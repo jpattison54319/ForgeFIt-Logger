@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>ForgeFit reads workout, heart, sleep, and recovery data to summarize training and readiness.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>ForgeFit writes completed workouts to Apple Health when you finish a session.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>ForgeFit uses location during outdoor cardio workouts to save route maps and splits on this device.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+</dict>
+</plist>
