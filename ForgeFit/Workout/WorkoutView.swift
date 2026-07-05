@@ -531,7 +531,7 @@ struct WorkoutHomeView: View {
 
     private func start(_ routine: RoutineModel) {
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, in: modelContext)
+            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
             appState.showingLogger = true
         }
     }

@@ -72,6 +72,67 @@ struct ForgeFitTests {
         #expect(workout.cardioSessions.first?.durationSeconds == 1_800)
     }
 
+    @MainActor
+    @Test func routineStartLoadsSavedSetupNoteWhenRoutineExerciseHasNoNote() async throws {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+
+        let exercise = ExerciseLibraryModel(name: "Machine Chest Press", primaryMuscles: ["chest"], equipment: "machine")
+        let setupNote = UserExerciseNoteModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            note: "Keep shoulder blades pinned before the first rep."
+        )
+        let routineExercise = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            position: 0,
+            sets: [RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetWeight: 70)]
+        )
+        let routine = RoutineModel(userID: userID, name: "Full Body A", exercises: [routineExercise])
+
+        context.insert(exercise)
+        context.insert(setupNote)
+        context.insert(routine)
+        try context.save()
+
+        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+
+        #expect(workout.exercises.first?.notes == setupNote.note)
+        #expect(workout.exercises.first?.notePinned == true)
+    }
+
+    @MainActor
+    @Test func routineStartPreservesRoutineExerciseNoteOverSavedSetupNote() async throws {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+
+        let exercise = ExerciseLibraryModel(name: "Machine Chest Press", primaryMuscles: ["chest"], equipment: "machine")
+        let setupNote = UserExerciseNoteModel(userID: userID, exerciseID: exercise.id, note: "Saved setup cue")
+        let routineExercise = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            position: 0,
+            notes: "Routine-specific cue",
+            sets: [RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetWeight: 70)]
+        )
+        let routine = RoutineModel(userID: userID, name: "Full Body A", exercises: [routineExercise])
+
+        context.insert(exercise)
+        context.insert(setupNote)
+        context.insert(routine)
+        try context.save()
+
+        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+
+        #expect(workout.exercises.first?.notes == "Routine-specific cue")
+        #expect(workout.exercises.first?.notePinned == false)
+    }
+
     @Test func cardioSRPELoadFallsBackToDurationTimesEffort() {
         let workout = cardioWorkout(daysAgo: 1, minutes: 60, effort: 5)
         let report = RecoveryEngine(workouts: [workout], now: now).report()

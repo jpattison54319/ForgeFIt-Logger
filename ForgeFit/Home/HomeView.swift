@@ -147,6 +147,7 @@ struct HomeView: View {
                                 WorkoutFeedRow(workout: workout, analytics: analytics)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("home-workout-\(workout.title ?? "Workout")")
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                         }
                     }
@@ -303,7 +304,7 @@ struct HomeView: View {
                 Spacer(minLength: Space.sm)
                 Button {
                     appState.requestStart {
-                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, in: modelContext)
+                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
                         appState.showingLogger = true
                     }
                 } label: {
@@ -315,11 +316,13 @@ struct HomeView: View {
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)
                 .buttonBorderShape(.capsule)
+                .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
             }
         }
         .overlay(
             RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
+                .allowsHitTesting(false)
         )
     }
 
@@ -347,6 +350,7 @@ struct HomeView: View {
                         QuickStartTile(
                             title: title(for: action),
                             systemImage: systemImage(for: action),
+                            accessibilityIdentifier: accessibilityIdentifier(for: action),
                             isEditing: quickStartEditing,
                             isDragging: draggedQuickStartAction == action,
                             onTap: { start(action) },
@@ -453,7 +457,7 @@ struct HomeView: View {
                 _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
             case .routine(let id):
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil }) else { return }
-                _ = WorkoutFactory.start(routine: routine, exercises: exercises, in: modelContext)
+                _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
             }
             appState.showingLogger = true
         }
@@ -470,6 +474,13 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): modality.systemImage
         case .routine: "list.bullet.clipboard"
+        }
+    }
+
+    private func accessibilityIdentifier(for action: HomeQuickStartAction) -> String {
+        switch action.kind {
+        case .cardio(let modality): "start-cardio-\(modality.rawValue)"
+        case .routine(let id): "start-home-routine-\(id.uuidString)"
         }
     }
 
@@ -568,6 +579,7 @@ private struct QuickStartTile: View {
     @Environment(\.theme) private var theme
     let title: String
     let systemImage: String
+    let accessibilityIdentifier: String
     let isEditing: Bool
     let isDragging: Bool
     let onTap: () -> Void
@@ -613,6 +625,7 @@ private struct QuickStartTile: View {
         .shadow(color: .black.opacity(isDragging ? 0.28 : 0), radius: isDragging ? 12 : 0, y: isDragging ? 6 : 0)
         .animation(.easeInOut(duration: 0.18), value: isEditing)
         .animation(.easeInOut(duration: 0.16), value: isDragging)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
@@ -829,5 +842,6 @@ struct WorkoutFeedRow: View {
                 }
             }
         }
+        .accessibilityIdentifier("home-workout-\(workout.title ?? "Workout")")
     }
 }

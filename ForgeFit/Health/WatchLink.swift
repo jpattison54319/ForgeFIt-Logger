@@ -242,9 +242,10 @@ final class WatchLink: NSObject {
         case .startRoutine(let routineID):
             guard active == nil else { publishState(); return }
             let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+            let setupNotes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
             let routines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
             guard let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil }) else { return }
-            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, in: context)
+            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: context)
             beginSession(for: workout, workouts: workouts, in: context)
 
         case .startEmpty:

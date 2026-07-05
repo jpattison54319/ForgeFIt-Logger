@@ -109,9 +109,12 @@ enum ExerciseCatalog {
         guard !seeds.isEmpty else { return }
 
         let existing = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        let existingByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let existingByID = Dictionary(
+            existing.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
-        var inserted = 0
+        var changed = 0
         for seed in seeds {
             let id = deterministicID(for: seed.slug)
             let isCardio = seed.category == "cardio"
@@ -120,28 +123,47 @@ enum ExerciseCatalog {
             // including the cardiovascular system, and are updated on reseed.
             let primary = isCardio ? kind.musclesWorked : seed.primaryMuscles
             let model = existingByID[id] ?? ExerciseLibraryModel(id: id, name: seed.name)
-            model.ownerID = nil
-            model.name = seed.name
-            model.movementPattern = isCardio ? "cardio" : seed.force
-            model.primaryMuscles = primary
-            model.secondaryMuscles = isCardio ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" } : seed.secondaryMuscles
-            model.equipment = seed.equipment
-            model.isUnilateral = false
-            model.defaultWeightMode = isCardio ? .bodyweight : weightMode(equipment: seed.equipment, name: seed.name)
-            model.difficulty = seed.level
-            model.isCardio = isCardio
-            model.mediaSlug = seed.image
-            model.category = seed.category
-            model.force = seed.force
-            model.mechanic = seed.mechanic
-            model.instructions = seed.instructions ?? []
-            model.updatedAt = Date()
+            var modelChanged = false
+
             if existingByID[id] == nil {
                 context.insert(model)
-                inserted += 1
+                modelChanged = true
+            } else if model.userModified {
+                continue
+            }
+
+            func set<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<ExerciseLibraryModel, Value>, _ value: Value) {
+                guard model[keyPath: keyPath] != value else { return }
+                model[keyPath: keyPath] = value
+                modelChanged = true
+            }
+
+            set(\.ownerID, nil)
+            set(\.name, seed.name)
+            set(\.movementPattern, isCardio ? "cardio" : seed.force)
+            set(\.primaryMuscles, primary)
+            set(\.secondaryMuscles, isCardio ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" } : seed.secondaryMuscles)
+            set(\.equipment, seed.equipment)
+            set(\.isUnilateral, false)
+            let desiredWeightMode = isCardio ? WeightMode.bodyweight : weightMode(equipment: seed.equipment, name: seed.name)
+            if model.defaultWeightMode != desiredWeightMode {
+                model.defaultWeightMode = desiredWeightMode
+                modelChanged = true
+            }
+            set(\.difficulty, seed.level)
+            set(\.isCardio, isCardio)
+            set(\.mediaSlug, seed.image)
+            set(\.category, seed.category)
+            set(\.force, seed.force)
+            set(\.mechanic, seed.mechanic)
+            set(\.instructions, seed.instructions ?? [])
+
+            if modelChanged {
+                model.updatedAt = Date()
+                changed += 1
             }
         }
-        if inserted > 0 || seeds.contains(where: { $0.category == "cardio" }) { try? context.save() }
+        if changed > 0 { try? context.save() }
     }
 
     // MARK: - Filter taxonomy for the picker

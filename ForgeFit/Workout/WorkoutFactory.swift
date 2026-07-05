@@ -51,7 +51,12 @@ enum WorkoutFactory {
     }
 
     @discardableResult
-    static func start(routine: RoutineModel, exercises: [ExerciseLibraryModel], in context: ModelContext) -> WorkoutModel {
+    static func start(
+        routine: RoutineModel,
+        exercises: [ExerciseLibraryModel],
+        setupNotes: [UserExerciseNoteModel] = [],
+        in context: ModelContext
+    ) -> WorkoutModel {
         let workout = WorkoutModel(
             userID: ForgeFitDemo.userID,
             routineID: routine.id,
@@ -59,11 +64,15 @@ enum WorkoutFactory {
             sourceDevice: "iphone"
         )
         let exerciseByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
+        let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
         var cardioSessions: [CardioSessionModel] = []
         workout.exercises = routine.exercises
             .sorted { $0.position < $1.position }
             .map { routineExercise in
                 let exercise = exerciseByID[routineExercise.exerciseID]
+                let setupNote = resolvedSetupNotes.first {
+                    $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID
+                }
                 let pendingSets: [SetModel] = exercise?.isCardio == true ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
@@ -84,7 +93,8 @@ enum WorkoutFactory {
                     exerciseID: routineExercise.exerciseID,
                     position: routineExercise.position,
                     supersetGroup: routineExercise.supersetGroup,
-                    notes: routineExercise.notes,
+                    notes: routineExercise.notes ?? setupNote?.note,
+                    notePinned: routineExercise.notes == nil && setupNote != nil,
                     intervalPlanJSON: routineExercise.intervalPlanJSON,
                     sourceRoutineExerciseID: routineExercise.id,
                     sets: pendingSets

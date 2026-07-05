@@ -51,7 +51,8 @@ struct RoutineDetailView: View {
                     ForEach(sortedExercises) { re in
                         RoutineExerciseSummary(
                             routineExercise: re,
-                            exercise: exercises.first { $0.id == re.exerciseID }
+                            exercise: exercises.first { $0.id == re.exerciseID },
+                            setupNote: setupNotes.first { $0.exerciseID == re.exerciseID && $0.userID == ForgeFitDemo.userID }
                         )
                     }
                 }
@@ -133,7 +134,7 @@ struct RoutineDetailView: View {
 
     private func start() {
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, in: modelContext)
+            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
             appState.showingLogger = true
         }
     }
@@ -153,6 +154,7 @@ private struct RoutineExerciseSummary: View {
     @Environment(\.theme) private var theme
     let routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
+    let setupNote: UserExerciseNoteModel?
 
     private var sortedSets: [RoutineSetModel] { routineExercise.sets.sorted { $0.position < $1.position } }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
@@ -190,6 +192,10 @@ private struct RoutineExerciseSummary: View {
                     Spacer()
                 }
 
+                if let setupNote {
+                    ExerciseNoteBanner(note: setupNote, context: .routine)
+                }
+
                 if exercise?.isCardio == true {
                     cardioSummary
                 } else {
@@ -197,6 +203,7 @@ private struct RoutineExerciseSummary: View {
                 }
             }
         }
+        .accessibilityIdentifier("routine-exercise-\(exercise?.name ?? "Exercise")")
     }
 
     private var strengthSummary: some View {

@@ -71,10 +71,13 @@ struct ContentView: View {
     @State private var workoutCountReactionTask: Task<Void, Never>?
     @State private var readinessStampTask: Task<Void, Never>?
     @State private var liveSurfaceUpdateTask: Task<Void, Never>?
+    @State private var didStartLaunchTasks = false
+    @State private var showBootSplash = true
     // First launch only; UI-test launch hooks skip it.
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didOnboard")
         && UserDefaults.standard.string(forKey: "initialTab") == nil
         && !UserDefaults.standard.bool(forKey: "autoStartRoutine")
+        && !ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
         && !ProcessInfo.processInfo.arguments.contains("--reset-store")
 
     private var activeWorkout: WorkoutModel? {
@@ -94,12 +97,20 @@ struct ContentView: View {
     }
 
     var body: some View {
-        appShell
+        ZStack {
+            appShell
+
+            if showBootSplash {
+                BootSplashView()
+                    .transition(.opacity)
+                    .zIndex(1)
+            }
+        }
             .environment(appState)
             .preferredColorScheme(.dark)
             .tint(theme.accent)
             .fullScreenCover(isPresented: $appState.showingLogger) {
-            if let activeWorkout {
+            if let activeWorkout = activeWorkoutForPresentation() {
                 ActiveWorkoutLoggerView(
                     workout: activeWorkout,
                     exercises: exercises,
@@ -176,7 +187,7 @@ struct ContentView: View {
                     WatchLink.shared.publishState()
                 }
             }
-            .task { await launchTasks() }
+            .task { await runLaunchTasksIfNeeded() }
             .onReceive(NotificationCenter.default.publisher(for: .forgeFitAccountResetDidComplete)) { _ in
                 handleAccountReset()
             }
@@ -326,6 +337,29 @@ struct ContentView: View {
         return CardioKind.from(modality: modality)
     }
 
+    @MainActor
+    private func runLaunchTasksIfNeeded() async {
+        guard !didStartLaunchTasks else { return }
+        didStartLaunchTasks = true
+        let startedAt = Date()
+
+        await launchTasks()
+
+        let minimumSplashSeconds = 0.65
+        let elapsed = Date().timeIntervalSince(startedAt)
+        if elapsed < minimumSplashSeconds {
+            try? await Task.sleep(for: .seconds(minimumSplashSeconds - elapsed))
+        }
+
+        withAnimation(.easeOut(duration: 0.22)) {
+            showBootSplash = false
+        }
+
+        if shouldAutoStartRoutine {
+            presentLoggerWhenActiveWorkoutIsReady()
+        }
+    }
+
     private func launchTasks() async {
         if let raw = UserDefaults.standard.string(forKey: "weightUnitRaw"), let u = WeightUnit(rawValue: raw) {
             Fmt.unit = u
@@ -340,11 +374,13 @@ struct ContentView: View {
            let tab = AppTab(rawValue: raw) {
             appState.selectedTab = tab
         }
-        if UserDefaults.standard.bool(forKey: "autoStartRoutine"),
+        if shouldAutoStartRoutine,
            activeWorkout == nil,
-           let routine = routines.first(where: { $0.deletedAt == nil && !$0.exercises.isEmpty }) {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, in: modelContext)
-            appState.showingLogger = true
+           let routine = launchRoutineForAutoStart() {
+            let launchExercises = (try? modelContext.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? exercises
+            let launchSetupNotes = (try? modelContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? setupNotes
+            _ = WorkoutFactory.start(routine: routine, exercises: launchExercises, setupNotes: launchSetupNotes, in: modelContext)
+            presentLoggerWhenActiveWorkoutIsReady()
         }
         await importHealthWorkoutHistory()
         HealthMetricsStore.shared.refresh()
@@ -352,6 +388,40 @@ struct ContentView: View {
         refreshStreakNudge()
         updateWidgetSnapshot()
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+    }
+
+    private func launchRoutineForAutoStart() -> RoutineModel? {
+        let launchRoutines = (try? modelContext.fetch(FetchDescriptor<RoutineModel>())) ?? routines
+        return launchRoutines
+            .sorted { $0.position < $1.position }
+            .first { $0.deletedAt == nil && !$0.exercises.isEmpty }
+    }
+
+    private var shouldAutoStartRoutine: Bool {
+        UserDefaults.standard.bool(forKey: "autoStartRoutine")
+            || ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
+    }
+
+    private func activeWorkoutForPresentation() -> WorkoutModel? {
+        if let activeWorkout { return activeWorkout }
+        var descriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
+    }
+
+    private func presentLoggerWhenActiveWorkoutIsReady() {
+        Task { @MainActor in
+            for _ in 0..<15 {
+                if activeWorkoutForPresentation() != nil {
+                    appState.showingLogger = true
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
     }
 
     private func updateWidgetSnapshot() {
@@ -431,6 +501,7 @@ struct ContentView: View {
             try ExerciseSeedRepository.seedGlobalLibrary(in: modelContext)
             ExerciseCatalog.seed(into: modelContext)
             if shouldSeedStarterContent {
+                try seedStarterSetupNote()
                 try seedStarterRoutine()
             }
         } catch {
@@ -442,6 +513,7 @@ struct ContentView: View {
         ProcessInfo.processInfo.arguments.contains("--reset-store")
             || UserDefaults.standard.string(forKey: "initialTab") != nil
             || UserDefaults.standard.bool(forKey: "autoStartRoutine")
+            || ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
     }
 
     private var shouldSeedStarterContent: Bool {
@@ -507,7 +579,6 @@ struct ContentView: View {
             userID: ForgeFitDemo.userID,
             exerciseID: GlobalExerciseLibrary.machineChestPressID,
             position: 0,
-            notes: "Use the saved setup before pressing.",
             sets: [firstTarget]
         )
         let routine = RoutineModel(
@@ -521,6 +592,68 @@ struct ContentView: View {
 
         modelContext.insert(routine)
         try modelContext.save()
+    }
+
+    private func seedStarterSetupNote() throws {
+        let noteID = ForgeFitDemo.machinePressNoteID
+        var descriptor = FetchDescriptor<UserExerciseNoteModel>(predicate: #Predicate { $0.id == noteID })
+        descriptor.fetchLimit = 1
+        guard try modelContext.fetch(descriptor).isEmpty else { return }
+
+        let note = UserExerciseNoteModel(
+            id: noteID,
+            userID: ForgeFitDemo.userID,
+            exerciseID: GlobalExerciseLibrary.machineChestPressID,
+            note: "Keep shoulder blades pinned before the first rep.",
+            seatHeight: "4",
+            grip: "Neutral",
+            stance: "Feet planted"
+        )
+        modelContext.insert(note)
+        try modelContext.save()
+    }
+}
+
+private struct BootSplashView: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        ZStack {
+            ScreenBackground()
+
+            VStack(spacing: Space.xl) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accentSoft)
+                        .frame(width: 92, height: 92)
+
+                    Circle()
+                        .stroke(theme.accent.opacity(0.38), lineWidth: 1)
+                        .frame(width: 92, height: 92)
+
+                    Image(systemName: "dumbbell.fill")
+                        .font(.system(size: 38, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                }
+
+                VStack(spacing: Space.sm) {
+                    Text("ForgeFit")
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(theme.textPrimary)
+
+                    Text("Loading your training")
+                        .font(.label)
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                ProgressView()
+                    .tint(theme.accent)
+                    .controlSize(.regular)
+            }
+            .padding(.horizontal, Space.xxl)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("ForgeFit is loading")
     }
 }
 

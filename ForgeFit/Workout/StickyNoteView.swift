@@ -65,6 +65,7 @@ struct StickyNoteView: View {
                 .focused($focused)
                 .lineLimit(1...6)
                 .accessibilityLabel("Workout note")
+                .accessibilityIdentifier("workout-note-banner")
             }
         }
         .padding(Space.md)

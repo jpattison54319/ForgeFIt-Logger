@@ -861,6 +861,7 @@ private struct PostWorkoutSummaryView: View {
                     PrimaryButton(title: "Save Workout", systemImage: "checkmark") {
                         requestSave()
                     }
+                    .accessibilityIdentifier("save-workout-button")
                     SecondaryButton(title: "Keep Logging") {
                         onCancel()
                     }

@@ -47,6 +47,7 @@ struct ExerciseNoteBanner: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.yellow.opacity(0.16))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityIdentifier(context == .workout ? "workout-note-banner" : "routine-note-banner")
     }
 }
 

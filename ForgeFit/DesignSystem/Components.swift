@@ -215,6 +215,10 @@ struct StatColumn: View {
 
     @Environment(\.theme) private var theme
 
+    private var accessibilityID: String {
+        "stat-\(label.lowercased().replacingOccurrences(of: " ", with: "-"))"
+    }
+
     var body: some View {
         VStack(alignment: alignment, spacing: 2) {
             Text(label)
@@ -227,6 +231,9 @@ struct StatColumn: View {
                 .minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) \(value)")
+        .accessibilityIdentifier(accessibilityID)
     }
 }
 
