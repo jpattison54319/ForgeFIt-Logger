@@ -537,7 +537,16 @@ struct RecoveryEngine {
            let days = freshest.daysAgo, days >= 3 {
             adjustment += targetSet.isEmpty ? 0.03 : 0.07
             score = max(score, 0.78)
-            chips.append(ReasonChip(text: "\(freshest.muscle.capitalized) fresh", tone: .positive))
+            // Naming one muscle only makes sense when the picture is mixed —
+            // when everything trained is recovered, singling out the
+            // longest-rested one ("Triceps fresh") reads as arbitrary.
+            let trained = relevant.filter { $0.daysAgo != nil }
+            let allFresh = recent.isEmpty && trained.allSatisfy { ($0.daysAgo ?? 0) >= 3 }
+            if allFresh, trained.count > 1 {
+                chips.append(ReasonChip(text: "All muscles fresh", tone: .positive))
+            } else {
+                chips.append(ReasonChip(text: "\(freshest.muscle.capitalized) fresh", tone: .positive))
+            }
         }
 
         return MuscleAssessment(
@@ -847,8 +856,11 @@ struct RecoveryEngine {
         if muscle.hasRecentTarget {
             out.append("At least one relevant muscle was trained within 48h. Rotate emphasis or reduce local volume.")
         }
-        let fresh = muscleFreshness().filter { $0.daysAgo != nil }.max { ($0.daysAgo ?? 0) < ($1.daysAgo ?? 0) }
-        if let fresh, let d = fresh.daysAgo, d >= 3 {
+        let trained = muscleFreshness().filter { $0.daysAgo != nil }
+        if !trained.isEmpty, trained.allSatisfy({ ($0.daysAgo ?? 0) >= 3 }), trained.count > 1 {
+            out.append("Every tracked muscle has had 3+ days since direct work — pick any focus today.")
+        } else if let fresh = trained.max(by: { ($0.daysAgo ?? 0) < ($1.daysAgo ?? 0) }),
+                  let d = fresh.daysAgo, d >= 3 {
             out.append("\(fresh.muscle.capitalized) has had \(d) days since direct work.")
         }
         if let d = daysSinceLast, d >= 4 { out.append("It has been \(d) days since your last workout. Start a little conservative.") }

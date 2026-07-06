@@ -201,6 +201,31 @@ struct ForgeFitTests {
         #expect(crash.displayScore < 0.6)   // number agrees with the action
     }
 
+    /// When every trained muscle is recovered, the chip says so collectively —
+    /// naming the single longest-rested muscle ("Triceps fresh") reads as
+    /// arbitrary when the whole body is ready.
+    @Test func allMusclesFreshGetsCollectiveChipNotArbitrarySingleMuscle() {
+        let squat = exercise("Back Squat", muscles: ["quadriceps"])
+        let curl = exercise("Curl", muscles: ["biceps"])
+        let pushdown = exercise("Pushdown", muscles: ["triceps"])
+        let workouts = [
+            strengthWorkout(daysAgo: 3, exercise: squat, reps: 8, weight: 100, rpe: 8),
+            strengthWorkout(daysAgo: 4, exercise: curl, reps: 10, weight: 20, rpe: 8),
+            strengthWorkout(daysAgo: 6, exercise: pushdown, reps: 10, weight: 25, rpe: 8),
+        ]
+        let report = RecoveryEngine(workouts: workouts, exercises: [squat, curl, pushdown], now: now).report()
+
+        #expect(report.reasonChips.contains { $0.text == "All muscles fresh" })
+        #expect(!report.reasonChips.contains { $0.text.hasSuffix(" fresh") && $0.text != "All muscles fresh" })
+
+        // Mixed picture: biceps trained yesterday → the named-muscle chip is
+        // back, because now it is informative.
+        let mixed = workouts + [strengthWorkout(daysAgo: 1, exercise: curl, reps: 10, weight: 20, rpe: 8)]
+        let mixedReport = RecoveryEngine(workouts: mixed, exercises: [squat, curl, pushdown], now: now).report()
+        #expect(!mixedReport.reasonChips.contains { $0.text == "All muscles fresh" })
+        #expect(mixedReport.reasonChips.contains { $0.text == "Triceps fresh" })
+    }
+
     @Test func sustainedLowHRVAfter48HoursReducesVolume() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let workouts = recurringWorkouts(exercise: squat, daysAgo: [2, 9, 16, 23])
