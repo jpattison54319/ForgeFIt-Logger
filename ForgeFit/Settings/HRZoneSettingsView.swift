@@ -260,11 +260,33 @@ struct HRZoneFieldTestView: View {
     @Environment(\.dismiss) private var dismiss
     let onCapture: (Int) -> Void
 
-    private enum Phase { case intro, running, done }
+    /// A max-effort test needs actual pacing, not a bare "tell us when
+    /// you're done" — warmup and cooldown are now real guided countdowns
+    /// (previously just prose in the intro), and the effort phase advances
+    /// itself so the only thing the user needs to do at max HR is run, not
+    /// aim a thumb at a button.
+    private enum Phase { case intro, warmup, effort, cooldown, done }
+    /// Fixed at 3 minutes to match the pacing instructions ("~3 minutes,
+    /// building to a sprint in the final 30 seconds") — this is the
+    /// calibration protocol, not a user preference.
+    private let effortSeconds = 180
+    /// Below this, an "observed peak" almost certainly reflects a sensor
+    /// glitch or a watch that wasn't actually worn, not a real max HR.
+    private let plausibleRange = 100...230
+
     @State private var phase: Phase = .intro
     @State private var watch = WatchLink.shared
     @State private var peakHR = 0
-    @State private var startedAt = Date()
+    @State private var phaseEndsAt: Date?
+    @State private var warmupMinutes = 10
+    @State private var cooldownMinutes = 3
+    @State private var autoAdvanceTask: Task<Void, Never>?
+    @State private var showCloseConfirm = false
+    @State private var showLowPeakConfirm = false
+
+    private var isMidTest: Bool {
+        phase == .warmup || phase == .effort || phase == .cooldown
+    }
 
     var body: some View {
         NavigationStack {
@@ -272,7 +294,19 @@ struct HRZoneFieldTestView: View {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     switch phase {
                     case .intro: intro
-                    case .running: running
+                    case .warmup: timedPhase(
+                        title: "Warm up",
+                        detail: "Easy effort — jog, spin, or row to raise your heart rate gradually.",
+                        tint: theme.secondaryAccent,
+                        skipTitle: "Skip warmup"
+                    )
+                    case .effort: effortPhase
+                    case .cooldown: timedPhase(
+                        title: "Cool down",
+                        detail: "Easy effort until your heart rate settles.",
+                        tint: theme.secondaryAccent,
+                        skipTitle: "Skip cooldown"
+                    )
                     case .done: done
                     }
                 }
@@ -283,8 +317,16 @@ struct HRZoneFieldTestView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { finishAndDismiss() }
+                    Button("Close") {
+                        if isMidTest { showCloseConfirm = true } else { finishAndDismiss() }
+                    }
                 }
+            }
+            .confirmationDialog("End this test?", isPresented: $showCloseConfirm, titleVisibility: .visible) {
+                Button("End Test", role: .destructive) { finishAndDismiss() }
+                Button("Keep Going", role: .cancel) {}
+            } message: {
+                Text("Your progress and observed peak heart rate will be lost.")
             }
         }
         .preferredColorScheme(.dark)
@@ -296,7 +338,7 @@ struct HRZoneFieldTestView: View {
         VStack(alignment: .leading, spacing: Space.md) {
             Label("Wear your Apple Watch", systemImage: "applewatch")
                 .font(.bodyStrong).foregroundStyle(theme.textPrimary)
-            Text("Warm up for 10 minutes. Then run (or bike) as hard as you can sustain for ~3 minutes — ideally uphill — building to an absolute sprint in the final 30 seconds. We'll record your peak heart rate.")
+            Text("We'll guide you through a warmup, a ~3 minute max effort — building to an absolute sprint in the final 30 seconds — and a cooldown. Peak heart rate is captured automatically.")
                 .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Card(fill: theme.danger.opacity(0.12)) {
@@ -307,37 +349,77 @@ struct HRZoneFieldTestView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text("Warmup length").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                SegmentedPills(options: [5, 10, 15], title: { "\($0) min" }, selection: $warmupMinutes)
+            }
             PrimaryButton(title: "Start test", systemImage: "bolt.heart.fill", tint: theme.danger) {
                 start()
             }
         }
     }
 
-    private var running: some View {
+    /// Shared layout for the warmup and cooldown phases: a countdown, a live
+    /// HR readout, and a way to move on early. Effort has its own view since
+    /// it also tracks and shows the peak.
+    private func timedPhase(title: String, detail: String, tint: Color, skipTitle: String) -> some View {
         VStack(spacing: Space.lg) {
-            Text("Recording peak HR").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.danger)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "heart.fill").foregroundStyle(theme.danger)
-                    .symbolEffect(.pulse, isActive: true)
-                Text(watch.liveMetrics?.heartRate.map(String.init) ?? "—")
+            Text(title.uppercased()).font(.system(size: 13, weight: .bold)).foregroundStyle(tint)
+            // Purely cosmetic — the phase actually ends via the Task scheduled
+            // in beginPhase(), not by this view noticing zero (avoids a
+            // double-advance race between the two).
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(Fmt.restTimer(remainingSeconds(at: ctx.date)))
                     .font(.system(size: 56, weight: .bold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(theme.textPrimary)
-                Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
             }
-            HStack(spacing: Space.xl) {
-                StatColumn(label: "Peak", value: peakHR > 0 ? "\(peakHR)" : "—", valueColor: theme.secondaryAccent)
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    StatColumn(label: "Elapsed", value: Fmt.elapsed(max(0, Int(ctx.date.timeIntervalSince(startedAt)))))
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "heart.fill").foregroundStyle(theme.danger).font(.system(size: 13))
+                Text(watch.liveMetrics?.heartRate.map(String.init) ?? "—")
+                    .font(.system(size: 20, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(theme.textPrimary)
+                Text("bpm").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
+            }
+            Text(detail)
+                .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            SecondaryButton(title: skipTitle, systemImage: "forward.end.fill") { advance() }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var effortPhase: some View {
+        VStack(spacing: Space.lg) {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let remaining = remainingSeconds(at: ctx.date)
+                let finalSprint = remaining <= 30
+                VStack(spacing: Space.lg) {
+                    Text(finalSprint ? "FINAL SPRINT!" : "MAX EFFORT")
+                        .font(.system(size: 13, weight: .heavy))
+                        .foregroundStyle(finalSprint ? theme.danger : theme.textSecondary)
+                        .contentTransition(.numericText())
+                    // Purely cosmetic — see the note in timedPhase(): the
+                    // Task in beginPhase() owns the actual transition.
+                    Text(Fmt.restTimer(remaining))
+                        .font(.system(size: 56, weight: .bold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(finalSprint ? theme.danger : theme.textPrimary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "heart.fill").foregroundStyle(theme.danger)
+                            .symbolEffect(.pulse, isActive: true)
+                        Text(watch.liveMetrics?.heartRate.map(String.init) ?? "—")
+                            .font(.system(size: 56, weight: .bold, design: .rounded)).monospacedDigit()
+                            .foregroundStyle(theme.textPrimary)
+                        Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
+                    }
                 }
             }
+            StatColumn(label: "Peak so far", value: peakHR > 0 ? "\(peakHR) bpm" : "—", valueColor: theme.secondaryAccent)
             if watch.liveMetrics?.heartRate == nil {
                 Text("Waiting for heart rate from your Watch… make sure the ForgeFit watch app opened into a workout.")
                     .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            PrimaryButton(title: "Finish", systemImage: "checkmark", tint: theme.success) {
-                phase = .done
-            }
+            SecondaryButton(title: "End effort now", systemImage: "forward.end.fill") { advance() }
         }
         .frame(maxWidth: .infinity)
     }
@@ -348,9 +430,23 @@ struct HRZoneFieldTestView: View {
                 Text("Observed peak").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
                 Text("\(peakHR)").font(.system(size: 64, weight: .bold, design: .rounded)).foregroundStyle(theme.secondaryAccent)
                 Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
+                if !plausibleRange.contains(peakHR) {
+                    Card(fill: theme.danger.opacity(0.12)) {
+                        HStack(alignment: .top, spacing: Space.sm) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(theme.danger)
+                            Text("This is unusual for a max heart rate — make sure your Watch was worn snugly and tracking. Using it anyway will skew every training zone.")
+                                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
                 PrimaryButton(title: "Use \(peakHR) bpm as my max HR", systemImage: "checkmark.seal.fill") {
-                    onCapture(peakHR)
-                    finishAndDismiss()
+                    if plausibleRange.contains(peakHR) {
+                        onCapture(peakHR)
+                        finishAndDismiss()
+                    } else {
+                        showLowPeakConfirm = true
+                    }
                 }
                 SecondaryButton(title: "Discard") { finishAndDismiss() }
             } else {
@@ -362,22 +458,66 @@ struct HRZoneFieldTestView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .confirmationDialog("Use \(peakHR) bpm anyway?", isPresented: $showLowPeakConfirm, titleVisibility: .visible) {
+            Button("Use \(peakHR) bpm anyway", role: .destructive) {
+                onCapture(peakHR)
+                finishAndDismiss()
+            }
+            Button("Discard instead", role: .cancel) {}
+        } message: {
+            Text("This value is outside the normal range for a max heart rate and will skew every training zone.")
+        }
+    }
+
+    private func remainingSeconds(at date: Date) -> Int {
+        guard let phaseEndsAt else { return 0 }
+        return max(0, Int(phaseEndsAt.timeIntervalSince(date).rounded(.up)))
     }
 
     private func start() {
         peakHR = 0
-        startedAt = Date()
-        phase = .running
         // Nudge the watch into a live run so it starts streaming heart rate.
         HealthService.shared.startWatchApp(cardioKind: .run)
+        beginPhase(.warmup, seconds: warmupMinutes * 60)
+    }
+
+    private func beginPhase(_ next: Phase, seconds: Int) {
+        autoAdvanceTask?.cancel()
+        phase = next
+        phaseEndsAt = Date().addingTimeInterval(TimeInterval(seconds))
+        autoAdvanceTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            advance()
+        }
+    }
+
+    /// Moves to the next phase — used both by the countdown reaching zero and
+    /// by the manual Skip/End-now escape hatches, since both mean the same
+    /// thing: this phase is over.
+    private func advance() {
+        switch phase {
+        case .intro: break
+        case .warmup: beginPhase(.effort, seconds: effortSeconds)
+        case .effort: beginPhase(.cooldown, seconds: cooldownMinutes * 60)
+        case .cooldown:
+            autoAdvanceTask?.cancel()
+            phaseEndsAt = nil
+            phase = .done
+        case .done: break
+        }
     }
 
     private func trackPeak(_ hr: Int?) {
-        guard phase == .running, let hr, hr > peakHR, hr < 240 else { return }
+        // Only the effort phase's HR counts toward peak — a warmup or
+        // cooldown spike (dropped signal, moving the watch) shouldn't be
+        // mistaken for max effort.
+        guard phase == .effort, let hr, hr > peakHR, hr < 240 else { return }
         peakHR = hr
     }
 
     private func finishAndDismiss() {
+        autoAdvanceTask?.cancel()
         watch.clearLiveMetrics()
         dismiss()
     }
