@@ -20,6 +20,13 @@ struct WorkoutShareCard: View {
     let theme: AppTheme
     var hrSamples: [(date: Date, bpm: Int)] = []
     var recoveryPoints: [SetRecoveryPoint] = []
+    /// Pre-rendered GPS route map per cardio session id (MapKit can't be
+    /// rasterized off-screen, so the map is snapshotted before rendering).
+    var routeMaps: [UUID: UIImage] = [:]
+
+    /// Point size of the embedded route map — the cardio block's content width
+    /// (card 430 − 28·2 padding − 16·2 block padding) at a 16:9-ish ratio.
+    static let routeMapSize = CGSize(width: 342, height: 190)
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
     private var summary: TrainingAnalytics.Summary { analytics.summary(for: workout) }
@@ -309,6 +316,18 @@ struct WorkoutShareCard: View {
                 }
                 if let hr = session.avgHR { chip("Avg HR", "\(hr)") }
             }
+            if let map = routeMaps[session.id] {
+                Image(uiImage: map)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(theme.separator, lineWidth: 1)
+                    )
+            }
             let zones = session.hrZoneSeconds
             if zones.reduce(0, +) > 0 {
                 zoneBar(zones)
@@ -413,7 +432,8 @@ enum WorkoutShareRenderer {
         exercises: [ExerciseLibraryModel],
         theme: AppTheme,
         hrSamples: [(date: Date, bpm: Int)] = [],
-        recoveryPoints: [SetRecoveryPoint] = []
+        recoveryPoints: [SetRecoveryPoint] = [],
+        routeMaps: [UUID: UIImage] = [:]
     ) -> UIImage? {
         ShareRenderer.image(
             WorkoutShareCard(
@@ -421,7 +441,8 @@ enum WorkoutShareRenderer {
                 exercises: exercises,
                 theme: theme,
                 hrSamples: hrSamples,
-                recoveryPoints: recoveryPoints
+                recoveryPoints: recoveryPoints,
+                routeMaps: routeMaps
             ),
             theme: theme
         )

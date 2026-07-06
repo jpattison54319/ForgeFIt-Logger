@@ -87,6 +87,7 @@ struct WorkoutDetailView: View {
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
     @State private var recoveryPoints: [SetRecoveryPoint] = []
+    @State private var isSharing = false
     @State private var sharePayload: SharePayload?
     @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
@@ -199,7 +200,10 @@ struct WorkoutDetailView: View {
             Text("Workout").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.xs) {
-                CircleIconButton(systemImage: "square.and.arrow.up") { prepareShare() }
+                CircleIconButton(systemImage: isSharing ? "hourglass" : "square.and.arrow.up") {
+                    guard !isSharing else { return }
+                    Task { await prepareShare() }
+                }
                     .accessibilityLabel("Share workout")
                 CircleIconButton(systemImage: "square.and.pencil") { showEditor = true }
                     .accessibilityLabel("Edit workout")
@@ -739,13 +743,30 @@ struct WorkoutDetailView: View {
     /// the share sheet (Save to Photos, Messages, AirDrop, …). Shares only the
     /// image so exactly one artifact is produced, and passes the already-loaded
     /// HR series / recovery points so the picture matches what's on screen.
-    private func prepareShare() {
+    ///
+    /// Async because GPS routes are snapshotted first via `MKMapSnapshotter`
+    /// (MapKit can't be rasterized off-screen by `ImageRenderer`). Indoor /
+    /// strength workouts have no routes, so this returns near-instantly.
+    private func prepareShare() async {
+        isSharing = true
+        defer { isSharing = false }
+        var routeMaps: [UUID: UIImage] = [:]
+        for session in workout.cardioSessions {
+            let coordinates = session.routePoints
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+            if coordinates.count >= 2,
+               let map = await RouteMapSnapshot.image(coordinates: coordinates, size: WorkoutShareCard.routeMapSize, theme: theme) {
+                routeMaps[session.id] = map
+            }
+        }
         guard let image = WorkoutShareRenderer.image(
             for: workout,
             exercises: exercises,
             theme: theme,
             hrSamples: hrSamples,
-            recoveryPoints: recoveryPoints
+            recoveryPoints: recoveryPoints,
+            routeMaps: routeMaps
         ) else { return }
         sharePayload = SharePayload(items: [image])
     }
