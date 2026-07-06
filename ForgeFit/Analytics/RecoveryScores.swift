@@ -258,7 +258,9 @@ extension RecoveryEngine {
         guard baseline.count >= 14 else { return nil }
         let lnToday = log(today)
         let mean = average(baseline) ?? lnToday
-        let sd = max(standardDeviation(baseline), 0.03)   // ≥~3% CV floor
+        // Noise floor at 5% CV: day-to-day lnRMSSD variability is typically
+        // 5–10% (Buchheit 2014) — a tighter floor over-reacts to normal nights.
+        let sd = max(standardDeviation(baseline), 0.05)
         let z = (lnToday - mean) / sd
         // Steeper than the chronic trend (0.28 vs 0.20 per SD): the acute score
         // is meant to react to a single off morning.
@@ -375,7 +377,7 @@ extension RecoveryEngine {
 
         let lnAvg7 = average(recent.map { log($0) }) ?? 0
         let mean = average(baseline) ?? lnAvg7
-        let sd = max(standardDeviation(baseline), 0.03)  // ≥~3% CV floor
+        let sd = max(standardDeviation(baseline), 0.05)  // ≥5% CV noise floor (Buchheit 2014)
         let z = (lnAvg7 - mean) / sd
         // At baseline → 0.9; each SD below baseline costs 0.2 (Buchheit 2014:
         // deviations beyond the baseline's own noise are the signal).

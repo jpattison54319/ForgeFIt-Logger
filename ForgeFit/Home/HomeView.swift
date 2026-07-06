@@ -278,45 +278,81 @@ struct HomeView: View {
                 targetMuscles: targetMuscles(for: routine)
             ).report()
         }
+        let coachPlan = CoachAdjustments.plan(for: targetReport.action)
         return Card {
-            HStack(spacing: Space.md) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Up next")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(theme.accent)
-                        .textCase(.uppercase)
-                    Text(routine.name)
-                        .font(.cardTitle)
-                        .foregroundStyle(theme.textPrimary)
-                    Text(reason)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: targetReport.action.systemImage)
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(spacing: Space.md) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Up next")
                             .font(.system(size: 11, weight: .bold))
-                        Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(2)
+                            .foregroundStyle(theme.accent)
+                            .textCase(.uppercase)
+                        Text(routine.name)
+                            .font(.cardTitle)
+                            .foregroundStyle(theme.textPrimary)
+                        Text(reason)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                        HStack(spacing: Space.sm) {
+                            Image(systemName: targetReport.action.systemImage)
+                                .font(.system(size: 11, weight: .bold))
+                            Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(2)
+                        }
+                        .foregroundStyle(targetReport.action.tint)
                     }
-                    .foregroundStyle(targetReport.action.tint)
-                }
-                Spacer(minLength: Space.sm)
-                Button {
-                    appState.requestStart {
-                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                        appState.showingLogger = true
+                    Spacer(minLength: Space.sm)
+                    Button {
+                        appState.requestStart {
+                            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                            appState.showingLogger = true
+                        }
+                    } label: {
+                        Text(coachPlan == nil ? "Start" : "As planned")
+                            .font(.system(size: 15, weight: .bold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
                     }
-                } label: {
-                    Text("Start")
-                        .font(.system(size: 15, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                    .buttonStyle(.glassProminent)
+                    .tint(theme.accent)
+                    .buttonBorderShape(.capsule)
+                    .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
                 }
-                .buttonStyle(.glassProminent)
-                .tint(theme.accent)
-                .buttonBorderShape(.capsule)
-                .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
+
+                // One-tap coach modification: today only, routine untouched.
+                if let coachPlan {
+                    Button {
+                        appState.requestStart {
+                            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                            CoachAdjustments.apply(coachPlan, to: workout, in: modelContext)
+                            appState.showingLogger = true
+                        }
+                    } label: {
+                        HStack(spacing: Space.sm) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 13, weight: .bold))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Start coach's version")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text("\(coachPlan.summary) · routine unchanged")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .opacity(0.85)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(targetReport.action.tint)
+                        .padding(10)
+                        .frame(maxWidth: .infinity)
+                        .background(targetReport.action.tint.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("start-coach-version-\(routine.name)")
+                }
             }
         }
         .overlay(

@@ -171,22 +171,34 @@ struct ForgeFitTests {
         #expect(report.cardioLoad == 0)
     }
 
-    @Test func singleLowHRVAfter48HoursAllowsTrainingWithCaution() {
+    /// A single low-HRV morning scales with severity: a mild dip after 48h off
+    /// still trains as planned (one reading is noisy — Plews 2013), but a crash
+    /// far beyond the baseline's own variability is a real signal (Buchheit
+    /// 2014) and pulls the day down to reduced volume.
+    @Test func singleLowHRVSeverityScalesTheResponse() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let workouts = recurringWorkouts(exercise: squat, daysAgo: [2, 9, 16, 23])
-        let health = healthSeries(currentHRV: 35, priorLowDays: 0)
 
-        let report = RecoveryEngine(
+        let mildDip = RecoveryEngine(
             workouts: workouts,
             exercises: [squat],
-            healthMetrics: health,
+            healthMetrics: healthSeries(currentHRV: 46, priorLowDays: 0),
             targetMuscles: ["quadriceps"],
             now: now
         ).report()
+        #expect(mildDip.action == .trainAsPlanned)
+        #expect(mildDip.reasonChips.contains { $0.text == "HRV low today" })
+        #expect(mildDip.reasonChips.contains { $0.text == "48h recovered" })
 
-        #expect(report.action == .trainAsPlanned)
-        #expect(report.reasonChips.contains { $0.text == "HRV low today" })
-        #expect(report.reasonChips.contains { $0.text == "48h recovered" })
+        let crash = RecoveryEngine(
+            workouts: workouts,
+            exercises: [squat],
+            healthMetrics: healthSeries(currentHRV: 35, priorLowDays: 0),
+            targetMuscles: ["quadriceps"],
+            now: now
+        ).report()
+        #expect(crash.action == .reduceVolume)
+        #expect(crash.displayScore < 0.6)   // number agrees with the action
     }
 
     @Test func sustainedLowHRVAfter48HoursReducesVolume() {

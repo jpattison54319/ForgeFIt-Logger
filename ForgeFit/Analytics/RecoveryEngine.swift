@@ -298,7 +298,13 @@ struct RecoveryEngine {
             biometric: biometric,
             acuteFlags: snapshot.daily.flags
         )
-        let chips = reasonChips(load: load, muscle: muscle, biometric: biometric, daysSinceLast: daysSinceLast)
+        let chips = reasonChips(
+            load: load,
+            muscle: muscle,
+            biometric: biometric,
+            daysSinceLast: daysSinceLast,
+            acuteFlags: snapshot.daily.flags
+        )
 
         // Confidence = how complete the data feeding the recommendation is, so
         // a missing input always lowers it. Two sources: the morning
@@ -777,9 +783,21 @@ struct RecoveryEngine {
         load: LoadAssessment,
         muscle: MuscleAssessment,
         biometric: BiometricAssessment,
-        daysSinceLast: Int?
+        daysSinceLast: Int?,
+        acuteFlags: [String] = []
     ) -> [ReasonChip] {
-        var chips = muscle.chips + biometric.chips + load.chips
+        // Acute daily-readiness flags lead: they use the same banding as the
+        // headline score, so the chips can't disagree with the number. The
+        // legacy "HRV normal" chip is dropped when the acute read says low.
+        let acute = acuteFlags.map { ReasonChip(text: $0, tone: .caution) }
+        var biometricChips = biometric.chips
+        if acuteFlags.contains("HRV low today") {
+            biometricChips.removeAll { $0.text == "HRV normal" }
+        }
+        if acuteFlags.contains("Sleeping HR elevated") {
+            biometricChips.removeAll { $0.text == "RHR normal" }
+        }
+        var chips = acute + muscle.chips + biometricChips + load.chips
         if chips.isEmpty, let daysSinceLast, daysSinceLast >= 2 {
             chips.append(ReasonChip(text: "48h recovered", tone: .positive))
         }
