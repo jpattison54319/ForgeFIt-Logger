@@ -314,7 +314,12 @@ final class WatchLink: NSObject {
                 if let hr = snap.avgHR { session.avgHR = hr }
                 if let mx = snap.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                if let dist = snap.distanceMeters, providesGPSDistance { session.distanceMeters = dist }
+                // Keep the GPS route distance when a route was recorded (the
+                // splits are summed from it); only take HealthKit's distance
+                // when there's no route to trust.
+                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
+                    session.distanceMeters = dist
+                }
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
                 try? context.save()
                 await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: context)

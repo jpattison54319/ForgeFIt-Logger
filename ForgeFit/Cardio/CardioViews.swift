@@ -391,9 +391,15 @@ struct CardioExerciseCard: View {
                 if let hr = snap.avgHR { session.avgHR = hr }
                 if let mx = snap.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // Skip auto distance for treadmills / indoor machines — their
-                // HealthKit distance is a motion estimate; the user enters it.
-                if let dist = snap.distanceMeters, providesGPSDistance { session.distanceMeters = dist }
+                // Skip auto distance for treadmills / indoor machines (manual
+                // entry). For outdoor runs, keep the GPS route distance when we
+                // recorded a route — it's what the splits are summed from, so
+                // overwriting it with HealthKit's shorter estimate makes the
+                // total disagree with the splits. Only fall back to HealthKit
+                // when there's no route to trust.
+                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
+                    session.distanceMeters = dist
+                }
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
             }
             // Capture the time-series and auto-detect intervals (free-form runs).

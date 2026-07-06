@@ -28,7 +28,8 @@ enum CardioRouteMath {
         var previous = points[0]
         var accumulated = 0.0
         var elevationGain = 0.0
-        var index = 1
+        // 0-based, matching every other split producer; the UI renders index + 1.
+        var index = 0
 
         for point in points.dropFirst() {
             let segment = distanceMeters(previous, point)
