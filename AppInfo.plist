@@ -8,6 +8,8 @@
 	<string>ForgeFit writes completed workouts to Apple Health when you finish a session.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ForgeFit uses location during outdoor cardio workouts to save route maps and splits on this device.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ForgeFit saves workout, routine, and training-cycle images to your photo library when you share them.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>
