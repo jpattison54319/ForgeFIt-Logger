@@ -639,6 +639,17 @@ private struct QuickStartTile: View {
                 .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .onTapGesture { onTap() }
                 .onLongPressGesture(minimumDuration: 0.35) { onLongPress() }
+                // Without an explicit accessibility boundary here, the
+                // `.accessibilityIdentifier` applied below (on the outer view)
+                // has no single element of its own to bind to and lands on an
+                // arbitrary descendant leaf — in practice the tiny SF Symbol
+                // Image instead of the full tappable tile, which made this
+                // control unreliably hittable for UI testing (and for
+                // VoiceOver/Switch Control, since a custom `.onTapGesture`
+                // isn't announced as a button on its own).
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(.isButton)
 
                 if isEditing {
                     Button(action: onRemove) {

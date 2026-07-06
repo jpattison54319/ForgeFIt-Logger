@@ -84,6 +84,14 @@ final class HealthService {
     func requestAuthorization() async -> Bool {
         #if canImport(HealthKit)
         guard isAvailable else { return false }
+        // UI test automation reinstalls the app fresh, so HealthKit
+        // authorization has never been decided; requesting it would pop the
+        // real system permission sheet full-screen over whatever the test is
+        // driving, and no test drives through that sheet (it covers dozens of
+        // data-type toggles, not a one-tap "Allow"). --reset-store is already
+        // this codebase's signal for an automation launch; real users never
+        // pass it, so this only ever short-circuits test runs.
+        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return false }
         do {
             try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
             return isConnected

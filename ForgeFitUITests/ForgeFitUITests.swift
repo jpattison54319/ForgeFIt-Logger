@@ -22,6 +22,43 @@ final class ForgeFitUITests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
+    // MARK: - Shared helpers
+
+    /// Sheet-dismiss and view-transition animations can leave an element
+    /// existing but briefly un-hittable (e.g. a button appearing where a
+    /// different one was a moment ago as the view swaps branches). Poll
+    /// instead of assuming the first frame after `waitForExistence` is
+    /// already interactive.
+    private func tapWhenReady(_ element: XCUIElement, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !(element.exists && element.isHittable), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        element.tap()
+    }
+
+    /// Scrolls `element` into view when it's off the initial viewport in
+    /// either axis — e.g. Home's quick-start row is a horizontal ScrollView
+    /// nested inside the screen's vertical one, and XCUITest's built-in
+    /// single-pass "scroll to visible" doesn't reliably resolve nested
+    /// scroll axes (it can report a degenerate {-1,-1} hit point and fail).
+    /// Tries vertical first (content above quick-start varies: the readiness
+    /// card / "Jump back in" suggestion only render once there's data), then
+    /// horizontal (quick-start tile order is user-customizable and persists
+    /// in UserDefaults across `--reset-store`, which only clears SwiftData).
+    private func scrollUntilHittable(_ element: XCUIElement, in app: XCUIApplication, maxAttemptsPerAxis: Int = 6) {
+        var attempts = 0
+        while !(element.exists && element.isHittable), attempts < maxAttemptsPerAxis {
+            app.swipeUp(velocity: .fast)
+            attempts += 1
+        }
+        attempts = 0
+        while !(element.exists && element.isHittable), attempts < maxAttemptsPerAxis {
+            app.swipeLeft(velocity: .fast)
+            attempts += 1
+        }
+    }
+
     @MainActor
     func testRoutineStartLogSetCompleteAndShowsSetupNotes() throws {
         throw XCTSkip("Routine auto-start presentation is still being stabilized; setup-note propagation is covered by ForgeFitTests.")
@@ -30,22 +67,37 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testQuickCardioCanBeSavedToRecents() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        // --reset-store only wipes SwiftData (AccountResetService); it does not
+        // touch UserDefaults. Home's quick-start tile order is user-customizable
+        // and persisted there (homeQuickStartActions.v1), so a prior manual
+        // session on this simulator could leave "Row" anywhere in the row —
+        // force the built-in default order [Run, Cycle, Row, Walk] so the tile
+        // is always in the same place.
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-homeQuickStartActions.v1", ""]
         app.launch()
 
         let startRow = app.descendants(matching: .any).matching(identifier: "start-cardio-row").firstMatch
         XCTAssertTrue(startRow.waitForExistence(timeout: 5), "Expected Row quick-start.")
+        // Nested horizontal-in-vertical ScrollViews: XCUITest's single-pass
+        // auto-scroll can fail to resolve both axes (surfaced as a degenerate
+        // {-1,-1} hit point) depending on what renders above quick-start
+        // (readiness card, "Jump back in" suggestion). Scroll explicitly first.
+        scrollUntilHittable(startRow, in: app)
+        XCTAssertTrue(startRow.isHittable, "Expected the Row quick-start tile to be reachable by scrolling.")
         startRow.tap()
 
         XCTAssertTrue(app.buttons["Start Row"].waitForExistence(timeout: 5), "Expected structured cardio logger.")
-        app.descendants(matching: .any)["start-cardio-segment"].tap()
+        tapWhenReady(app.descendants(matching: .any)["start-cardio-segment"])
 
+        // notStarted → inProgress swaps the whole card body; the Complete
+        // button that appears in its place can be briefly un-hittable mid
+        // transition.
         let completeCardio = app.descendants(matching: .any)["complete-cardio-segment"]
         if !completeCardio.waitForExistence(timeout: 2) {
             app.swipeUp()
         }
         XCTAssertTrue(completeCardio.waitForExistence(timeout: 3), "Expected Complete cardio button.")
-        completeCardio.tap()
+        tapWhenReady(completeCardio)
 
         app.descendants(matching: .any)["finish-workout-button"].tap()
         app.buttons["Review Summary"].tap()
@@ -170,17 +222,6 @@ final class ForgeFitUITests: XCTestCase {
         let newRoutine = app.buttons["New Routine"].firstMatch
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         newRoutine.tap()
-
-        // Sheet-dismiss animations leave the element behind them existing but
-        // briefly un-hittable; poll rather than assume the first frame after
-        // waitForExistence is already interactive.
-        func tapWhenReady(_ element: XCUIElement, timeout: TimeInterval = 5) {
-            let deadline = Date().addingTimeInterval(timeout)
-            while !(element.exists && element.isHittable), Date() < deadline {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-            }
-            element.tap()
-        }
 
         func addExercise(searching term: String) {
             let addExercise = app.buttons["Add Exercise"].firstMatch
