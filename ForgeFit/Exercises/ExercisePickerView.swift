@@ -360,15 +360,28 @@ struct CreateExerciseView: View {
 
     private var isEditing: Bool { editing != nil }
 
-    /// Library exercises whose names closely match what's being typed —
-    /// reuses the same tolerant scorer as search (case, diacritics, small
-    /// typos), keeping only strong matches so the prompt isn't noisy.
-    private var duplicateCandidates: [ExerciseLibraryModel] {
-        let query = name.trimmingCharacters(in: .whitespaces)
+    /// Duplicate matches for the typed name. Populated by a debounced task —
+    /// NOT a computed property — so keystrokes never pay for snapshot building
+    /// or fuzzy scoring inside the render transaction (it caused visible input
+    /// latency). Cleared and frozen once Create is tapped, so the just-created
+    /// exercise can't flash in as its own "duplicate" while the sheet closes.
+    @State private var duplicateCandidates: [ExerciseLibraryModel] = []
+    @State private var snapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
+    @State private var isSaving = false
+
+    /// Library exercises whose names closely match `query` — the same tolerant
+    /// scorer as search (case, diacritics, small typos), strong matches only.
+    /// The normalized snapshot is memoized per library state, so a keystroke
+    /// costs one ranked search, not a full library re-normalization.
+    private func duplicateMatches(for query: String) -> [ExerciseLibraryModel] {
         guard query.count >= 3 else { return [] }
         var seen = Set<UUID>()
         let live = allExercises.filter { $0.deletedAt == nil && seen.insert($0.id).inserted }
-        let snapshot = ExerciseLibrarySnapshot(exercises: live.map(\.domainInfo))
+        var latest = Date.distantPast
+        for exercise in live { latest = max(latest, exercise.updatedAt) }
+        let snapshot = snapshotMemo("\(live.count)|\(latest.timeIntervalSince1970)") {
+            ExerciseLibrarySnapshot(exercises: live.map(\.domainInfo))
+        }
         let strong = snapshot.search(query, limit: 3).filter { $0.score >= 62 }
         let byID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return strong.compactMap { byID[$0.exercise.id] }
@@ -401,7 +414,7 @@ struct CreateExerciseView: View {
                             // Duplicate guard: fuzzy-match the library as the user
                             // types (case / spelling tolerant) and offer the
                             // existing exercise instead of creating a twin.
-                            if !isEditing, !duplicateCandidates.isEmpty {
+                            if !isEditing, !isSaving, !duplicateCandidates.isEmpty {
                                 VStack(alignment: .leading, spacing: Space.sm) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "exclamationmark.circle.fill")
@@ -412,6 +425,7 @@ struct CreateExerciseView: View {
                                     .foregroundStyle(theme.warmup)
                                     ForEach(duplicateCandidates) { candidate in
                                         Button {
+                                            isSaving = true
                                             onCreate(candidate)
                                             dismiss()
                                         } label: {
@@ -489,6 +503,20 @@ struct CreateExerciseView: View {
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
             .navigationBarTitleDisplayMode(.inline)
+            // Debounced duplicate matching: restarts on every keystroke (task
+            // id) and only does the fuzzy work after typing pauses, off the
+            // keystroke's render pass.
+            .task(id: name) {
+                guard !isEditing, !isSaving else { return }
+                let query = name.trimmingCharacters(in: .whitespaces)
+                guard query.count >= 3 else {
+                    if !duplicateCandidates.isEmpty { duplicateCandidates = [] }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, !isSaving else { return }
+                duplicateCandidates = duplicateMatches(for: query)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -591,6 +619,11 @@ struct CreateExerciseView: View {
     }
 
     private func save() {
+        // Freeze and clear suggestions before the insert: the @Query update
+        // would otherwise match the just-created exercise against its own name
+        // and flash the "already exists" card while the sheet dismisses.
+        isSaving = true
+        duplicateCandidates = []
         if let editing {
             apply(to: editing)
             editing.userModified = true
