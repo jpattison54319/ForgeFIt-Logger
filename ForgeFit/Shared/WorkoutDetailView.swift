@@ -86,6 +86,7 @@ struct WorkoutDetailView: View {
     @State private var deleteError: String?
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
+    @State private var recoveryPoints: [SetRecoveryPoint] = []
     @State private var sharePayload: SharePayload?
     @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
@@ -125,6 +126,10 @@ struct WorkoutDetailView: View {
 
                 if hrLoaded, !hrSamples.isEmpty {
                     heartRateCard
+                }
+
+                if !s.isCardio, recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
+                    betweenSetRecoveryCard
                 }
 
                 if !s.isCardio {
@@ -274,7 +279,23 @@ struct WorkoutDetailView: View {
         let end = workout.endedAt ?? workout.startedAt
         let samples = await HealthService.shared.heartRateSamples(from: workout.startedAt, to: end)
         hrSamples = samples
+        recoveryPoints = betweenSetRecovery(from: samples)
         hrLoaded = true
+    }
+
+    /// Per-set between-set HR recovery for this workout's strength sets, derived
+    /// from the HR series and each set's `completedAt`. Cardio sessions are
+    /// excluded — this is a resistance-training conditioning read.
+    private func betweenSetRecovery(from samples: [(date: Date, bpm: Int)]) -> [SetRecoveryPoint] {
+        guard !samples.isEmpty else { return [] }
+        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
+        let sets = workout.exercises
+            .filter { !cardioExerciseIDs.contains($0.id) }
+            .flatMap(\.sets)
+            .compactMap { set -> (id: UUID, completedAt: Date)? in
+                set.completedAt.map { (set.id, $0) }
+            }
+        return SetHRRecovery.analyze(samples: samples, sets: sets)
     }
 
     /// Heart-rate-over-time graph for the session (Apple Watch samples).
@@ -295,6 +316,83 @@ struct WorkoutDetailView: View {
                 }
                 HeartRateTrendChart(samples: hrSamples)
             }
+        }
+    }
+
+    /// How far HR fell during rest after each set — a between-set recovery /
+    /// conditioning read, distinct from set effort (which RPE/RIR cover).
+    private var betweenSetRecoveryCard: some View {
+        let dict = Dictionary(uniqueKeysWithValues: recoveryPoints.map { ($0.setID, $0) })
+        let drops = recoveryPoints.compactMap(\.recoveryBPM)
+        let avg = drops.isEmpty ? 0 : Int((Double(drops.reduce(0, +)) / Double(drops.count)).rounded())
+        let best = drops.max() ?? 0
+        let maxDrop = max(1, best)
+        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
+        let strengthExercises = workout.exercises
+            .filter { !cardioExerciseIDs.contains($0.id) }
+            .sorted { $0.position < $1.position }
+        return Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.heart.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(theme.danger)
+                    Text("Between-set recovery").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                }
+                HStack {
+                    StatColumn(label: "Avg drop", value: "\(avg) bpm")
+                    StatColumn(label: "Best drop", value: "\(best) bpm")
+                    StatColumn(label: "Sets", value: "\(drops.count)")
+                }
+                VStack(alignment: .leading, spacing: Space.md) {
+                    ForEach(strengthExercises) { we in
+                        let sets = we.sets.sorted { $0.position < $1.position }
+                        let rows = Array(sets.enumerated()).compactMap { index, set -> (label: String, point: SetRecoveryPoint)? in
+                            dict[set.id].map { (historicalSetLabel(for: set, index: index, sets: sets), $0) }
+                        }
+                        if !rows.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(exercises.first { $0.id == we.exerciseID }?.name ?? "Exercise")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(theme.textPrimary)
+                                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                                    recoveryRow(label: row.label, point: row.point, maxDrop: maxDrop)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Peak HR at the end of each set and how far it fell before the next set. Bigger drops mean faster recovery — a conditioning signal, not a measure of how hard the set was.")
+                    .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
+            }
+        }
+    }
+
+    private func recoveryRow(label: String, point: SetRecoveryPoint, maxDrop: Int) -> some View {
+        HStack(spacing: Space.sm) {
+            Text(label)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 32, alignment: .leading)
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.heart.fill")
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(theme.danger)
+                Text("\(point.peakHR)")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+            }
+            .frame(width: 56, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(theme.surfaceHighlight)
+                    Capsule().fill(theme.success)
+                        .frame(width: geo.size.width * CGFloat(point.recoveryBPM ?? 0) / CGFloat(maxDrop))
+                }
+            }
+            .frame(height: 8)
+            Text(point.recoveryBPM.map { "▼\($0)" } ?? "—")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(point.recoveryBPM != nil ? theme.success : theme.textTertiary)
+                .frame(width: 44, alignment: .trailing)
         }
     }
 
