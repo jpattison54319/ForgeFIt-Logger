@@ -26,7 +26,7 @@ enum ImportedExerciseBackfill {
         }
 
         let seedCorpus = WorkoutHistoryImportService.seedCorpus()
-        let namesByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0.importedRawName ?? $0.name) })
+        let namesByID = Dictionary(candidates.map { ($0.id, $0.importedRawName ?? $0.name) }, uniquingKeysWith: { first, _ in first })
         let classifications = await Task.detached(priority: .utility) {
             let classifier = ExerciseClassifier(seedCorpus: seedCorpus)
             return namesByID.mapValues { classifier.classify(name: $0) }

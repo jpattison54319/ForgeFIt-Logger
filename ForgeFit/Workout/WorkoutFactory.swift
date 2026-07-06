@@ -63,7 +63,7 @@ enum WorkoutFactory {
             title: routine.name,
             sourceDevice: "iphone"
         )
-        let exerciseByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
+        let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
         var cardioSessions: [CardioSessionModel] = []
         workout.exercises = routine.exercises

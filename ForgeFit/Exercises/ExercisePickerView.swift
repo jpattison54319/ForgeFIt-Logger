@@ -70,7 +70,7 @@ struct ExercisePickerView: View {
                 aliases: GlobalExerciseLibrary.snapshot.aliases
             )
             let rankedIDs = snapshot.search(normalizedSearch, limit: base.count).map(\.exercise.id)
-            let byID = Dictionary(uniqueKeysWithValues: base.map { ($0.id, $0) })
+            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             return rankedIDs.compactMap { byID[$0] }
         }
     }

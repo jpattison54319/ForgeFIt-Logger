@@ -54,6 +54,48 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
     }
 
+    /// Regression: typing in the exercise picker's search crashed the app when
+    /// the library contained duplicate exercise IDs (CloudKit can't enforce
+    /// unique constraints, so a sync/re-seed race produces them). Drives the
+    /// exact reported flow — edit a routine, add an exercise, search — and
+    /// asserts the app stays alive with results rendering.
+    @MainActor
+    func testExerciseSearchDoesNotCrash() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
+
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected New Routine button.")
+        newRoutine.tap()
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected Add Exercise in the routine editor.")
+        addExercise.tap()
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the exercise search field.")
+        searchField.tap()
+        searchField.typeText("bench press")
+
+        // The crash fired on the first keystroke — surviving typing plus a
+        // rendered ranked result (or the no-matches empty state) is the pass.
+        XCTAssertEqual(app.state, .runningForeground, "App should survive exercise search.")
+        let benchRow = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] 'bench'")
+        ).firstMatch
+        let hasResults = benchRow.waitForExistence(timeout: 3)
+            || app.staticTexts["No matches"].waitForExistence(timeout: 2)
+        XCTAssertTrue(hasResults, "Search should render results or the empty state, not crash.")
+
+        // Fuzzy path (typo → Levenshtein branch) while we're here.
+        searchField.typeText(XCUIKeyboardKey.delete.rawValue)
+        searchField.typeText("presz")
+        XCTAssertEqual(app.state, .runningForeground, "App should survive fuzzy search.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

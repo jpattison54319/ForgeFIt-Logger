@@ -34,7 +34,9 @@ public struct ExerciseLibrarySnapshot: Equatable, Sendable {
         self.exercises = exercises
         self.aliases = aliases
         self.setupNotes = setupNotes
-        let exercisesByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
+        // CloudKit can't enforce unique constraints, so duplicate IDs can occur
+        // transiently after a sync/re-seed race — never trap on them.
+        let exercisesByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         self.exercisesByID = exercisesByID
         self.searchItems = exercises.map {
             SearchItem(candidate: $0.name, normalizedCandidate: Self.normalized($0.name), exercise: $0)

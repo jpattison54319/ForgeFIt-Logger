@@ -119,7 +119,7 @@ enum WorkoutHistoryImportService {
             guard let exerciseID = match.exerciseID else { return nil }
             return (match.importedName, exerciseID)
         })
-        var exerciseByID = Dictionary(uniqueKeysWithValues: existingExercises.map { ($0.id, $0) })
+        var exerciseByID = Dictionary(existingExercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var createdExercises = 0
         var flaggedForReview = 0
         var importedWorkouts = 0

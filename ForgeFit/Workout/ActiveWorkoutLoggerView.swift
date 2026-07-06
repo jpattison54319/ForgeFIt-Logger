@@ -368,7 +368,7 @@ struct ActiveWorkoutLoggerView: View {
     private func buildReferenceCaches() async -> ReferenceCaches {
         let exerciseIDs = Set(workout.exercises.map(\.exerciseID))
         var baselines: [UUID: ExerciseRecordBaseline] = [:]
-        var previousSets = Dictionary(uniqueKeysWithValues: exerciseIDs.map { ($0, [SetModel]()) })
+        var previousSets = Dictionary(exerciseIDs.map { ($0, [SetModel]()) }, uniquingKeysWith: { first, _ in first })
         guard !exerciseIDs.isEmpty else {
             return ReferenceCaches(recordBaselines: baselines, previousSetsByExerciseID: previousSets)
         }

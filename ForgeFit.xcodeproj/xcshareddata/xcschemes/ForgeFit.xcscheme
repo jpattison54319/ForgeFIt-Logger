@@ -38,6 +38,16 @@
                ReferencedContainer = "container:ForgeFit.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "11D5DF082FF3739A00F018A9"
+               BuildableName = "ForgeFitUITests.xctest"
+               BlueprintName = "ForgeFitUITests"
+               ReferencedContainer = "container:ForgeFit.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

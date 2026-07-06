@@ -326,7 +326,7 @@ struct WorkoutDetailView: View {
     /// How far HR fell during rest after each set — a between-set recovery /
     /// conditioning read, distinct from set effort (which RPE/RIR cover).
     private var betweenSetRecoveryCard: some View {
-        let dict = Dictionary(uniqueKeysWithValues: recoveryPoints.map { ($0.setID, $0) })
+        let dict = Dictionary(recoveryPoints.map { ($0.setID, $0) }, uniquingKeysWith: { first, _ in first })
         let drops = recoveryPoints.compactMap(\.recoveryBPM)
         let avg = drops.isEmpty ? 0 : Int((Double(drops.reduce(0, +)) / Double(drops.count)).rounded())
         let best = drops.max() ?? 0
