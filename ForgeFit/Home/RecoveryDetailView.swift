@@ -32,10 +32,10 @@ struct RecoveryDetailView: View {
     /// are enough readings to form a baseline.
     private var hrvTrend: HRVTrendData? {
         let metrics = HealthMetricsStore.shared.metrics.sorted { $0.date < $1.date }.suffix(45)
-        let usedRMSSD = metrics.contains { $0.hrvRMSSD != nil }
+        let usedRMSSD = metrics.contains { $0.hrvRMSSD != nil || $0.nocturnalHRV != nil }
+        // Same signal the scores use: nocturnal window first, all-day fallback.
         let values: [(Date, Double)] = metrics.compactMap { metric in
-            let v = usedRMSSD ? (metric.hrvRMSSD ?? metric.hrvSDNN) : (metric.hrvSDNN ?? metric.hrvRMSSD)
-            return v.map { (metric.date, $0) }
+            metric.bestHRV.map { (metric.date, $0) }
         }
         guard values.count >= 7, let today = values.last?.1 else { return nil }
         let all = values.map(\.1)
@@ -57,9 +57,6 @@ struct RecoveryDetailView: View {
                 header
 
                 RecoverySummaryCard(report: report) { selectedInfo = $0 }
-
-                SectionHeader("Today's readiness")
-                DailyReadinessCard(daily: report.recovery.daily) { selectedInfo = $0 }
 
                 SectionHeader("Recovery trend")
                 SystemicScoreCard(systemic: report.recovery.systemic) { selectedInfo = $0 }
@@ -180,6 +177,7 @@ private struct RecoverySummaryCard: View {
     let onInfo: (RecoveryInfoTopic) -> Void
 
     var body: some View {
+        let daily = report.recovery.daily
         Card {
             VStack(alignment: .leading, spacing: Space.lg) {
                 HStack(alignment: .center, spacing: Space.lg) {
@@ -190,7 +188,7 @@ private struct RecoverySummaryCard: View {
                             .font(.system(size: 48, weight: .bold))
                             .foregroundStyle(theme.textPrimary)
                     }
-                    .accessibilityLabel("Recovery score \(Int(report.displayScore * 100))")
+                    .accessibilityLabel("Readiness score \(Int(report.displayScore * 100))")
 
                     VStack(alignment: .leading, spacing: Space.sm) {
                         HStack(spacing: Space.sm) {
@@ -198,7 +196,7 @@ private struct RecoverySummaryCard: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(theme.textSecondary)
                                 .textCase(.uppercase)
-                            InfoButton { onInfo(.readinessScore) }
+                            InfoButton { onInfo(.dailyScore) }
                         }
                         HStack(spacing: Space.sm) {
                             Image(systemName: report.action.systemImage)
@@ -216,63 +214,8 @@ private struct RecoverySummaryCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Text(report.recommendation)
-                    .font(.system(size: 15))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: Space.sm) {
-                    Text("Confidence \(Int(report.confidence * 100))%")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
-                    InfoButton { onInfo(.confidence) }
-                    Spacer()
-                    if let trend = report.trendScore {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("7-day trend \(Int(trend * 100))")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundStyle(theme.readinessColor(trend))
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Daily readiness (acute)
-
-/// Today's acute readiness: nocturnal HRV, sleeping HR, and last night's sleep
-/// vs the user's own baseline. The flags shown here are the exact conditions
-/// that moved the score, so copy and number can't drift apart.
-private struct DailyReadinessCard: View {
-    @Environment(\.theme) private var theme
-    let daily: RecoveryEngine.DailyReadiness
-    let onInfo: (RecoveryInfoTopic) -> Void
-
-    var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(spacing: Space.sm) {
-                    Label("Last night", systemImage: "moon.stars.fill")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                    InfoButton { onInfo(.dailyScore) }
-                    Spacer()
-                    ScoreBadge(state: daily.state)
-                }
-
-                if let score = daily.state.value {
-                    ScoreBar(progress: score)
-                }
-
-                Text(guidanceText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
+                // The exact conditions that moved the score — number and copy
+                // share one source of truth.
                 if !daily.flags.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(daily.flags, id: \.self) { flag in
@@ -283,10 +226,27 @@ private struct DailyReadinessCard: View {
                                 .background(theme.warmup.opacity(0.14), in: Capsule())
                         }
                     }
+                } else if case .building(let needed) = daily.state {
+                    // Daily score still forming: the ring is falling back to the
+                    // trend/composite, so say what unlocks the acute read.
+                    HStack(spacing: 6) {
+                        Image(systemName: "hourglass")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                        Text(needed)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
-                Divider().overlay(theme.separator)
+                Text(report.recommendation)
+                    .font(.system(size: 15))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
+                // Last night's signals — the evidence behind the ring.
+                Divider().overlay(theme.separator)
                 VStack(spacing: Space.md) {
                     ForEach(daily.parts) { part in
                         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
@@ -314,13 +274,25 @@ private struct DailyReadinessCard: View {
                         }
                     }
                 }
+
+                HStack(spacing: Space.sm) {
+                    Text("Confidence \(Int(report.confidence * 100))%")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    InfoButton { onInfo(.confidence) }
+                    Spacer()
+                    if let trend = report.trendScore {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("7-day trend \(Int(trend * 100))")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(theme.readinessColor(trend))
+                    }
+                }
             }
         }
-    }
-
-    private var guidanceText: String {
-        if case .building(let needed) = daily.state { return needed }
-        return daily.guidance
     }
 
     private func detailText(for part: RecoveryEngine.ScorePart) -> String {
@@ -782,7 +754,6 @@ private struct MetricInfoSheet: View {
 }
 
 private enum RecoveryInfoTopic: String, Identifiable {
-    case readinessScore
     case dailyScore
     case systemicScore
     case muscleScore
@@ -794,7 +765,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
 
     var title: String {
         switch self {
-        case .readinessScore: "Today's recommendation"
         case .dailyScore: "Today's readiness"
         case .systemicScore: "Recovery trend"
         case .muscleScore: "Muscle recovery"
@@ -806,8 +776,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
 
     var explanation: String {
         switch self {
-        case .readinessScore:
-            return "The headline number is your acute daily readiness, and the action beside it — Push, Train as planned, Reduce volume, or Deload/recover — is derived from the same signals, so they always agree."
         case .dailyScore:
             return "Daily readiness reads how stressed your body is this morning: last night's HRV and sleeping heart rate compared against your own baseline range (in log space, the way the HRV literature does it), plus last night's sleep versus your personal need. It's deliberately reactive — one genuinely rough night will move it."
         case .systemicScore:
@@ -825,10 +793,8 @@ private enum RecoveryInfoTopic: String, Identifiable {
 
     var takeaway: String? {
         switch self {
-        case .readinessScore:
-            return "Use the action first. The exact number matters less than whether the app says Push, Train as planned, Reduce volume, or Deload."
         case .dailyScore:
-            return "A low morning after good weeks usually means: train, but leave PRs for another day. A low morning during a low trend means back off."
+            return "Use the action first — Push, Train as planned, Reduce volume, or Deload. A low morning after good weeks usually means: train, but leave PRs for another day; a low morning during a low trend means back off."
         case .systemicScore:
             return "One rough night or one low HRV morning rarely matters here — sustained trends against your own baseline are the real signal."
         case .muscleScore:
@@ -870,7 +836,7 @@ private enum RecoveryInfoTopic: String, Identifiable {
                 "Stanley, Peake & Buchheit 2013 (Sports Med) — parasympathetic recovery: ≈24 h after easy sessions, 24–48 h after threshold, 48 h+ after high-intensity work.",
                 "Seiler 2010 (IJSPP) — most endurance volume belongs at low intensity precisely because it recovers quickly.",
             ]
-        case .readinessScore, .trainingLoad, .confidence:
+        case .trainingLoad, .confidence:
             return nil
         }
     }
