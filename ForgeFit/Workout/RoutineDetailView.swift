@@ -178,12 +178,15 @@ private struct RoutineExerciseSummary: View {
                         if let exercise {
                             NavigationLink(value: exercise.id) {
                                 HStack(spacing: 4) {
+                                    // Matches the live-workout exercise header:
+                                    // white name, sage chevron only.
                                     Text(exercise.name)
                                         .font(.bodyStrong)
+                                        .foregroundStyle(theme.textPrimary)
                                     Image(systemName: "chevron.right")
                                         .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(theme.accent)
                                 }
-                                .foregroundStyle(theme.accent)
                             }
                             .buttonStyle(.plain)
                         } else {
