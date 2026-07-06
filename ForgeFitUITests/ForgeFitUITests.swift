@@ -157,6 +157,94 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(inRoutine.waitForExistence(timeout: 3), "Expected the existing exercise in the routine.")
     }
 
+    /// Routine editor: exercises can be reordered (mirrors the live logger's
+    /// reorder mode) and replaced in place (via the row's ellipsis menu),
+    /// without changing how many exercises the routine has.
+    @MainActor
+    func testRoutineEditorReordersAndReplacesExercises() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        newRoutine.tap()
+
+        // Sheet-dismiss animations leave the element behind them existing but
+        // briefly un-hittable; poll rather than assume the first frame after
+        // waitForExistence is already interactive.
+        func tapWhenReady(_ element: XCUIElement, timeout: TimeInterval = 5) {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !(element.exists && element.isHittable), Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            }
+            element.tap()
+        }
+
+        func addExercise(searching term: String) {
+            let addExercise = app.buttons["Add Exercise"].firstMatch
+            XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+            tapWhenReady(addExercise)
+            let searchField = app.searchFields.firstMatch
+            XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+            searchField.tap()
+            searchField.typeText(term)
+            let row = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+            ).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 4), "Expected a search result for '\(term)'.")
+            row.tap()
+            // This picker allows multi-select — tapping a row only checks it;
+            // committing (and dismissing) needs the bottom "Add 1 exercise" button.
+            let commit = app.buttons["Add 1 exercise"].firstMatch
+            XCTAssertTrue(commit.waitForExistence(timeout: 3), "Expected the commit button after selecting a result.")
+            tapWhenReady(commit)
+        }
+
+        addExercise(searching: "squat")
+        addExercise(searching: "curl")
+
+        let menus = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
+        )
+        XCTAssertEqual(menus.count, 2, "Expected two exercises in the routine before reordering.")
+
+        // Reorder mode: only offered once there's something to reorder.
+        let reorderButton = app.buttons["reorder-exercises-button"].firstMatch
+        XCTAssertTrue(reorderButton.waitForExistence(timeout: 5), "Expected the Reorder button with 2+ exercises.")
+        tapWhenReady(reorderButton)
+        XCTAssertTrue(app.staticTexts["Reorder"].waitForExistence(timeout: 3), "Expected the Reorder screen.")
+        let reorderDone = app.buttons["reorder-done-button"].firstMatch
+        XCTAssertTrue(reorderDone.waitForExistence(timeout: 3))
+        tapWhenReady(reorderDone)
+        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to return to normal editing after Done.")
+
+        // Replace: swap one exercise for another without changing the count.
+        let firstMenu = menus.firstMatch
+        XCTAssertTrue(firstMenu.waitForExistence(timeout: 5))
+        tapWhenReady(firstMenu)
+        let replaceItem = app.buttons["Replace Exercise"].firstMatch
+        XCTAssertTrue(replaceItem.waitForExistence(timeout: 3))
+        replaceItem.tap()
+
+        let replaceSearch = app.searchFields.firstMatch
+        XCTAssertTrue(replaceSearch.waitForExistence(timeout: 5), "Expected the replace picker's search field.")
+        replaceSearch.tap()
+        replaceSearch.typeText("press")
+        let replacementRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        ).firstMatch
+        XCTAssertTrue(replacementRow.waitForExistence(timeout: 4))
+        replacementRow.tap()
+
+        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor after replacing.")
+        let menusAfterReplace = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
+        )
+        XCTAssertEqual(menusAfterReplace.count, 2, "Replacing should swap the exercise, not add or remove one.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

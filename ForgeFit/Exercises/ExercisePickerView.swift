@@ -346,6 +346,7 @@ private struct ExerciseRowLabel: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("exercise-row-\(exercise.name)")
 
             Button(action: onInfo) {
                 Image(systemName: "info.circle")
