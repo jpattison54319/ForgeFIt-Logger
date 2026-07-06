@@ -1,6 +1,7 @@
 import CoreLocation
 import ForgeData
 import Foundation
+import Observation
 import SwiftData
 
 enum CardioRouteMath {
@@ -105,12 +106,19 @@ enum CardioRouteMath {
 }
 
 @MainActor
+@Observable
 final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     static let shared = CardioRouteRecorder()
 
-    private let manager = CLLocationManager()
+    /// Live running distance total (meters) for the current session, updated as
+    /// GPS fixes arrive so the logger can show distance in real time — the
+    /// phone-side fallback when no Apple Watch is streaming.
+    private(set) var liveDistanceMeters: Double = 0
+
+    @ObservationIgnored private let manager = CLLocationManager()
     private(set) var recordingSessionID: UUID?
-    private var locations: [CLLocation] = []
+    @ObservationIgnored private var locations: [CLLocation] = []
+    @ObservationIgnored private var lastLiveLocation: CLLocation?
 
     var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
     var isAuthorized: Bool {
@@ -134,7 +142,14 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
         guard isAuthorized else { return }
         recordingSessionID = session.id
         locations = []
+        lastLiveLocation = nil
+        liveDistanceMeters = 0
         manager.startUpdatingLocation()
+    }
+
+    /// Live distance for a session if it's the one currently recording, else nil.
+    func liveDistanceMeters(for sessionID: UUID) -> Double? {
+        recordingSessionID == sessionID ? liveDistanceMeters : nil
     }
 
     func stop(session: CardioSessionModel, in context: ModelContext) {
@@ -156,6 +171,15 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         Task { @MainActor in
             self.locations.append(contentsOf: locations)
+            // Accumulate a live distance total from accurate fixes, ignoring
+            // sub-metre GPS jitter so a stationary user's distance doesn't drift.
+            for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 50 {
+                if let last = self.lastLiveLocation {
+                    let segment = location.distance(from: last)
+                    if segment >= 1 { self.liveDistanceMeters += segment }
+                }
+                self.lastLiveLocation = location
+            }
         }
     }
 

@@ -254,7 +254,10 @@ struct ContentView: View {
         scheduleLiveSurfaceUpdate()
     }
 
-    private func handleLiveHeartRateChange(_ _: Int?) {
+    private func handleLiveHeartRateChange(_ heartRate: Int?) {
+        // Zone-lock guard: fire audible/haptic cues on leaving/re-entering the
+        // target zone. Runs app-wide so it works on any screen.
+        HRZoneGuard.shared.evaluate(hr: heartRate)
         scheduleLiveSurfaceUpdate()
     }
 
@@ -273,10 +276,19 @@ struct ContentView: View {
             Task { await importHealthWorkoutHistory() }
             // Force: every app open must pick up the day's new Health data
             // (overnight sleep, morning HRV, weigh-ins) so readiness is
-            // never stale.
-            HealthMetricsStore.shared.refresh(force: true)
+            // never stale. Re-write the idle widget once fresh metrics land so
+            // it isn't hours stale between app opens.
+            Task { @MainActor in
+                await HealthMetricsStore.shared.refreshNow()
+                if activeWorkout == nil { updateWidgetSnapshot() }
+            }
             NotificationScheduler.shared.refreshStatus()
             refreshStreakNudge()
+            updateWidgetSnapshot()
+        } else if phase == .background {
+            // Leave the widget with the freshest snapshot we have — otherwise it
+            // would serve whatever it last read until the next app open.
+            updateWidgetSnapshot()
         }
     }
 
@@ -363,6 +375,9 @@ struct ContentView: View {
     private func launchTasks() async {
         if let raw = UserDefaults.standard.string(forKey: "weightUnitRaw"), let u = WeightUnit(rawValue: raw) {
             Fmt.unit = u
+        }
+        if let raw = UserDefaults.standard.string(forKey: "distanceUnitRaw"), let du = DistanceUnit(rawValue: raw) {
+            Fmt.distanceUnit = du
         }
         WatchLink.shared.configure(context: modelContext)
         WatchLink.shared.activate()

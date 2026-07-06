@@ -67,6 +67,12 @@ struct WatchMetricsPage: View {
                     metric("max", engine.maxHR.map(String.init) ?? "—", .secondary)
                 }
 
+                if let distance = engine.distanceMeters, distance > 0 {
+                    metric("dist",
+                           WFmt.distance(distance, unit: store.context?.effectiveDistanceUnit ?? .km),
+                           WTheme.accent)
+                }
+
                 Spacer(minLength: 0)
 
                 Text("\(workout.completedSets)/\(workout.totalSets) sets")

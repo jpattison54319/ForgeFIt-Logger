@@ -27,6 +27,29 @@ struct RecoveryDetailView: View {
         }
     }
 
+    /// Daily HRV over the last ~45 days with its mean/SD baseline band — the
+    /// substrate for the honest "trend, not one night" display. nil until there
+    /// are enough readings to form a baseline.
+    private var hrvTrend: HRVTrendData? {
+        let metrics = HealthMetricsStore.shared.metrics.sorted { $0.date < $1.date }.suffix(45)
+        let usedRMSSD = metrics.contains { $0.hrvRMSSD != nil }
+        let values: [(Date, Double)] = metrics.compactMap { metric in
+            let v = usedRMSSD ? (metric.hrvRMSSD ?? metric.hrvSDNN) : (metric.hrvSDNN ?? metric.hrvRMSSD)
+            return v.map { (metric.date, $0) }
+        }
+        guard values.count >= 7, let today = values.last?.1 else { return nil }
+        let all = values.map(\.1)
+        let mean = all.reduce(0, +) / Double(all.count)
+        let variance = all.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(all.count)
+        return HRVTrendData(
+            points: values.map { .init(date: $0.0, value: $0.1) },
+            mean: mean,
+            sd: variance.squareRoot(),
+            today: today,
+            usedRMSSD: usedRMSSD
+        )
+    }
+
     var body: some View {
         let report = self.report
         ScrollView(showsIndicators: false) {
@@ -37,6 +60,11 @@ struct RecoveryDetailView: View {
 
                 SectionHeader("Systemic recovery")
                 SystemicScoreCard(systemic: report.recovery.systemic) { selectedInfo = $0 }
+
+                if let trend = hrvTrend {
+                    SectionHeader("HRV trend & training call")
+                    HRVTrendCard(trend: trend, readiness: report.displayScore)
+                }
 
                 SectionHeader("Muscle recovery")
                 MuscleRecoveryCard(muscles: report.recovery.muscles) { selectedInfo = $0 }
@@ -78,6 +106,70 @@ struct RecoveryDetailView: View {
 }
 
 // MARK: - Summary
+
+private struct HRVTrendData {
+    var points: [HRVBaselineBandChart.Point]
+    var mean: Double
+    var sd: Double
+    var today: Double
+    var usedRMSSD: Bool
+    /// How many standard deviations today sits from the baseline mean.
+    var z: Double { sd > 0 ? (today - mean) / sd : 0 }
+}
+
+/// Shows the HRV baseline band plus a concrete training call — the honest,
+/// decision-linked version of a recovery score. Low HRV routes the user toward
+/// easy Zone 2 / cross-training rather than a bare number.
+private struct HRVTrendCard: View {
+    @Environment(\.theme) private var theme
+    let trend: HRVTrendData
+    let readiness: Double   // 0...1
+
+    private var call: (icon: String, title: String, detail: String, tint: Color) {
+        let z = trend.z
+        if z <= -1 {
+            return ("figure.cooldown", "Ease off — cross-train",
+                    "Today's HRV is \(abs(z).formatted(.number.precision(.fractionLength(1)))) SD below your baseline. Swap hard intervals for an easy Zone 2 run, a walk, mobility, or another low-strain cross-training session and let your system rebound.",
+                    theme.danger)
+        } else if z >= 1 && readiness >= 0.7 {
+            return ("bolt.fill", "Green light for intensity",
+                    "HRV is above your baseline and readiness is high — a harder session or intervals are well supported today.",
+                    theme.success)
+        } else {
+            return ("checkmark.circle.fill", "Train as planned",
+                    "HRV is within your normal range. Run your planned session and adjust by feel.",
+                    theme.secondaryAccent)
+        }
+    }
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("HRV vs baseline").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Text("\(Int(trend.today.rounded())) ms · \(trend.usedRMSSD ? "RMSSD" : "SDNN")")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                }
+                HRVBaselineBandChart(points: trend.points, mean: trend.mean, sd: trend.sd)
+                HStack(alignment: .top, spacing: Space.sm) {
+                    Image(systemName: call.icon).foregroundStyle(call.tint).frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(call.title).font(.system(size: 14, weight: .bold)).foregroundStyle(call.tint)
+                        Text(call.detail).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .background(call.tint.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                Text("A single night's HRV is noisy — it's the trend against your baseline band that's actionable, not any one reading.")
+                    .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
 
 private struct RecoverySummaryCard: View {
     @Environment(\.theme) private var theme

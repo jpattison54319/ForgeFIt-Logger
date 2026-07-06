@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 import SwiftData
 
@@ -12,12 +13,14 @@ struct SettingsView: View {
     @AppStorage("liveSyncEnabled") private var liveSyncEnabled = true
     @AppStorage("healthWriteEnabled") private var healthWriteEnabled = true
     @AppStorage("weightUnitRaw") private var weightUnitRaw = WeightUnit.lb.rawValue
+    @AppStorage("distanceUnitRaw") private var distanceUnitRaw = DistanceUnit.km.rawValue
     @AppStorage("showRPEInLogger") private var showRPEInLogger = false
 
     @State private var watch = WatchLink.shared
     @State private var connected = HealthService.shared.isConnected
     @State private var connecting = false
     @State private var unit: WeightUnit = Fmt.unit
+    @State private var distanceUnit: DistanceUnit = Fmt.distanceUnit
     @State private var showHistoryImporter = false
     @State private var showResetSheet = false
 
@@ -30,6 +33,7 @@ struct SettingsView: View {
                     watchCard
                     remindersCard
                     unitsCard
+                    heartZonesCard
                     platesCard
                     dataResetCard
                     aboutCard
@@ -185,6 +189,37 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Heart-rate zones
+
+    private var heartZonesCard: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionHeader("Heart-rate zones")
+            NavigationLink {
+                HRZoneSettingsView()
+            } label: {
+                Card {
+                    HStack(spacing: Space.md) {
+                        Image(systemName: "heart.text.square.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(theme.danger)
+                            .frame(width: 44, height: 44)
+                            .background(theme.surfaceElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Heart-rate zones").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                            Text("Set your max HR, customize zones, or run a zone test.")
+                                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: Space.sm)
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textTertiary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     // MARK: - Units
 
     private var unitsCard: some View {
@@ -207,6 +242,24 @@ struct SettingsView: View {
                         }
                     }
                     Text("Used for exercises without their own unit.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                    Divider().overlay(theme.separator)
+                    HStack {
+                        Text("Cardio distance").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        Picker("Distance", selection: $distanceUnit) {
+                            Text("km").tag(DistanceUnit.km)
+                            Text("mi").tag(DistanceUnit.mi)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 120)
+                        .onChange(of: distanceUnit) { _, newValue in
+                            Fmt.distanceUnit = newValue
+                            distanceUnitRaw = newValue.rawValue
+                        }
+                    }
+                    Text("Applies to distance, pace, and speed across all cardio.")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                     Divider().overlay(theme.separator)

@@ -83,6 +83,7 @@ enum AccountResetService {
             "liveSyncEnabled",
             "healthWriteEnabled",
             "weightUnitRaw",
+            "distanceUnitRaw",
             "showRPEInLogger",
             "reminderWeekdays",
             "reminderMinutes",
@@ -91,5 +92,6 @@ enum AccountResetService {
             PlateInventoryStore.key(for: .kg)
         ].forEach(defaults.removeObject(forKey:))
         Fmt.unit = .lb
+        Fmt.distanceUnit = .km
     }
 }

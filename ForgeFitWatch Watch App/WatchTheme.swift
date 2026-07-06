@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 
 /// Watch-sized slice of the ForgeFit design language: same sage / mint /
@@ -37,5 +38,11 @@ enum WFmt {
         return value == value.rounded()
             ? String(Int(value))
             : value.formatted(.number.precision(.fractionLength(0...1)))
+    }
+
+    /// Live distance in the user's unit (from the synced `WatchAppContext`).
+    static func distance(_ meters: Double?, unit: DistanceUnit) -> String {
+        guard let meters else { return "—" }
+        return "\(unit.distance(fromMeters: meters).formatted(.number.precision(.fractionLength(0...2)))) \(unit.abbreviation)"
     }
 }

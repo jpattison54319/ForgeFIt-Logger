@@ -4,6 +4,72 @@ import MapKit
 import SwiftData
 import SwiftUI
 
+/// Identifiable wrapper so the share sheet can be driven by `.sheet(item:)`.
+private struct SharePayload: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
+/// Identifiable wrapper so the interval-splits editor can be driven by
+/// `.sheet(item:)` (SwiftData models aren't Identifiable for that API).
+private struct EditSplitsTarget: Identifiable {
+    let id = UUID()
+    let session: CardioSessionModel
+}
+
+/// Lightweight editor for a cardio session's laps: rename or delete individual
+/// segments. Used to confirm/adjust auto-detected intervals.
+private struct IntervalSplitsEditor: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var session: CardioSessionModel
+
+    private var laps: [CardioSplitModel] {
+        session.splits.sorted { $0.index < $1.index }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(laps) { split in
+                        HStack(spacing: Space.md) {
+                            TextField("Label", text: Binding(
+                                get: { split.label ?? "" },
+                                set: { split.label = $0.isEmpty ? nil : $0 }
+                            ))
+                            .font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                            Text(Fmt.durationShort(split.durationSeconds))
+                                .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                    .onDelete { offsets in
+                        let ordered = laps
+                        for index in offsets {
+                            let split = ordered[index]
+                            session.splits.removeAll { $0.id == split.id }
+                            modelContext.delete(split)
+                        }
+                        try? modelContext.save()
+                    }
+                } footer: {
+                    Text("Rename a lap or swipe to delete. Reverting from the workout restores plain laps.")
+                }
+            }
+            .navigationTitle("Edit intervals")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { try? modelContext.save(); dismiss() }.font(.bodyStrong)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
 /// Read-only breakdown of a completed workout: headline stats plus each
 /// exercise's logged sets.
 struct WorkoutDetailView: View {
@@ -20,6 +86,8 @@ struct WorkoutDetailView: View {
     @State private var deleteError: String?
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
+    @State private var sharePayload: SharePayload?
+    @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
     @State private var splitsMemo = MemoTable<UUID, [CardioSplitModel]>()
@@ -43,7 +111,7 @@ struct WorkoutDetailView: View {
                         StatColumn(label: "Duration", value: Fmt.durationShort(s.durationSeconds))
                         if s.isCardio {
                             StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
-                            StatColumn(label: "Distance", value: Fmt.distanceKm(workout.cardioSessions.first?.distanceMeters))
+                            StatColumn(label: "Distance", value: Fmt.distance(workout.cardioSessions.first?.distanceMeters))
                         } else {
                             StatColumn(label: "Volume", value: Fmt.volume(s.volume))
                             StatColumn(label: "Sets", value: "\(s.sets)")
@@ -85,6 +153,12 @@ struct WorkoutDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
         .task(id: workout.id) { await loadHeartRateSamples() }
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(items: payload.items)
+        }
+        .sheet(item: $editingSplits) { target in
+            IntervalSplitsEditor(session: target.session)
+        }
         .fullScreenCover(isPresented: $showEditor) {
             ActiveWorkoutLoggerView(
                 workout: workout,
@@ -120,6 +194,8 @@ struct WorkoutDetailView: View {
             Text("Workout").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.xs) {
+                CircleIconButton(systemImage: "square.and.arrow.up") { prepareShare() }
+                    .accessibilityLabel("Share workout")
                 CircleIconButton(systemImage: "square.and.pencil") { showEditor = true }
                     .accessibilityLabel("Edit workout")
                 CircleIconButton(systemImage: isDeleting ? "hourglass" : "trash") {
@@ -343,6 +419,66 @@ struct WorkoutDetailView: View {
         return "\(set.reps.map(String.init) ?? "—") reps"
     }
 
+    /// Banner shown when ForgeFit optimistically applied detected interval laps
+    /// to a free-form run — the user can edit or revert to plain laps.
+    @ViewBuilder
+    private func autoIntervalBanner(_ cardio: CardioSessionModel) -> some View {
+        let workCount = cardio.splits.filter { $0.autoDetected && ($0.label?.hasPrefix("Work") == true) }.count
+        HStack(spacing: 8) {
+            Image(systemName: "wand.and.stars").foregroundStyle(theme.secondaryAccent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Detected \(workCount) interval\(workCount == 1 ? "" : "s")")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text("Auto-segmented from your effort — edit or revert to plain laps.")
+                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: Space.sm)
+            Button("Edit") { editingSplits = EditSplitsTarget(session: cardio) }
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.secondaryAccent)
+            Button("Revert") { CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext) }
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.danger)
+        }
+        .padding(10)
+        .background(theme.secondaryAccent.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+    }
+
+    /// Efficiency Factor for an aerobic session, with a 30-day comparison —
+    /// cardio's "am I getting fitter" line.
+    @ViewBuilder
+    private func efficiencyRow(for cardio: CardioSessionModel) -> some View {
+        let config = HRZoneConfigStore.load()
+        if let ef = analytics.efficiencyFactor(for: cardio), analytics.isAerobicSession(cardio, config: config) {
+            HStack(spacing: 8) {
+                Image(systemName: "bolt.heart.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent)
+                Text("Efficiency \(ef.formatted(.number.precision(.fractionLength(2))))")
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                if let baseline = aerobicEFBaseline(kind: CardioKind.from(modality: cardio.modality)), baseline > 0 {
+                    let pct = (ef - baseline) / baseline * 100
+                    Text(pct >= 0
+                         ? "▲ \(pct.formatted(.number.precision(.fractionLength(0))))% vs 30-day"
+                         : "▼ \(abs(pct).formatted(.number.precision(.fractionLength(0))))% vs 30-day")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(pct >= 0 ? theme.success : theme.danger)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func aerobicEFBaseline(kind: CardioKind) -> Double? {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: workout.startedAt) ?? .distantPast
+        let config = HRZoneConfigStore.load()
+        let efs = history
+            .filter { $0.startedAt >= cutoff && $0.startedAt < workout.startedAt }
+            .flatMap(\.cardioSessions)
+            .filter { CardioKind.from(modality: $0.modality) == kind && analytics.isAerobicSession($0, config: config) }
+            .compactMap { analytics.efficiencyFactor(for: $0) }
+        guard efs.count >= 2 else { return nil }
+        return efs.reduce(0, +) / Double(efs.count)
+    }
+
     private func cardioCard(_ cardio: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
         let kind = CardioKind.from(modality: cardio.modality)
         let name = exercise?.name ?? kind.title
@@ -365,10 +501,10 @@ struct WorkoutDetailView: View {
                 HStack {
                     metric(kind.usesPace ? "Pace" : "Speed",
                            kind.usesPace
-                           ? CardioMetrics.paceString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds, unit: kind.distanceUnit)
+                           ? CardioMetrics.paceString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds, kind: kind)
                            : CardioMetrics.speedString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds),
                            color: theme.secondaryAccent)
-                    metric("Distance", Fmt.distanceKm(cardio.distanceMeters))
+                    metric("Distance", Fmt.distance(cardio.distanceMeters))
                     metric("Time", Fmt.durationShort(cardio.durationSeconds))
                 }
 
@@ -381,7 +517,20 @@ struct WorkoutDetailView: View {
                     if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
                 }
 
+                efficiencyRow(for: cardio)
+
+                if cardio.intervalsAutoApplied {
+                    autoIntervalBanner(cardio)
+                }
+
                 routeSection(for: cardio, kind: kind)
+
+                // Interval laps for sessions without a GPS map (e.g. treadmill)
+                // — the route section already renders laps under the map.
+                if cardio.routePoints.count < 2 {
+                    let laps = cardio.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
+                    if !laps.isEmpty { splitsTable(laps) }
+                }
 
                 if let hr = cardio.avgHR {
                     HRZoneBar(avgHR: hr, maxHR: cardio.maxHR, durationSeconds: cardio.durationSeconds)
@@ -464,7 +613,7 @@ struct WorkoutDetailView: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(theme.secondaryAccent)
                             .frame(width: 24, alignment: .leading)
-                        Text(Fmt.distanceKm(split.distanceMeters))
+                        Text(Fmt.distance(split.distanceMeters))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(theme.textPrimary)
                     }
@@ -485,11 +634,18 @@ struct WorkoutDetailView: View {
     }
 
     private func paceString(_ split: CardioSplitModel) -> String {
-        let pace = split.paceSecondsPerKm
-        guard pace.isFinite, pace > 0 else { return "—" }
-        let minutes = Int(pace) / 60
-        let seconds = Int(pace) % 60
-        return "\(minutes):\(String(format: "%02d", seconds))/km"
+        CardioMetrics.paceString(distanceMeters: split.distanceMeters, durationSeconds: split.durationSeconds)
+    }
+
+    /// Render the full-length workout card to an image and present the share
+    /// sheet (save to Photos, Messages, etc.), with a text summary alongside.
+    private func prepareShare() {
+        var items: [Any] = []
+        if let image = WorkoutShareRenderer.image(for: workout, exercises: exercises, theme: theme) {
+            items.append(image)
+        }
+        items.append(WorkoutShareRenderer.text(for: workout, exercises: exercises))
+        sharePayload = SharePayload(items: items)
     }
 
     private func metric(_ label: String, _ value: String, color: Color? = nil) -> some View {

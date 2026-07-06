@@ -35,20 +35,33 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     public var readiness: Int?
     public var unitSuffix: String
     public var updatedAt: Date
+    /// Optional so contexts encoded by an older watch/phone still decode; use
+    /// the `??` accessors below.
+    public var distanceUnit: DistanceUnit?
+    public var hrZoneConfig: HRZoneConfig?
 
     public init(
         workout: WatchWorkoutSnapshot? = nil,
         routines: [WatchRoutineSummary] = [],
         readiness: Int? = nil,
         unitSuffix: String = "lb",
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        distanceUnit: DistanceUnit? = nil,
+        hrZoneConfig: HRZoneConfig? = nil
     ) {
         self.workout = workout
         self.routines = routines
         self.readiness = readiness
         self.unitSuffix = unitSuffix
         self.updatedAt = updatedAt
+        self.distanceUnit = distanceUnit
+        self.hrZoneConfig = hrZoneConfig
     }
+
+    /// The user's distance unit, defaulting to km when a peer hasn't sent one.
+    public var effectiveDistanceUnit: DistanceUnit { distanceUnit ?? .km }
+    /// The user's HR-zone config, defaulting to the classic model.
+    public var effectiveHRZoneConfig: HRZoneConfig { hrZoneConfig ?? HRZoneConfig() }
 }
 
 public struct WatchRoutineSummary: Codable, Sendable, Equatable, Identifiable {
@@ -75,6 +88,9 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
     /// step name + when it ends. Display only — the phone drives execution.
     public var intervalStepName: String?
     public var intervalStepEndsAt: Date?
+    /// The active HR "zone lock" target (1...5), if a zone-locked cardio session
+    /// is running — the watch fires its own haptic cues on leaving/re-entering.
+    public var hrZoneTarget: Int?
 
     public init(
         workoutID: UUID,
@@ -84,7 +100,8 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         restEndsAt: Date? = nil,
         restTotalSeconds: Int? = nil,
         intervalStepName: String? = nil,
-        intervalStepEndsAt: Date? = nil
+        intervalStepEndsAt: Date? = nil,
+        hrZoneTarget: Int? = nil
     ) {
         self.workoutID = workoutID
         self.title = title
@@ -94,6 +111,7 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         self.restTotalSeconds = restTotalSeconds
         self.intervalStepName = intervalStepName
         self.intervalStepEndsAt = intervalStepEndsAt
+        self.hrZoneTarget = hrZoneTarget
     }
 
     public var completedSets: Int {
@@ -176,6 +194,9 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
     public var avgHR: Int?
     public var maxHR: Int?
     public var activeEnergyKcal: Double?
+    /// Live distance from the watch's workout session, in meters (nil until the
+    /// session accumulates distance / for indoor sessions with no distance).
+    public var distanceMeters: Double?
     /// Seconds spent in each of the 5 HR zones.
     public var hrZoneSeconds: [Int]
     public var asOf: Date
@@ -185,6 +206,7 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         avgHR: Int? = nil,
         maxHR: Int? = nil,
         activeEnergyKcal: Double? = nil,
+        distanceMeters: Double? = nil,
         hrZoneSeconds: [Int] = [],
         asOf: Date = Date()
     ) {
@@ -192,6 +214,7 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         self.avgHR = avgHR
         self.maxHR = maxHR
         self.activeEnergyKcal = activeEnergyKcal
+        self.distanceMeters = distanceMeters
         self.hrZoneSeconds = hrZoneSeconds
         self.asOf = asOf
     }

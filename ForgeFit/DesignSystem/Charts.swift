@@ -1,4 +1,5 @@
 import Charts
+import ForgeCore
 import SwiftUI
 
 /// A single (date, value) sample for the trend charts.
@@ -122,6 +123,125 @@ struct LineTrendChart: View {
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 2)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
+                AxisValueLabel().foregroundStyle(theme.textTertiary)
+            }
+        }
+        .frame(height: 180)
+    }
+}
+
+/// Daily HRV against a shaded ±1 SD "normal" band and a dashed baseline mean,
+/// with today's reading called out — so a single noisy night reads as "within
+/// my range" rather than an alarming isolated number.
+struct HRVBaselineBandChart: View {
+    struct Point: Identifiable {
+        let id = UUID()
+        let date: Date
+        let value: Double
+    }
+
+    let points: [Point]
+    let mean: Double
+    let sd: Double
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Chart {
+            ForEach(points) { point in
+                AreaMark(x: .value("Date", point.date),
+                         yStart: .value("Low", mean - sd),
+                         yEnd: .value("High", mean + sd))
+                    .foregroundStyle(theme.success.opacity(0.12))
+            }
+            RuleMark(y: .value("Baseline", mean))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .foregroundStyle(theme.textTertiary)
+            ForEach(points) { point in
+                LineMark(x: .value("Date", point.date), y: .value("HRV", point.value))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(theme.accent)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+            }
+            if let last = points.last {
+                PointMark(x: .value("Date", last.date), y: .value("HRV", last.value))
+                    .foregroundStyle(theme.accent)
+                    .symbolSize(90)
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
+                AxisValueLabel().foregroundStyle(theme.textTertiary)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 2)) { _ in
+                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    .foregroundStyle(theme.textTertiary)
+            }
+        }
+        .frame(height: 160)
+    }
+}
+
+/// Mean-maximal pace curve: best sustained pace at each duration window, with an
+/// optional prior-period overlay so fitness change is visible at a glance. Pace
+/// shows in the user's unit and the y-axis is reversed so faster sits higher.
+struct CriticalPaceCurveView: View {
+    let current: [TrainingAnalytics.CriticalPacePoint]
+    var prior: [TrainingAnalytics.CriticalPacePoint] = []
+
+    @Environment(\.theme) private var theme
+
+    private func unitPace(_ secPerKm: Double) -> Double {
+        secPerKm * (Fmt.distanceUnit.metersPerUnit / 1000)
+    }
+    private func windowLabel(_ seconds: Int) -> String {
+        seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds)s"
+    }
+    private func paceLabel(_ secInUnit: Double) -> String {
+        let s = Int(secInUnit.rounded())
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+    private var orderedLabels: [String] {
+        let windows = Set(current.map(\.windowSeconds)).union(prior.map(\.windowSeconds))
+        return windows.sorted().map(windowLabel)
+    }
+
+    var body: some View {
+        Chart {
+            ForEach(prior) { point in
+                LineMark(x: .value("Window", windowLabel(point.windowSeconds)),
+                         y: .value("Pace", unitPace(point.paceSecPerKm)),
+                         series: .value("Period", "Previous"))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
+            }
+            ForEach(current) { point in
+                LineMark(x: .value("Window", windowLabel(point.windowSeconds)),
+                         y: .value("Pace", unitPace(point.paceSecPerKm)),
+                         series: .value("Period", "Now"))
+                    .foregroundStyle(theme.accent)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                PointMark(x: .value("Window", windowLabel(point.windowSeconds)),
+                          y: .value("Pace", unitPace(point.paceSecPerKm)))
+                    .foregroundStyle(theme.accent)
+                    .symbolSize(60)
+            }
+        }
+        .chartXScale(domain: orderedLabels)
+        .chartYScale(domain: .automatic(reversed: true))
+        .chartYAxis {
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
+                if let secs = value.as(Double.self) {
+                    AxisValueLabel { Text(paceLabel(secs)).foregroundStyle(theme.textTertiary) }
+                }
+            }
+        }
+        .chartXAxis {
+            AxisMarks { _ in
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }

@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import ForgeData
 import SwiftUI
 
@@ -74,7 +75,9 @@ enum CardioKind: String, CaseIterable {
     var usesPower: Bool { [.cycle, .row].contains(self) }
     var usesStrokeRate: Bool { self == .row }
     var usesCadence: Bool { [.run, .trailRun, .walk, .cycle].contains(self) }
-    var distanceUnit: String { self == .swim ? "m" : "km" }
+    /// Pool swims are always measured in fixed meters, regardless of the user's
+    /// km/mi preference; every other modality follows the user's distance unit.
+    var usesFixedMeters: Bool { self == .swim }
 
     static func infer(name: String, equipment: String?) -> CardioKind {
         let n = name.lowercased()
@@ -102,6 +105,25 @@ enum CardioKind: String, CaseIterable {
     static func from(modality: String) -> CardioKind {
         CardioKind(rawValue: modality) ?? infer(name: modality, equipment: nil)
     }
+
+    /// An indoor / machine variant of an otherwise-outdoor modality — a
+    /// treadmill run, a stationary/spin bike, an indoor rower/erg — detected
+    /// from the exercise name or equipment. GPS distance is meaningless here.
+    static func isIndoorVariant(name: String, equipment: String?) -> Bool {
+        let hay = (name + " " + (equipment ?? "")).lowercased()
+        let keywords = ["treadmill", "indoor", "stationary", "spin bike", "spinning",
+                        "spin ", "smart trainer", "bike trainer", "erg", "assault"]
+        return keywords.contains { hay.contains($0) }
+    }
+
+    /// Whether this specific exercise yields a real GPS route/distance. Outdoor
+    /// run/walk/cycle do; indoor machines (treadmill, spin bike, erg) and
+    /// modalities without a route (elliptical, stair, rope, swim) do not — for
+    /// those, distance is a machine read-out the user enters manually.
+    static func providesGPSDistance(name: String, equipment: String?) -> Bool {
+        guard infer(name: name, equipment: equipment).supportsOutdoorRoute else { return false }
+        return !isIndoorVariant(name: name, equipment: equipment)
+    }
 }
 
 /// Derived cardio metric formatting (pace, speed) and heart-rate zone modeling.
@@ -113,12 +135,16 @@ enum CardioMetrics {
         return Double(durationSeconds) / (distanceMeters / 1000)
     }
 
-    static func paceString(distanceMeters: Double?, durationSeconds: Int?, unit: String = "km") -> String {
-        guard let sec = paceSecPerKm(distanceMeters: distanceMeters, durationSeconds: durationSeconds) else { return "—" }
-        let s = unit == "m" ? sec / 10 : sec   // per-100m for swims
-        let m = Int(s) / 60
-        let r = Int(s) % 60
-        return String(format: "%d:%02d /%@", m, r, unit == "m" ? "100m" : unit)
+    /// Formatted pace in the user's distance unit (min/km or min/mi); pool
+    /// swims render per-100m regardless of the preference.
+    static func paceString(distanceMeters: Double?, durationSeconds: Int?, kind: CardioKind = .run, unit: DistanceUnit = Fmt.distanceUnit) -> String {
+        guard let secPerKm = paceSecPerKm(distanceMeters: distanceMeters, durationSeconds: durationSeconds) else { return "—" }
+        if kind.usesFixedMeters {
+            let s = secPerKm / 10   // per-100m for swims
+            return String(format: "%d:%02d /100m", Int(s) / 60, Int(s) % 60)
+        }
+        let secPerUnit = secPerKm * (unit.metersPerUnit / 1000)
+        return String(format: "%d:%02d %@", Int(secPerUnit) / 60, Int(secPerUnit) % 60, unit.paceSuffix)
     }
 
     static func speedKmh(distanceMeters: Double?, durationSeconds: Int?) -> Double? {
@@ -126,9 +152,10 @@ enum CardioMetrics {
         return (distanceMeters / 1000) / (Double(durationSeconds) / 3600)
     }
 
-    static func speedString(distanceMeters: Double?, durationSeconds: Int?) -> String {
+    static func speedString(distanceMeters: Double?, durationSeconds: Int?, unit: DistanceUnit = Fmt.distanceUnit) -> String {
         guard let kmh = speedKmh(distanceMeters: distanceMeters, durationSeconds: durationSeconds) else { return "—" }
-        return "\(kmh.formatted(.number.precision(.fractionLength(1)))) km/h"
+        let value = unit == .km ? kmh : kmh / (DistanceUnit.mi.metersPerUnit / 1000)
+        return "\(value.formatted(.number.precision(.fractionLength(1)))) \(unit.speedSuffix)"
     }
 
     /// Estimated time-in-zone distribution centered on the average-HR zone.

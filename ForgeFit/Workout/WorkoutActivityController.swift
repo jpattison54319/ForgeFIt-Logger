@@ -70,15 +70,25 @@ final class WorkoutActivityController {
         if pureCardio, let session = workout.cardioSessions.first {
             let kind = CardioKind.from(modality: session.modality)
             let duration = session.durationSeconds ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
+            // Prefer live distance (watch stream / phone GPS) so the lock screen
+            // and Dynamic Island tick in real time; treadmills stay manual-only.
+            let library = workout.exercises.first { $0.id == session.workoutExerciseID }
+                .flatMap { we in exercises.first { $0.id == we.exerciseID } }
+            let providesGPS = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
+            let liveDist: Double? = providesGPS
+                ? (WatchLink.shared.liveMetrics?.distanceMeters
+                    ?? CardioRouteRecorder.shared.liveDistanceMeters(for: session.id)
+                    ?? session.distanceMeters)
+                : session.distanceMeters
             let paceOrSpeed = kind.usesPace
-                ? CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: duration, unit: kind.distanceUnit)
-                : CardioMetrics.speedString(distanceMeters: session.distanceMeters, durationSeconds: duration)
+                ? CardioMetrics.paceString(distanceMeters: liveDist, durationSeconds: duration, kind: kind)
+                : CardioMetrics.speedString(distanceMeters: liveDist, durationSeconds: duration)
             // Structured session: the current interval step is the headline.
             let intervalStep = IntervalRunnerHub.shared.runner(for: session.id)?.currentStep?.label
             let paceMetric = paceOrSpeed == "—" ? Fmt.durationShort(duration) : paceOrSpeed
             let primaryMetric = intervalStep ?? paceMetric
             let detail = [
-                Fmt.distanceKm(session.distanceMeters),
+                Fmt.distance(liveDist),
                 session.avgHR.map { "\($0) bpm" } ?? WatchLink.shared.liveMetrics?.heartRate.map { "\($0) bpm" }
             ]
                 .compactMap { $0 }

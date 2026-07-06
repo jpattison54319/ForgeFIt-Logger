@@ -324,7 +324,7 @@ struct ActiveWorkoutLoggerView: View {
                 let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
                 let hrs = workout.cardioSessions.compactMap { $0.avgHR }
                 StatColumn(label: "Duration", value: Fmt.durationShort(loggedTime > 0 ? loggedTime : elapsed), valueColor: theme.secondaryAccent)
-                StatColumn(label: "Distance", value: totalDist > 0 ? Fmt.distanceKm(totalDist) : "—")
+                StatColumn(label: "Distance", value: totalDist > 0 ? Fmt.distance(totalDist) : "—")
                 StatColumn(label: "Avg HR", value: hrs.isEmpty ? "—" : "\(hrs.reduce(0,+) / hrs.count)")
             } else {
                 // Neutral, not accent: the live timer is a data readout, not a
@@ -498,6 +498,7 @@ struct ActiveWorkoutLoggerView: View {
         }
         refreshLiveStats()
         try? modelContext.save()
+        publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
 
@@ -540,6 +541,7 @@ struct ActiveWorkoutLoggerView: View {
             }
         }
         try? modelContext.save()
+        publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
 
@@ -550,6 +552,7 @@ struct ActiveWorkoutLoggerView: View {
         workout.recomputeTotalVolume()
         refreshLiveStats()
         try? modelContext.save()
+        publishWorkoutChange()
     }
 
     private func deleteCardioSessions(for workoutExerciseID: UUID) {
@@ -830,7 +833,7 @@ private struct PostWorkoutSummaryView: View {
                             HStack {
                                 StatColumn(label: "Time", value: Fmt.durationShort(duration))
                                 if let cardioDistance {
-                                    StatColumn(label: "Distance", value: Fmt.distanceKm(cardioDistance), valueColor: theme.secondaryAccent)
+                                    StatColumn(label: "Distance", value: Fmt.distance(cardioDistance), valueColor: theme.secondaryAccent)
                                 } else {
                                     StatColumn(label: "Volume", value: Fmt.volume(volume))
                                 }

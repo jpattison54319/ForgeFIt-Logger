@@ -413,6 +413,8 @@ struct StatisticsView: View {
             cardioTrendCard
             modalityCard(breakdown)
             zoneCard
+            efficiencyCard
+            criticalPaceCard
             paceCard
             cardioBestsCard
         }
@@ -426,7 +428,7 @@ struct StatisticsView: View {
             HStack {
                 StatColumn(label: "Sessions", value: "\(sessions)")
                 StatColumn(label: "Time", value: Fmt.durationShort(Int(minutes * 60)), valueColor: theme.secondaryAccent)
-                StatColumn(label: "Distance", value: distance > 0 ? Fmt.distanceKm(distance) : "—")
+                StatColumn(label: "Distance", value: distance > 0 ? Fmt.distance(distance) : "—")
             }
         }
     }
@@ -496,7 +498,7 @@ struct StatisticsView: View {
 
     private func shareDetail(_ share: TrainingAnalytics.ModalityShare) -> String {
         var parts = ["\(share.sessions)×", Fmt.durationShort(Int(share.minutes * 60))]
-        if share.distanceMeters > 0 { parts.append(Fmt.distanceKm(share.distanceMeters)) }
+        if share.distanceMeters > 0 { parts.append(Fmt.distance(share.distanceMeters)) }
         return parts.joined(separator: " · ")
     }
 
@@ -518,6 +520,61 @@ struct StatisticsView: View {
     }
 
     @ViewBuilder
+    private var efficiencyCard: some View {
+        if let kind = analytics.dominantAerobicModality(in: range) {
+            let series = analytics.efficiencySeries(for: kind, in: range)
+            if series.count >= 2 {
+                let delta = series.last!.value - series.first!.value
+                let pct = series.first!.value > 0 ? delta / series.first!.value * 100 : 0
+                Card {
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(kind.title) efficiency").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                            Spacer()
+                            Text(pct >= 0 ? "▲ \(pct.formatted(.number.precision(.fractionLength(0))))%" : "▼ \(abs(pct).formatted(.number.precision(.fractionLength(0))))%")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(pct >= 0 ? theme.success : theme.danger)
+                        }
+                        Text("More distance per heartbeat at easy effort — cardio's version of adding weight to the bar.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        LineTrendChart(points: series, color: theme.accent)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var criticalPaceCard: some View {
+        let curve = analytics.criticalPaceCurve(in: range)
+        if curve.current.count >= 2 {
+            Card {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Critical pace").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        Text("best sustained pace").font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    }
+                    Text("Your fastest pace held for each duration — this is fitness change, not one session.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    CriticalPaceCurveView(current: curve.current, prior: curve.prior)
+                }
+            }
+        } else if curve.hasAnyData {
+            Card {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.xyaxis.line").foregroundStyle(theme.textTertiary)
+                    Text("Keep logging runs and your critical-pace curve will build here.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var paceCard: some View {
         if let kind = analytics.dominantPaceModality(in: range) {
             let series = analytics.paceSeries(for: kind, in: range)
@@ -527,7 +584,7 @@ struct StatisticsView: View {
                         HStack(alignment: .firstTextBaseline) {
                             Text("\(kind.title) pace").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             Spacer()
-                            Text("min/km · lower is faster")
+                            Text("min\(Fmt.distanceUnit.paceSuffix) · lower is faster")
                                 .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                         }
                         LineTrendChart(points: series, color: theme.secondaryAccent)
@@ -546,7 +603,7 @@ struct StatisticsView: View {
                     .foregroundStyle(theme.warmup)
                 HStack {
                     StatColumn(label: "Longest", value: bests.longestSeconds.map { Fmt.durationShort($0) } ?? "—")
-                    StatColumn(label: "Farthest", value: bests.longestDistanceMeters.map { Fmt.distanceKm($0) } ?? "—")
+                    StatColumn(label: "Farthest", value: bests.longestDistanceMeters.map { Fmt.distance($0) } ?? "—")
                     StatColumn(label: "Best pace", value: bests.bestPaceMinutesPerKm.map(paceText) ?? "—")
                 }
             }
@@ -554,8 +611,9 @@ struct StatisticsView: View {
     }
 
     private func paceText(_ minutesPerKm: Double) -> String {
-        let totalSeconds = Int((minutesPerKm * 60).rounded())
-        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))/km"
+        let unit = Fmt.distanceUnit
+        let totalSeconds = Int((minutesPerKm * 60 * (unit.metersPerUnit / 1000)).rounded())
+        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60)) \(unit.paceSuffix)"
     }
 
     // MARK: - Monthly tab
@@ -701,7 +759,7 @@ struct StatisticsView: View {
         if report.distanceMeters > 0 {
             Card {
                 HStack {
-                    StatColumn(label: "Distance", value: Fmt.distanceKm(report.distanceMeters), valueColor: theme.secondaryAccent)
+                    StatColumn(label: "Distance", value: Fmt.distance(report.distanceMeters), valueColor: theme.secondaryAccent)
                     StatColumn(label: "Cardio time", value: Fmt.durationShort(Int(report.cardioMinutes * 60)))
                 }
             }

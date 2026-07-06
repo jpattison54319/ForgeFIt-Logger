@@ -915,6 +915,13 @@ public final class CardioSessionModel {
     public var inclinePercent: Double?
     public var elevationGainMeters: Double?
     public var tss: Double?
+    /// Downsampled per-session HR + cumulative-distance time-series (JSON),
+    /// captured at completion. Powers the critical-pace curve and after-the-fact
+    /// interval detection. CloudKit-safe: optional attribute, nil default.
+    public var sampleSeriesJSON: String?
+    /// True once ForgeFit has auto-detected and applied interval segments to this
+    /// session, so we can offer a revert and not re-detect on reopen.
+    public var intervalsAutoApplied: Bool = false
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -960,6 +967,8 @@ public final class CardioSessionModel {
         inclinePercent: Double? = nil,
         elevationGainMeters: Double? = nil,
         tss: Double? = nil,
+        sampleSeriesJSON: String? = nil,
+        intervalsAutoApplied: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -993,6 +1002,8 @@ public final class CardioSessionModel {
         self.inclinePercent = inclinePercent
         self.elevationGainMeters = elevationGainMeters
         self.tss = tss
+        self.sampleSeriesJSON = sampleSeriesJSON
+        self.intervalsAutoApplied = intervalsAutoApplied
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -1053,6 +1064,9 @@ public final class CardioSplitModel {
     /// Interval-step label (e.g. "Work 3/6") for structured sessions.
     /// Additive-optional; nil for plain distance/lap splits.
     public var label: String?
+    /// True when this lap was proposed by after-the-fact interval detection
+    /// (vs a manual plan or a distance split), so it can be reverted as a group.
+    public var autoDetected: Bool = false
     public var startedAt: Date = Date()
     public var endedAt: Date = Date()
     public var createdAt: Date = Date()
@@ -1068,6 +1082,7 @@ public final class CardioSplitModel {
         paceSecondsPerKm: Double,
         elevationGainMeters: Double? = nil,
         label: String? = nil,
+        autoDetected: Bool = false,
         startedAt: Date,
         endedAt: Date,
         createdAt: Date = Date()
@@ -1081,6 +1096,7 @@ public final class CardioSplitModel {
         self.paceSecondsPerKm = paceSecondsPerKm
         self.elevationGainMeters = elevationGainMeters
         self.label = label
+        self.autoDetected = autoDetected
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.createdAt = createdAt

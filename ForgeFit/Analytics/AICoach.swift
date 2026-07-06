@@ -211,7 +211,7 @@ struct AICoachContext {
                 .prefix(5)
                 .joined(separator: ", ")
             let cardio = workout.cardioSessions.first.map { session in
-                let distance = session.distanceMeters.map { ", \(Fmt.distanceKm($0))" } ?? ""
+                let distance = session.distanceMeters.map { ", \(Fmt.distance($0))" } ?? ""
                 return ", cardio \(session.modality)\(distance)"
             } ?? ""
             return "- \(workout.startedAt.formatted(date: .abbreviated, time: .omitted)): \(title), \(Fmt.durationShort(summary.durationSeconds)), \(summary.sets) sets, \(Fmt.volume(summary.volume))\(cardio)\(exercises.isEmpty ? "" : ", exercises: \(exercises)")"

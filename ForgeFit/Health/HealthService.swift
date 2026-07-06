@@ -66,6 +66,7 @@ final class HealthService {
             if let type = HKQuantityType.quantityType(forIdentifier: id) { t.insert(type) }
         }
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { t.insert(sleep) }
+        if let dob = HKObjectType.characteristicType(forIdentifier: .dateOfBirth) { t.insert(dob) }
         t.insert(HKSeriesType.workoutRoute())
         return t
     }
@@ -103,6 +104,21 @@ final class HealthService {
         configuration.activityType = cardioKind?.hkActivityType ?? .traditionalStrengthTraining
         configuration.locationType = cardioKind?.supportsOutdoorRoute == true ? .outdoor : .indoor
         store.startWatchApp(with: configuration) { _, _ in }
+        #endif
+    }
+
+    /// The user's age from their Apple Health date of birth, if shared — used
+    /// to seed a max-HR estimate (220 − age). Returns nil when unavailable.
+    func biologicalAge() -> Int? {
+        #if canImport(HealthKit)
+        guard isAvailable,
+              let components = try? store.dateOfBirthComponents(),
+              let birthYear = components.year else { return nil }
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let age = currentYear - birthYear
+        return (10...100).contains(age) ? age : nil
+        #else
+        return nil
         #endif
     }
 

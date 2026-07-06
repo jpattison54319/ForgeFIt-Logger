@@ -191,6 +191,11 @@ final class WatchStore: NSObject {
         let previous = context
         context = newContext
 
+        // Keep the live engine on the user's synced HR-zone model so wrist-side
+        // time-in-zone and zone-adherence alerts match the phone.
+        engine.zoneConfig = newContext.effectiveHRZoneConfig
+        engine.zoneTarget = newContext.workout?.hrZoneTarget
+
         // Session management: a workout live on the phone starts metric
         // collection here; a workout that vanished (finished/discarded on the
         // phone) ends it.
