@@ -439,8 +439,12 @@ struct ExercisesListView: View {
                             HStack(spacing: Space.md) {
                                 ExerciseThumbnail(exercise: exercise)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
+                                    // Browsing/search context: show the full name,
+                                    // wrapped, so long variants stay readable.
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                            .multilineTextAlignment(.leading)
+                                            .fixedSize(horizontal: false, vertical: true)
                                         if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
                                     }
                                     Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]

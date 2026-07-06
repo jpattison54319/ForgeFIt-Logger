@@ -280,9 +280,13 @@ private struct ExerciseRowLabel: View {
                 HStack(spacing: Space.md) {
                     ExerciseThumbnail(exercise: exercise)
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                        // Full name, wrapped — users are *finding* an exercise
+                        // here, so truncating to "…" hides the differentiator
+                        // (routine-card previews still truncate by design).
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                             if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
                         }
                         Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
@@ -435,7 +439,8 @@ struct CreateExerciseView: View {
                                                     Text(candidate.name)
                                                         .font(.system(size: 14, weight: .semibold))
                                                         .foregroundStyle(theme.textPrimary)
-                                                        .lineLimit(1)
+                                                        .multilineTextAlignment(.leading)
+                                                        .fixedSize(horizontal: false, vertical: true)
                                                     Text("Use this instead")
                                                         .font(.system(size: 11, weight: .semibold))
                                                         .foregroundStyle(theme.accent)
