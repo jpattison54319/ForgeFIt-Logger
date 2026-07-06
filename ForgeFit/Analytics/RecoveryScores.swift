@@ -71,6 +71,21 @@ extension RecoveryEngine {
         var guidance: String
     }
 
+    /// The acute, today-only readiness score — nocturnal autonomic state plus
+    /// last night's sleep, judged against the individual's own baseline. Built
+    /// to move with the day (like Athlytic/WHOOP) so the headline number always
+    /// agrees with the guidance shown beside it. Training-load balance is
+    /// deliberately excluded here — it belongs to the chronic trend, not to
+    /// "how stressed is my body this morning".
+    struct DailyReadiness {
+        var state: ScoreState
+        var parts: [ScorePart]
+        /// Short, user-facing reasons that also drove the score, e.g.
+        /// "HRV low today" — the copy and the number share one source of truth.
+        var flags: [String]
+        var guidance: String
+    }
+
     struct MuscleRecoveryScore: Identifiable {
         var id: String { muscle }
         let muscle: String
@@ -105,6 +120,7 @@ extension RecoveryEngine {
     }
 
     struct RecoverySnapshot {
+        var daily: DailyReadiness
         var systemic: SystemicRecovery
         var muscles: [MuscleRecoveryScore]
         var cardio: CardioRecovery
@@ -112,6 +128,7 @@ extension RecoveryEngine {
 
     func recoverySnapshot() -> RecoverySnapshot {
         RecoverySnapshot(
+            daily: dailyReadiness(),
             systemic: systemicRecovery(),
             muscles: muscleRecoveryScores(),
             cardio: cardioRecovery()
@@ -120,8 +137,12 @@ extension RecoveryEngine {
 
     // MARK: - Systemic
 
+    /// Chronic-trend weights. Load balance is capped at 15% — EWMA-ACWR is a
+    /// training-management heuristic, not a recovery measure (Impellizzeri
+    /// 2020), so it flavors the trend without being able to mask autonomic or
+    /// sleep deterioration. HRV trend keeps the largest share (Plews 2013).
     private enum SystemicWeight {
-        static let hrv = 0.35, sleep = 0.25, rhr = 0.15, load = 0.25
+        static let hrv = 0.40, sleep = 0.30, rhr = 0.15, load = 0.15
     }
 
     private func systemicRecovery() -> SystemicRecovery {
@@ -156,103 +177,275 @@ extension RecoveryEngine {
 
     private func systemicGuidance(_ score: Double) -> String {
         switch score {
-        case 0.8...: "Recovered — full intensity is available today."
-        case 0.65..<0.8: "Mostly recovered — train as planned."
-        case 0.5..<0.65: "Partially recovered — keep volume moderate and stop short of failure."
-        default: "Under-recovered — favor easy movement, Zone 2, or rest."
+        case 0.8...: "Trending recovered — adaptation is on track."
+        case 0.65..<0.8: "Stable trend — training load and recovery are in balance."
+        case 0.5..<0.65: "Trend softening — watch load and sleep over the next few days."
+        default: "Downward trend — accumulated fatigue; plan a lighter week or deload."
         }
+    }
+
+    // MARK: - Daily readiness (acute)
+
+    private enum DailyWeight {
+        static let hrv = 0.55, sleepingHR = 0.20, sleep = 0.25
+    }
+
+    /// Today's autonomic state vs the individual's baseline, plus last night's
+    /// sleep. Reactive by design — one genuinely bad night should move it.
+    private func dailyReadiness() -> DailyReadiness {
+        let hrv = acuteHRVPart()
+        let hr = sleepingHRPart()
+        let sleep = lastNightSleepPart()
+        let parts = [hrv, sleep, hr]
+
+        var weighted = 0.0, weightSum = 0.0
+        for (part, weight) in [(hrv, DailyWeight.hrv), (hr, DailyWeight.sleepingHR), (sleep, DailyWeight.sleep)] {
+            if let value = part.state.value { weighted += value * weight; weightSum += weight }
+        }
+        guard weightSum >= 0.2 else {
+            return DailyReadiness(
+                state: .building("Wear your watch overnight to capture last night's HRV, heart rate, and sleep."),
+                parts: parts, flags: [],
+                guidance: "Daily readiness reads your nocturnal HRV, sleeping heart rate, and last night's sleep against your own baseline."
+            )
+        }
+        let score = min(1, max(0, weighted / weightSum))
+
+        // Flags are derived from the same parts that moved the score, so the
+        // copy can never contradict the number.
+        var flags: [String] = []
+        if acuteHRVBelowRange { flags.append("HRV low today") }
+        if sleepingHRElevated { flags.append("Sleeping HR elevated") }
+        if lastNightSleepShort { flags.append("Short sleep") }
+
+        return DailyReadiness(state: .ready(score), parts: parts, flags: flags, guidance: dailyGuidance(score, flags: flags))
+    }
+
+    private func dailyGuidance(_ score: Double, flags: [String]) -> String {
+        let base: String
+        switch score {
+        case 0.8...: base = "Recovered — full intensity is available today."
+        case 0.65..<0.8: base = "Solid — train as planned."
+        case 0.5..<0.65: base = "Partially recovered — keep volume moderate and stop short of failure."
+        default: base = "Under-recovered — favor Zone 2, mobility, or rest today."
+        }
+        // When the score is still green-ish but a single acute flag is up, say so
+        // explicitly instead of a bare "train as planned" that ignores it.
+        if score >= 0.6, flags.contains("HRV low today") {
+            return "\(base) HRV dipped below your normal range this morning, so hold back PR attempts."
+        }
+        return base
+    }
+
+    // These mirror the acute parts' internal decisions so the flags match the
+    // exact thresholds that shaped each sub-score.
+    private var acuteHRVBelowRange: Bool { acuteHRVAssessment()?.belowRange ?? false }
+    private var sleepingHRElevated: Bool { sleepingHRAssessment()?.elevated ?? false }
+    private var lastNightSleepShort: Bool {
+        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else { return false }
+        return Double(sleep) / Double(personalizedSleepNeedMinutes()) < 0.85
+    }
+
+    private struct AcuteHRV { let score: Double; let todayMs: Double; let baselineMs: Double; let belowRange: Bool }
+
+    /// Last night's nocturnal HRV vs a 14–60 day baseline, in ln space (HRV is
+    /// log-normal; ln-HRV is the standard for baseline/SWC math — Plews 2013).
+    private func acuteHRVAssessment() -> AcuteHRV? {
+        guard let current = latestHealthMetric(), let today = current.bestHRV, today > 0 else { return nil }
+        let baseline = baselineMetrics(days: 60)
+            .filter { calendarDaysBetween($0.date, and: now) >= 1 }   // exclude today only
+            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
+        guard baseline.count >= 14 else { return nil }
+        let lnToday = log(today)
+        let mean = average(baseline) ?? lnToday
+        let sd = max(standardDeviation(baseline), 0.03)   // ≥~3% CV floor
+        let z = (lnToday - mean) / sd
+        // Steeper than the chronic trend (0.28 vs 0.20 per SD): the acute score
+        // is meant to react to a single off morning.
+        let score = min(1, max(0, 0.9 + 0.28 * min(0.4, max(-3.0, z))))
+        let swc = 0.5 * sd                                // smallest worthwhile change (Plews 2013)
+        let belowRange = (lnToday - mean) < -max(swc, 0.02)
+        return AcuteHRV(score: score, todayMs: today, baselineMs: exp(mean), belowRange: belowRange)
+    }
+
+    private func acuteHRVPart() -> ScorePart {
+        guard let assessment = acuteHRVAssessment() else {
+            let have = latestHealthMetric()?.bestHRV != nil
+            return ScorePart(
+                name: "HRV (today)",
+                state: .building(have ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
+                valueText: latestHealthMetric()?.bestHRV.map { "\(Int($0.rounded())) ms" } ?? "—",
+                detailText: have ? "Nocturnal HRV; baseline still forming" : "Wear your watch overnight to capture HRV"
+            )
+        }
+        return ScorePart(
+            name: "HRV (today)",
+            state: .ready(assessment.score),
+            valueText: "\(Int(assessment.todayMs.rounded())) ms",
+            detailText: assessment.belowRange
+                ? "Last night, below your normal range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
+                : "Last night, within your normal range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
+        )
+    }
+
+    private struct SleepingHR { let score: Double; let today: Int; let baseline: Double; let elevated: Bool }
+
+    private func sleepingHRAssessment() -> SleepingHR? {
+        guard let current = latestHealthMetric(), let today = current.bestRestingHR else { return nil }
+        let baseline = baselineMetrics(days: 60)
+            .filter { calendarDaysBetween($0.date, and: now) >= 1 }
+            .compactMap { $0.bestRestingHR.map(Double.init) }
+        guard baseline.count >= 14 else { return nil }
+        let mean = average(baseline) ?? Double(today)
+        let sd = max(standardDeviation(baseline), max(2, mean * 0.03))
+        let z = (Double(today) - mean) / sd             // elevated = worse
+        let score = min(1, max(0, 0.9 - 0.25 * min(3.0, max(-0.5, z))))
+        let elevated = Double(today) > mean + max(3, sd)
+        return SleepingHR(score: score, today: today, baseline: mean, elevated: elevated)
+    }
+
+    private func sleepingHRPart() -> ScorePart {
+        guard let assessment = sleepingHRAssessment() else {
+            return ScorePart(name: "Sleeping HR", state: .building("No overnight heart rate yet"),
+                             valueText: latestHealthMetric()?.bestRestingHR.map { "\($0) bpm" } ?? "—",
+                             detailText: "Wear your watch to bed to capture sleeping heart rate")
+        }
+        return ScorePart(
+            name: "Sleeping HR",
+            state: .ready(assessment.score),
+            valueText: "\(assessment.today) bpm",
+            detailText: assessment.elevated
+                ? "Elevated vs \(Int(assessment.baseline.rounded())) bpm baseline"
+                : "vs \(Int(assessment.baseline.rounded())) bpm baseline"
+        )
+    }
+
+    private func lastNightSleepPart() -> ScorePart {
+        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else {
+            return ScorePart(name: "Sleep (last night)", state: .building("No sleep data from last night"),
+                             valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
+        }
+        let need = personalizedSleepNeedMinutes()
+        let ratio = Double(sleep) / Double(need)
+        let score = ratio >= 0.95 ? 1.0 : max(0.3, 1.0 - (0.95 - ratio) * 2.0)
+        let hours = Double(sleep) / 60
+        return ScorePart(
+            name: "Sleep (last night)",
+            state: .ready(min(1, max(0, score))),
+            valueText: "\(hours.formatted(.number.precision(.fractionLength(1)))) h",
+            detailText: "Need \(String(format: "%.1f", Double(need) / 60)) h"
+        )
+    }
+
+    /// Personalized nightly sleep need. Starts from an 8 h default (or a profile
+    /// override via `sleepNeedMinutes`) and only raises it for habitual long
+    /// sleepers — the 60th percentile of the last 30 nights — never lowering it
+    /// below 8 h, so chronic short sleep is still flagged as debt rather than
+    /// quietly redefined as sufficient.
+    func personalizedSleepNeedMinutes() -> Int {
+        let base = max(300, latestHealthMetric()?.sleepNeedMinutes ?? 480)
+        let nights = baselineMetrics(days: 30).compactMap { $0.sleepTotalMinutes }.sorted()
+        guard nights.count >= 10 else { return base }
+        let p60 = nights[Int(Double(nights.count - 1) * 0.6)]
+        return min(600, max(base, p60))   // cap at 10 h
     }
 
     /// 7-day rolling HRV vs a 14–60 day baseline (last 7 days excluded from
     /// the baseline so the acute window can't drag its own reference).
+    ///
+    /// All math runs in ln space: HRV is log-normally distributed, and the
+    /// baseline / SWC / z-score literature is built on lnRMSSD (Plews 2013).
+    /// Signals come via `bestHRV` — the nocturnal window when present, else
+    /// all-day RMSSD, else SDNN. HealthKit only exposes SDNN, whose absolute ms
+    /// differ from RMSSD, but ln-space z-scores against the *user's own*
+    /// baseline are scale-free, so the same constants apply to either metric.
     private func hrvPart() -> ScorePart {
-        func value(_ metric: DailyHealthMetric, preferRMSSD: Bool) -> Double? {
-            preferRMSSD ? (metric.hrvRMSSD ?? metric.hrvSDNN) : (metric.hrvSDNN ?? metric.hrvRMSSD)
-        }
-        let preferRMSSD = recentHealthMetrics(days: 7).contains { $0.hrvRMSSD != nil }
-        let recent = recentHealthMetrics(days: 7).compactMap { value($0, preferRMSSD: preferRMSSD) }
+        let recent = recentHealthMetrics(days: 7).compactMap { $0.bestHRV }.filter { $0 > 0 }
         guard recent.count >= 4 else {
-            return ScorePart(name: "HRV", state: .building("Needs \(4 - recent.count) more morning\(4 - recent.count == 1 ? "" : "s") of HRV"),
+            return ScorePart(name: "HRV trend", state: .building("Needs \(4 - recent.count) more morning\(4 - recent.count == 1 ? "" : "s") of HRV"),
                              valueText: "—", detailText: "Wear your watch overnight to capture HRV")
         }
-        let baselineWindow = baselineMetrics(days: 60).filter {
-            calendarDaysBetween($0.date, and: now) > 7
-        }
-        let baseline = baselineWindow.compactMap { value($0, preferRMSSD: preferRMSSD) }
+        let baseline = baselineMetrics(days: 60)
+            .filter { calendarDaysBetween($0.date, and: now) > 7 }
+            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
         guard baseline.count >= 14 else {
-            return ScorePart(name: "HRV", state: .building("Baseline building — \(14 - baseline.count) more days"),
+            return ScorePart(name: "HRV trend", state: .building("Baseline building — \(14 - baseline.count) more days"),
                              valueText: "\(Int((average(recent) ?? 0).rounded())) ms", detailText: "7-day average; baseline needs ~2 weeks more")
         }
 
-        let avg7 = average(recent) ?? 0
-        let mean = average(baseline) ?? avg7
-        let sd = standardDeviation(baseline)
-        let effectiveSD = max(sd, mean * 0.03)
-        let z = (avg7 - mean) / effectiveSD
+        let lnAvg7 = average(recent.map { log($0) }) ?? 0
+        let mean = average(baseline) ?? lnAvg7
+        let sd = max(standardDeviation(baseline), 0.03)  // ≥~3% CV floor
+        let z = (lnAvg7 - mean) / sd
         // At baseline → 0.9; each SD below baseline costs 0.2 (Buchheit 2014:
         // deviations beyond the baseline's own noise are the signal).
         let score = min(1, max(0, 0.9 + 0.2 * min(0.5, max(-3.5, z))))
-        let swc = 0.5 * (sd / max(mean, 1)) * mean   // smallest worthwhile change (Plews 2013)
-        let within = abs(avg7 - mean) <= max(swc, 0.5)
+        let swc = 0.5 * sd                               // smallest worthwhile change (Plews 2013)
+        let within = abs(lnAvg7 - mean) <= max(swc, 0.02)
+        let displayAvg = exp(lnAvg7)
+        let displayMean = exp(mean)
         return ScorePart(
-            name: "HRV",
+            name: "HRV trend",
             state: .ready(score),
-            valueText: "\(Int(avg7.rounded())) ms",
+            valueText: "\(Int(displayAvg.rounded())) ms",
             detailText: within
-                ? "7-day avg, within your normal range (baseline \(Int(mean.rounded())) ms)"
-                : "7-day avg vs \(Int(mean.rounded())) ms baseline"
+                ? "7-day avg, within your normal range (baseline \(Int(displayMean.rounded())) ms)"
+                : "7-day avg vs \(Int(displayMean.rounded())) ms baseline"
         )
     }
 
+    /// 7-day resting/sleeping HR trend vs baseline (sleeping HR preferred — the
+    /// overnight signal is the cleaner autonomic corroborator; Buchheit 2014).
     private func rhrPart() -> ScorePart {
-        guard let current = latestHealthMetric(), let restingHR = current.restingHR else {
+        let recent = recentHealthMetrics(days: 7).compactMap { $0.bestRestingHR.map(Double.init) }
+        guard let avg7 = average(recent) else {
             return ScorePart(name: "Resting HR", state: .building("No recent resting heart rate"),
                              valueText: "—", detailText: "Connect Apple Health or wear your watch")
         }
         let baseline = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) > 7 }
-            .compactMap { $0.restingHR.map(Double.init) }
+            .compactMap { $0.bestRestingHR.map(Double.init) }
         guard baseline.count >= 14 else {
             return ScorePart(name: "Resting HR", state: .building("Baseline building — \(14 - baseline.count) more days"),
-                             valueText: "\(restingHR) bpm", detailText: "Needs ~2 weeks for a fair baseline")
+                             valueText: "\(Int(avg7.rounded())) bpm", detailText: "Needs ~2 weeks for a fair baseline")
         }
-        let mean = average(baseline) ?? Double(restingHR)
+        let mean = average(baseline) ?? avg7
         let sd = max(standardDeviation(baseline), max(2, mean * 0.03))
-        let z = (Double(restingHR) - mean) / sd     // elevated = worse
+        let z = (avg7 - mean) / sd                  // elevated = worse
         let score = min(1, max(0, 0.9 - 0.2 * min(3.5, max(-0.5, z))))
         return ScorePart(
             name: "Resting HR",
             state: .ready(score),
-            valueText: "\(restingHR) bpm",
-            detailText: "Baseline \(Int(mean.rounded())) bpm"
+            valueText: "\(Int(avg7.rounded())) bpm",
+            detailText: "7-day avg vs \(Int(mean.rounded())) bpm baseline"
         )
     }
 
+    /// 7-day sleep adequacy: average nightly sleep vs the personalized need,
+    /// plus accumulated debt. Last night's sleep is deliberately NOT judged
+    /// here — the acute daily score owns it — so one short night isn't
+    /// double-penalized in both scores (dose-response: Fullagar 2015).
     private func sleepPart() -> ScorePart {
-        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else {
-            return ScorePart(name: "Sleep", state: .building("No sleep data from last night"),
+        let need = personalizedSleepNeedMinutes()
+        let nights = recentHealthMetrics(days: 7).compactMap { $0.sleepTotalMinutes }
+        guard nights.count >= 3 else {
+            return ScorePart(name: "Sleep trend", state: .building("Needs \(3 - nights.count) more night\(3 - nights.count == 1 ? "" : "s") of sleep data"),
                              valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
         }
-        let need = max(300, current.sleepNeedMinutes)
-        let ratio = Double(sleep) / Double(need)
-        // ≥95% of need scores full marks; each missing hour below that costs
-        // steeply (dose-response between sleep restriction and performance,
-        // Fullagar 2015).
+        let avgMinutes = Double(nights.reduce(0, +)) / Double(nights.count)
+        let ratio = avgMinutes / Double(need)
         var score = ratio >= 0.95 ? 1.0 : max(0.3, 1.0 - (0.95 - ratio) * 2.0)
-        let debt = recentHealthMetrics(days: 7).reduce(0.0) { total, metric in
-            guard let s = metric.sleepTotalMinutes else { return total }
-            return total + Double(max(0, metric.sleepNeedMinutes - s)) / 60
-        }
+        let debt = nights.reduce(0.0) { $0 + Double(max(0, need - $1)) / 60 }
         score -= min(0.25, max(0, debt - 1) * 0.05)
         score = min(1, max(0, score))
-        let hours = Double(sleep) / 60
+        let hours = avgMinutes / 60
         return ScorePart(
-            name: "Sleep",
+            name: "Sleep trend",
             state: .ready(score),
-            valueText: "\(hours.formatted(.number.precision(.fractionLength(1)))) h",
+            valueText: "\(hours.formatted(.number.precision(.fractionLength(1)))) h avg",
             detailText: debt > 1
-                ? "7-day debt \(debt.formatted(.number.precision(.fractionLength(1)))) h"
-                : "Meeting your sleep need"
+                ? "7-day debt \(debt.formatted(.number.precision(.fractionLength(1)))) h vs \(String(format: "%.1f", Double(need) / 60)) h need"
+                : "Meeting your \(String(format: "%.1f", Double(need) / 60)) h need"
         )
     }
 
@@ -283,13 +476,17 @@ extension RecoveryEngine {
             return ScorePart(name: "Load balance", state: .building("Chronic baseline still near zero"),
                              valueText: "—", detailText: "Keep logging sessions")
         }
+        // Asymmetric by design: a spike pulls recovery down hard, but a tidy
+        // ratio only reads slightly-positive — ACWR is a fatigue flag, not a
+        // recovery credit (Impellizzeri 2020), so good load management can't
+        // paper over poor sleep or a sagging HRV trend.
         let ratio = acute / chronic
         var score: Double = switch ratio {
-        case ..<0.8: 0.95        // fresh / tapered
-        case ..<1.3: 0.85        // balanced
-        case ..<1.5: 0.65        // elevated
-        case ..<2.0: 0.65 - (ratio - 1.5) * 0.6   // 1.5→0.65 … 2.0→0.35
-        default: 0.3
+        case ..<0.8: 0.85        // fresh / tapered
+        case ..<1.3: 0.80        // balanced — neutral, not a bonus
+        case ..<1.5: 0.60        // elevated
+        case ..<2.0: 0.60 - (ratio - 1.5) * 0.6   // 1.5→0.60 … 2.0→0.30
+        default: 0.25
         }
         if let monotonyValue = monotony(dailyLoads(days: 7)), monotonyValue > 2 {
             score -= monotonyValue > 3 ? 0.15 : 0.08  // flat weeks accumulate strain (Foster 1998)
