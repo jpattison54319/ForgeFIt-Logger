@@ -279,47 +279,43 @@ struct HomeView: View {
             ).report()
         }
         let coachPlan = CoachAdjustments.plan(for: targetReport.action)
+        // This is THE answer to "what should I do today" — the one card on
+        // Home that should visually outrank everything else, so its Start
+        // button is a full-width PrimaryButton, not a small corner capsule.
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
-                HStack(spacing: Space.md) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Up next")
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Up next")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .textCase(.uppercase)
+                    Text(routine.name)
+                        .font(.cardTitle)
+                        .foregroundStyle(theme.textPrimary)
+                    Text(reason)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: targetReport.action.systemImage)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(theme.accent)
-                            .textCase(.uppercase)
-                        Text(routine.name)
-                            .font(.cardTitle)
-                            .foregroundStyle(theme.textPrimary)
-                        Text(reason)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(theme.textSecondary)
-                            .lineLimit(1)
-                        HStack(spacing: Space.sm) {
-                            Image(systemName: targetReport.action.systemImage)
-                                .font(.system(size: 11, weight: .bold))
-                            Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(2)
-                        }
-                        .foregroundStyle(targetReport.action.tint)
+                        Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(2)
                     }
-                    Spacer(minLength: Space.sm)
-                    Button {
-                        appState.requestStart {
-                            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                            appState.showingLogger = true
-                        }
-                    } label: {
-                        Text(coachPlan == nil ? "Start" : "As planned")
-                            .font(.system(size: 15, weight: .bold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(theme.accent)
-                    .buttonBorderShape(.capsule)
-                    .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
+                    .foregroundStyle(targetReport.action.tint)
                 }
+
+                // Always "Start" — the coach's modified dose lives entirely
+                // in the button below, so this one never needs to say
+                // anything other than what it does.
+                PrimaryButton(title: "Start", systemImage: "play.fill") {
+                    appState.requestStart {
+                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                        appState.showingLogger = true
+                    }
+                }
+                .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
 
                 // One-tap coach modification: today only, routine untouched.
                 if let coachPlan {
@@ -374,14 +370,29 @@ struct HomeView: View {
 
     private var quickStart: some View {
         VStack(spacing: Space.md) {
-            SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
-                appState.requestStart {
-                    _ = WorkoutFactory.startEmpty(in: modelContext)
-                    appState.showingLogger = true
-                }
-            }
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: Space.md) {
+                    // Fixed leading tile, not part of the customizable/
+                    // reorderable quick-start actions (it's a fundamental
+                    // capability, not a preference) — folded in here instead
+                    // of its own full-width button so it stops competing
+                    // with the "Up next" suggestion's Start button above.
+                    QuickStartTile(
+                        title: "Empty",
+                        systemImage: "square.and.pencil",
+                        accessibilityIdentifier: "start-empty-workout",
+                        isEditing: false,
+                        isDragging: false,
+                        onTap: {
+                            appState.requestStart {
+                                _ = WorkoutFactory.startEmpty(in: modelContext)
+                                appState.showingLogger = true
+                            }
+                        },
+                        onLongPress: {},
+                        onRemove: {}
+                    )
+
                     ForEach(quickStartActions) { action in
                         QuickStartTile(
                             title: title(for: action),
