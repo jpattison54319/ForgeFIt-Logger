@@ -751,7 +751,6 @@ struct RecoveryEngine {
         biometric: BiometricAssessment,
         acuteFlags: [String] = []
     ) -> (recommendation: String, preWorkoutAdjustment: String) {
-        let acuteLowHRV = acuteFlags.contains("HRV low today")
         switch action {
         case .push:
             return (
@@ -759,7 +758,22 @@ struct RecoveryEngine {
                 "Green light: keep the plan and allow one hard top set."
             )
         case .trainAsPlanned:
-            if acuteLowHRV || (biometric.singleLowHRV && !biometric.sustainedLowHRV) {
+            // Acute flags come from the same daily-readiness parts that
+            // produced the headline number, so naming them here can't
+            // contradict the score or the flag chips shown next to it —
+            // covers every flag the daily score can raise (HRV, sleeping HR,
+            // sleep), not just HRV.
+            let reasons = acuteFlags.compactMap(RecoveryEngine.acuteReasonClause)
+            if !reasons.isEmpty {
+                let combined = reasons.count == 1
+                    ? reasons[0]
+                    : reasons.dropLast().joined(separator: ", ") + " and " + reasons.last!
+                return (
+                    "You look trainable, but \(combined). Train as planned and skip PR attempts unless warmups feel unusually good.",
+                    "Train as planned; cap top sets around RPE 8."
+                )
+            }
+            if biometric.singleLowHRV, !biometric.sustainedLowHRV {
                 return (
                     "You look trainable, but HRV is below your normal range this morning. Train as planned and skip PR attempts unless warmups feel unusually good.",
                     "Train as planned; cap top sets around RPE 8."

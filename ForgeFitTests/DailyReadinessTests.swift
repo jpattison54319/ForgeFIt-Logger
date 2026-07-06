@@ -63,6 +63,49 @@ struct DailyReadinessTests {
         #expect(snapshot.daily.flags.contains("Short sleep"))
     }
 
+    @Test func guidanceNamesElevatedSleepingHRWhenScoreStillTrainable() {
+        // HRV and sleep stay normal; only sleeping HR is elevated (55 → 66,
+        // well past the ~58 bpm threshold at this baseline's variability).
+        let snapshot = engine(metrics(todaySleepingHR: 66)).recoverySnapshot()
+        let daily = snapshot.daily
+        #expect(daily.flags.contains("Sleeping HR elevated"))
+        if let score = daily.state.value, score >= 0.6 {
+            #expect(daily.guidance.localizedCaseInsensitiveContains("sleeping heart rate"))
+        }
+    }
+
+    @Test func guidanceNamesShortSleepWhenScoreStillTrainable() {
+        // HRV and sleeping HR stay normal; only sleep comes up short.
+        let snapshot = engine(metrics(todaySleepMinutes: 380)).recoverySnapshot()
+        let daily = snapshot.daily
+        #expect(daily.flags.contains("Short sleep"))
+        if let score = daily.state.value, score >= 0.6 {
+            #expect(daily.guidance.localizedCaseInsensitiveContains("short on sleep"))
+        }
+    }
+
+    @Test func guidanceCombinesMultipleFlagsInOneSentence() {
+        let snapshot = engine(metrics(todaySleepingHR: 66, todaySleepMinutes: 380)).recoverySnapshot()
+        let daily = snapshot.daily
+        #expect(daily.flags.contains("Sleeping HR elevated"))
+        #expect(daily.flags.contains("Short sleep"))
+        if let score = daily.state.value, score >= 0.6 {
+            #expect(daily.guidance.localizedCaseInsensitiveContains("sleeping heart rate"))
+            #expect(daily.guidance.localizedCaseInsensitiveContains("short on sleep"))
+            #expect(daily.guidance.contains(" and "))
+        }
+    }
+
+    /// The recommendation shown on the merged Today tile (RecoveryEngine's
+    /// `report().recommendation`) must name the same flags as the daily
+    /// score's own guidance — this used to only special-case HRV.
+    @Test func reportRecommendationNamesNonHRVFlagsToo() {
+        let report = engine(metrics(todaySleepingHR: 66)).report()
+        if report.recovery.daily.flags.contains("Sleeping HR elevated"), report.displayScore >= 0.55 {
+            #expect(report.recommendation.localizedCaseInsensitiveContains("sleeping heart rate"))
+        }
+    }
+
     @Test func guidanceMentionsHRVWhenFlaggedButScoreStillTrainable() {
         // Mild dip: HRV 71 vs 80 baseline, decent sleep — trainable but flagged.
         let snapshot = engine(metrics(todayHRV: 71, todaySleepMinutes: 450)).recoverySnapshot()

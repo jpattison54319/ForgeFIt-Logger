@@ -229,12 +229,32 @@ extension RecoveryEngine {
         case 0.5..<0.65: base = "Partially recovered — keep volume moderate and stop short of failure."
         default: base = "Under-recovered — favor Zone 2, mobility, or rest today."
         }
-        // When the score is still green-ish but a single acute flag is up, say so
-        // explicitly instead of a bare "train as planned" that ignores it.
-        if score >= 0.6, flags.contains("HRV low today") {
-            return "\(base) HRV dipped below your normal range this morning, so hold back PR attempts."
+        // When the score is still green-ish but an acute flag is up, say so
+        // explicitly instead of a bare "train as planned" that ignores it —
+        // covers every flag the daily score can raise (HRV, sleeping HR,
+        // sleep), not just HRV, so the guidance never contradicts a visible
+        // flag chip.
+        guard score >= 0.6 else { return base }
+        let reasons = flags.compactMap(Self.acuteReasonClause)
+        guard !reasons.isEmpty else { return base }
+        let joined = reasons.count == 1
+            ? reasons[0]
+            : reasons.dropLast().joined(separator: ", ") + " and " + reasons.last!
+        let sentence = joined.prefix(1).uppercased() + joined.dropFirst()
+        return "\(base) \(sentence), so hold back PR attempts."
+    }
+
+    /// User-facing clause per acute flag, phrased to read naturally alone or
+    /// joined with others ("X and Y, so hold back PR attempts"). Shared with
+    /// RecoveryEngine's interpretation() so both surfaces name every flag the
+    /// same way.
+    static func acuteReasonClause(_ flag: String) -> String? {
+        switch flag {
+        case "HRV low today": return "HRV dipped below your normal range this morning"
+        case "Sleeping HR elevated": return "your sleeping heart rate was elevated overnight"
+        case "Short sleep": return "you came up short on sleep last night"
+        default: return nil
         }
-        return base
     }
 
     // These mirror the acute parts' internal decisions so the flags match the

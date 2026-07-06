@@ -17,6 +17,14 @@ private struct EditSplitsTarget: Identifiable {
     let session: CardioSessionModel
 }
 
+/// Identifiable wrapper so tapping the inline route thumbnail can drive a
+/// full-screen expanded map via `.sheet(item:)`.
+private struct ExpandedRouteTarget: Identifiable {
+    let id = UUID()
+    let coordinates: [CLLocationCoordinate2D]
+    let kind: CardioKind
+}
+
 /// Lightweight editor for a cardio session's laps: rename or delete individual
 /// segments. Used to confirm/adjust auto-detected intervals.
 private struct IntervalSplitsEditor: View {
@@ -93,6 +101,7 @@ struct WorkoutDetailView: View {
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
     @State private var splitsMemo = MemoTable<UUID, [CardioSplitModel]>()
+    @State private var expandedRoute: ExpandedRouteTarget?
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
 
@@ -165,6 +174,9 @@ struct WorkoutDetailView: View {
         .sheet(item: $editingSplits) { target in
             IntervalSplitsEditor(session: target.session)
         }
+        .sheet(item: $expandedRoute) { target in
+            ExpandedRouteMapView(coordinates: target.coordinates, kind: target.kind)
+        }
         .fullScreenCover(isPresented: $showEditor) {
             ActiveWorkoutLoggerView(
                 workout: workout,
@@ -200,11 +212,27 @@ struct WorkoutDetailView: View {
             Text("Workout").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.xs) {
-                CircleIconButton(systemImage: isSharing ? "hourglass" : "square.and.arrow.up") {
-                    guard !isSharing else { return }
-                    Task { await prepareShare() }
+                // The share image includes an async GPS route snapshot
+                // (MKMapSnapshotter), so preparing it can take a beat — an
+                // icon swap alone is easy to miss; say so in words.
+                if isSharing {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Preparing…").font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 38)
+                    .background(theme.surfaceElevated)
+                    .clipShape(Capsule())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Preparing share image")
+                } else {
+                    CircleIconButton(systemImage: "square.and.arrow.up") {
+                        Task { await prepareShare() }
+                    }
+                        .accessibilityLabel("Share workout")
                 }
-                    .accessibilityLabel("Share workout")
                 CircleIconButton(systemImage: "square.and.pencil") { showEditor = true }
                     .accessibilityLabel("Edit workout")
                 CircleIconButton(systemImage: isDeleting ? "hourglass" : "trash") {
@@ -642,6 +670,26 @@ struct WorkoutDetailView: View {
         }
     }
 
+    /// Start (green) / finish (red) markers for a route — without them a bare
+    /// polyline doesn't say which end is which.
+    @MapContentBuilder
+    private func routeEndpointMarkers(_ coordinates: [CLLocationCoordinate2D]) -> some MapContent {
+        if let start = coordinates.first {
+            Annotation("Start", coordinate: start) {
+                Circle().fill(theme.success)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().stroke(.white, lineWidth: 2))
+            }
+        }
+        if let end = coordinates.last {
+            Annotation("Finish", coordinate: end) {
+                Circle().fill(theme.danger)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().stroke(.white, lineWidth: 2))
+            }
+        }
+    }
+
     private func exerciseTitle(_ name: String, color: Color, showsChevron: Bool = false) -> some View {
         HStack(spacing: 4) {
             Text(name)
@@ -665,16 +713,35 @@ struct WorkoutDetailView: View {
                 points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
             }
             VStack(alignment: .leading, spacing: Space.md) {
-                Map {
-                    MapPolyline(coordinates: coordinates)
-                        .stroke(theme.secondaryAccent, lineWidth: 4)
+                Button {
+                    expandedRoute = ExpandedRouteTarget(coordinates: coordinates, kind: kind)
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Map(interactionModes: []) {
+                            MapPolyline(coordinates: coordinates)
+                                .stroke(theme.secondaryAccent, lineWidth: 4)
+                            routeEndpointMarkers(coordinates)
+                        }
+                        .frame(height: 180)
+                        .allowsHitTesting(false)
+
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .background(.black.opacity(0.45), in: Circle())
+                            .padding(8)
+                    }
                 }
-                .frame(height: 180)
+                .buttonStyle(.plain)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                         .stroke(theme.separator, lineWidth: 1)
                 }
+                .accessibilityLabel("Route map, \(Fmt.distance(cardio.distanceMeters))")
+                .accessibilityHint("Double tap to view full screen")
+                .accessibilityIdentifier("route-map-thumbnail")
 
                 let splits = splitsMemo.value(for: cardio.id, generation: generation) {
                     cardio.splits.sorted { $0.index < $1.index }
@@ -778,5 +845,67 @@ struct WorkoutDetailView: View {
                 .lineLimit(1).minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Full-screen, fully interactive (pan/zoom) route review — the 180pt inline
+/// thumbnail is disabled to avoid intercepting the scroll view's gestures, so
+/// closer route inspection (checking a specific turn, comparing against a
+/// planned route) needs its own screen.
+private struct ExpandedRouteMapView: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    let coordinates: [CLLocationCoordinate2D]
+    let kind: CardioKind
+
+    private var region: MKCoordinateRegion {
+        var minLat = coordinates[0].latitude, maxLat = coordinates[0].latitude
+        var minLon = coordinates[0].longitude, maxLon = coordinates[0].longitude
+        for coordinate in coordinates {
+            minLat = min(minLat, coordinate.latitude); maxLat = max(maxLat, coordinate.latitude)
+            minLon = min(minLon, coordinate.longitude); maxLon = max(maxLon, coordinate.longitude)
+        }
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2),
+            span: MKCoordinateSpan(
+                latitudeDelta: max(0.003, (maxLat - minLat) * 1.3),
+                longitudeDelta: max(0.003, (maxLon - minLon) * 1.3)
+            )
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            Map(initialPosition: .region(region)) {
+                MapPolyline(coordinates: coordinates)
+                    .stroke(theme.secondaryAccent, lineWidth: 5)
+                if let start = coordinates.first {
+                    Annotation("Start", coordinate: start) {
+                        Circle().fill(theme.success)
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().stroke(.white, lineWidth: 2.5))
+                    }
+                }
+                if let end = coordinates.last {
+                    Annotation("Finish", coordinate: end) {
+                        Circle().fill(theme.danger)
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().stroke(.white, lineWidth: 2.5))
+                    }
+                }
+            }
+            .mapControls {
+                MapCompass()
+                MapScaleView()
+            }
+            .navigationTitle(kind.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
