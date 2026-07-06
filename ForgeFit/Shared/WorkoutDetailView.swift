@@ -735,15 +735,19 @@ struct WorkoutDetailView: View {
         CardioMetrics.paceString(distanceMeters: split.distanceMeters, durationSeconds: split.durationSeconds)
     }
 
-    /// Render the full-length workout card to an image and present the share
-    /// sheet (save to Photos, Messages, etc.), with a text summary alongside.
+    /// Render the full-length workout card to a single tall image and present
+    /// the share sheet (Save to Photos, Messages, AirDrop, …). Shares only the
+    /// image so exactly one artifact is produced, and passes the already-loaded
+    /// HR series / recovery points so the picture matches what's on screen.
     private func prepareShare() {
-        var items: [Any] = []
-        if let image = WorkoutShareRenderer.image(for: workout, exercises: exercises, theme: theme) {
-            items.append(image)
-        }
-        items.append(WorkoutShareRenderer.text(for: workout, exercises: exercises))
-        sharePayload = SharePayload(items: items)
+        guard let image = WorkoutShareRenderer.image(
+            for: workout,
+            exercises: exercises,
+            theme: theme,
+            hrSamples: hrSamples,
+            recoveryPoints: recoveryPoints
+        ) else { return }
+        sharePayload = SharePayload(items: [image])
     }
 
     private func metric(_ label: String, _ value: String, color: Color? = nil) -> some View {

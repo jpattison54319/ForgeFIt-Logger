@@ -6,17 +6,23 @@ import UIKit
 #endif
 
 /// A branded, full-length snapshot of a completed workout, designed to be
-/// rendered to an image and shared ("save a full-length screenshot"). Takes an
-/// explicit `AppTheme` so it renders correctly off-screen where the environment
-/// isn't injected.
+/// rendered to a single tall image and shared / saved to Photos. Mirrors every
+/// section the user sees on `WorkoutDetailView` — summary, session metrics, HR
+/// graph, between-set recovery, muscles worked, and the full set log — so the
+/// shared picture is a faithful capture of the workout, not a trimmed summary.
+///
+/// Takes an explicit `AppTheme` (and the already-loaded HealthKit-derived
+/// `hrSamples` / `recoveryPoints`) so it renders correctly off-screen where the
+/// environment and async loads aren't available.
 struct WorkoutShareCard: View {
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
+    var hrSamples: [(date: Date, bpm: Int)] = []
+    var recoveryPoints: [SetRecoveryPoint] = []
 
-    private var summary: TrainingAnalytics.Summary {
-        TrainingAnalytics(workouts: [workout], exercises: exercises).summary(for: workout)
-    }
+    private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
+    private var summary: TrainingAnalytics.Summary { analytics.summary(for: workout) }
     private var sortedExercises: [WorkoutExerciseModel] {
         workout.exercises.sorted { $0.position < $1.position }
     }
@@ -25,9 +31,22 @@ struct WorkoutShareCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 18) {
             header
             statBlock
+            if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
+                sessionMetricsBlock
+            }
+            if !hrSamples.isEmpty {
+                heartRateBlock
+            }
+            if recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
+                recoveryBlock
+            }
+            if !summary.isCardio {
+                let muscles = analytics.muscleVolume(for: workout)
+                if !muscles.isEmpty { muscleBlock(muscles) }
+            }
             Rectangle().fill(theme.separator).frame(height: 1)
             ForEach(sortedExercises) { we in
                 if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
@@ -93,26 +112,154 @@ struct WorkoutShareCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    // MARK: - Session metrics
+
+    private var sessionMetricsBlock: some View {
+        surfaceBlock {
+            blockTitle("Session metrics", systemImage: "heart.fill", color: theme.danger) {
+                if let readiness = workout.readinessAtStart {
+                    Text("Started \(readiness)% ready")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.readinessColor(Double(readiness) / 100))
+                }
+            }
+            HStack(spacing: 12) {
+                miniStat("Avg HR", Fmt.bpm(workout.avgHR))
+                miniStat("Max HR", Fmt.bpm(workout.maxHR))
+                miniStat("Energy", workout.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
+            }
+            if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
+                ZoneSecondsBar(zoneSeconds: workout.hrZoneSeconds)
+            }
+        }
+    }
+
+    // MARK: - Heart rate graph
+
+    private var heartRateBlock: some View {
+        surfaceBlock {
+            blockTitle("Heart rate", systemImage: "waveform.path.ecg", color: theme.danger) {
+                if let peak = hrSamples.map(\.bpm).max() {
+                    Text("peak \(peak) bpm")
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.danger)
+                }
+            }
+            HeartRateTrendChart(samples: hrSamples)
+        }
+    }
+
+    // MARK: - Between-set recovery
+
+    private var recoveryBlock: some View {
+        let dict = Dictionary(uniqueKeysWithValues: recoveryPoints.map { ($0.setID, $0) })
+        let drops = recoveryPoints.compactMap(\.recoveryBPM)
+        let avg = drops.isEmpty ? 0 : Int((Double(drops.reduce(0, +)) / Double(drops.count)).rounded())
+        let best = drops.max() ?? 0
+        let maxDrop = max(1, best)
+        return surfaceBlock {
+            blockTitle("Between-set recovery", systemImage: "arrow.down.heart.fill", color: theme.danger) { EmptyView() }
+            HStack(spacing: 12) {
+                miniStat("Avg drop", "\(avg) bpm")
+                miniStat("Best drop", "\(best) bpm")
+                miniStat("Sets", "\(drops.count)")
+            }
+            ForEach(sortedExercises.filter { we in workout.cardioSessions.allSatisfy { $0.workoutExerciseID != we.id } }) { we in
+                let sets = we.sets.sorted { $0.position < $1.position }
+                let rows = Array(sets.enumerated()).compactMap { index, set -> (String, SetRecoveryPoint)? in
+                    dict[set.id].map { (numberedLabel(for: set, index: index, sets: sets), $0) }
+                }
+                if !rows.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(library(we)?.name ?? "Exercise")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                            HStack(spacing: 8) {
+                                Text(row.0).font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundStyle(theme.textSecondary).frame(width: 30, alignment: .leading)
+                                Text("\(row.1.peakHR) bpm peak")
+                                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                                    .frame(width: 92, alignment: .leading)
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(theme.surfaceHighlight)
+                                        Capsule().fill(theme.success)
+                                            .frame(width: geo.size.width * CGFloat(row.1.recoveryBPM ?? 0) / CGFloat(maxDrop))
+                                    }
+                                }
+                                .frame(height: 7)
+                                Text(row.1.recoveryBPM.map { "▼\($0)" } ?? "—")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(row.1.recoveryBPM != nil ? theme.success : theme.textTertiary)
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Muscles worked
+
+    private func muscleBlock(_ rows: [(muscle: String, sets: Double)]) -> some View {
+        let maxSets = rows.map(\.sets).max() ?? 1
+        return surfaceBlock {
+            blockTitle("Muscles worked", systemImage: "figure.strengthtraining.traditional", color: theme.accent) { EmptyView() }
+            VStack(spacing: 7) {
+                ForEach(rows, id: \.muscle) { row in
+                    VStack(spacing: 4) {
+                        HStack {
+                            Text(row.muscle.capitalized).font(.system(size: 13, weight: .medium)).foregroundStyle(theme.textPrimary)
+                            Spacer()
+                            Text("\(row.sets.formatted(.number.precision(.fractionLength(0...1)))) sets")
+                                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                        }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(theme.surfaceHighlight)
+                                Capsule().fill(theme.accent)
+                                    .frame(width: geo.size.width * (row.sets / max(1, maxSets)))
+                            }
+                        }
+                        .frame(height: 7)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Strength
 
     private func strengthBlock(_ we: WorkoutExerciseModel) -> some View {
         let unit = library(we)?.effectiveWeightUnit ?? Fmt.unit
         let sets = we.sets.sorted { $0.position < $1.position }
-        var working = 0
         return VStack(alignment: .leading, spacing: 8) {
             Text(library(we)?.name ?? "Exercise")
                 .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
-            ForEach(sets) { set in
+            if let notes = we.notes, !notes.isEmpty {
+                Text(notes).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+            }
+            // Deterministic per-set numbering (no mutable counter) — ImageRenderer
+            // evaluates the body more than once, so a running `var` double-counts.
+            ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                 let style = SetTypeStyle.of(set.setType)
-                let label: String = {
-                    if style.numbered { working += 1; return "\(working)\(style.badge)" }
-                    return style.badge
-                }()
-                HStack {
+                let label = numberedLabel(for: set, index: index, sets: sets)
+                HStack(spacing: 8) {
                     Text(label).font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(theme.textSecondary).frame(width: 34, alignment: .leading)
+                        .foregroundStyle(set.setType == .working ? theme.textSecondary : style.color)
+                        .frame(width: 34, alignment: .leading)
                     Text(setValue(set, unit: unit)).font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    if set.setType != .working {
+                        Text(style.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(style.color)
+                    }
                     Spacer(minLength: 0)
+                    if let rpe = set.rpe {
+                        Text("RPE \(rpe.formatted(.number.precision(.fractionLength(0...1))))")
+                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                    } else if let rir = set.rir {
+                        Text("\(rir) RIR")
+                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                    }
                     if set.completedAt != nil {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(theme.success)
                     }
@@ -126,9 +273,19 @@ struct WorkoutShareCard: View {
     }
 
     private func setValue(_ set: SetModel, unit: WeightUnit) -> String {
-        let reps = set.reps.map { "\($0) reps" } ?? "—"
-        guard let weight = set.weight, weight > 0 else { return reps }
-        return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(set.reps ?? 0)"
+        if !set.miniReps.isEmpty {
+            let activation = set.reps.map(String.init)
+            let minis = set.miniReps.map(String.init).joined(separator: "+")
+            let reps = [activation, minis].compactMap(\.self).joined(separator: "+")
+            guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
+            return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
+        }
+        if let seconds = set.durationSeconds, seconds > 0 {
+            return Fmt.durationShort(seconds)
+        }
+        let reps = set.reps.map { "\($0)" } ?? "—"
+        guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
+        return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
     }
 
     // MARK: - Cardio
@@ -183,6 +340,44 @@ struct WorkoutShareCard: View {
         .clipShape(Capsule())
     }
 
+    // MARK: - Shared building blocks
+
+    @ViewBuilder
+    private func surfaceBlock<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func blockTitle<Trailing: View>(_ title: String, systemImage: String, color: Color, @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage).font(.system(size: 13, weight: .bold)).foregroundStyle(color)
+            Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(theme.textPrimary)
+            Spacer(minLength: 0)
+            trailing()
+        }
+    }
+
+    private func miniStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(theme.textPrimary)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(label.uppercased()).font(.system(size: 9, weight: .heavy)).foregroundStyle(theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func numberedLabel(for set: SetModel, index: Int, sets: [SetModel]) -> String {
+        let style = SetTypeStyle.of(set.setType)
+        guard style.numbered else { return style.badge.isEmpty ? "•" : style.badge }
+        let number = sets.prefix(index + 1).filter { SetTypeStyle.of($0.setType).numbered }.count
+        return "\(number)\(style.badge)"
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
@@ -190,9 +385,6 @@ struct WorkoutShareCard: View {
             Image(systemName: "dumbbell.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(theme.accent)
             Text("Tracked with ForgeFit").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
             Spacer()
-            if let readiness = workout.readinessAtStart {
-                Text("Readiness \(readiness)%").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
-            }
         }
         .padding(.top, 2)
     }
@@ -201,34 +393,44 @@ struct WorkoutShareCard: View {
 // MARK: - Rendering & sharing
 
 @MainActor
-enum WorkoutShareRenderer {
-    /// Render the full-length share card to an image at retina scale.
-    static func image(for workout: WorkoutModel, exercises: [ExerciseLibraryModel], theme: AppTheme) -> UIImage? {
-        let renderer = ImageRenderer(content: WorkoutShareCard(workout: workout, exercises: exercises, theme: theme))
+enum ShareRenderer {
+    /// Render any share card to a retina-scale image. Injects the theme into the
+    /// environment so environment-reading subviews (charts, zone bars) render
+    /// correctly off-screen.
+    static func image<V: View>(_ content: V, theme: AppTheme) -> UIImage? {
+        let renderer = ImageRenderer(content: content.environment(\.theme, theme))
         renderer.scale = 3
         renderer.isOpaque = true
         return renderer.uiImage
     }
+}
 
-    /// A plain-text summary for share targets that prefer text (Messages, etc.).
-    static func text(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> String {
-        let summary = TrainingAnalytics(workouts: [workout], exercises: exercises).summary(for: workout)
-        var lines = [workout.title ?? "Workout", workout.startedAt.formatted(date: .abbreviated, time: .shortened)]
-        lines.append("⏱ \(Fmt.durationShort(summary.durationSeconds))")
-        if summary.isCardio {
-            if let d = workout.cardioSessions.first?.distanceMeters, d > 0 { lines.append("📍 \(Fmt.distance(d))") }
-            if let hr = summary.avgHR { lines.append("❤️ \(hr) bpm avg") }
-        } else {
-            lines.append("🏋️ \(Fmt.volume(summary.volume)) · \(summary.sets) sets")
-        }
-        lines.append("— Tracked with ForgeFit")
-        return lines.joined(separator: "\n")
+@MainActor
+enum WorkoutShareRenderer {
+    /// Render the full-length share card to a single tall image at retina scale.
+    static func image(
+        for workout: WorkoutModel,
+        exercises: [ExerciseLibraryModel],
+        theme: AppTheme,
+        hrSamples: [(date: Date, bpm: Int)] = [],
+        recoveryPoints: [SetRecoveryPoint] = []
+    ) -> UIImage? {
+        ShareRenderer.image(
+            WorkoutShareCard(
+                workout: workout,
+                exercises: exercises,
+                theme: theme,
+                hrSamples: hrSamples,
+                recoveryPoints: recoveryPoints
+            ),
+            theme: theme
+        )
     }
 }
 
 #if canImport(UIKit)
-/// Standard iOS share sheet — lets the user save the workout image to Photos or
-/// send it anywhere.
+/// Standard iOS share sheet — lets the user save the image to Photos or send it
+/// anywhere. Sharing a single `UIImage` surfaces the "Save Image" action.
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
@@ -237,5 +439,11 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Identifiable wrapper so any rendered share image can drive `.sheet(item:)`.
+struct ShareImagePayload: Identifiable {
+    let id = UUID()
+    let image: UIImage
 }
 #endif

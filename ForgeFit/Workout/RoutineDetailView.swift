@@ -19,6 +19,7 @@ struct RoutineDetailView: View {
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var chartRange: TimeChartRange = .all
     @State private var editing = false
+    @State private var sharePayload: ShareImagePayload?
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
@@ -63,6 +64,9 @@ struct RoutineDetailView: View {
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(items: [payload.image])
+        }
         .navigationDestination(isPresented: $editing) {
             RoutineEditorView(routine: routine, exercises: exercises, setupNotes: setupNotes)
         }
@@ -78,7 +82,7 @@ struct RoutineDetailView: View {
             Text("Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.sm) {
-                ShareLink(item: routineShareText) {
+                Button { shareRoutine() } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(theme.textPrimary)
@@ -86,6 +90,7 @@ struct RoutineDetailView: View {
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
+                .accessibilityLabel("Share routine")
                 Menu {
                     Button("Edit Routine", systemImage: "pencil") { editing = true }
                 } label: {
@@ -139,12 +144,12 @@ struct RoutineDetailView: View {
         }
     }
 
-    private var routineShareText: String {
-        let exerciseNames = sortedExercises.compactMap { re in
-            exercises.first { $0.id == re.exerciseID }?.name
+    /// Render the routine to a single tall image and present the share sheet
+    /// (Save to Photos, Messages, AirDrop, …).
+    private func shareRoutine() {
+        if let image = RoutineShareRenderer.image(for: routine, exercises: exercises, theme: theme) {
+            sharePayload = ShareImagePayload(image: image)
         }
-        let names = exerciseNames.isEmpty ? "No exercises yet" : exerciseNames.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        return "\(routine.name)\n\n\(names)\n\nShared from ForgeFit"
     }
 }
 

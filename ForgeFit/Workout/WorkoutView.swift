@@ -65,6 +65,7 @@ struct WorkoutHomeView: View {
     @State private var newRoutine: RoutineModel?
     @State private var renamingFolder: RoutineFolderModel?
     @State private var folderNameDraft = ""
+    @State private var sharePayload: ShareImagePayload?
     /// The item currently being dragged. SwiftUI's drop target callback only
     /// tells us whether something is hovering, so we keep the payload here to
     /// make folder hover feedback specific instead of vague.
@@ -168,6 +169,9 @@ struct WorkoutHomeView: View {
                         showExploreLibrary = false
                     }
                 )
+            }
+            .sheet(item: $sharePayload) { payload in
+                ShareSheet(items: [payload.image])
             }
         }
         .interactiveBackSwipeEnabled()
@@ -335,6 +339,9 @@ struct WorkoutHomeView: View {
                 Button("Set as Active Mesocycle", systemImage: "star") { activeFolderRaw = folder.id.uuidString }
             }
             Divider()
+            Button(hasChildren ? "Share Macrocycle" : "Share Mesocycle", systemImage: "square.and.arrow.up") {
+                shareFolder(folder, hasChildren: hasChildren)
+            }
             Button("Rename", systemImage: "pencil") { startRename(folder) }
             // A folder with subfolders holds only folders — no loose routines.
             if !hasChildren {
@@ -361,6 +368,29 @@ struct WorkoutHomeView: View {
             Button("Delete Folder", systemImage: "trash", role: .destructive) { deleteFolder(folder) }
         } label: {
             Image(systemName: "ellipsis").foregroundStyle(theme.textSecondary).frame(width: 30, height: 30)
+        }
+    }
+
+    /// Render a training-cycle folder to a single tall image and present the
+    /// share sheet. A folder with subfolders shares as a macrocycle (routines
+    /// grouped under each mesocycle); otherwise as a mesocycle (its routines).
+    private func shareFolder(_ folder: RoutineFolderModel, hasChildren: Bool) {
+        let sections: [FolderShareCard.Section]
+        if hasChildren {
+            sections = childFolders(of: folder).map { sub in
+                FolderShareCard.Section(title: sub.name, routines: routines(in: sub))
+            }
+        } else {
+            sections = [FolderShareCard.Section(title: nil, routines: routines(in: folder))]
+        }
+        if let image = FolderShareRenderer.image(
+            name: folder.name,
+            isMacro: hasChildren,
+            sections: sections,
+            exercises: exercises,
+            theme: theme
+        ) {
+            sharePayload = ShareImagePayload(image: image)
         }
     }
 
