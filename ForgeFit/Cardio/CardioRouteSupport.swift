@@ -196,7 +196,7 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     }
 }
 
-extension CardioKind {
+nonisolated extension CardioKind {
     var supportsOutdoorRoute: Bool {
         switch self {
         case .run, .trailRun, .walk, .cycle:

@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Rich cardio classification used to drive the Strava-style cardio UI: which
 /// metrics matter, the muscles worked, and how to format pace/speed.
-enum CardioKind: String, CaseIterable {
+nonisolated enum CardioKind: String, CaseIterable {
     case run, walk, trailRun, cycle, row, elliptical, stair, jumpRope, skate, swim, other
 
     var title: String {

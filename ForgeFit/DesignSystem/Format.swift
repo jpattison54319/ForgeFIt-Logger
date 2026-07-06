@@ -4,7 +4,7 @@ import ForgeCore
 /// Display unit for loads. ForgeFit stores load in kilograms internally (see the
 /// data-layer model comments); this controls how it is shown. Defaults to lbs to
 /// match the way the reference screens are configured.
-enum WeightUnit: String, Codable {
+nonisolated enum WeightUnit: String, Codable {
     case lb, kg
 
     var suffix: String { self == .lb ? "lbs" : "kg" }

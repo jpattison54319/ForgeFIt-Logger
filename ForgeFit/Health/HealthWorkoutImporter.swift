@@ -37,7 +37,7 @@ final class HealthWorkoutImporter {
             let avgHR = await heartRate(.discreteAverage, for: healthWorkout, store: healthStore).map { Int($0.rounded()) }
             let maxHR = await heartRate(.discreteMax, for: healthWorkout, store: healthStore).map { Int($0.rounded()) }
             let durationSeconds = max(1, Int(healthWorkout.duration.rounded()))
-            let energyKcal = healthWorkout.totalEnergyBurned?.doubleValue(for: .kilocalorie())
+            let energyKcal = activeEnergyKcal(for: healthWorkout)
             let distanceMeters = healthWorkout.totalDistance?.doubleValue(for: .meter())
             let zones = CardioMetrics.estimatedZoneSecondsArray(avgHR: avgHR, durationSeconds: durationSeconds)
             let source = sourceLabel(for: healthWorkout)
@@ -125,6 +125,11 @@ final class HealthWorkoutImporter {
             }
             store.execute(query)
         }
+    }
+
+    private func activeEnergyKcal(for workout: HKWorkout) -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return nil }
+        return workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .kilocalorie())
     }
 
     private func routeLocations(for workout: HKWorkout, store: HKHealthStore) async -> [CLLocation] {
