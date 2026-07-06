@@ -94,6 +94,28 @@ final class ForgeFitUITests: XCTestCase {
         searchField.typeText(XCUIKeyboardKey.delete.rawValue)
         searchField.typeText("presz")
         XCTAssertEqual(app.state, .runningForeground, "App should survive fuzzy search.")
+
+        // Create-from-search: the escape hatch under the results opens the
+        // create form with the searched name prefilled — and no duplicate
+        // suggestions (the search already established it doesn't exist).
+        let createFromSearch = app.descendants(matching: .any)["create-from-search"].firstMatch
+        var scrollAttempts = 0
+        while !(createFromSearch.exists && createFromSearch.isHittable), scrollAttempts < 6 {
+            app.swipeUp(velocity: .fast)
+            scrollAttempts += 1
+        }
+        XCTAssertTrue(createFromSearch.waitForExistence(timeout: 3), "Expected the create-from-search button under results.")
+        createFromSearch.tap()
+
+        let nameField = app.textFields["create-exercise-name"].firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Expected the create form.")
+        let prefilled = nameField.value as? String ?? ""
+        XCTAssertFalse(prefilled.isEmpty, "Expected the searched name prefilled.")
+        XCTAssertTrue(prefilled.lowercased().contains("bench"), "Prefill should carry the searched text, got \(prefilled).")
+        let suggestion = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'use-existing-'")
+        ).firstMatch
+        XCTAssertFalse(suggestion.waitForExistence(timeout: 1), "Duplicate suggestions should be off for the search-origin path.")
     }
 
     /// Creating an exercise whose name matches an existing one surfaces a

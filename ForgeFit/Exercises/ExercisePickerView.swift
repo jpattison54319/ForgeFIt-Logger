@@ -148,7 +148,9 @@ struct ExercisePickerView: View {
                 }
             }
             .sheet(isPresented: $showCreate) {
-                CreateExerciseView { created in commit([created]) }
+                CreateExerciseView(
+                    initialName: search.trimmingCharacters(in: .whitespacesAndNewlines)
+                ) { created in commit([created]) }
             }
             .sheet(item: $detailExercise) { exercise in
                 NavigationStack {
@@ -235,10 +237,49 @@ struct ExercisePickerView: View {
                     )
                     .padding(.horizontal, Space.lg)
                 }
+
+                // Escape hatch under the results: if none of the matches is the
+                // exercise being searched for, create it with the name prefilled.
+                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    createFromSearchButton
+                        .padding(.horizontal, Space.lg)
+                        .padding(.top, Space.sm)
+                }
             }
             .padding(.vertical, Space.sm)
             .padding(.bottom, 90)
         }
+    }
+
+    /// "None of these? Create it" — rendered under search results and reused
+    /// as the primary action of the no-results empty state. Opens the create
+    /// form with the searched name prefilled.
+    private var createFromSearchButton: some View {
+        Button { showCreate = true } label: {
+            HStack(spacing: Space.sm) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Create \"\(search.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                        .font(.system(size: 15, weight: .bold))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("New custom exercise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .opacity(0.8)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(theme.accent)
+            .padding(Space.md)
+            .frame(maxWidth: .infinity)
+            .background(theme.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("create-from-search")
     }
 
     private var emptyState: some View {
@@ -248,8 +289,9 @@ struct ExercisePickerView: View {
             Text("No matches").font(.bodyStrong).foregroundStyle(theme.textPrimary)
             Text("Try a different search or create a custom exercise.")
                 .font(.system(size: 14)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
-            SecondaryButton(title: "Create \"\(search)\"", systemImage: "plus") { showCreate = true }
-                .padding(.horizontal, Space.xxl)
+            // Same prefilled create flow as the button under results.
+            createFromSearchButton
+                .padding(.horizontal, Space.lg)
             Spacer()
         }
         .padding(Space.lg)
@@ -350,6 +392,10 @@ struct CreateExerciseView: View {
     /// inserting a new one. Callback fires with the saved model in both modes.
     let editing: ExerciseLibraryModel?
     let onCreate: (ExerciseLibraryModel) -> Void
+    /// True when the form was reached from a search that found nothing — the
+    /// name is prefilled and duplicate suggestions are skipped (the user just
+    /// established the exercise doesn't exist).
+    private let cameFromSearch: Bool
 
     @Query(sort: \ExerciseLibraryModel.name) private var allExercises: [ExerciseLibraryModel]
 
@@ -391,9 +437,13 @@ struct CreateExerciseView: View {
         return strong.compactMap { byID[$0.exercise.id] }
     }
 
-    init(editing: ExerciseLibraryModel? = nil, onCreate: @escaping (ExerciseLibraryModel) -> Void) {
+    init(editing: ExerciseLibraryModel? = nil, initialName: String = "", onCreate: @escaping (ExerciseLibraryModel) -> Void) {
         self.editing = editing
         self.onCreate = onCreate
+        self.cameFromSearch = !initialName.isEmpty
+        if editing == nil, !initialName.isEmpty {
+            _name = State(initialValue: initialName)
+        }
         if let editing {
             _name = State(initialValue: editing.name)
             _primaryMuscle = State(initialValue: editing.primaryMuscles.first ?? "chest")
@@ -418,7 +468,7 @@ struct CreateExerciseView: View {
                             // Duplicate guard: fuzzy-match the library as the user
                             // types (case / spelling tolerant) and offer the
                             // existing exercise instead of creating a twin.
-                            if !isEditing, !isSaving, !duplicateCandidates.isEmpty {
+                            if !isEditing, !isSaving, !cameFromSearch, !duplicateCandidates.isEmpty {
                                 VStack(alignment: .leading, spacing: Space.sm) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "exclamationmark.circle.fill")
@@ -512,7 +562,7 @@ struct CreateExerciseView: View {
             // id) and only does the fuzzy work after typing pauses, off the
             // keystroke's render pass.
             .task(id: name) {
-                guard !isEditing, !isSaving else { return }
+                guard !isEditing, !isSaving, !cameFromSearch else { return }
                 let query = name.trimmingCharacters(in: .whitespaces)
                 guard query.count >= 3 else {
                     if !duplicateCandidates.isEmpty { duplicateCandidates = [] }
