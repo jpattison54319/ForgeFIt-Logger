@@ -96,6 +96,45 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "App should survive fuzzy search.")
     }
 
+    /// Creating an exercise whose name matches an existing one surfaces a
+    /// "use this instead" suggestion; tapping it adds the existing exercise to
+    /// the routine and abandons creation (no duplicate is made).
+    @MainActor
+    func testCreateExerciseSuggestsExistingDuplicate() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        newRoutine.tap()
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        addExercise.tap()
+
+        // Open the create form from the picker toolbar.
+        let createButton = app.descendants(matching: .any)["create-exercise-button"].firstMatch
+        XCTAssertTrue(createButton.waitForExistence(timeout: 5))
+        createButton.tap()
+
+        let nameField = app.textFields["create-exercise-name"].firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Expected the name field.")
+        nameField.tap()
+        nameField.typeText("bench press")   // lowercase on purpose — casing-tolerant
+
+        let suggestion = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'use-existing-'")
+        ).firstMatch
+        XCTAssertTrue(suggestion.waitForExistence(timeout: 4), "Expected a duplicate suggestion for an existing exercise.")
+        suggestion.tap()
+
+        // Creation abandoned, existing exercise landed in the routine editor.
+        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor.")
+        let inRoutine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'bench press'")).firstMatch
+        XCTAssertTrue(inRoutine.waitForExistence(timeout: 3), "Expected the existing exercise in the routine.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

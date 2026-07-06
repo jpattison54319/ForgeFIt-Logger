@@ -1131,6 +1131,11 @@ private struct ExerciseLogCard: View {
     /// at a time, Mail-style).
     @State private var openSwipeSetID: UUID?
     @FocusState private var focusedInput: SetInputFocus?
+    /// PR awards per set, computed when set data changes rather than on every
+    /// body evaluation — focus changes and menu presentations re-render all
+    /// visible rows, and running PersonalRecords per row per render caused
+    /// visible stutter opening the set-type menu on long workouts.
+    @State private var awardsCache: [UUID: [RecordKind]] = [:]
 
     private var sortedSets: [SetModel] { workoutExercise.sets.sorted { $0.position < $1.position } }
     private var isCardio: Bool { exercise?.isCardio == true }
@@ -1190,7 +1195,6 @@ private struct ExerciseLogCard: View {
                 columnHeader
 
                 let sets = sortedSets
-                let exerciseSessionSets = sessionSetsForExercise
 
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                     if set.setType.isBlockType {
@@ -1211,7 +1215,7 @@ private struct ExerciseLogCard: View {
                         SetRow(
                             set: set,
                             workingNumber: workingNumber(upTo: index, in: sets),
-	                            awards: awards(for: set, sessionSets: exerciseSessionSets),
+	                            awards: awardsCache[set.id] ?? [],
 	                            previous: previousText(index: index),
 	                            previousSet: previousSet(index: index),
 	                            isCardio: isCardio,
@@ -1276,7 +1280,10 @@ private struct ExerciseLogCard: View {
                 }
             }
         }
-        .onAppear(perform: prefillPinnedNote)
+        .onAppear {
+            prefillPinnedNote()
+            refreshAwardsCache()
+        }
         .onDisappear {
             deferredSaveTask?.cancel()
             saveNow()
@@ -1387,9 +1394,13 @@ private struct ExerciseLogCard: View {
 
 	    /// Records this set holds right now, judged against history plus the
 	    /// sets of the same exercise completed earlier this session.
-	    private func awards(for set: SetModel, sessionSets: [SetModel]) -> [RecordKind] {
-	        guard set.completedAt != nil else { return [] }
-	        return PersonalRecords.awards(for: set, baseline: recordBaseline, sessionSets: sessionSets)
+	    private func refreshAwardsCache() {
+	        let sessionSets = sessionSetsForExercise
+	        var fresh: [UUID: [RecordKind]] = [:]
+	        for set in workoutExercise.sets where set.completedAt != nil {
+	            fresh[set.id] = PersonalRecords.awards(for: set, baseline: recordBaseline, sessionSets: sessionSets)
+	        }
+	        if fresh != awardsCache { awardsCache = fresh }
 	    }
 
     private func usesSuggestedValues(for set: SetModel) -> Bool {
@@ -1399,7 +1410,7 @@ private struct ExerciseLogCard: View {
     }
 
     private func suggestedWeight(for set: SetModel, index: Int) -> Double? {
-        previousSet(index: index)?.weight ?? set.weight
+        previousSet(index: index).flatMap { $0.modeWeight ?? $0.weight } ?? set.modeWeight ?? set.weight
     }
 
     private func suggestedReps(for set: SetModel, index: Int) -> Int? {
@@ -1425,7 +1436,7 @@ private struct ExerciseLogCard: View {
 	    private func previousText(index: Int) -> String {
 	        guard index < previousSets.count else { return "—" }
 	        let prev = previousSets[index]
-        let w = Fmt.load(prev.weight, unit: displayUnit)
+        let w = Fmt.load(prev.modeWeight ?? prev.weight, unit: displayUnit)
         let r = prev.reps.map(String.init) ?? "—"
         // No unit suffix here: the weight column header already labels the unit,
         // and dropping it keeps the value legible when the RPE column is on.
@@ -1439,6 +1450,8 @@ private struct ExerciseLogCard: View {
     private func matchPrevious(_ set: SetModel, from previous: SetModel?) {
         guard let previous else { return }
         set.weight = previous.weight
+        set.addedWeight = previous.addedWeight
+        set.assistanceWeight = previous.assistanceWeight
         set.reps = previous.reps
         set.durationSeconds = previous.durationSeconds
         set.rpe = previous.rpe
@@ -1556,6 +1569,7 @@ private struct ExerciseLogCard: View {
 
     private func recompute() {
         workoutExercise.updatedAt = Date()
+        refreshAwardsCache()
         let completedSets = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil }
         workout.totalVolume = completedSets.reduce(0) { $0 + ($1.totalVolume ?? 0) }
         workout.updatedAt = Date()
@@ -1686,6 +1700,31 @@ private struct SwipeToDeleteRow<Content: View>: View {
 }
 
 // MARK: - Single set row
+
+/// The weight column means different things per mode: external load, weight
+/// added to bodyweight, or assistance subtracted from bodyweight. Routing
+/// reads/writes through one accessor keeps the input, "previous", and volume
+/// math (VolumeMath.effectiveLoad) on the same field.
+extension SetModel {
+    var modeWeight: Double? {
+        switch weightMode {
+        case .external: weight
+        case .bodyweightAdded: addedWeight
+        case .bodyweightAssisted: assistanceWeight
+        case .bodyweight: nil
+        }
+    }
+
+    func setModeWeight(_ value: Double?) {
+        switch weightMode {
+        case .external: weight = value
+        case .bodyweightAdded: addedWeight = value
+        case .bodyweightAssisted: assistanceWeight = value
+        case .bodyweight: break
+        }
+        recomputeDerivedMetrics()
+    }
+}
 
 private struct SetRow: View {
     @Environment(\.theme) private var theme
@@ -1969,7 +2008,7 @@ private struct SetRow: View {
         if usesSuggestedValues, let suggestedWeight {
             return Fmt.load(suggestedWeight, unit: displayUnit)
         }
-        return set.weight.map { Fmt.load($0, unit: displayUnit) } ?? ""
+        return set.modeWeight.map { Fmt.load($0, unit: displayUnit) } ?? ""
     }
 
     private var primaryText: String {
@@ -2131,9 +2170,9 @@ private struct SetRow: View {
         if usesSuggestedValues {
             onSuggestionEdited()
         }
-        guard !sameLoad(set.weight, next) else { return }
+        guard !sameLoad(set.modeWeight, next) else { return }
         onSuggestionEdited()
-        set.weight = next
+        set.setModeWeight(next)
         onChange()
     }
 

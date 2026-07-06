@@ -58,8 +58,12 @@ struct ExercisePickerView: View {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = "\(exerciseFingerprint)|\(normalizedSearch.lowercased())|\(muscle ?? "")|\(equipment ?? "")"
         return filteredMemo(key) {
+            // Dedupe by id while filtering: CloudKit can't enforce unique
+            // constraints, and duplicate IDs in a ForEach corrupt LazyVStack
+            // layout (rows collapse to zero height / spacing goes erratic).
+            var seen = Set<UUID>()
             let base = exercises.filter { ex in
-                guard ex.deletedAt == nil else { return false }
+                guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
                 if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                 if let equipment, ex.equipment != equipment { return false }
                 return true
@@ -96,8 +100,9 @@ struct ExercisePickerView: View {
             guard !muscleScore.isEmpty || !usage.isEmpty else { return [] }
 
             let alreadyIn = Set(context.map(\.id))
+            var seen = Set<UUID>()
             let scored: [(ExerciseLibraryModel, Double)] = exercises.compactMap { ex in
-                guard ex.deletedAt == nil, !alreadyIn.contains(ex.id) else { return nil }
+                guard ex.deletedAt == nil, !alreadyIn.contains(ex.id), seen.insert(ex.id).inserted else { return nil }
                 var score = 0.0
                 for m in ex.primaryMuscles { score += (muscleScore[m] ?? 0) }
                 for m in ex.secondaryMuscles { score += (muscleScore[m] ?? 0) * 0.4 }
@@ -139,6 +144,7 @@ struct ExercisePickerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityIdentifier("create-exercise-button")
                 }
             }
             .sheet(isPresented: $showCreate) {
@@ -341,6 +347,8 @@ struct CreateExerciseView: View {
     let editing: ExerciseLibraryModel?
     let onCreate: (ExerciseLibraryModel) -> Void
 
+    @Query(sort: \ExerciseLibraryModel.name) private var allExercises: [ExerciseLibraryModel]
+
     @State private var name = ""
     @State private var primaryMuscle = "chest"
     @State private var secondaryMuscles: Set<String> = []
@@ -351,6 +359,20 @@ struct CreateExerciseView: View {
     @State private var secondaryMusclesExpanded = false
 
     private var isEditing: Bool { editing != nil }
+
+    /// Library exercises whose names closely match what's being typed —
+    /// reuses the same tolerant scorer as search (case, diacritics, small
+    /// typos), keeping only strong matches so the prompt isn't noisy.
+    private var duplicateCandidates: [ExerciseLibraryModel] {
+        let query = name.trimmingCharacters(in: .whitespaces)
+        guard query.count >= 3 else { return [] }
+        var seen = Set<UUID>()
+        let live = allExercises.filter { $0.deletedAt == nil && seen.insert($0.id).inserted }
+        let snapshot = ExerciseLibrarySnapshot(exercises: live.map(\.domainInfo))
+        let strong = snapshot.search(query, limit: 3).filter { $0.score >= 62 }
+        let byID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return strong.compactMap { byID[$0.exercise.id] }
+    }
 
     init(editing: ExerciseLibraryModel? = nil, onCreate: @escaping (ExerciseLibraryModel) -> Void) {
         self.editing = editing
@@ -374,6 +396,50 @@ struct CreateExerciseView: View {
                         VStack(alignment: .leading, spacing: Space.md) {
                             FieldLabel("Name")
                             DarkTextField(text: $name, placeholder: "e.g. Atlantis Leg Press")
+                                .accessibilityIdentifier("create-exercise-name")
+
+                            // Duplicate guard: fuzzy-match the library as the user
+                            // types (case / spelling tolerant) and offer the
+                            // existing exercise instead of creating a twin.
+                            if !isEditing, !duplicateCandidates.isEmpty {
+                                VStack(alignment: .leading, spacing: Space.sm) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.circle.fill")
+                                            .font(.system(size: 12, weight: .bold))
+                                        Text("Similar exercise\(duplicateCandidates.count == 1 ? "" : "s") already exist\(duplicateCandidates.count == 1 ? "s" : "")")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .foregroundStyle(theme.warmup)
+                                    ForEach(duplicateCandidates) { candidate in
+                                        Button {
+                                            onCreate(candidate)
+                                            dismiss()
+                                        } label: {
+                                            HStack(spacing: Space.sm) {
+                                                ExerciseThumbnail(exercise: candidate, size: 34)
+                                                VStack(alignment: .leading, spacing: 1) {
+                                                    Text(candidate.name)
+                                                        .font(.system(size: 14, weight: .semibold))
+                                                        .foregroundStyle(theme.textPrimary)
+                                                        .lineLimit(1)
+                                                    Text("Use this instead")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                        .foregroundStyle(theme.accent)
+                                                }
+                                                Spacer(minLength: 0)
+                                                Image(systemName: "plus.circle.fill")
+                                                    .font(.system(size: 18))
+                                                    .foregroundStyle(theme.accent)
+                                            }
+                                            .padding(8)
+                                            .background(theme.surfaceElevated)
+                                            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityIdentifier("use-existing-\(candidate.name)")
+                                    }
+                                }
+                            }
                         }
                     }
 

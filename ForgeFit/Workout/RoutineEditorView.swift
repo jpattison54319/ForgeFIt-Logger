@@ -14,6 +14,8 @@ struct RoutineEditorView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @State private var showPicker = false
+    @State private var entrySnapshot: RoutineSnapshot?
+    @State private var showDiscardConfirm = false
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
 
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
@@ -65,6 +67,19 @@ struct RoutineEditorView: View {
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+        .onAppear {
+            if entrySnapshot == nil { entrySnapshot = RoutineSnapshot(of: routine) }
+        }
+        .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Save Changes") { save(); dismiss() }
+            Button("Discard Changes", role: .destructive) {
+                if let entrySnapshot { entrySnapshot.restore(onto: routine, in: modelContext) }
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("You've made changes to this routine.")
+        }
         .sheet(isPresented: $showPicker) {
             ExercisePickerView(context: exercisesInRoutine, history: allWorkouts) { added in added.forEach(add) }
         }
@@ -75,7 +90,15 @@ struct RoutineEditorView: View {
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left") { save(); dismiss() }
+            // Back offers to save or discard when the routine changed — it no
+            // longer silently saves, so Save actually means something.
+            CircleIconButton(systemImage: "chevron.left") {
+                if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
+                    showDiscardConfirm = true
+                } else {
+                    dismiss()
+                }
+            }
             Spacer()
             Text("Edit Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
             Spacer()

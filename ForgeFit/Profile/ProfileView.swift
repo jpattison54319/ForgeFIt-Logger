@@ -364,9 +364,11 @@ struct ExercisesListView: View {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let key = "\(count)|\(latest.timeIntervalSince1970)|\(normalizedQuery)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
         return filteredMemo(key) {
-            exercises
+            // Dedupe by id: CloudKit duplicates would corrupt ForEach layout.
+            var seen = Set<UUID>()
+            return exercises
                 .filter { ex in
-                    guard ex.deletedAt == nil else { return false }
+                    guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
                     if !normalizedQuery.isEmpty, !ex.name.lowercased().contains(normalizedQuery) { return false }
                     if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                     if let equipment, ex.equipment != equipment { return false }
