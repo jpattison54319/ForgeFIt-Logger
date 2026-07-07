@@ -77,6 +77,10 @@ public final class ExerciseLibraryModel {
     public var preferredWeightUnitRaw: String?
     public var difficulty: String?
     public var isCardio: Bool = false
+    /// Explicit cardio modality (CardioKind raw value) chosen at creation.
+    /// Nil = infer from name/equipment, which stays correct for the built-in
+    /// library and legacy custom exercises. Additive-optional for CloudKit.
+    public var cardioKindRaw: String?
     public var mappedGlobalID: UUID?
     public var instructions: [String] = []
     public var mechanic: String?
@@ -117,6 +121,7 @@ public final class ExerciseLibraryModel {
         preferredWeightUnitRaw: String? = nil,
         difficulty: String? = nil,
         isCardio: Bool = false,
+        cardioKindRaw: String? = nil,
         mappedGlobalID: UUID? = nil,
         instructions: [String] = [],
         mechanic: String? = nil,
@@ -145,6 +150,7 @@ public final class ExerciseLibraryModel {
         self.preferredWeightUnitRaw = preferredWeightUnitRaw
         self.difficulty = difficulty
         self.isCardio = isCardio
+        self.cardioKindRaw = cardioKindRaw
         self.mappedGlobalID = mappedGlobalID
         self.instructions = instructions
         self.mechanic = mechanic

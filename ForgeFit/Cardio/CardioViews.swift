@@ -56,7 +56,8 @@ struct CardioExerciseCard: View {
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
-        CardioKind.infer(name: exercise?.name ?? "Cardio", equipment: exercise?.equipment)
+        exercise?.resolvedCardioKind
+            ?? CardioKind.infer(name: "Cardio", equipment: nil)
     }
 
     /// Treadmills / indoor machines don't produce a meaningful GPS distance, so

@@ -333,7 +333,7 @@ private struct ExerciseRowLabel: View {
                             .compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
                         if exercise.isCardio {
-                            Text(CardioKind.infer(name: exercise.name, equipment: exercise.equipment).metricLabels.prefix(4).joined(separator: " · "))
+                            Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
                                 .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
                         }
                     }
@@ -407,6 +407,9 @@ struct CreateExerciseView: View {
     @State private var isCardio = false
     @State private var isUnilateral = false
     @State private var secondaryMusclesExpanded = false
+    /// Explicit cardio modality; nil = auto-detect from name/equipment. Only
+    /// meaningful while the Cardio mode is selected.
+    @State private var cardioKindChoice: CardioKind?
 
     private var isEditing: Bool { editing != nil }
 
@@ -453,13 +456,31 @@ struct CreateExerciseView: View {
             _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? "") ?? Fmt.unit)
             _isCardio = State(initialValue: editing.isCardio)
             _isUnilateral = State(initialValue: editing.isUnilateral)
+            _cardioKindChoice = State(initialValue: editing.cardioKindRaw.flatMap(CardioKind.init(rawValue:)))
         }
+    }
+
+    /// The modality the cardio form previews and saves: explicit choice or
+    /// live inference from what's typed so far.
+    private var resolvedKind: CardioKind {
+        cardioKindChoice ?? CardioKind.infer(
+            name: name.trimmingCharacters(in: .whitespaces),
+            equipment: equipment)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
+                    // Modality first: creating a lift and creating a cardio
+                    // exercise are different forms, not a metadata toggle.
+                    Picker("Exercise type", selection: $isCardio) {
+                        Text("Lift").tag(false)
+                        Text("Cardio").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("exercise-modality")
+
                     Card {
                         VStack(alignment: .leading, spacing: Space.md) {
                             FieldLabel("Name")
@@ -513,67 +534,14 @@ struct CreateExerciseView: View {
                         }
                     }
 
-                    Card {
-                        VStack(alignment: .leading, spacing: Space.lg) {
-                            pickerRow("Primary muscle", selection: $primaryMuscle, options: ExerciseCatalog.muscleGroups)
-                            Divider().overlay(theme.separator)
-                            secondaryMuscleRow
-                            Divider().overlay(theme.separator)
-                            pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentTypes)
-                            Divider().overlay(theme.separator)
-                            HStack {
-                                Text("Weight mode").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                Spacer()
-                                Menu {
-                                    ForEach(WeightModeOption.allCases) { opt in
-                                        Button(opt.label) { weightMode = opt.mode }
-                                    }
-                                } label: {
-                                    Text(WeightModeOption.from(weightMode).label)
-                                        .font(.bodyStrong).foregroundStyle(theme.accent)
-                                }
-                            }
-                            Divider().overlay(theme.separator)
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Movement").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                    Text("Unilateral = one arm/leg at a time; structured sets repeat per side.")
-                                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                Spacer()
-                                Menu {
-                                    Button("Bilateral") { isUnilateral = false }
-                                    Button("Unilateral") { isUnilateral = true }
-                                } label: {
-                                    Text(isUnilateral ? "Unilateral" : "Bilateral")
-                                        .font(.bodyStrong).foregroundStyle(theme.accent)
-                                }
-                            }
-                            .opacity(isCardio ? 0.45 : 1)
-                            .disabled(isCardio)
-                            Divider().overlay(theme.separator)
-                            HStack {
-                                Text("Weight unit").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                Spacer()
-                                Picker("Weight unit", selection: $preferredUnit) {
-                                    Text("lb").tag(WeightUnit.lb)
-                                    Text("kg").tag(WeightUnit.kg)
-                                }
-                                .pickerStyle(.segmented)
-                                .frame(width: 120)
-                                .disabled(isCardio)
-                                .opacity(isCardio ? 0.45 : 1)
-                            }
-                            Divider().overlay(theme.separator)
-                            Toggle(isOn: $isCardio) {
-                                Text("Cardio exercise").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                            }
-                            .tint(theme.accent)
-                        }
+                    if isCardio {
+                        cardioFieldsCard
+                    } else {
+                        liftFieldsCard
                     }
                 }
                 .padding(Space.lg)
+                .animation(.spring(duration: 0.25), value: isCardio)
             }
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
@@ -597,6 +565,107 @@ struct CreateExerciseView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Save" : "Create") { save() }
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+
+    /// Strength-training fields: muscles, equipment, loading, laterality.
+    private var liftFieldsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                pickerRow("Primary muscle", selection: $primaryMuscle, options: ExerciseCatalog.muscleGroups)
+                Divider().overlay(theme.separator)
+                secondaryMuscleRow
+                Divider().overlay(theme.separator)
+                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentTypes)
+                Divider().overlay(theme.separator)
+                HStack {
+                    Text("Weight mode").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Menu {
+                        ForEach(WeightModeOption.allCases) { opt in
+                            Button(opt.label) { weightMode = opt.mode }
+                        }
+                    } label: {
+                        Text(WeightModeOption.from(weightMode).label)
+                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                    }
+                }
+                Divider().overlay(theme.separator)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Movement").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Text("Unilateral = one arm/leg at a time; structured sets repeat per side.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Menu {
+                        Button("Bilateral") { isUnilateral = false }
+                        Button("Unilateral") { isUnilateral = true }
+                    } label: {
+                        Text(isUnilateral ? "Unilateral" : "Bilateral")
+                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                    }
+                }
+                Divider().overlay(theme.separator)
+                HStack {
+                    Text("Weight unit").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("Weight unit", selection: $preferredUnit) {
+                        Text("lb").tag(WeightUnit.lb)
+                        Text("kg").tag(WeightUnit.kg)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
+                }
+            }
+        }
+    }
+
+    /// Cardio fields: modality (explicit or auto-detected), equipment, and a
+    /// read-out of the muscle classification — Cardiovascular is the default
+    /// primary, with the modality's movers alongside.
+    private var cardioFieldsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                HStack {
+                    Text("Cardio type").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Menu {
+                        Button("Auto-detect") { cardioKindChoice = nil }
+                        Divider()
+                        ForEach(CardioKind.allCases, id: \.self) { kind in
+                            Button {
+                                cardioKindChoice = kind
+                            } label: {
+                                Label(kind.title, systemImage: kind.systemImage)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: resolvedKind.systemImage)
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(cardioKindChoice == nil ? "Auto · \(resolvedKind.title)" : resolvedKind.title)
+                                .font(.bodyStrong)
+                        }
+                        .foregroundStyle(theme.secondaryAccent)
+                    }
+                    .accessibilityIdentifier("cardio-type-picker")
+                }
+                Text("Auto-detect reads the name and equipment — \"Treadmill Run\" tracks pace, \"Row Erg\" tracks 500m splits.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider().overlay(theme.separator)
+                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentTypes)
+                Divider().overlay(theme.separator)
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("Works").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    MuscleChips(muscles: resolvedKind.musclesWorked)
+                    Text("Cardio counts toward Cardiovascular volume, plus the movement's main muscles.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -721,7 +790,9 @@ struct CreateExerciseView: View {
     /// and edit paths so both stay in lockstep.
     private func apply(to exercise: ExerciseLibraryModel) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        let kind = CardioKind.infer(name: trimmed, equipment: equipment)
+        // Every field branches on the selected modality, so values left over
+        // from the other mode's hidden form can never leak into the save.
+        let kind = resolvedKind
         exercise.name = trimmed
         exercise.movementPattern = isCardio ? "cardio" : nil
         exercise.primaryMuscles = isCardio ? kind.musclesWorked : [primaryMuscle]
@@ -730,6 +801,7 @@ struct CreateExerciseView: View {
         exercise.defaultWeightMode = isCardio ? .bodyweight : weightMode
         exercise.preferredWeightUnitRaw = isCardio ? nil : preferredUnit.rawValue
         exercise.isCardio = isCardio
+        exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
         exercise.isUnilateral = isCardio ? false : isUnilateral
         exercise.category = isCardio ? "cardio" : "strength"
     }
@@ -763,3 +835,15 @@ private enum WeightModeOption: CaseIterable, Identifiable {
         }
     }
 }
+
+#if DEBUG
+#Preview("Create exercise — Lift") {
+    CreateExerciseView { _ in }
+        .modelContainer(for: ForgeDataSchema.models, inMemory: true)
+}
+
+#Preview("Create exercise — Cardio") {
+    CreateExerciseView(initialName: "Treadmill Run") { _ in }
+        .modelContainer(for: ForgeDataSchema.models, inMemory: true)
+}
+#endif
