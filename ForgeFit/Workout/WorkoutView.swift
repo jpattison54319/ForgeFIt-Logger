@@ -77,8 +77,14 @@ struct WorkoutHomeView: View {
     /// already used in the routine editor and the live logger.
     @State private var editingOrder = false
 
-    /// The active mesocycle: the folder whose routines Home rotates through.
-    @AppStorage("activeFolderID") private var activeFolderRaw = ""
+    /// The active macrocycle: when no mesocycle is more specifically active,
+    /// Home rotates through every mesocycle nested inside it.
+    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
+    /// The active mesocycle: the most specific "what am I actually running
+    /// right now" signal. A macrocycle can hold several mesocycles, so these
+    /// are independent — Home drills into the mesocycle first, then falls
+    /// back to the macrocycle, then to best-guessing from the full list.
+    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
 
     private var activeRoutines: [RoutineModel] {
         routines.filter { $0.deletedAt == nil }.sorted { $0.position < $1.position }
@@ -98,8 +104,28 @@ struct WorkoutHomeView: View {
     private func routines(in folder: RoutineFolderModel) -> [RoutineModel] {
         activeRoutines.filter { $0.folderID == folder.id }
     }
-    private func isActiveFolder(_ folder: RoutineFolderModel) -> Bool {
-        activeFolderRaw == folder.id.uuidString
+    private func isActiveMacro(_ folder: RoutineFolderModel) -> Bool {
+        activeMacroFolderRaw == folder.id.uuidString
+    }
+    private func isActiveMeso(_ folder: RoutineFolderModel) -> Bool {
+        activeMesoFolderRaw == folder.id.uuidString
+    }
+    /// Setting a mesocycle active also adopts its parent macrocycle (if any)
+    /// — drilling into a specific mesocycle means you're "in" that
+    /// macrocycle too, so the two stay consistent with each other.
+    private func setActiveMeso(_ folder: RoutineFolderModel) {
+        activeMesoFolderRaw = folder.id.uuidString
+        if let parentID = folder.parentID { activeMacroFolderRaw = parentID.uuidString }
+    }
+    /// Setting a macrocycle active keeps the current mesocycle active only if
+    /// it's actually nested inside this macrocycle — otherwise it no longer
+    /// makes sense as "the specific plan within the active macro".
+    private func setActiveMacro(_ folder: RoutineFolderModel) {
+        activeMacroFolderRaw = folder.id.uuidString
+        if let mesoID = UUID(uuidString: activeMesoFolderRaw),
+           mesoID != folder.id, !childFolders(of: folder).contains(where: { $0.id == mesoID }) {
+            activeMesoFolderRaw = ""
+        }
     }
 
     var body: some View {
@@ -175,10 +201,13 @@ struct WorkoutHomeView: View {
                     templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
                     exercises: exercises,
                     onImport: { template in
-                        let activeFolderID = UUID(uuidString: activeFolderRaw)
+                        // Only a mesocycle (leaf folder) can directly hold a
+                        // routine — a macrocycle-only active state has
+                        // nowhere concrete to import into, so it lands
+                        // ungrouped instead.
                         _ = RoutineTemplateCatalog.importTemplate(
                             template,
-                            folderID: activeFolderID,
+                            folderID: UUID(uuidString: activeMesoFolderRaw),
                             existingRoutines: activeRoutines,
                             in: modelContext
                         )
@@ -211,7 +240,9 @@ struct WorkoutHomeView: View {
         let isCollapsed = collapsed.contains(folder.id)
         let items = routines(in: folder)
         let children = childFolders(of: folder)
-        let isActive = isActiveFolder(folder)
+        // A folder is either a macrocycle (has children) or a mesocycle
+        // (leaf) — check whichever active slot applies to its role.
+        let isActive = children.isEmpty ? isActiveMeso(folder) : isActiveMacro(folder)
         let target = DropTarget.folder(folder.id)
         let feedback = feedback(for: target)
         let isTargeted = feedback != nil
@@ -361,10 +392,21 @@ struct WorkoutHomeView: View {
 
     private func folderMenu(_ folder: RoutineFolderModel, isActive: Bool, hasChildren: Bool) -> some View {
         Menu {
-            if isActive {
-                Button("Clear Active Mesocycle", systemImage: "star.slash") { activeFolderRaw = "" }
+            // Independent slots: a macrocycle and one of its mesocycles can
+            // both be active at once (that's the whole point — a macro can
+            // hold several mesocycles, only one of which you're running now).
+            if hasChildren {
+                if isActive {
+                    Button("Clear Active Macrocycle", systemImage: "star.slash") { activeMacroFolderRaw = "" }
+                } else {
+                    Button("Set as Active Macrocycle", systemImage: "star") { setActiveMacro(folder) }
+                }
             } else {
-                Button("Set as Active Mesocycle", systemImage: "star") { activeFolderRaw = folder.id.uuidString }
+                if isActive {
+                    Button("Clear Active Mesocycle", systemImage: "star.slash") { activeMesoFolderRaw = "" }
+                } else {
+                    Button("Set as Active Mesocycle", systemImage: "star") { setActiveMeso(folder) }
+                }
             }
             Divider()
             Button(hasChildren ? "Share Macrocycle" : "Share Mesocycle", systemImage: "square.and.arrow.up") {
@@ -653,7 +695,8 @@ struct WorkoutHomeView: View {
             child.parentID = folder.parentID
             child.updatedAt = now
         }
-        if isActiveFolder(folder) { activeFolderRaw = "" }
+        if isActiveMacro(folder) { activeMacroFolderRaw = "" }
+        if isActiveMeso(folder) { activeMesoFolderRaw = "" }
         folder.updatedAt = now
         folder.deletedAt = now
         save()

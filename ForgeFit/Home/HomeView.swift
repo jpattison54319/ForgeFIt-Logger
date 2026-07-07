@@ -61,7 +61,12 @@ struct HomeView: View {
 
     // MARK: - Smart next-workout suggestion
 
-    @AppStorage("activeFolderID") private var activeFolderRaw = ""
+    /// A macrocycle can hold several mesocycles, only one of which you're
+    /// actually running — these are independent so both can be active at
+    /// once. `suggestion` drills into the mesocycle first, then falls back
+    /// to the macrocycle, then to best-guessing across every routine.
+    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
+    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
     @Query private var allFolders: [RoutineFolderModel]
 
     /// The active folder plus its whole subtree, so an active macrocycle picks
@@ -79,37 +84,18 @@ struct HomeView: View {
         return result
     }
 
-    /// What the app thinks you'll want to train next: rotates through the
-    /// active mesocycle folder's routines in order; otherwise rotates through
-    /// all routines based on what you performed last.
+    /// What the app thinks you'll want to train next — see
+    /// `NextRoutineSuggestion` for the drilldown logic (mesocycle → macrocycle
+    /// → best guess).
     private var suggestion: (routine: RoutineModel, reason: String)? {
-        let active = routines
-            .filter { $0.deletedAt == nil && !$0.exercises.isEmpty }
-            .sorted { $0.position < $1.position }
-        guard !active.isEmpty else { return nil }
-
-        let folderID = UUID(uuidString: activeFolderRaw)
-        let inFolder: [RoutineModel] = folderID.map { id in
-            let subtree = folderSubtree(rootID: id)
-            return active.filter { r in r.folderID.map(subtree.contains) ?? false }
-        } ?? []
-        let usingMeso = !inFolder.isEmpty
-        let pool = usingMeso ? inFolder : active
-
-        let completed = workouts
-            .filter { $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-
-        if let lastDone = completed.first(where: { w in pool.contains { $0.id == w.routineID } }),
-           let lastIndex = pool.firstIndex(where: { $0.id == lastDone.routineID }) {
-            let next = pool[(lastIndex + 1) % pool.count]
-            var reason = usingMeso ? "Next in your mesocycle" : "Up after \(pool[lastIndex].name)"
-            if let lastTime = completed.first(where: { $0.routineID == next.id })?.startedAt {
-                reason += " · last done \(lastTime.formatted(.relative(presentation: .named)))"
-            }
-            return (next, reason)
-        }
-        return (pool[0], usingMeso ? "Start your mesocycle" : "Start your plan")
+        guard let result = NextRoutineSuggestion.suggest(
+            routines: routines,
+            completedWorkouts: workouts,
+            activeMesoFolderID: UUID(uuidString: activeMesoFolderRaw),
+            activeMacroFolderID: UUID(uuidString: activeMacroFolderRaw),
+            macroSubtree: folderSubtree(rootID:)
+        ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
+        return (routine, result.reason)
     }
 
     var body: some View {
@@ -211,7 +197,10 @@ struct HomeView: View {
                     templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
                     exercises: exercises,
                     onImport: { template in
-                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeFolderRaw), existingRoutines: routines, in: modelContext)
+                        // Only a mesocycle (leaf folder) can directly hold a
+                        // routine — an active macrocycle alone has nowhere
+                        // concrete to import into.
+                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeMesoFolderRaw), existingRoutines: routines, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
