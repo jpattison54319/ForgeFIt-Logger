@@ -79,6 +79,7 @@ struct SetBlockView: View {
     let onDelete: () -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(SetInputRouter.self) private var inputRouter: SetInputRouter?
 
     /// Inline pill entry: `newEntryIndex` = typing a new mini-set, >= 0 =
     /// retyping an existing one.
@@ -380,10 +381,24 @@ struct SetBlockView: View {
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(style.color, lineWidth: 1.5))
             .onChange(of: entryFocused) { _, focused in
-                if !focused { commitEntry() }
+                // The keyboard's Log/dismiss both just end focus — the commit
+                // itself always rides the focus loss, so every exit path
+                // (accessory, tap-away, scroll) lands the typed reps.
+                if focused {
+                    inputRouter?.register(
+                        token: entryAccessoryToken,
+                        completeTitle: "Log",
+                        onComplete: { entryFocused = false },
+                        onDismiss: { entryFocused = false }
+                    )
+                } else {
+                    commitEntry()
+                    inputRouter?.unregister(token: entryAccessoryToken)
+                }
             }
-
     }
+
+    private var entryAccessoryToken: String { "\(set.id.uuidString)-mini" }
 
     /// nil = no target to repeat yet — the first mini must be typed.
     private var nextMiniTarget: Int? {

@@ -286,6 +286,41 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertEqual(menusAfterReplace.count, 2, "Replacing should swap the exercise, not add or remove one.")
     }
 
+    /// Regression: the keyboard accessory's Complete button used to stop
+    /// rendering after the accessory's own dismiss chevron was used (the old
+    /// UIKit toolbar was reused blank on refocus). Drives the reported flow —
+    /// focus a set input, dismiss via the accessory, refocus — and asserts
+    /// the accessory comes back intact every time.
+    @MainActor
+    func testKeyboardAccessorySurvivesDismissAndRefocus() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let weightField = app.textFields["Weight"].firstMatch
+        XCTAssertTrue(weightField.waitForExistence(timeout: 10), "Expected the live logger with a weight field.")
+        tapWhenReady(weightField)
+
+        let complete = app.buttons["Complete"].firstMatch
+        XCTAssertTrue(complete.waitForExistence(timeout: 5), "Expected the Complete accessory above the keyboard.")
+
+        let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3), "Expected the dismiss chevron in the accessory.")
+        dismissKeyboard.tap()
+
+        // The dismissed keyboard takes its accessory with it.
+        let deadline = Date().addingTimeInterval(3)
+        while complete.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        // Refocus: the accessory must render again — this is where the old
+        // UIKit-toolbar approach came back blank.
+        tapWhenReady(weightField)
+        XCTAssertTrue(complete.waitForExistence(timeout: 5), "Accessory should render again after dismiss + refocus.")
+        XCTAssertTrue(app.buttons["Next"].firstMatch.exists, "Weight field should offer Next to advance to reps.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

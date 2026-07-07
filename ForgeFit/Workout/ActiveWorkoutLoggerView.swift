@@ -64,6 +64,7 @@ struct ActiveWorkoutLoggerView: View {
     @State private var widgetSnapshotTask: Task<Void, Never>?
     @State private var previousSetsByExerciseID: [UUID: [SetModel]] = [:]
     @State private var liveStats = WorkoutLiveStats()
+    @State private var inputRouter = SetInputRouter()
     @AppStorage("showRPEInLogger") private var showRPEInLogger = false
 
     private var sortedExercises: [WorkoutExerciseModel] {
@@ -98,6 +99,32 @@ struct ActiveWorkoutLoggerView: View {
                     statsBar
                         .padding(.horizontal, Space.lg)
                         .padding(.bottom, Space.sm)
+                }
+            }
+        }
+        .environment(inputRouter)
+        // One keyboard toolbar for every set input in the logger, driven by
+        // whichever field registered itself with the router on focus. A
+        // single root-level toolbar can't hit the per-field UIKit
+        // toolbar-reuse bug that used to blank the accessory buttons.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if let actions = inputRouter.active {
+                    Button {
+                        actions.onDismiss()
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                    .accessibilityLabel("Dismiss keyboard")
+                    Spacer()
+                    if let onNext = actions.onNext {
+                        Button("Next", action: onNext)
+                            .font(.bodyStrong)
+                            .tint(theme.accent)
+                    }
+                    Button(actions.completeTitle, action: actions.onComplete)
+                        .font(.bodyStrong)
+                        .tint(theme.accent)
                 }
             }
         }
@@ -191,6 +218,10 @@ struct ActiveWorkoutLoggerView: View {
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
             .padding(.bottom, 40)
+            // Tapping any non-interactive spot (card chrome, labels, empty
+            // space) drops the keyboard — controls layered above win their
+            // own taps first, so buttons/fields are unaffected.
+            .onTapGesture { hideKeyboard() }
         }
         .scrollDismissesKeyboard(.interactively)
     }
@@ -1650,7 +1681,13 @@ private struct SwipeToDeleteRow<Content: View>: View {
             content
                 .background(widthReader)
                 .offset(x: offset)
-                .gesture(swipe)
+                // Simultaneous, not exclusive: an exclusive DragGesture claims
+                // the touch stream even for the vertical drags its onChanged
+                // ignores, which starved ScrollView's pan whenever a scroll
+                // began on a set row or one of its text fields. The
+                // horizontal-dominant guard below still keeps casual scrolls
+                // from opening the tray.
+                .simultaneousGesture(swipe)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onChange(of: isOpen) { _, open in
@@ -1730,6 +1767,7 @@ extension SetModel {
 
 private struct SetRow: View {
     @Environment(\.theme) private var theme
+    @Environment(SetInputRouter.self) private var inputRouter: SetInputRouter?
     @Bindable var set: SetModel
     @State private var weightDraft = ""
     @State private var primaryDraft = ""
@@ -1864,9 +1902,11 @@ private struct SetRow: View {
         .onChange(of: currentField) { oldField, newField in
             if let oldField {
                 commitDraft(for: oldField)
+                inputRouter?.unregister(token: accessoryToken(for: oldField))
             }
             if let newField {
                 seedDraft(for: newField)
+                registerAccessory(for: newField)
             }
         }
         .onChange(of: weightText) { _, _ in
@@ -1880,7 +1920,25 @@ private struct SetRow: View {
         }
         .onDisappear {
             commitFocusedDraft()
+            if let currentField {
+                inputRouter?.unregister(token: accessoryToken(for: currentField))
+            }
         }
+    }
+
+    private func accessoryToken(for field: SetInputField) -> String {
+        "\(set.id.uuidString)-\(field)"
+    }
+
+    /// Hand this field's actions to the logger's shared keyboard toolbar.
+    private func registerAccessory(for field: SetInputField) {
+        let nextAction: (() -> Void)? = nextInputField(after: field).map { next in { focus(next) } }
+        inputRouter?.register(
+            token: accessoryToken(for: field),
+            onNext: nextAction,
+            onComplete: completeFromKeyboard,
+            onDismiss: clearFocus
+        )
     }
 
     /// A quiet one-line record callout under the set — gold, no popup.
@@ -2267,7 +2325,6 @@ private struct SetRow: View {
         keyboardType: UIKeyboardType = .decimalPad
     ) -> some View {
         let label = accessibilityLabel(for: field)
-        let nextAction: (() -> Void)? = nextInputField(after: field).map { next in { focus(next) } }
 
         return ZStack {
             if text.wrappedValue.isEmpty {
@@ -2293,17 +2350,6 @@ private struct SetRow: View {
                         completeFromKeyboard()
                     }
                 }
-#if canImport(UIKit)
-                .background {
-                    KeyboardAccessoryInstaller(
-                        isActive: currentField == field,
-                        onNext: nextAction,
-                        onComplete: completeFromKeyboard,
-                        onDismiss: clearFocus
-                    )
-                    .frame(width: 0, height: 0)
-                }
-#endif
         }
         .frame(width: width, height: 44)
         .background(theme.surfaceElevated)
@@ -2359,115 +2405,3 @@ private struct SetRow: View {
 
 }
 
-#if canImport(UIKit)
-private struct KeyboardAccessoryInstaller: UIViewRepresentable {
-    let isActive: Bool
-    let onNext: (() -> Void)?
-    let onComplete: () -> Void
-    let onDismiss: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeUIView(context: Context) -> InstallerView {
-        let view = InstallerView()
-        view.coordinator = context.coordinator
-        return view
-    }
-
-    func updateUIView(_ view: InstallerView, context: Context) {
-        context.coordinator.parent = self
-        view.installAccessoryIfNeeded()
-    }
-
-    final class InstallerView: UIView {
-        weak var coordinator: Coordinator?
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            installAccessoryIfNeeded()
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            installAccessoryIfNeeded()
-        }
-
-        func installAccessoryIfNeeded() {
-            coordinator?.install(from: self)
-        }
-    }
-
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        var parent: KeyboardAccessoryInstaller
-        private weak var attachedField: UITextField?
-
-        init(_ parent: KeyboardAccessoryInstaller) {
-            self.parent = parent
-        }
-
-        func install(from host: UIView) {
-            guard parent.isActive, let textField = host.window?.firstResponderTextField else { return }
-            if attachedField !== textField || textField.inputAccessoryView == nil {
-                textField.inputAccessoryView = makeToolbar()
-                textField.reloadInputViews()
-                attachedField = textField
-            }
-        }
-
-        private func makeToolbar() -> UIToolbar {
-            let toolbar = UIToolbar()
-            toolbar.sizeToFit()
-
-            let dismiss = UIBarButtonItem(
-                image: UIImage(systemName: "keyboard.chevron.compact.down"),
-                style: .plain,
-                target: self,
-                action: #selector(dismissKeyboard)
-            )
-            dismiss.accessibilityLabel = "Dismiss keyboard"
-
-            var items = [dismiss]
-            items.append(UIBarButtonItem(systemItem: .flexibleSpace))
-            let sage = UIColor(red: 85 / 255, green: 179 / 255, blue: 116 / 255, alpha: 1) // 0x55B374 Active Sage
-            if parent.onNext != nil {
-                let next = UIBarButtonItem(title: "Next", style: .prominent, target: self, action: #selector(next))
-                next.tintColor = sage
-                items.append(next)
-            }
-            let complete = UIBarButtonItem(title: "Complete", style: .prominent, target: self, action: #selector(complete))
-            complete.tintColor = sage
-            items.append(complete)
-            toolbar.items = items
-            return toolbar
-        }
-
-        @objc private func dismissKeyboard() {
-            parent.onDismiss()
-        }
-
-        @objc private func next() {
-            parent.onNext?()
-        }
-
-        @objc private func complete() {
-            parent.onComplete()
-        }
-    }
-}
-
-private extension UIView {
-    var firstResponderTextField: UITextField? {
-        if let textField = self as? UITextField, textField.isFirstResponder {
-            return textField
-        }
-        for subview in subviews {
-            if let textField = subview.firstResponderTextField {
-                return textField
-            }
-        }
-        return nil
-    }
-}
-#endif
