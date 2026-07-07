@@ -139,12 +139,15 @@ final class WatchLink: NSObject {
         var snapshot: WatchWorkoutSnapshot?
         if let active {
             let timer = RestTimerController.shared
-            // The zone-lock target of the cardio segment currently recording,
-            // so the watch can run its own low-latency haptic guard.
-            let activeZoneTarget: Int? = active.cardioSessions
-                .first { $0.liveStartedAt != nil && $0.endedAt == nil }
-                .flatMap { session in active.exercises.first { $0.id == session.workoutExerciseID } }
-                .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hrZoneTarget }
+            // The zone target of the cardio segment currently recording, so
+            // the watch can run its own low-latency haptic guard. A live
+            // interval runner takes precedence — its per-step zone (work Z4,
+            // recover Z3) is the target to hold right now.
+            let activeZoneTarget: Int? = IntervalRunnerHub.shared.runner?.currentZoneTarget
+                ?? active.cardioSessions
+                    .first { $0.liveStartedAt != nil && $0.endedAt == nil }
+                    .flatMap { session in active.exercises.first { $0.id == session.workoutExerciseID } }
+                    .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hrZoneTarget }
             snapshot = WatchWorkoutSnapshot(
                 workoutID: active.id,
                 title: active.title,
@@ -167,6 +170,10 @@ final class WatchLink: NSObject {
                 intervalStepName: IntervalRunnerHub.shared.runner?.currentStep?.label,
                 intervalStepEndsAt: IntervalRunnerHub.shared.runner?.currentStep != nil
                     ? IntervalRunnerHub.shared.runner?.stepEndsAt : nil,
+                intervalStepKind: IntervalRunnerHub.shared.runner?.currentStep?.kind.rawValue,
+                intervalNextName: IntervalRunnerHub.shared.runner?.nextStep?.label,
+                intervalRound: IntervalRunnerHub.shared.runner?.roundInfo
+                    .map { "Round \($0.round) of \($0.total)" },
                 hrZoneTarget: activeZoneTarget
             )
         }

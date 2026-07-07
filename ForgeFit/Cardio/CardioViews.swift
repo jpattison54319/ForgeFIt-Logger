@@ -53,6 +53,7 @@ struct CardioExerciseCard: View {
     @State private var session: CardioSessionModel?
     @State private var showManual = false
     @State private var importing = false
+    @State private var showIntervalEditor = false
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
@@ -84,6 +85,101 @@ struct CardioExerciseCard: View {
         var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON) ?? IntervalPlan(steps: [])
         plan.hrZoneTarget = zone
         workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
+        workoutExercise.updatedAt = Date()
+        try? modelContext.save()
+        WatchLink.shared.publishState()
+    }
+
+    /// Pre-start goal selector: open tracking, a heart-rate zone to hold, or
+    /// a structured interval session — one row that makes the session's mode
+    /// obvious before the Start button.
+    private var goalRow: some View {
+        let plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)
+        let hasIntervals = plan?.hasSteps == true
+        let zone = plan?.hrZoneTarget ?? 0
+        return HStack(spacing: 8) {
+            Image(systemName: hasIntervals ? "timer" : "target")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(hasIntervals
+                    ? theme.secondaryAccent
+                    : (zone == 0 ? theme.textTertiary : theme.zoneColor(zone)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Goal").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text(goalSummary(plan))
+                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if hasIntervals {
+                Button("Edit") { showIntervalEditor = true }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryAccent)
+                    .buttonStyle(.plain)
+            }
+            Menu {
+                Button {
+                    setGoalOpen()
+                } label: {
+                    Label("Open tracking", systemImage: "record.circle")
+                }
+                Menu {
+                    ForEach(1...5, id: \.self) { z in
+                        Button(HRZone.label(z)) { setGoalZone(z) }
+                    }
+                } label: {
+                    Label("Heart rate zone", systemImage: "target")
+                }
+                Button {
+                    showIntervalEditor = true
+                } label: {
+                    Label("Intervals…", systemImage: "timer")
+                }
+            } label: {
+                Text(plan?.isMeaningful == true ? "Change" : "Set")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.secondaryAccent)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(theme.secondaryAccent.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+            .accessibilityIdentifier("cardio-goal-menu")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .sheet(isPresented: $showIntervalEditor) {
+            IntervalPlanBuilderView(planJSON: workoutExercise.intervalPlanJSON) { json in
+                workoutExercise.intervalPlanJSON = json
+                workoutExercise.updatedAt = Date()
+                try? modelContext.save()
+                WatchLink.shared.publishState()
+            }
+        }
+    }
+
+    private func goalSummary(_ plan: IntervalPlan?) -> String {
+        guard let plan, plan.isMeaningful else { return "Open tracking" }
+        if plan.hasSteps {
+            var text = intervalPlanSummary(plan)
+            if let zone = plan.hrZoneTarget { text += " · Z\(zone) lock" }
+            return text
+        }
+        if let zone = plan.hrZoneTarget { return HRZone.label(zone) }
+        return "Open tracking"
+    }
+
+    private func setGoalOpen() {
+        workoutExercise.intervalPlanJSON = nil
+        workoutExercise.updatedAt = Date()
+        try? modelContext.save()
+        WatchLink.shared.publishState()
+    }
+
+    private func setGoalZone(_ zone: Int) {
+        // A zone goal replaces intervals — the selector is choosing the
+        // session's mode, and the interval editor can still layer a zone
+        // lock on top of steps.
+        workoutExercise.intervalPlanJSON = IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON()
         workoutExercise.updatedAt = Date()
         try? modelContext.save()
         WatchLink.shared.publishState()
@@ -173,20 +269,7 @@ struct CardioExerciseCard: View {
 
     private func notStarted(_ session: CardioSessionModel) -> some View {
         VStack(spacing: Space.md) {
-            if let plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON), plan.hasSteps {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.doc.horizontal")
-                        .font(.system(size: 12, weight: .bold))
-                    Text(intervalPlanSummary(plan))
-                        .font(.tag)
-                    Spacer()
-                }
-                .foregroundStyle(theme.secondaryAccent)
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(theme.secondaryAccent.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-            }
-            zoneLockRow
+            goalRow
             Button { start(session) } label: {
                 HStack(spacing: Space.sm) {
                     Image(systemName: "play.fill")
@@ -221,7 +304,7 @@ struct CardioExerciseCard: View {
             if let runner = IntervalRunnerHub.shared.runner(for: session.id) {
                 IntervalRunnerStrip(runner: runner)
             } else if let planJSON = workoutExercise.intervalPlanJSON,
-                      IntervalPlan.decode(from: planJSON) != nil {
+                      IntervalPlan.decode(from: planJSON)?.hasSteps == true {
                 // Plan exists but no live runner (e.g. app relaunched
                 // mid-session) — offer to pick the guidance back up.
                 Button {
@@ -231,6 +314,10 @@ struct CardioExerciseCard: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(theme.secondaryAccent)
                 }
+            } else {
+                // Zone-only or open sessions can still set/adjust a zone
+                // lock mid-run.
+                zoneLockRow
             }
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let elapsed = max(0, Int(ctx.date.timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
@@ -363,12 +450,14 @@ struct CardioExerciseCard: View {
         session.liveStartedAt = now
         session.startedAt = now
         try? modelContext.save()
-        // Structured session: begin the step engine with the segment.
+        // Structured session: begin the step engine with the segment. The
+        // runner drives the zone guard per step (work Z4, recover Z3...).
         if let planJSON = workoutExercise.intervalPlanJSON {
             IntervalRunnerHub.shared.start(planJSON: planJSON, session: session, context: modelContext)
         }
-        // Zone lock: begin audible/haptic zone-adherence cues.
-        if let target = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hrZoneTarget {
+        // Zone-only lock (no steps): begin audible/haptic adherence cues.
+        if IntervalRunnerHub.shared.runner(for: session.id) == nil,
+           let target = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hrZoneTarget {
             HRZoneGuard.shared.activate(targetZone: target, speak: zoneVoiceCues)
         }
         WatchLink.shared.publishState()

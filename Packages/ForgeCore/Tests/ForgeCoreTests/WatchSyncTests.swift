@@ -42,7 +42,11 @@ struct WatchSyncTests {
                 restEndsAt: restEndsAt,
                 restTotalSeconds: 120,
                 intervalStepName: "Work 1/6",
-                intervalStepEndsAt: intervalEndsAt
+                intervalStepEndsAt: intervalEndsAt,
+                intervalStepKind: "work",
+                intervalNextName: "Recover 1/5",
+                intervalRound: "Round 1 of 6",
+                hrZoneTarget: 4
             ),
             routines: [WatchRoutineSummary(id: routineID, name: "Push", exerciseCount: 4)],
             readiness: 82,

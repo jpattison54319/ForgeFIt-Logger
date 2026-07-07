@@ -25,6 +25,8 @@ final class WatchStore: NSObject {
 
     private let engine = WatchWorkoutEngine.shared
     @ObservationIgnored private var restHapticTask: Task<Void, Never>?
+    @ObservationIgnored private var intervalHapticTask: Task<Void, Never>?
+    @ObservationIgnored private var lastIntervalStepEndsAt: Date?
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -224,6 +226,7 @@ final class WatchStore: NSObject {
         }
 
         scheduleRestHaptic(endsAt: newContext.workout?.restEndsAt)
+        scheduleIntervalHaptic(endsAt: newContext.workout?.intervalStepEndsAt)
     }
 
     /// Buzz the wrist when the phone's rest timer hits zero.
@@ -234,6 +237,22 @@ final class WatchStore: NSObject {
             try? await Task.sleep(for: .seconds(endsAt.timeIntervalSinceNow))
             guard !Task.isCancelled else { return }
             WKInterfaceDevice.current().play(.notification)
+        }
+    }
+
+    /// Buzz the wrist at each interval-step transition. The phone drives the
+    /// steps and pushes a fresh snapshot per transition; scheduling against
+    /// the step's own end time means the haptic still lands on time even if
+    /// that push lags a pocketed phone.
+    private func scheduleIntervalHaptic(endsAt: Date?) {
+        guard endsAt != lastIntervalStepEndsAt else { return }
+        lastIntervalStepEndsAt = endsAt
+        intervalHapticTask?.cancel()
+        guard let endsAt, endsAt > Date() else { return }
+        intervalHapticTask = Task {
+            try? await Task.sleep(for: .seconds(endsAt.timeIntervalSinceNow))
+            guard !Task.isCancelled else { return }
+            WKInterfaceDevice.current().play(.retry)
         }
     }
 

@@ -2,13 +2,16 @@ import ForgeCore
 import ForgeData
 import SwiftUI
 
-/// Builds a time-based interval template for a routine's cardio exercise:
-/// warmup → N × (work / recover) → cooldown, with a live total-duration
-/// readout. Persists to `RoutineExerciseModel.intervalPlanJSON`.
+/// Builds a time-based interval template for a cardio exercise: warmup →
+/// N × (work / recover) → cooldown, optional per-step HR zone targets, and a
+/// plan-wide zone lock — with a live total-duration readout. Closure-based so
+/// the routine editor (template) and the live cardio card (this session) can
+/// both present it.
 struct IntervalPlanBuilderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
-    @Bindable var routineExercise: RoutineExerciseModel
+
+    private let onSave: (String?) -> Void
 
     @State private var warmup: Int
     @State private var repeats: Int
@@ -18,10 +21,13 @@ struct IntervalPlanBuilderView: View {
     @State private var enabled: Bool
     /// 0 = no zone lock; 1...5 = target zone.
     @State private var zoneTarget: Int
+    /// Per-step zone targets for work/recover blocks (0 = none).
+    @State private var workZone: Int
+    @State private var recoverZone: Int
 
-    init(routineExercise: RoutineExerciseModel) {
-        self.routineExercise = routineExercise
-        let existing = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
+    init(planJSON: String?, onSave: @escaping (String?) -> Void) {
+        self.onSave = onSave
+        let existing = IntervalPlan.decode(from: planJSON)
         _enabled = State(initialValue: existing?.hasSteps ?? false)
         // Seed from the existing plan's shape, or sensible defaults.
         let work = existing?.steps.first { $0.kind == .work }
@@ -32,12 +38,25 @@ struct IntervalPlanBuilderView: View {
         _recover = State(initialValue: recover?.seconds ?? 90)
         _cooldown = State(initialValue: existing?.steps.first { $0.kind == .cooldown }?.seconds ?? 300)
         _zoneTarget = State(initialValue: existing?.hrZoneTarget ?? 0)
+        _workZone = State(initialValue: work?.hrZone ?? 0)
+        _recoverZone = State(initialValue: recover?.hrZone ?? 0)
+    }
+
+    /// Edit a routine exercise's stored template in place.
+    init(routineExercise: RoutineExerciseModel) {
+        self.init(planJSON: routineExercise.intervalPlanJSON) { json in
+            routineExercise.intervalPlanJSON = json
+            routineExercise.updatedAt = Date()
+        }
     }
 
     private var plan: IntervalPlan {
         let steps = enabled
-            ? IntervalPlan.build(warmupSeconds: warmup, repeats: repeats,
-                                 workSeconds: work, recoverSeconds: recover, cooldownSeconds: cooldown).steps
+            ? IntervalPlan.build(
+                warmupSeconds: warmup, repeats: repeats,
+                workSeconds: work, recoverSeconds: recover, cooldownSeconds: cooldown,
+                workZone: workZone == 0 ? nil : workZone,
+                recoverZone: recoverZone == 0 ? nil : recoverZone).steps
             : []
         return IntervalPlan(steps: steps, hrZoneTarget: zoneTarget == 0 ? nil : zoneTarget)
     }
@@ -58,6 +77,8 @@ struct IntervalPlanBuilderView: View {
                     }
 
                     if enabled {
+                        presetsCard
+
                         Card {
                             VStack(alignment: .leading, spacing: Space.md) {
                                 durationRow("Warm-up", seconds: $warmup, step: 30)
@@ -71,7 +92,9 @@ struct IntervalPlanBuilderView: View {
                                 }
                                 Divider().overlay(theme.separator)
                                 durationRow("Work", seconds: $work, step: 15, tint: theme.secondaryAccent)
+                                stepZoneRow("Work target zone", selection: $workZone)
                                 durationRow("Recover", seconds: $recover, step: 15)
+                                stepZoneRow("Recover target zone", selection: $recoverZone)
                                 Divider().overlay(theme.separator)
                                 durationRow("Cool-down", seconds: $cooldown, step: 30)
                             }
@@ -127,6 +150,65 @@ struct IntervalPlanBuilderView: View {
         }
     }
 
+    /// Quick-start templates: one tap fills the whole structure; the steppers
+    /// stay editable after.
+    private var presetsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text("Presets").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Space.sm) {
+                        ForEach(IntervalPresets.builtIn, id: \.name) { preset in
+                            Button {
+                                load(preset)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(preset.name)
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(theme.textPrimary)
+                                    Text(preset.plan.structureSummary)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(theme.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func load(_ preset: IntervalPresets.Preset) {
+        let steps = preset.plan.steps
+        let workStep = steps.first { $0.kind == .work }
+        let recoverStep = steps.first { $0.kind == .recover }
+        warmup = steps.first { $0.kind == .warmup }?.seconds ?? 0
+        repeats = max(1, steps.filter { $0.kind == .work }.count)
+        work = workStep?.seconds ?? 60
+        recover = recoverStep?.seconds ?? 60
+        cooldown = steps.first { $0.kind == .cooldown }?.seconds ?? 0
+        workZone = workStep?.hrZone ?? 0
+        recoverZone = recoverStep?.hrZone ?? 0
+        if let zone = preset.plan.hrZoneTarget { zoneTarget = zone }
+    }
+
+    private func stepZoneRow(_ label: String, selection: Binding<Int>) -> some View {
+        HStack {
+            Text(label).font(.system(size: 13)).foregroundStyle(theme.textSecondary)
+            Spacer()
+            Picker(label, selection: selection) {
+                Text("None").tag(0)
+                ForEach(1...5, id: \.self) { z in Text("Z\(z)").tag(z) }
+            }
+            .pickerStyle(.menu)
+            .tint(selection.wrappedValue == 0 ? theme.textTertiary : theme.zoneColor(selection.wrappedValue))
+        }
+    }
+
     private func durationRow(_ label: String, seconds: Binding<Int>, step: Int, tint: Color? = nil) -> some View {
         Stepper(value: seconds, in: 0...3600, step: step) {
             HStack {
@@ -139,8 +221,28 @@ struct IntervalPlanBuilderView: View {
     }
 
     private func save() {
-        routineExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
-        routineExercise.updatedAt = Date()
+        onSave(plan.isMeaningful ? plan.encodedJSON() : nil)
         dismiss()
     }
+}
+
+/// Built-in interval templates — the classics, ready in one tap.
+enum IntervalPresets {
+    struct Preset {
+        let name: String
+        let plan: IntervalPlan
+    }
+
+    static let builtIn: [Preset] = [
+        Preset(name: "Run / Walk 10×1:00", plan: .build(
+            warmupSeconds: 300, repeats: 10, workSeconds: 60, recoverSeconds: 60, cooldownSeconds: 300)),
+        Preset(name: "Norwegian 4×4", plan: .build(
+            warmupSeconds: 600, repeats: 4, workSeconds: 240, recoverSeconds: 180, cooldownSeconds: 300,
+            workZone: 4, recoverZone: 3)),
+        Preset(name: "30/30 HIIT", plan: .build(
+            warmupSeconds: 300, repeats: 10, workSeconds: 30, recoverSeconds: 30, cooldownSeconds: 180)),
+        Preset(name: "Sprint 8×0:20", plan: .build(
+            warmupSeconds: 300, repeats: 8, workSeconds: 20, recoverSeconds: 100, cooldownSeconds: 300,
+            workZone: 5)),
+    ]
 }

@@ -88,6 +88,12 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
     /// step name + when it ends. Display only — the phone drives execution.
     public var intervalStepName: String?
     public var intervalStepEndsAt: Date?
+    /// Step kind raw value ("warmup"/"work"/"recover"/"cooldown") for
+    /// work/rest coloring, the upcoming step's label, and a "Round 3 of 10"
+    /// readout. All additive-optional so older snapshots still decode.
+    public var intervalStepKind: String?
+    public var intervalNextName: String?
+    public var intervalRound: String?
     /// The active HR "zone lock" target (1...5), if a zone-locked cardio session
     /// is running — the watch fires its own haptic cues on leaving/re-entering.
     public var hrZoneTarget: Int?
@@ -101,6 +107,9 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         restTotalSeconds: Int? = nil,
         intervalStepName: String? = nil,
         intervalStepEndsAt: Date? = nil,
+        intervalStepKind: String? = nil,
+        intervalNextName: String? = nil,
+        intervalRound: String? = nil,
         hrZoneTarget: Int? = nil
     ) {
         self.workoutID = workoutID
@@ -111,6 +120,9 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         self.restTotalSeconds = restTotalSeconds
         self.intervalStepName = intervalStepName
         self.intervalStepEndsAt = intervalStepEndsAt
+        self.intervalStepKind = intervalStepKind
+        self.intervalNextName = intervalNextName
+        self.intervalRound = intervalRound
         self.hrZoneTarget = hrZoneTarget
     }
 
