@@ -113,6 +113,82 @@ struct SetModelDerivedMetricTests {
         #expect(set.miniReps.isEmpty)
     }
 
+    @Test func side2DataAddsPerSideVolumeForMyoReps() {
+        // Unilateral myo-reps logged per side: side 1 = 12 + [4,4,3],
+        // side 2 = 11 + [4,3,3], both at 20kg. Each side counts once.
+        let set = SetModel(
+            userID: UUID(),
+            setType: .myoRep,
+            reps: 12,
+            weight: 20,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        set.miniReps = [4, 4, 3]
+        set.side2Reps = 11
+        set.side2MiniReps = [4, 3, 3]
+
+        // (12 + 4+4+3) + (11 + 4+3+3) = 23 + 21 = 44 reps × 20kg
+        #expect(set.hasSide2Data)
+        #expect(set.totalVolume == 880)
+    }
+
+    @Test func side2ClusterSegmentsCountOnceWithoutDoubling() {
+        // Per-side cluster: `reps` mirrors SIDE 1's segments only; side 2's
+        // live in side2MiniReps — folding them into `reps` too would double.
+        let set = SetModel(
+            userID: UUID(),
+            setType: .cluster,
+            reps: 10,   // side 1: 2×5 segments
+            weight: 40,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        set.miniReps = [5, 5]
+        set.side2MiniReps = [5, 4]
+
+        // side 1: 10 reps + side 2: 9 reps, all × 40kg
+        #expect(set.totalVolume == 760)
+    }
+
+    @Test func setsWithoutSide2DataKeepExactPreExistingVolume() {
+        // The per-side path must be invisible to bilateral / single-entry
+        // work: nil side-2 fields → byte-identical math to before.
+        let set = SetModel(
+            userID: UUID(),
+            setType: .myoRep,
+            reps: 12,
+            weight: 50,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        set.miniReps = [4, 4, 3]
+
+        #expect(!set.hasSide2Data)
+        #expect(set.totalVolume == 1_150)
+
+        set.side2MiniReps = []
+        #expect(set.side2MiniRepsJSON == nil)
+        #expect(!set.hasSide2Data)
+    }
+
+    @Test func side2WithSingleEntryUnilateralConventionDoesNotDoubleCount() {
+        // A set flagged with the older single-entry unilateral convention
+        // (limbCount doubles the one logged value) that ALSO gets explicit
+        // side-2 data must not count side 1 twice: per-side logging wins.
+        let set = SetModel(
+            userID: UUID(),
+            setType: .myoRep,
+            reps: 10,
+            isUnilateral: true,
+            implementWeight: 20,
+            limbCount: 2,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        set.side2Reps = 9
+        set.recomputeDerivedMetrics()
+
+        // 10 reps + 9 reps at 20kg — NOT (10×2) + 9.
+        #expect(set.totalVolume == 380)
+    }
+
     @Test func domainEntryReflectsLatestSetFieldsAfterMutation() {
         let set = SetModel(
             userID: UUID(),

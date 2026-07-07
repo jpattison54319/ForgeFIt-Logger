@@ -715,6 +715,14 @@ public final class SetModel {
     /// Myo-reps / rest-pause: the mini-sets after the activation set (`reps` =
     /// activation reps). Cluster: every segment (`reps` mirrors the sum).
     public var miniRepsJSON: String?
+    /// Second-side data for structured sets on unilateral exercises: the
+    /// lifter runs the whole block (activation + minis) on one limb, then
+    /// repeats it on the other. Side 1 lives in the existing `reps` /
+    /// `miniRepsJSON`; these hold side 2. Both nil on bilateral work — and
+    /// when they're nil, volume math is exactly the pre-existing single-entry
+    /// behavior (nothing changes for old data).
+    public var side2Reps: Int?
+    public var side2MiniRepsJSON: String?
     public var effectiveLoad: Double?
     public var totalVolume: Double?
     public var estimated1RM: Double?
@@ -864,11 +872,50 @@ public final class SetModel {
         }
     }
 
+    /// Decoded view of `side2MiniRepsJSON`. Setting recomputes derived metrics.
+    public var side2MiniReps: [Int] {
+        get {
+            guard let side2MiniRepsJSON, let data = side2MiniRepsJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([Int].self, from: data)) ?? []
+        }
+        set {
+            if newValue.isEmpty {
+                side2MiniRepsJSON = nil
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                side2MiniRepsJSON = String(data: data, encoding: .utf8)
+            }
+            recomputeDerivedMetrics()
+        }
+    }
+
+    /// True when this set carries explicit per-side data (unilateral block
+    /// flow) — side 2's reps and minis are logged separately instead of being
+    /// inferred by doubling side 1.
+    public var hasSide2Data: Bool {
+        side2Reps != nil || side2MiniRepsJSON != nil
+    }
+
     public func recomputeDerivedMetrics() {
         let entry = domainEntry
         effectiveLoad = VolumeMath.effectiveLoad(entry)
         totalVolume = VolumeMath.tonnage(entry)
         estimated1RM = VolumeMath.estimated1RM(entry)
+        if hasSide2Data {
+            // Per-side logging: each side's reps are real, counted once. The
+            // single-entry unilateral convention (`tonnage` multiplying one
+            // entered value by limbCount because the user only logs one limb)
+            // would double-count side 1, so back that multiplier out and add
+            // side 2 explicitly at the same load.
+            if isUnilateral, limbCount > 1, let volume = totalVolume {
+                totalVolume = volume / Double(limbCount)
+            }
+            if let load = effectiveLoad {
+                let side2Total = (side2Reps ?? 0) + side2MiniReps.reduce(0, +)
+                if side2Total > 0 {
+                    totalVolume = (totalVolume ?? 0) + load * Double(side2Total)
+                }
+            }
+        }
         // Myo-rep / rest-pause mini-sets are extra reps at the same load on top
         // of the activation set. (Cluster segments already sum into `reps`.)
         if setType == .myoRep || setType == .restPause {

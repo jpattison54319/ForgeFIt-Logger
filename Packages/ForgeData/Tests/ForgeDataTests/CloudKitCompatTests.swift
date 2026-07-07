@@ -30,4 +30,13 @@ import Testing
         #expect(exercise.importBatchID == nil)
         #expect(exercise.importedRawName == nil)
     }
+
+    @Test func perSideSetFieldsHaveCloudKitSafeDefaults() {
+        let set = SetModel(userID: UUID())
+
+        #expect(set.side2Reps == nil)
+        #expect(set.side2MiniRepsJSON == nil)
+        #expect(set.side2MiniReps.isEmpty)
+        #expect(!set.hasSide2Data)
+    }
 }

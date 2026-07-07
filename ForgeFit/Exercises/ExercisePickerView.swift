@@ -405,6 +405,7 @@ struct CreateExerciseView: View {
     @State private var weightMode: WeightMode = .external
     @State private var preferredUnit: WeightUnit = Fmt.unit
     @State private var isCardio = false
+    @State private var isUnilateral = false
     @State private var secondaryMusclesExpanded = false
 
     private var isEditing: Bool { editing != nil }
@@ -451,6 +452,7 @@ struct CreateExerciseView: View {
             _weightMode = State(initialValue: editing.defaultWeightMode)
             _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? "") ?? Fmt.unit)
             _isCardio = State(initialValue: editing.isCardio)
+            _isUnilateral = State(initialValue: editing.isUnilateral)
         }
     }
 
@@ -531,6 +533,25 @@ struct CreateExerciseView: View {
                                         .font(.bodyStrong).foregroundStyle(theme.accent)
                                 }
                             }
+                            Divider().overlay(theme.separator)
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Movement").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                    Text("Unilateral = one arm/leg at a time; structured sets repeat per side.")
+                                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Menu {
+                                    Button("Bilateral") { isUnilateral = false }
+                                    Button("Unilateral") { isUnilateral = true }
+                                } label: {
+                                    Text(isUnilateral ? "Unilateral" : "Bilateral")
+                                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                                }
+                            }
+                            .opacity(isCardio ? 0.45 : 1)
+                            .disabled(isCardio)
                             Divider().overlay(theme.separator)
                             HStack {
                                 Text("Weight unit").font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -709,6 +730,7 @@ struct CreateExerciseView: View {
         exercise.defaultWeightMode = isCardio ? .bodyweight : weightMode
         exercise.preferredWeightUnitRaw = isCardio ? nil : preferredUnit.rawValue
         exercise.isCardio = isCardio
+        exercise.isUnilateral = isCardio ? false : isUnilateral
         exercise.category = isCardio ? "cardio" : "strength"
     }
 }

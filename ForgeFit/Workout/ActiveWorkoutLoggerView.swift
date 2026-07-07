@@ -1244,6 +1244,7 @@ private struct ExerciseLogCard: View {
                             previous: blockTemplate(for: set, index: index, in: sets),
                             showWeight: weightHeader != nil,
                             displayUnit: displayUnit,
+                            isUnilateral: exercise?.isUnilateral == true,
                             onChange: recompute,
                             onSetType: { set.setType = $0; recompute() },
                             onDelete: { deleteSet(set) }
