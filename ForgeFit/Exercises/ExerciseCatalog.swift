@@ -169,10 +169,24 @@ enum ExerciseCatalog {
     // MARK: - Filter taxonomy for the picker
 
     static let muscleGroups = [
-        "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "lats",
+        "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "back", "lats",
         "middle back", "upper back", "lower back", "traps", "quadriceps", "hamstrings",
         "glutes", "calves", "forearms", "abductors", "adductors", "neck"
     ]
+
+    /// The picker's grouped view of `muscleGroups`: parents that drill down
+    /// into sub-muscles (via `MuscleTaxonomy`), everything else standalone.
+    /// A parent is selectable on its own — broad tagging stays valid.
+    static let muscleHierarchy: [(group: String, children: [String])] = {
+        var seen = Set<String>()
+        var result: [(group: String, children: [String])] = []
+        for muscle in muscleGroups {
+            let parent = MuscleTaxonomy.parent(of: muscle)
+            guard seen.insert(parent).inserted else { continue }
+            result.append((group: parent, children: MuscleTaxonomy.children[parent] ?? []))
+        }
+        return result
+    }()
 
     static let equipmentTypes = [
         "treadmill", "bike", "rower", "elliptical", "stair", "barbell", "dumbbell",

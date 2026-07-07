@@ -1,0 +1,4 @@
+module ForgeCore {
+header "ForgeCore-Swift.h"
+export *
+}

@@ -20,7 +20,7 @@ final class MuscleVolumeTests: XCTestCase {
         let v = MuscleVolume.fractionalSets(for: set, exercise: benchPress)
         XCTAssertEqual(v["chest"] ?? 0, 1.0, accuracy: tol)
         XCTAssertEqual(v["triceps"] ?? 0, 0.5, accuracy: tol)
-        XCTAssertEqual(v["front_delts"] ?? 0, 0.5, accuracy: tol)
+        XCTAssertEqual(v["front delts"] ?? 0, 0.5, accuracy: tol)
     }
 
     // Warm-up sets contribute no muscle volume.
@@ -77,6 +77,6 @@ final class MuscleVolumeTests: XCTestCase {
         let totals = MuscleVolume.weeklyVolume(entries)
         XCTAssertEqual(totals["chest"] ?? 0, 3.0, accuracy: tol)
         XCTAssertEqual(totals["triceps"] ?? 0, 1.5, accuracy: tol)
-        XCTAssertEqual(totals["front_delts"] ?? 0, 1.5, accuracy: tol)
+        XCTAssertEqual(totals["front delts"] ?? 0, 1.5, accuracy: tol)
     }
 }

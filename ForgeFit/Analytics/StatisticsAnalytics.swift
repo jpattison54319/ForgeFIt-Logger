@@ -68,7 +68,7 @@ extension TrainingAnalytics {
 
     private static let splitCategories: [(name: String, muscles: Set<String>)] = [
         ("Push", ["chest", "shoulders", "triceps"]),
-        ("Pull", ["lats", "middle back", "traps", "biceps", "forearms", "neck"]),
+        ("Pull", ["back", "lats", "middle back", "upper back", "traps", "biceps", "forearms", "neck"]),
         ("Legs", ["quadriceps", "hamstrings", "glutes", "calves", "abductors", "adductors"]),
         ("Core", ["abdominals", "lower back"]),
     ]
@@ -78,7 +78,13 @@ extension TrainingAnalytics {
         guard !distribution.isEmpty else { return [] }
         var totals: [String: Double] = [:]
         for share in distribution {
-            let category = Self.splitCategories.first { $0.muscles.contains(share.muscle.lowercased()) }?.name ?? "Other"
+            // Exact match first (keeps "lower back" in Core), then the
+            // taxonomy parent so sub-muscles route with their group
+            // ("upper chest" → chest → Push, "rear delts" → shoulders → Push).
+            let muscle = MuscleTaxonomy.canonical(share.muscle)
+            let category = Self.splitCategories.first { $0.muscles.contains(muscle) }?.name
+                ?? Self.splitCategories.first { $0.muscles.contains(MuscleTaxonomy.parent(of: muscle)) }?.name
+                ?? "Other"
             totals[category, default: 0] += share.sets
         }
         let grand = totals.values.reduce(0, +)

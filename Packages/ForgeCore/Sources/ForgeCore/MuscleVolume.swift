@@ -30,13 +30,15 @@ public enum MuscleVolume {
         let setCount = VolumeMath.effectiveSetCount(set)
         guard setCount > 0 else { return [:] }
 
+        // Keys are canonicalized so legacy variants ("front_delts") and
+        // taxonomy names ("front delts") land in one bucket.
         var result: [String: Double] = [:]
         for muscle in exercise.secondaryMuscles {
-            result[muscle] = secondaryWeight * setCount
+            result[MuscleTaxonomy.canonical(muscle)] = secondaryWeight * setCount
         }
         // Primary applied second so it overrides any secondary listing.
         for muscle in exercise.primaryMuscles {
-            result[muscle] = primaryWeight * setCount
+            result[MuscleTaxonomy.canonical(muscle)] = primaryWeight * setCount
         }
         return result
     }

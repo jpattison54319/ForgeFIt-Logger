@@ -1,0 +1,12 @@
+{
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/CardioSampleSeries.swift" : {
+    "abi-baseline-json" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore.abi.json",
+    "const-values" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.swiftconstvalues",
+    "dependencies" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.d",
+    "diagnostics" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.dia",
+    "objc-header" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-Swift.h",
+    "swiftdoc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore.swiftdoc",
+    "swiftmodule" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore.swiftmodule",
+    "swiftsourceinfo" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore.swiftsourceinfo"
+  }
+}

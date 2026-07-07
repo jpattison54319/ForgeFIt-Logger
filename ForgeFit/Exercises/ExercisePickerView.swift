@@ -64,7 +64,12 @@ struct ExercisePickerView: View {
             var seen = Set<UUID>()
             let base = exercises.filter { ex in
                 guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
-                if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
+                // Parent-aware: a "Shoulders" filter also finds exercises
+                // tagged with a sub-muscle like "rear delts" (and legacy
+                // variants like "rear_delts").
+                if let muscle,
+                   !ex.primaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }),
+                   !ex.secondaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }) { return false }
                 if let equipment, ex.equipment != equipment { return false }
                 return true
             }
@@ -166,11 +171,21 @@ struct ExercisePickerView: View {
                 HStack(spacing: Space.sm) {
                     Menu {
                         Button("All muscles") { muscle = nil }
-                        ForEach(ExerciseCatalog.muscleGroups, id: \.self) { m in
-                            Button(m.capitalized) { muscle = m }
+                        ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
+                            if entry.children.isEmpty {
+                                Button(MuscleTaxonomy.displayName(entry.group)) { muscle = entry.group }
+                            } else {
+                                Menu(MuscleTaxonomy.displayName(entry.group)) {
+                                    Button("All \(MuscleTaxonomy.displayName(entry.group))") { muscle = entry.group }
+                                    Divider()
+                                    ForEach(entry.children, id: \.self) { child in
+                                        Button(MuscleTaxonomy.displayName(child)) { muscle = child }
+                                    }
+                                }
+                            }
                         }
                     } label: {
-                        FilterChip(title: muscle?.capitalized ?? "Muscle", active: muscle != nil, systemImage: "figure.arms.open")
+                        FilterChip(title: muscle.map(MuscleTaxonomy.displayName) ?? "Muscle", active: muscle != nil, systemImage: "figure.arms.open")
                     }
                     Menu {
                         Button("All equipment") { equipment = nil }
@@ -574,7 +589,7 @@ struct CreateExerciseView: View {
     private var liftFieldsCard: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.lg) {
-                pickerRow("Primary muscle", selection: $primaryMuscle, options: ExerciseCatalog.muscleGroups)
+                musclePickerRow("Primary muscle", selection: $primaryMuscle)
                 Divider().overlay(theme.separator)
                 secondaryMuscleRow
                 Divider().overlay(theme.separator)
@@ -700,15 +715,20 @@ struct CreateExerciseView: View {
                 .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
 
             if secondaryMusclesExpanded {
+                // Hierarchy order: each parent group followed by its
+                // sub-muscles, so Shoulders reads next to its delt heads.
+                let options = ExerciseCatalog.muscleHierarchy
+                    .flatMap { [$0.group] + $0.children }
+                    .filter { MuscleTaxonomy.canonical($0) != MuscleTaxonomy.canonical(primaryMuscle) }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: 8)], alignment: .leading, spacing: 8) {
-                    ForEach(ExerciseCatalog.muscleGroups.filter { $0 != primaryMuscle }, id: \.self) { muscle in
+                    ForEach(options, id: \.self) { muscle in
                         Button {
                             toggleSecondaryMuscle(muscle)
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: secondaryMuscles.contains(muscle) ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 15, weight: .semibold))
-                                Text(muscle.capitalized)
+                                Text(MuscleTaxonomy.displayName(muscle))
                                     .font(.system(size: 13, weight: .semibold))
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.85)
@@ -744,6 +764,34 @@ struct CreateExerciseView: View {
             secondaryMuscles.remove(muscle)
         } else {
             secondaryMuscles.insert(muscle)
+        }
+    }
+
+    /// Primary-muscle picker with drill-down: parent groups open a submenu of
+    /// "All <Group>" plus their sub-muscles; standalone groups pick directly.
+    private func musclePickerRow(_ title: String, selection: Binding<String>) -> some View {
+        HStack {
+            Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+            Spacer()
+            Menu {
+                ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
+                    if entry.children.isEmpty {
+                        Button(MuscleTaxonomy.displayName(entry.group)) { selection.wrappedValue = entry.group }
+                    } else {
+                        Menu(MuscleTaxonomy.displayName(entry.group)) {
+                            Button("All \(MuscleTaxonomy.displayName(entry.group))") { selection.wrappedValue = entry.group }
+                            Divider()
+                            ForEach(entry.children, id: \.self) { child in
+                                Button(MuscleTaxonomy.displayName(child)) { selection.wrappedValue = child }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(MuscleTaxonomy.displayName(selection.wrappedValue))
+                    .font(.bodyStrong).foregroundStyle(theme.accent)
+            }
+            .accessibilityIdentifier("primary-muscle-picker")
         }
     }
 

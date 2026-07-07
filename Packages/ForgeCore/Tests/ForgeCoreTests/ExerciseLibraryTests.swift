@@ -31,7 +31,7 @@ final class ExerciseLibraryTests: XCTestCase {
 
         XCTAssertEqual(resolved.movementPattern, "horizontal_pull")
         XCTAssertEqual(volume["lats"] ?? 0, 1.0, accuracy: 0.0001)
-        XCTAssertEqual(volume["mid_back"] ?? 0, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(volume["middle back"] ?? 0, 1.0, accuracy: 0.0001)
         XCTAssertEqual(volume["biceps"] ?? 0, 0.5, accuracy: 0.0001)
     }
 

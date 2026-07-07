@@ -1,0 +1,66 @@
+{
+  "" : {
+    "const-values" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.swiftconstvalues",
+    "dependencies" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.d",
+    "diagnostics" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.dia",
+    "emit-module-dependencies" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary-emit-module.dia",
+    "pch" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ForgeCore-primary.swiftdeps"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/CardioSampleSeries.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/CardioSampleSeries.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/CardioSampleSeries.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/CardioSampleSeries.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/DistanceUnit.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/DistanceUnit.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/DistanceUnit.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/DistanceUnit.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/ExerciseClassifier.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseClassifier.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseClassifier.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseClassifier.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/ExerciseLibrary.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseLibrary.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseLibrary.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/ExerciseLibrary.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/HRZoneConfig.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/HRZoneConfig.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/HRZoneConfig.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/HRZoneConfig.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/IntervalPlan.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/IntervalPlan.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/IntervalPlan.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/IntervalPlan.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/Models.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/Models.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/Models.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/Models.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/MuscleVolume.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/MuscleVolume.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/MuscleVolume.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/MuscleVolume.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/VolumeMath.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/VolumeMath.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/VolumeMath.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/VolumeMath.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/WatchSync.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WatchSync.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WatchSync.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WatchSync.o"
+  },
+  "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/Sources/ForgeCore/WorkoutActivity.swift" : {
+    "index-unit-output-path" : "/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WorkoutActivity.o",
+    "llvm-bc" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WorkoutActivity.bc",
+    "object" : "/Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore/build/ForgeCore.build/Release-iphonesimulator/ForgeCore.build/Objects-normal/arm64/WorkoutActivity.o"
+  }
+}
