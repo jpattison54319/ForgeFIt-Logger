@@ -53,6 +53,13 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
     public var isEccentric: Bool
     public var isPaused: Bool
 
+    // Structured-set shape (myo-reps / rest-pause / cluster), for effective
+    // set counting: how many mini-sets followed the activation, and whether a
+    // second side was logged explicitly (unilateral per-side flow).
+    public var miniSetCount: Int
+    public var side2Logged: Bool
+    public var side2MiniSetCount: Int
+
     public init(
         id: UUID = UUID(),
         setType: SetType = .working,
@@ -71,7 +78,10 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
         implementWeight: Double? = nil,
         limbCount: Int = 2,
         isEccentric: Bool = false,
-        isPaused: Bool = false
+        isPaused: Bool = false,
+        miniSetCount: Int = 0,
+        side2Logged: Bool = false,
+        side2MiniSetCount: Int = 0
     ) {
         self.id = id
         self.setType = setType
@@ -91,6 +101,9 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
         self.limbCount = limbCount
         self.isEccentric = isEccentric
         self.isPaused = isPaused
+        self.miniSetCount = miniSetCount
+        self.side2Logged = side2Logged
+        self.side2MiniSetCount = side2MiniSetCount
     }
 }
 

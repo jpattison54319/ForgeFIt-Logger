@@ -94,14 +94,14 @@ extension TrainingAnalytics {
     struct ExerciseUsage: Identifiable {
         let id: UUID              // exercise id — navigable
         let name: String
-        let workingSets: Int
+        let workingSets: Double
         let volume: Double        // kg tonnage
         let sessions: Int
     }
 
     func topExercises(in range: TimeChartRange, limit: Int = 5) -> [ExerciseUsage] {
         let byID = exerciseByIDPublic
-        var sets: [UUID: Int] = [:]
+        var sets: [UUID: Double] = [:]
         var volume: [UUID: Double] = [:]
         var sessions: [UUID: Set<UUID>] = [:]
         for workout in completed(in: range) {
@@ -109,7 +109,7 @@ extension TrainingAnalytics {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
-                sets[we.exerciseID, default: 0] += done.count
+                sets[we.exerciseID, default: 0] += done.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
                 volume[we.exerciseID, default: 0] += done.reduce(0) { $0 + ($1.totalVolume ?? 0) }
                 sessions[we.exerciseID, default: []].insert(workout.id)
             }
@@ -452,7 +452,7 @@ extension TrainingAnalytics {
         var workouts: Int
         var durationSeconds: Int
         var volume: Double            // kg
-        var workingSets: Int
+        var workingSets: Double
         var reps: Int
         var cardioMinutes: Double
         var distanceMeters: Double
@@ -505,7 +505,7 @@ extension TrainingAnalytics {
         return completed.filter { interval.contains($0.startedAt) }
     }
 
-    private func monthTotals(for monthStart: Date) -> (workouts: Int, durationSeconds: Int, volume: Double, sets: Int, reps: Int, cardioMinutes: Double, distanceMeters: Double) {
+    private func monthTotals(for monthStart: Date) -> (workouts: Int, durationSeconds: Int, volume: Double, sets: Double, reps: Int, cardioMinutes: Double, distanceMeters: Double) {
         let month = workouts(inMonth: monthStart)
         let summaries = month.map(summary(for:))
         let cardioMinutes = month.flatMap(\.cardioSessions).reduce(0.0) { $0 + Double($1.durationSeconds ?? 0) / 60 }
@@ -542,7 +542,7 @@ extension TrainingAnalytics {
 
     private func topExercises(inMonth monthStart: Date, limit: Int) -> [ExerciseUsage] {
         let byID = exerciseByIDPublic
-        var sets: [UUID: Int] = [:]
+        var sets: [UUID: Double] = [:]
         var volume: [UUID: Double] = [:]
         var sessions: [UUID: Set<UUID>] = [:]
         for workout in workouts(inMonth: monthStart) {
@@ -550,7 +550,7 @@ extension TrainingAnalytics {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
-                sets[we.exerciseID, default: 0] += done.count
+                sets[we.exerciseID, default: 0] += done.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
                 volume[we.exerciseID, default: 0] += done.reduce(0) { $0 + ($1.totalVolume ?? 0) }
                 sessions[we.exerciseID, default: []].insert(workout.id)
             }

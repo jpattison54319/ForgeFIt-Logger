@@ -67,4 +67,51 @@ final class VolumeMathTests: XCTestCase {
         let s = SetEntry(weight: 100)
         XCTAssertNil(VolumeMath.estimated1RM(s))
     }
+
+    // MARK: - Effective set count (documented convention — golden vectors)
+
+    // Straight-set types are the literature's unit: exactly 1.
+    func testEffectiveSetCountStraightTypes() {
+        XCTAssertEqual(VolumeMath.effectiveSetCount(SetEntry(setType: .working)), 1, accuracy: tol)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(SetEntry(setType: .backoff)), 1, accuracy: tol)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(SetEntry(setType: .amrap)), 1, accuracy: tol)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(SetEntry(setType: .warmup)), 0, accuracy: tol)
+    }
+
+    // A drop row is half a set (Sødal et al. 2023: comparable hypertrophy in
+    // roughly half the time — not a full set per drop).
+    func testEffectiveSetCountDrop() {
+        XCTAssertEqual(VolumeMath.effectiveSetCount(SetEntry(setType: .drop)), 0.5, accuracy: tol)
+    }
+
+    // The canonical myo-rep block: 6 + 3+3+2+2 = activation + 4 minis
+    // = 3.0 sets ("≈3 sets in less time", Prestes et al. 2019).
+    func testEffectiveSetCountMyoRepBlock() {
+        let block = SetEntry(setType: .myoRep, reps: 6, miniSetCount: 4)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(block), 3.0, accuracy: tol)
+
+        let restPause = SetEntry(setType: .restPause, reps: 8, miniSetCount: 2)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(restPause), 2.0, accuracy: tol)
+
+        // No minis logged yet: the activation alone is one set.
+        let bare = SetEntry(setType: .myoRep, reps: 6)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(bare), 1.0, accuracy: tol)
+    }
+
+    // Cluster segments are ONE set by design (Tufano et al. 2017) — the
+    // segment count never inflates it.
+    func testEffectiveSetCountCluster() {
+        let cluster = SetEntry(setType: .cluster, reps: 10, miniSetCount: 5)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(cluster), 1.0, accuracy: tol)
+    }
+
+    // Unilateral per-side logging doubles the structure: each side is its own
+    // activation + minis (or its own cluster).
+    func testEffectiveSetCountPerSide() {
+        let myoBothSides = SetEntry(setType: .myoRep, reps: 6, miniSetCount: 4, side2Logged: true, side2MiniSetCount: 3)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(myoBothSides), 5.5, accuracy: tol) // 3.0 + 2.5
+
+        let clusterBothSides = SetEntry(setType: .cluster, reps: 10, miniSetCount: 5, side2Logged: true, side2MiniSetCount: 4)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(clusterBothSides), 2.0, accuracy: tol)
+    }
 }

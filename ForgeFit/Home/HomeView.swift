@@ -252,7 +252,7 @@ struct HomeView: View {
                     StatColumn(label: "Workouts", value: "\(week.workoutCount)")
                     StatColumn(label: "Time", value: Fmt.durationShort(week.durationSeconds))
                     StatColumn(label: "Volume", value: Fmt.volume(week.volume))
-                    StatColumn(label: "Sets", value: "\(week.sets)")
+                    StatColumn(label: "Sets", value: Fmt.sets(week.sets))
                 }
             }
         }
@@ -883,7 +883,7 @@ struct WorkoutFeedRow: View {
                         StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
                     } else {
                         StatColumn(label: "Volume", value: Fmt.volume(s.volume))
-                        StatColumn(label: "Sets", value: "\(s.sets)")
+                        StatColumn(label: "Sets", value: Fmt.sets(s.sets))
                     }
                 }
             }

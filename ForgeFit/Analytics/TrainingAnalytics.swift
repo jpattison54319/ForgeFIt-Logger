@@ -48,7 +48,9 @@ struct TrainingAnalytics {
     struct Summary {
         var date: Date
         var volume: Double        // kg
-        var sets: Int
+        /// Effective working sets (`VolumeMath.effectiveSetCount`) — myo-rep /
+        /// rest-pause blocks count more than 1, drop rows count 0.5.
+        var sets: Double
         var reps: Int
         var durationSeconds: Int
         var isCardio: Bool
@@ -69,7 +71,7 @@ struct TrainingAnalytics {
         return Summary(
             date: workout.startedAt,
             volume: volume,
-            sets: working.count,
+            sets: working.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) },
             reps: reps,
             durationSeconds: cardio?.durationSeconds ?? duration,
             isCardio: cardio != nil,
@@ -82,7 +84,7 @@ struct TrainingAnalytics {
     struct WeekTotals {
         var durationSeconds: Int
         var volume: Double
-        var sets: Int
+        var sets: Double
         var reps: Int
         var workoutCount: Int
     }

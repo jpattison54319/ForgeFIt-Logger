@@ -124,7 +124,7 @@ struct WorkoutDetailView: View {
                             StatColumn(label: "Distance", value: Fmt.distance(workout.cardioSessions.first?.distanceMeters))
                         } else {
                             StatColumn(label: "Volume", value: Fmt.volume(s.volume))
-                            StatColumn(label: "Sets", value: "\(s.sets)")
+                            StatColumn(label: "Sets", value: Fmt.sets(s.sets))
                         }
                     }
                 }

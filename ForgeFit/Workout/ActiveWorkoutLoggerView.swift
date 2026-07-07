@@ -366,7 +366,7 @@ struct ActiveWorkoutLoggerView: View {
                 // Finish button and tappable fields actually stand out.
                 StatColumn(label: "Duration", value: Fmt.elapsed(elapsed))
                 StatColumn(label: "Volume", value: Fmt.volume(liveStats.volume))
-                StatColumn(label: "Sets", value: "\(liveStats.completedSets)")
+                StatColumn(label: "Sets", value: Fmt.sets(liveStats.completedSets))
                 if !isHistoricalEdit {
                     LiveHeartRateStat()
                 }
@@ -383,7 +383,8 @@ struct ActiveWorkoutLoggerView: View {
 
     private struct WorkoutLiveStats {
         var volume: Double = 0
-        var completedSets: Int = 0
+        /// Effective sets (`VolumeMath.effectiveSetCount`) — fractional.
+        var completedSets: Double = 0
     }
 
     /// Reads `WatchLink` inside its OWN body so the Observation dependency
@@ -504,7 +505,7 @@ struct ActiveWorkoutLoggerView: View {
         let completed = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
         return WorkoutLiveStats(
             volume: completed.reduce(0) { $0 + ($1.totalVolume ?? 0) },
-            completedSets: completed.count
+            completedSets: completed.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
         )
     }
 
@@ -810,6 +811,9 @@ private struct PostWorkoutSummaryView: View {
     private var completedSets: [SetModel] {
         workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
     }
+    private var effectiveSetTotal: Double {
+        completedSets.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
+    }
     private var duration: Int {
         max(0, Int(Date().timeIntervalSince(workout.startedAt)))
     }
@@ -838,7 +842,10 @@ private struct PostWorkoutSummaryView: View {
         return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
     }
     private var totalReps: Int {
-        completedSets.reduce(0) { $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +) }
+        completedSets.reduce(0) {
+            $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +)
+                + ($1.side2Reps ?? 0) + $1.side2MiniReps.reduce(0, +)
+        }
     }
     private var bestLift: Double? {
         completedSets.compactMap(\.effectiveLoad).filter { $0 > 0 }.max()
@@ -899,7 +906,7 @@ private struct PostWorkoutSummaryView: View {
                                 } else {
                                     StatColumn(label: "Volume", value: Fmt.volume(volume))
                                 }
-                                StatColumn(label: "Sets", value: "\(completedSets.count)")
+                                StatColumn(label: "Sets", value: Fmt.sets(effectiveSetTotal))
                             }
                             if !completedSets.isEmpty {
                                 HStack {

@@ -852,7 +852,10 @@ public final class SetModel {
             implementWeight: implementWeight,
             limbCount: limbCount,
             isEccentric: isEccentric,
-            isPaused: isPaused
+            isPaused: isPaused,
+            miniSetCount: miniReps.count,
+            side2Logged: hasSide2Data,
+            side2MiniSetCount: side2MiniReps.count
         )
     }
 

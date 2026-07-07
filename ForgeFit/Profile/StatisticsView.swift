@@ -110,7 +110,7 @@ struct StatisticsView: View {
         let summaries = completed.map(analytics.summary(for:))
         let totalSeconds = summaries.reduce(0) { $0 + $1.durationSeconds }
         let totalVolume = summaries.reduce(0.0) { $0 + $1.volume }
-        let totalSets = summaries.reduce(0) { $0 + $1.sets }
+        let totalSets = summaries.reduce(0.0) { $0 + $1.sets }
         return Card {
             VStack(spacing: Space.lg) {
                 HStack {
@@ -119,7 +119,7 @@ struct StatisticsView: View {
                 }
                 HStack {
                     StatColumn(label: "Total volume", value: Fmt.volume(totalVolume))
-                    StatColumn(label: "Total sets", value: "\(totalSets)")
+                    StatColumn(label: "Total sets", value: Fmt.sets(totalSets))
                 }
             }
         }
@@ -301,7 +301,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(theme.textTertiary)
                                 Spacer()
-                                Text("\(usage.workingSets) sets · \(Fmt.volume(usage.volume))")
+                                Text("\(Fmt.sets(usage.workingSets)) sets · \(Fmt.volume(usage.volume))")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(theme.textSecondary)
                             }
@@ -716,7 +716,7 @@ struct StatisticsView: View {
                     monthStat("Volume", Fmt.volume(report.volume), delta: report.volumeDelta, formatter: { Fmt.volume(abs($0)) })
                 }
                 HStack {
-                    StatColumn(label: "Sets", value: "\(report.workingSets)")
+                    StatColumn(label: "Sets", value: Fmt.sets(report.workingSets))
                     StatColumn(label: "Reps", value: "\(report.reps)")
                     StatColumn(label: "Cardio", value: report.cardioMinutes > 0 ? Fmt.durationShort(Int(report.cardioMinutes * 60)) : "—")
                 }
@@ -777,7 +777,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(theme.textTertiary)
                                 Spacer()
-                                Text("\(usage.workingSets) sets · \(usage.sessions) session\(usage.sessions == 1 ? "" : "s")")
+                                Text("\(Fmt.sets(usage.workingSets)) sets · \(usage.sessions) session\(usage.sessions == 1 ? "" : "s")")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(theme.textSecondary)
                             }

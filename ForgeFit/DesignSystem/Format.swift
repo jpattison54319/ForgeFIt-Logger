@@ -56,6 +56,12 @@ enum Fmt {
         return "\(unit.displayValue(fromKilograms: value).formatted(.number.precision(.fractionLength(0...1)))) \(unit.suffix)"
     }
 
+    /// An effective set count like "8" / "8.5" — fractional because structured
+    /// set types count fractionally (see `VolumeMath.effectiveSetCount`).
+    static func sets(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)))
+    }
+
     /// A single load value without a unit suffix (for set tables).
     static func load(_ value: Double?, unit: WeightUnit = Fmt.unit) -> String {
         guard let value else { return "—" }
