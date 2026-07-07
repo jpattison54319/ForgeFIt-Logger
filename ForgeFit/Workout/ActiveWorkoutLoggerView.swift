@@ -1269,6 +1269,7 @@ private struct ExerciseLogCard: View {
                                 suggestedWeight: suggestedWeight(for: set, index: index),
                                 suggestedReps: suggestedReps(for: set, index: index),
                                 suggestedDurationSeconds: suggestedDurationSeconds(for: set, index: index),
+                                suggestedRPE: suggestedRPE(for: set, index: index),
                                 onSuggestionEdited: { editedSuggestionSetIDs.insert(set.id) },
 	                                onMaterializeSuggestion: { materializeSuggestion(for: set, index: index) },
 	                            onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
@@ -1464,6 +1465,10 @@ private struct ExerciseLogCard: View {
         previousSet(index: index)?.durationSeconds ?? set.durationSeconds
     }
 
+    private func suggestedRPE(for set: SetModel, index: Int) -> Double? {
+        previousSet(index: index)?.rpe ?? set.rpe
+    }
+
     private func materializeSuggestion(for set: SetModel, index: Int) {
         guard usesSuggestedValues(for: set) else { return }
         editedSuggestionSetIDs.insert(set.id)
@@ -1471,8 +1476,11 @@ private struct ExerciseLogCard: View {
             set.weight = previous.weight ?? set.weight
             set.reps = previous.reps ?? set.reps
             set.durationSeconds = previous.durationSeconds ?? set.durationSeconds
-            set.rpe = previous.rpe ?? set.rpe
-            set.rir = previous.rir ?? set.rir
+            // Values the user already chose win over the suggestion — RPE can
+            // be picked from its menu before any field is touched, and
+            // materializing must never overwrite that pick.
+            set.rpe = set.rpe ?? previous.rpe
+            set.rir = set.rir ?? previous.rir
         }
     }
 
@@ -1803,6 +1811,7 @@ private struct SetRow: View {
     var suggestedWeight: Double?
     var suggestedReps: Int?
     var suggestedDurationSeconds: Int?
+    var suggestedRPE: Double?
     var onSuggestionEdited: () -> Void = {}
     var onMaterializeSuggestion: () -> Void = {}
     var onCompleted: () -> Void = {}
@@ -1832,6 +1841,7 @@ private struct SetRow: View {
         suggestedWeight: Double? = nil,
         suggestedReps: Int? = nil,
         suggestedDurationSeconds: Int? = nil,
+        suggestedRPE: Double? = nil,
         onSuggestionEdited: @escaping () -> Void = {},
         onMaterializeSuggestion: @escaping () -> Void = {},
         onCompleted: @escaping () -> Void = {},
@@ -1859,6 +1869,7 @@ private struct SetRow: View {
         self.suggestedWeight = suggestedWeight
         self.suggestedReps = suggestedReps
         self.suggestedDurationSeconds = suggestedDurationSeconds
+        self.suggestedRPE = suggestedRPE
         self.onSuggestionEdited = onSuggestionEdited
         self.onMaterializeSuggestion = onMaterializeSuggestion
         self.onCompleted = onCompleted
@@ -1971,7 +1982,7 @@ private struct SetRow: View {
     }
 
     private func rpeOptionIsSelected(_ option: RPEQuickPick) -> Bool {
-        guard let rpe = set.rpe else { return false }
+        guard let rpe = effectiveRPE else { return false }
         return option == .warmup ? rpe < 6 : abs(rpe - option.rpeValue) < 0.0001
     }
 
@@ -2157,12 +2168,17 @@ private struct SetRow: View {
     }
 
     private func setRPE(_ value: Double) {
+        // Picking an RPE adopts the row's suggestion like typing in a field
+        // does (materializeSuggestion fills only still-nil values, so this
+        // pick is never overwritten by it).
+        if usesSuggestedValues { onMaterializeSuggestion() }
         set.rpe = value
         rpeDraft = formattedRPE(value)
         onChange()
     }
 
     private func clearRPE() {
+        if usesSuggestedValues { onMaterializeSuggestion() }
         set.rpe = nil
         rpeDraft = ""
         onChange()
@@ -2303,8 +2319,17 @@ private struct SetRow: View {
         nextInputField(after: field) == nil ? .done : .next
     }
 
+    /// What the RPE chip reflects: the logged value, else the previous
+    /// session's suggestion — the same rule the weight/reps fields already
+    /// follow, so a suggested row reads fully prefilled instead of showing
+    /// "—" until a tap materializes it.
+    private var effectiveRPE: Double? {
+        if let rpe = set.rpe { return rpe }
+        return usesSuggestedValues ? suggestedRPE : nil
+    }
+
     private var rpeDisplay: String {
-        guard let rpe = set.rpe else { return "—" }
+        guard let rpe = effectiveRPE else { return "—" }
         if rpe < 6 { return "W" }
         return formattedRPE(rpe)
     }
@@ -2376,14 +2401,14 @@ private struct SetRow: View {
                     Label(rpeOptionLabel(option), systemImage: rpeOptionIsSelected(option) ? "checkmark" : "")
                 }
             }
-            if set.rpe != nil {
+            if effectiveRPE != nil {
                 Divider()
                 Button("Clear RPE", role: .destructive, action: clearRPE)
             }
         } label: {
             Text(rpeDisplay)
                 .font(.bodyStrong)
-                .foregroundStyle(set.rpe == nil ? theme.textTertiary : theme.textPrimary)
+                .foregroundStyle(effectiveRPE == nil ? theme.textTertiary : theme.textPrimary)
                 .frame(width: width, height: 44)
                 .background(theme.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
