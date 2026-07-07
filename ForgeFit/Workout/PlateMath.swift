@@ -3,7 +3,7 @@ import Foundation
 
 /// Pure barbell-loading math. Everything internal is kilograms (the data
 /// layer's unit); the UI converts for display via `Fmt`/`WeightUnit`.
-struct PlateInventory: Codable, Equatable {
+nonisolated struct PlateInventory: Codable, Equatable {
     struct PlateCount: Codable, Equatable, Identifiable {
         /// One plate's weight in the inventory's display unit.
         var weight: Double

@@ -2,7 +2,7 @@ import ForgeCore
 import ForgeData
 import Foundation
 
-enum ForgeFitDemo {
+nonisolated enum ForgeFitDemo {
     static let userID = UUID(uuidString: "00000000-0000-7000-8000-000000000901")!
     static let machinePressNoteID = UUID(uuidString: "00000000-0000-7000-8000-000000000902")!
 

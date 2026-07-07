@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import ForgeCore
 
-enum WorkoutImportSource: String, Codable, Sendable {
+nonisolated enum WorkoutImportSource: String, Codable, Sendable {
     case hevy
     case strong
     case fitbod
@@ -22,12 +22,12 @@ enum WorkoutImportSource: String, Codable, Sendable {
     }
 }
 
-struct WorkoutImportWarning: Identifiable, Hashable, Sendable {
+nonisolated struct WorkoutImportWarning: Identifiable, Hashable, Sendable {
     let id = UUID()
     var message: String
 }
 
-struct ImportedWorkoutDraft: Identifiable, Hashable, Sendable {
+nonisolated struct ImportedWorkoutDraft: Identifiable, Hashable, Sendable {
     let id: String
     var title: String
     var startedAt: Date
@@ -40,7 +40,7 @@ struct ImportedWorkoutDraft: Identifiable, Hashable, Sendable {
     var setCount: Int { exercises.reduce(0) { $0 + $1.sets.count } }
 }
 
-struct ImportedExerciseDraft: Identifiable, Hashable, Sendable {
+nonisolated struct ImportedExerciseDraft: Identifiable, Hashable, Sendable {
     let id: String
     var name: String
     var notes: String?
@@ -48,7 +48,7 @@ struct ImportedExerciseDraft: Identifiable, Hashable, Sendable {
     var sets: [ImportedSetDraft]
 }
 
-struct ImportedSetDraft: Identifiable, Hashable, Sendable {
+nonisolated struct ImportedSetDraft: Identifiable, Hashable, Sendable {
     let id: String
     var index: Int
     var setType: SetType
@@ -60,14 +60,14 @@ struct ImportedSetDraft: Identifiable, Hashable, Sendable {
     var notes: String?
 }
 
-struct WorkoutHistoryImportParseResult: Sendable {
+nonisolated struct WorkoutHistoryImportParseResult: Sendable {
     var source: WorkoutImportSource
     var fileName: String
     var workouts: [ImportedWorkoutDraft]
     var warnings: [WorkoutImportWarning]
 }
 
-enum WorkoutHistoryImportParser {
+nonisolated enum WorkoutHistoryImportParser {
     static func parse(data: Data, fileName: String) throws -> WorkoutHistoryImportParseResult {
         let trimmed = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -78,7 +78,7 @@ enum WorkoutHistoryImportParser {
     }
 }
 
-private extension WorkoutHistoryImportParser {
+nonisolated private extension WorkoutHistoryImportParser {
     static func parseCSV(data: Data, fileName: String) throws -> WorkoutHistoryImportParseResult {
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else {
             throw WorkoutImportError.unreadableFile
@@ -225,7 +225,7 @@ private extension WorkoutHistoryImportParser {
     }
 }
 
-enum WorkoutImportError: LocalizedError {
+nonisolated enum WorkoutImportError: LocalizedError {
     case unreadableFile
     case emptyFile
     case noImportableWorkouts
@@ -239,7 +239,7 @@ enum WorkoutImportError: LocalizedError {
     }
 }
 
-private struct CSVImportMapper {
+nonisolated private struct CSVImportMapper {
     let source: WorkoutImportSource
     let headers: Set<String>
 
@@ -381,7 +381,7 @@ private struct CSVImportMapper {
     }
 }
 
-private struct WorkoutBuilder {
+nonisolated private struct WorkoutBuilder {
     var title: String
     var startedAt: Date
     var endedAt: Date
@@ -437,14 +437,14 @@ private struct WorkoutBuilder {
     }
 }
 
-private struct ExerciseBuilder {
+nonisolated private struct ExerciseBuilder {
     var name: String
     var notes: String?
     var supersetID: Int?
     var sets: [ImportedSetDraft] = []
 }
 
-private extension ImportedWorkoutDraft {
+nonisolated private extension ImportedWorkoutDraft {
     func withFingerprint(source: WorkoutImportSource) -> ImportedWorkoutDraft {
         var copy = self
         let rows = exercises.map { exercise in
@@ -460,7 +460,7 @@ private extension ImportedWorkoutDraft {
     }
 }
 
-private struct CSVTable {
+nonisolated private struct CSVTable {
     static func parse(_ text: String) -> [[String]] {
         let delimiter = detectDelimiter(text)
         var rows: [[String]] = []
@@ -529,7 +529,7 @@ private struct CSVTable {
     }
 }
 
-private struct CSVRecord {
+nonisolated private struct CSVRecord {
     private var values: [String: String]
 
     init(header: [String], values row: [String]) {
@@ -557,40 +557,41 @@ private struct CSVRecord {
     }
 }
 
-private enum DateImportParser {
+nonisolated private enum DateImportParser {
     static func parse(_ raw: String) -> Date? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let iso = ISO8601DateFormatter().date(from: text) { return iso }
 
-        for formatter in formatters {
+        for formatter in formatters() {
             if let date = formatter.date(from: text) { return date }
         }
         return nil
     }
 
-    private static let formatters: [DateFormatter] = {
-        let formats = [
-            "MMM d, yyyy, h:mm a",
-            "MMM d, yyyy h:mm a",
-            "yyyy-MM-dd HH:mm:ss",
-            "yyyy-MM-dd HH:mm",
-            "yyyy-MM-dd",
-            "MM/dd/yyyy HH:mm:ss",
-            "MM/dd/yyyy h:mm a",
-            "M/d/yyyy h:mm a",
-            "dd/MM/yyyy HH:mm:ss",
-            "dd/MM/yyyy HH:mm"
-        ]
-        return formats.map {
+    private static let dateFormats = [
+        "MMM d, yyyy, h:mm a",
+        "MMM d, yyyy h:mm a",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd HH:mm",
+        "yyyy-MM-dd",
+        "MM/dd/yyyy HH:mm:ss",
+        "MM/dd/yyyy h:mm a",
+        "M/d/yyyy h:mm a",
+        "dd/MM/yyyy HH:mm:ss",
+        "dd/MM/yyyy HH:mm"
+    ]
+
+    private static func formatters() -> [DateFormatter] {
+        dateFormats.map {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = $0
             return formatter
         }
-    }()
+    }
 }
 
-private enum DurationImportParser {
+nonisolated private enum DurationImportParser {
     static func parse(_ raw: String) -> Int? {
         let text = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if text.contains(":") {
@@ -616,11 +617,11 @@ private enum DurationImportParser {
     }
 }
 
-private struct ForgeFitImportFile: Decodable {
+nonisolated private struct ForgeFitImportFile: Decodable {
     var workouts: [ForgeFitImportWorkout]
 }
 
-private struct ForgeFitImportWorkout: Decodable {
+nonisolated private struct ForgeFitImportWorkout: Decodable {
     var title: String?
     var startedAt: Date?
     var endedAt: Date?
@@ -629,14 +630,14 @@ private struct ForgeFitImportWorkout: Decodable {
     var exercises: [ForgeFitImportExercise]
 }
 
-private struct ForgeFitImportExercise: Decodable {
+nonisolated private struct ForgeFitImportExercise: Decodable {
     var name: String
     var notes: String?
     var supersetID: Int?
     var sets: [ForgeFitImportSet]
 }
 
-private struct ForgeFitImportSet: Decodable {
+nonisolated private struct ForgeFitImportSet: Decodable {
     var index: Int?
     var setType: String?
     var weightKg: Double?

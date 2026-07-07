@@ -364,9 +364,11 @@ struct ExercisesListView: View {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let key = "\(count)|\(latest.timeIntervalSince1970)|\(normalizedQuery)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
         return filteredMemo(key) {
-            exercises
+            // Dedupe by id: CloudKit duplicates would corrupt ForEach layout.
+            var seen = Set<UUID>()
+            return exercises
                 .filter { ex in
-                    guard ex.deletedAt == nil else { return false }
+                    guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
                     if !normalizedQuery.isEmpty, !ex.name.lowercased().contains(normalizedQuery) { return false }
                     if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                     if let equipment, ex.equipment != equipment { return false }
@@ -437,8 +439,12 @@ struct ExercisesListView: View {
                             HStack(spacing: Space.md) {
                                 ExerciseThumbnail(exercise: exercise)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
+                                    // Browsing/search context: show the full name,
+                                    // wrapped, so long variants stay readable.
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                            .multilineTextAlignment(.leading)
+                                            .fixedSize(horizontal: false, vertical: true)
                                         if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
                                     }
                                     Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]

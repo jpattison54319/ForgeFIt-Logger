@@ -135,8 +135,9 @@ final class RestTimerController {
 
 // MARK: - Countdown pill
 
-/// Live glass countdown shown in the logger header while resting. Tap for
-/// −15 / +15 / skip.
+/// Live glass countdown shown in the logger header while resting. −15 / +15 /
+/// Skip are exposed directly (not behind a menu tap) so adjusting rest
+/// mid-set is a single tap, matching the pace of actually lifting.
 struct RestTimerPill: View {
     @Environment(\.theme) private var theme
     var timer = RestTimerController.shared
@@ -148,11 +149,15 @@ struct RestTimerPill: View {
                 let fraction = timer.totalSeconds > 0 ? Double(remaining) / Double(timer.totalSeconds) : 0
                 let tint = timer.isMicro ? theme.secondaryAccent : theme.accent
 
-                Menu {
-                    Button("+15 sec", systemImage: "plus.circle") { timer.adjust(by: 15) }
-                    Button("−15 sec", systemImage: "minus.circle") { timer.adjust(by: -15) }
-                    Button("Skip Rest", systemImage: "forward.end", role: .destructive) { timer.skip() }
-                } label: {
+                HStack(spacing: 6) {
+                    Button { timer.adjust(by: -15) } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Subtract 15 seconds")
+
                     HStack(spacing: 7) {
                         ZStack {
                             Circle().stroke(tint.opacity(0.25), lineWidth: 3)
@@ -169,9 +174,28 @@ struct RestTimerPill: View {
                             .foregroundStyle(theme.textPrimary)
                             .contentTransition(.numericText(countsDown: true))
                     }
-                    .padding(.horizontal, 12)
-                    .frame(height: 40)
+
+                    Button { timer.adjust(by: 15) } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add 15 seconds")
+
+                    Rectangle().fill(tint.opacity(0.3)).frame(width: 1, height: 16)
+
+                    Button { timer.skip() } label: {
+                        Image(systemName: "forward.end.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Skip rest")
                 }
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10)
+                .frame(height: 40)
                 .glassEffect(.regular.tint(tint.opacity(0.28)).interactive(), in: Capsule())
                 .transition(.scale.combined(with: .opacity))
             }
@@ -209,10 +233,11 @@ struct MicroRestBar: View {
                         .monospacedDigit()
                         .foregroundStyle(tint)
                         .frame(width: 34, alignment: .trailing)
-                    Button("Go") { timer.skip() }
+                    Button("Skip") { timer.skip() }
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(tint)
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Skip micro-rest")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)

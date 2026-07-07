@@ -11,8 +11,6 @@ import FoundationModels
 /// still downloading) it returns nil and the UI falls back to the rule-based
 /// recommendation.
 enum AICoach {
-    static let offTopicResponse = "I can help with training, recovery, routines, exercise technique, cardio, strength progress, nutrition around workouts, and how your ForgeFit data is trending. Ask me something in that lane and I’ll dig in."
-
     static var isSupported: Bool {
         #if canImport(FoundationModels)
         if case .available = SystemLanguageModel.default.availability { return true }
@@ -101,28 +99,16 @@ enum AICoach {
         #endif
     }
 
-    static func isRelevant(_ question: String, context: AICoachContext) -> Bool {
-        let normalized = question.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
-        let keywords = [
-            "workout", "routine", "exercise", "set", "sets", "rep", "reps", "weight", "lbs", "kg",
-            "strength", "hypertrophy", "muscle", "volume", "progress", "pr", "1rm", "lift", "lifting",
-            "bench", "squat", "deadlift", "press", "row", "curl", "pull", "push", "legs", "chest",
-            "back", "shoulder", "arms", "biceps", "triceps", "glutes", "hamstring", "quad", "calf",
-            "cardio", "run", "ride", "cycle", "bike", "walk", "zone", "pace", "heart rate", "hr",
-            "recovery", "readiness", "sleep", "hrv", "resting", "soreness", "fatigue", "deload",
-            "warmup", "warm-up", "mobility", "form", "technique", "pain", "injury", "nutrition",
-            "protein", "calorie", "carb", "cut", "bulk", "diet", "xp", "level"
-        ]
-        if keywords.contains(where: { normalized.contains($0) }) { return true }
-        return context.relevanceTerms.contains { term in
-            let folded = term.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
-            return folded.count > 3 && normalized.contains(folded)
-        }
-    }
-
+    /// Rules-based answer used when Apple Intelligence isn't available. Routes to
+    /// the most relevant slice of the user's data by intent; anything else still
+    /// gets a grounded readiness-based reply rather than a refusal.
     static func fallbackAnswer(for question: String, context: AICoachContext) -> String {
         let lower = question.lowercased()
-        if lower.contains("ready") || lower.contains("recovery") || lower.contains("train") {
+        let readinessIntent = ["ready", "recover", "recovery", "train", "workout", "work out",
+                               "cardio", "run", "ride", "cycle", "bike", "walk", "lift", "session",
+                               "today", "tonight", "tomorrow", "rest", "hard", "easy", "should i",
+                               "do i", "can i", "zone", "pace", "hrv", "sleep", "fatigue", "deload"]
+        if readinessIntent.contains(where: { lower.contains($0) }) {
             return "\(context.readinessLine) \(context.actionLine) \(context.topReasonLine)"
         }
         if lower.contains("progress") || lower.contains("stronger") || lower.contains("record") || lower.contains("pr") {
@@ -131,7 +117,7 @@ enum AICoach {
         if lower.contains("volume") || lower.contains("muscle") || lower.contains("sets") {
             return context.muscleVolumeLine
         }
-        return "I can answer this better when Apple Intelligence is available. Based on your app data right now: \(context.actionLine) \(context.topReasonLine)"
+        return "Based on your app data right now: \(context.actionLine) \(context.topReasonLine)"
     }
 }
 
@@ -142,7 +128,6 @@ struct AICoachContext {
     let topReasonLine: String
     let muscleVolumeLine: String
     let recordsLine: String
-    let relevanceTerms: [String]
 
     static func build(
         workouts: [WorkoutModel],
@@ -211,7 +196,7 @@ struct AICoachContext {
                 .prefix(5)
                 .joined(separator: ", ")
             let cardio = workout.cardioSessions.first.map { session in
-                let distance = session.distanceMeters.map { ", \(Fmt.distanceKm($0))" } ?? ""
+                let distance = session.distanceMeters.map { ", \(Fmt.distance($0))" } ?? ""
                 return ", cardio \(session.modality)\(distance)"
             } ?? ""
             return "- \(workout.startedAt.formatted(date: .abbreviated, time: .omitted)): \(title), \(Fmt.durationShort(summary.durationSeconds)), \(summary.sets) sets, \(Fmt.volume(summary.volume))\(cardio)\(exercises.isEmpty ? "" : ", exercises: \(exercises)")"
@@ -269,23 +254,13 @@ struct AICoachContext {
         \(healthLines.isEmpty ? "- no Health signals connected yet" : healthLines.joined(separator: "\n"))
         """
 
-        let relevanceTerms = Array(
-            Set(
-                routines.map(\.name)
-                    + exercises.prefix(250).map(\.name)
-                    + exercises.flatMap(\.primaryMuscles)
-                    + exercises.flatMap(\.secondaryMuscles)
-            )
-        )
-
         return AICoachContext(
             prompt: prompt,
             readinessLine: readinessLine,
             actionLine: actionLine,
             topReasonLine: topReasonLine,
             muscleVolumeLine: muscleVolumeLine,
-            recordsLine: recordsLine,
-            relevanceTerms: relevanceTerms
+            recordsLine: recordsLine
         )
     }
 }
@@ -431,11 +406,9 @@ struct AICoachChatView: View {
         question = ""
         messages.append(CoachChatMessage(role: .user, text: trimmed))
 
-        guard AICoach.isRelevant(trimmed, context: context) else {
-            messages.append(CoachChatMessage(role: .coach, text: AICoach.offTopicResponse))
-            return
-        }
-
+        // No client-side relevance gate: the model's own scope instructions
+        // decline genuinely off-topic questions and steer back to training, so a
+        // keyword allowlist here only ever misfired on valid coaching questions.
         isAnswering = true
         Task {
             let response = await AICoach.answer(question: trimmed, context: context)

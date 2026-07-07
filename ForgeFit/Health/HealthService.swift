@@ -66,6 +66,7 @@ final class HealthService {
             if let type = HKQuantityType.quantityType(forIdentifier: id) { t.insert(type) }
         }
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { t.insert(sleep) }
+        if let dob = HKObjectType.characteristicType(forIdentifier: .dateOfBirth) { t.insert(dob) }
         t.insert(HKSeriesType.workoutRoute())
         return t
     }
@@ -83,6 +84,14 @@ final class HealthService {
     func requestAuthorization() async -> Bool {
         #if canImport(HealthKit)
         guard isAvailable else { return false }
+        // UI test automation reinstalls the app fresh, so HealthKit
+        // authorization has never been decided; requesting it would pop the
+        // real system permission sheet full-screen over whatever the test is
+        // driving, and no test drives through that sheet (it covers dozens of
+        // data-type toggles, not a one-tap "Allow"). --reset-store is already
+        // this codebase's signal for an automation launch; real users never
+        // pass it, so this only ever short-circuits test runs.
+        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return false }
         do {
             try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
             return isConnected
@@ -103,6 +112,21 @@ final class HealthService {
         configuration.activityType = cardioKind?.hkActivityType ?? .traditionalStrengthTraining
         configuration.locationType = cardioKind?.supportsOutdoorRoute == true ? .outdoor : .indoor
         store.startWatchApp(with: configuration) { _, _ in }
+        #endif
+    }
+
+    /// The user's age from their Apple Health date of birth, if shared — used
+    /// to seed a max-HR estimate (220 − age). Returns nil when unavailable.
+    func biologicalAge() -> Int? {
+        #if canImport(HealthKit)
+        guard isAvailable,
+              let components = try? store.dateOfBirthComponents(),
+              let birthYear = components.year else { return nil }
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let age = currentYear - birthYear
+        return (10...100).contains(age) ? age : nil
+        #else
+        return nil
         #endif
     }
 
@@ -165,30 +189,49 @@ final class HealthService {
         let end = Date()
         guard let start = calendar.date(byAdding: .day, value: -days, to: calendar.startOfDay(for: end)) else { return [] }
 
-        async let hrvSamples = quantitySamples(.heartRateVariabilitySDNN, from: start, to: end)
-        async let rhrSamples = quantitySamples(.restingHeartRate, from: start, to: end)
-        async let sleepSamples = sleepSamples(from: start, to: end)
+        async let hrvSamplesAsync = quantitySamples(.heartRateVariabilitySDNN, from: start, to: end)
+        async let rhrSamplesAsync = quantitySamples(.restingHeartRate, from: start, to: end)
+        async let sleepSamplesAsync = sleepSamples(from: start, to: end)
 
         let msUnit = HKUnit.secondUnit(with: .milli)
         let bpmUnit = HKUnit.count().unitDivided(by: .minute())
 
+        let hrvSamples = await hrvSamplesAsync
+        let rhrSamples = await rhrSamplesAsync
+        let sleepSegments = await sleepSamplesAsync
+
+        // Nocturnal window: restrict HRV to sleep and derive sleeping HR — the
+        // validated overnight measurement window (Plews 2013, Buchheit 2014),
+        // preferred over Apple's all-day HRV mean and daytime resting HR.
+        let windows = NocturnalAggregator.windows(
+            fromAsleepSegments: sleepSegments.map { ($0.startDate, $0.endDate) },
+            calendar: calendar
+        )
+        let nocturnalHR = await heartRateSamplesDuringSleep(windows: windows)
+        let nightly = NocturnalAggregator.nightly(
+            windows: windows,
+            hrv: hrvSamples.map { ($0.startDate, $0.quantity.doubleValue(for: msUnit)) },
+            hr: nocturnalHR
+        )
+
         // Bucket by calendar day. Sleep is attributed to the day it ENDED
-        // (last night's sleep belongs to today's readiness).
+        // (last night's sleep belongs to today's readiness). All-day HRV / RHR
+        // remain as fallbacks when the nocturnal window is empty.
         var hrvByDay: [Date: [Double]] = [:]
-        for sample in await hrvSamples {
+        for sample in hrvSamples {
             hrvByDay[calendar.startOfDay(for: sample.endDate), default: []].append(sample.quantity.doubleValue(for: msUnit))
         }
         var rhrByDay: [Date: [Double]] = [:]
-        for sample in await rhrSamples {
+        for sample in rhrSamples {
             rhrByDay[calendar.startOfDay(for: sample.endDate), default: []].append(sample.quantity.doubleValue(for: bpmUnit))
         }
         var sleepByDay: [Date: Int] = [:]
-        for sample in await sleepSamples {
+        for sample in sleepSegments {
             sleepByDay[calendar.startOfDay(for: sample.endDate), default: 0]
                 += Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
         }
 
-        let allDays = Set(hrvByDay.keys).union(rhrByDay.keys).union(sleepByDay.keys)
+        let allDays = Set(hrvByDay.keys).union(rhrByDay.keys).union(sleepByDay.keys).union(nightly.keys)
         return allDays.sorted().map { day in
             RecoveryEngine.DailyHealthMetric(
                 date: day,
@@ -196,13 +239,34 @@ final class HealthService {
                 restingHR: rhrByDay[day].map { Int(($0.reduce(0, +) / Double($0.count)).rounded()) },
                 sleepTotalMinutes: sleepByDay[day],
                 source: "healthkit",
-                hrvSampleCount: hrvByDay[day]?.count
+                hrvSampleCount: hrvByDay[day]?.count,
+                nocturnalHRV: nightly[day]?.hrv,
+                sleepingHR: nightly[day]?.sleepingHR
             )
         }
         #else
         return []
         #endif
     }
+
+    #if canImport(HealthKit)
+    /// Heart-rate samples that fall within the given sleep windows, fetched in a
+    /// single query (OR of per-window predicates) so sleeping HR costs one
+    /// round-trip rather than one per night.
+    private func heartRateSamplesDuringSleep(windows: [NocturnalAggregator.SleepWindow]) async -> [(date: Date, bpm: Int)] {
+        guard !windows.isEmpty, let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        let predicate = NSCompoundPredicate(orPredicateWithSubpredicates:
+            windows.map { HKQuery.predicateForSamples(withStart: $0.start, end: $0.end, options: []) })
+        let samples: [HKQuantitySample] = await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
+                cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        return samples.map { ($0.startDate, Int($0.quantity.doubleValue(for: unit).rounded())) }
+    }
+    #endif
 
     /// Today's supplemental full-day signals shown alongside the readiness
     /// breakdown: respiratory rate, blood oxygen, cardio fitness, HR recovery,

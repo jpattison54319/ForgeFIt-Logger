@@ -887,6 +887,7 @@
 				DEVELOPMENT_TEAM = 8USAFADYCA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WatchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ForgeFitWatch;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "ForgeFit reads heart rate and energy from Apple Watch during workouts.";
@@ -925,6 +926,7 @@
 				DEVELOPMENT_TEAM = 8USAFADYCA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WatchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ForgeFitWatch;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "ForgeFit reads heart rate and energy from Apple Watch during workouts.";
@@ -1048,7 +1050,7 @@
 				CODE_SIGN_ENTITLEMENTS = ForgeFitWidgets/ForgeFitWidgets.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 8USAFADYCA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetsInfo.plist;
@@ -1076,7 +1078,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ForgeFitWidgets/ForgeFitWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 8USAFADYCA;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WidgetsInfo.plist;

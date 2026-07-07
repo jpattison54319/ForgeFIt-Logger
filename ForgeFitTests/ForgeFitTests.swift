@@ -171,22 +171,59 @@ struct ForgeFitTests {
         #expect(report.cardioLoad == 0)
     }
 
-    @Test func singleLowHRVAfter48HoursAllowsTrainingWithCaution() {
+    /// A single low-HRV morning scales with severity: a mild dip after 48h off
+    /// still trains as planned (one reading is noisy — Plews 2013), but a crash
+    /// far beyond the baseline's own variability is a real signal (Buchheit
+    /// 2014) and pulls the day down to reduced volume.
+    @Test func singleLowHRVSeverityScalesTheResponse() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let workouts = recurringWorkouts(exercise: squat, daysAgo: [2, 9, 16, 23])
-        let health = healthSeries(currentHRV: 35, priorLowDays: 0)
 
-        let report = RecoveryEngine(
+        let mildDip = RecoveryEngine(
             workouts: workouts,
             exercises: [squat],
-            healthMetrics: health,
+            healthMetrics: healthSeries(currentHRV: 46, priorLowDays: 0),
             targetMuscles: ["quadriceps"],
             now: now
         ).report()
+        #expect(mildDip.action == .trainAsPlanned)
+        #expect(mildDip.reasonChips.contains { $0.text == "HRV low today" })
+        #expect(mildDip.reasonChips.contains { $0.text == "48h recovered" })
 
-        #expect(report.action == .trainAsPlanned)
-        #expect(report.reasonChips.contains { $0.text == "HRV low today" })
-        #expect(report.reasonChips.contains { $0.text == "48h recovered" })
+        let crash = RecoveryEngine(
+            workouts: workouts,
+            exercises: [squat],
+            healthMetrics: healthSeries(currentHRV: 35, priorLowDays: 0),
+            targetMuscles: ["quadriceps"],
+            now: now
+        ).report()
+        #expect(crash.action == .reduceVolume)
+        #expect(crash.displayScore < 0.6)   // number agrees with the action
+    }
+
+    /// When every trained muscle is recovered, the chip says so collectively —
+    /// naming the single longest-rested muscle ("Triceps fresh") reads as
+    /// arbitrary when the whole body is ready.
+    @Test func allMusclesFreshGetsCollectiveChipNotArbitrarySingleMuscle() {
+        let squat = exercise("Back Squat", muscles: ["quadriceps"])
+        let curl = exercise("Curl", muscles: ["biceps"])
+        let pushdown = exercise("Pushdown", muscles: ["triceps"])
+        let workouts = [
+            strengthWorkout(daysAgo: 3, exercise: squat, reps: 8, weight: 100, rpe: 8),
+            strengthWorkout(daysAgo: 4, exercise: curl, reps: 10, weight: 20, rpe: 8),
+            strengthWorkout(daysAgo: 6, exercise: pushdown, reps: 10, weight: 25, rpe: 8),
+        ]
+        let report = RecoveryEngine(workouts: workouts, exercises: [squat, curl, pushdown], now: now).report()
+
+        #expect(report.reasonChips.contains { $0.text == "All muscles fresh" })
+        #expect(!report.reasonChips.contains { $0.text.hasSuffix(" fresh") && $0.text != "All muscles fresh" })
+
+        // Mixed picture: biceps trained yesterday → the named-muscle chip is
+        // back, because now it is informative.
+        let mixed = workouts + [strengthWorkout(daysAgo: 1, exercise: curl, reps: 10, weight: 20, rpe: 8)]
+        let mixedReport = RecoveryEngine(workouts: mixed, exercises: [squat, curl, pushdown], now: now).report()
+        #expect(!mixedReport.reasonChips.contains { $0.text == "All muscles fresh" })
+        #expect(mixedReport.reasonChips.contains { $0.text == "Triceps fresh" })
     }
 
     @Test func sustainedLowHRVAfter48HoursReducesVolume() {

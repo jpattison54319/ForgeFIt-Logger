@@ -28,14 +28,25 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
     }
 
     public var steps: [Step]
+    /// Optional HR "zone lock": the target zone (1...5) the athlete wants to
+    /// hold. When set, a zone guard fires audible/haptic cues on leaving and
+    /// re-entering the zone. Independent of the time-based steps — a plan can
+    /// have a zone target with no steps (a pure zone-lock run). Optional so
+    /// plans encoded before this existed still decode.
+    public var hrZoneTarget: Int?
 
-    public init(steps: [Step]) {
+    public init(steps: [Step], hrZoneTarget: Int? = nil) {
         self.steps = steps
+        self.hrZoneTarget = hrZoneTarget
     }
 
     public var totalSeconds: Int {
         steps.reduce(0) { $0 + $1.seconds }
     }
+
+    public var hasSteps: Bool { !steps.isEmpty }
+    /// Whether this plan carries anything worth persisting/running.
+    public var isMeaningful: Bool { hasSteps || hrZoneTarget != nil }
 
     /// Builder used by the plan editor: expands a repeat structure into the
     /// flat step list that gets persisted and executed.
@@ -44,7 +55,8 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
         repeats: Int,
         workSeconds: Int,
         recoverSeconds: Int,
-        cooldownSeconds: Int
+        cooldownSeconds: Int,
+        hrZoneTarget: Int? = nil
     ) -> IntervalPlan {
         var steps: [Step] = []
         if warmupSeconds > 0 {
@@ -62,7 +74,7 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
         if cooldownSeconds > 0 {
             steps.append(Step(kind: .cooldown, seconds: cooldownSeconds, label: "Cool-down"))
         }
-        return IntervalPlan(steps: steps)
+        return IntervalPlan(steps: steps, hrZoneTarget: hrZoneTarget)
     }
 
     // MARK: - JSON persistence

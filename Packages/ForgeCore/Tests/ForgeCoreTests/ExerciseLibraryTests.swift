@@ -35,6 +35,29 @@ final class ExerciseLibraryTests: XCTestCase {
         XCTAssertEqual(volume["biceps"] ?? 0, 0.5, accuracy: 0.0001)
     }
 
+    /// CloudKit can't enforce unique constraints, so a sync/re-seed race can
+    /// leave duplicate exercise IDs in the store. Building a snapshot from that
+    /// state used to trap in `Dictionary(uniqueKeysWithValues:)`, crashing
+    /// every search surface (regression: exercise picker crash mid-search).
+    func testDuplicateExerciseIDsDoNotCrashSnapshotOrSearch() throws {
+        let id = UUID()
+        let original = ExerciseInfo(id: id, name: "Bench Press", primaryMuscles: ["chest"], equipment: "barbell")
+        let cloudKitDupe = ExerciseInfo(id: id, name: "Bench Press", primaryMuscles: ["chest"], equipment: "barbell")
+        let other = ExerciseInfo(name: "Back Squat", primaryMuscles: ["quads"], equipment: "barbell")
+
+        let snapshot = ExerciseLibrarySnapshot(
+            exercises: [original, cloudKitDupe, other],
+            aliases: [ExerciseAlias(exerciseID: id, alias: "BP")]
+        )
+
+        // Search still works, ranks, and dedupes the duplicate ID.
+        let results = snapshot.search("bench")
+        XCTAssertEqual(results.filter { $0.exercise.id == id }.count, 1)
+        XCTAssertEqual(results.first?.exercise.id, id)
+        XCTAssertEqual(snapshot.search("BP").first?.exercise.id, id)
+        XCTAssertEqual(snapshot.search("squat").first?.exercise.name, "Back Squat")
+    }
+
     func testSetupNoteLookupReturnsExerciseLoadCue() throws {
         let userID = UUID()
         let note = ExerciseSetupNote(

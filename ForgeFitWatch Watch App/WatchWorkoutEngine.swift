@@ -2,6 +2,7 @@ import Foundation
 import HealthKit
 import Observation
 import ForgeCore
+import WatchKit
 
 /// Live health-metric collection on the wrist: one HKWorkoutSession +
 /// HKLiveWorkoutBuilder per ForgeFit workout. Streams heart rate, energy, and
@@ -22,21 +23,32 @@ final class WatchWorkoutEngine: NSObject {
     private(set) var avgHR: Int?
     private(set) var maxHR: Int?
     private(set) var activeEnergyKcal: Double?
+    private(set) var distanceMeters: Double?
     private(set) var zoneSeconds = [0, 0, 0, 0, 0]
 
     /// Throttled live-metrics stream (WatchStore forwards these to the phone).
     var onMetrics: ((WatchLiveMetrics) -> Void)?
 
+    /// The user's HR-zone model, synced from the phone via `WatchAppContext`.
+    /// Drives live time-in-zone and (feature 4) the zone-adherence guard.
+    var zoneConfig = HRZoneConfig()
+    /// Active "zone lock" target (1...5); when set, the wrist buzzes on leaving
+    /// and re-entering the zone. Synced from the phone via the snapshot.
+    var zoneTarget: Int?
+
+    private enum ZoneGuardState { case unknown, below, inZone, above }
+    @ObservationIgnored private var zoneGuardState: ZoneGuardState = .unknown
+    @ObservationIgnored private var lastZoneCueAt = Date.distantPast
+
     @ObservationIgnored private var lastZoneTick: Date?
     @ObservationIgnored private var lastSend = Date.distantPast
-
-    private static let zoneMaxHR = 190.0
+    @ObservationIgnored private var lastSentHR: Int?
 
     // MARK: - Authorization
 
     private var readTypes: Set<HKObjectType> {
         var t: Set<HKObjectType> = []
-        for id: HKQuantityTypeIdentifier in [.heartRate, .activeEnergyBurned, .distanceWalkingRunning] {
+        for id: HKQuantityTypeIdentifier in [.heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling] {
             if let type = HKQuantityType.quantityType(forIdentifier: id) { t.insert(type) }
         }
         return t
@@ -141,6 +153,7 @@ final class WatchWorkoutEngine: NSObject {
             avgHR: avgHR,
             maxHR: maxHR,
             activeEnergyKcal: activeEnergyKcal,
+            distanceMeters: distanceMeters,
             hrZoneSeconds: zoneSeconds
         )
     }
@@ -150,8 +163,11 @@ final class WatchWorkoutEngine: NSObject {
         avgHR = nil
         maxHR = nil
         activeEnergyKcal = nil
+        distanceMeters = nil
         zoneSeconds = [0, 0, 0, 0, 0]
         lastZoneTick = nil
+        lastSentHR = nil
+        lastSend = .distantPast
     }
 
     // MARK: - Metric ingestion
@@ -163,6 +179,7 @@ final class WatchWorkoutEngine: NSObject {
             let bpm = HKUnit.count().unitDivided(by: .minute())
             if let latest = statistics.mostRecentQuantity()?.doubleValue(for: bpm) {
                 tickZone(hr: latest)
+                evaluateZoneGuard(hr: latest)
                 heartRate = Int(latest)
             }
             if let avg = statistics.averageQuantity()?.doubleValue(for: bpm) { avgHR = Int(avg) }
@@ -170,6 +187,10 @@ final class WatchWorkoutEngine: NSObject {
         case .activeEnergyBurned:
             if let sum = statistics.sumQuantity()?.doubleValue(for: .kilocalorie()) {
                 activeEnergyKcal = sum
+            }
+        case .distanceWalkingRunning, .distanceCycling:
+            if let sum = statistics.sumQuantity()?.doubleValue(for: .meter()) {
+                distanceMeters = sum
             }
         default:
             break
@@ -183,18 +204,48 @@ final class WatchWorkoutEngine: NSObject {
         if let last = lastZoneTick {
             let elapsed = Int(now.timeIntervalSince(last))
             if elapsed > 0 && elapsed < 120 {
-                let percent = hr / Self.zoneMaxHR
-                let zone: Int = percent < 0.6 ? 0 : percent < 0.7 ? 1 : percent < 0.8 ? 2 : percent < 0.9 ? 3 : 4
-                zoneSeconds[zone] += elapsed
+                let zone = zoneConfig.zone(for: Int(hr)) - 1   // 1...5 -> 0...4
+                if (0...4).contains(zone) { zoneSeconds[zone] += elapsed }
             }
         }
         lastZoneTick = now
     }
 
+    /// Buzz the wrist when the athlete leaves or re-enters their zone-lock
+    /// target. Distinct patterns: up = above, down = below, success = back in.
+    private func evaluateZoneGuard(hr: Double) {
+        guard let target = zoneTarget else { zoneGuardState = .unknown; return }
+        let zone = zoneConfig.zone(for: Int(hr))
+        let newState: ZoneGuardState = zone < target ? .below : (zone > target ? .above : .inZone)
+        guard newState != zoneGuardState else { return }
+        let previous = zoneGuardState
+        zoneGuardState = newState
+        // Skip the first classification and debounce boundary chatter.
+        guard previous != .unknown else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastZoneCueAt) >= 4 else { return }
+        lastZoneCueAt = now
+        switch newState {
+        case .above: WKInterfaceDevice.current().play(.directionUp)
+        case .below: WKInterfaceDevice.current().play(.directionDown)
+        case .inZone: WKInterfaceDevice.current().play(.success)
+        case .unknown: break
+        }
+    }
+
     private func throttledSend() {
         let now = Date()
-        guard now.timeIntervalSince(lastSend) >= 5 else { return }
+        let elapsed = now.timeIntervalSince(lastSend)
+        // Heart rate is the number the athlete watches most, so push it promptly
+        // when it moves (capped at ~1s to bound WatchConnectivity traffic);
+        // energy / distance / time-in-zone ride a steady ~5s heartbeat. This
+        // takes the worst-case HR lag on the phone from ~5s down to ~1s — the
+        // rest is inherent HealthKit batching + WC latency.
+        let hrMoved = heartRate != nil && heartRate != lastSentHR
+        let minInterval: TimeInterval = hrMoved ? 1.0 : 5.0
+        guard elapsed >= minInterval else { return }
         lastSend = now
+        lastSentHR = heartRate
         onMetrics?(currentMetrics())
     }
 }

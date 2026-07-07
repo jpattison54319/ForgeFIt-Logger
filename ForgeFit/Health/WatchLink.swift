@@ -139,6 +139,12 @@ final class WatchLink: NSObject {
         var snapshot: WatchWorkoutSnapshot?
         if let active {
             let timer = RestTimerController.shared
+            // The zone-lock target of the cardio segment currently recording,
+            // so the watch can run its own low-latency haptic guard.
+            let activeZoneTarget: Int? = active.cardioSessions
+                .first { $0.liveStartedAt != nil && $0.endedAt == nil }
+                .flatMap { session in active.exercises.first { $0.id == session.workoutExerciseID } }
+                .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hrZoneTarget }
             snapshot = WatchWorkoutSnapshot(
                 workoutID: active.id,
                 title: active.title,
@@ -160,7 +166,8 @@ final class WatchLink: NSObject {
                 restTotalSeconds: timer.isRunning && !timer.isMicro ? timer.totalSeconds : nil,
                 intervalStepName: IntervalRunnerHub.shared.runner?.currentStep?.label,
                 intervalStepEndsAt: IntervalRunnerHub.shared.runner?.currentStep != nil
-                    ? IntervalRunnerHub.shared.runner?.stepEndsAt : nil
+                    ? IntervalRunnerHub.shared.runner?.stepEndsAt : nil,
+                hrZoneTarget: activeZoneTarget
             )
         }
 
@@ -171,7 +178,9 @@ final class WatchLink: NSObject {
                 .sorted { $0.position < $1.position }
                 .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count) },
             readiness: readiness,
-            unitSuffix: Fmt.unit.suffix
+            unitSuffix: Fmt.unit.suffix,
+            distanceUnit: Fmt.distanceUnit,
+            hrZoneConfig: HRZoneConfigStore.load()
         )
     }
 
@@ -289,6 +298,15 @@ final class WatchLink: NSObject {
             session.endedAt = now
             session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
             let kind = CardioKind.from(modality: session.modality)
+            // Look up the exercise to tell an outdoor run from a treadmill —
+            // the stored modality alone can't (both resolve to `.run`).
+            var library: ExerciseLibraryModel?
+            if let exerciseID = active?.exercises.first(where: { $0.id == workoutExerciseID })?.exerciseID {
+                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
+            }
+            let providesGPSDistance = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
+            let hadManualIntervalPlan = active?.exercises.first { $0.id == workoutExerciseID }
+                .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
             try? context.save()
             publishState()
             Task { @MainActor in
@@ -296,9 +314,15 @@ final class WatchLink: NSObject {
                 if let hr = snap.avgHR { session.avgHR = hr }
                 if let mx = snap.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                if let dist = snap.distanceMeters { session.distanceMeters = dist }
+                // Keep the GPS route distance when a route was recorded (the
+                // splits are summed from it); only take HealthKit's distance
+                // when there's no route to trust.
+                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
+                    session.distanceMeters = dist
+                }
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
                 try? context.save()
+                await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: context)
             }
 
         case .liveMetrics(let metrics):

@@ -18,7 +18,7 @@ import UIKit
 final class NotificationScheduler: NSObject {
     static let shared = NotificationScheduler()
 
-    enum NotificationID {
+    nonisolated enum NotificationID {
         static let restTimer = "forgefit.rest-timer"
         static let streakNudge = "forgefit.streak-nudge"
         static let intervalCue = "forgefit.interval-cue"

@@ -38,7 +38,7 @@ struct ForgeTabBar: View {
             HStack(spacing: 7) {
                 Image(systemName: tab.systemImage)
                     .symbolVariant(isSelected ? .fill : .none)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .symbolEffect(.bounce, value: isSelected)
                 if isSelected {
                     Text(tab.title)
@@ -61,8 +61,11 @@ struct ForgeTabBar: View {
                 }
             }
             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
-            .padding(.vertical, 11)
-            .padding(.horizontal, isSelected ? 17 : 15)
+            .padding(.vertical, 12)
+            .padding(.horizontal, isSelected ? 18 : 16)
+            // Guarantee a ≥44pt tap target (Apple's HIG minimum). Icon-only
+            // tabs are otherwise ~40pt tall and read smaller than the stock bar.
+            .frame(minWidth: 44, minHeight: 44)
             .background {
                 if isSelected {
                     ActiveTabGlassPill()

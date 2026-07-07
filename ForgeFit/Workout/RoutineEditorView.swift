@@ -14,6 +14,10 @@ struct RoutineEditorView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @State private var showPicker = false
+    @State private var entrySnapshot: RoutineSnapshot?
+    @State private var showDiscardConfirm = false
+    @State private var reordering = false
+    @State private var replaceTarget: RoutineExerciseModel?
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
 
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
@@ -27,46 +31,81 @@ struct RoutineEditorView: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                header
+        Group {
+            if reordering {
+                VStack(spacing: 0) {
+                    header.padding(.horizontal, Space.lg)
+                    reorderList
+                }
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: Space.lg) {
+                        header
 
-                Card {
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        FieldLabel("Routine name")
-                        DarkTextField(text: $routine.name, placeholder: "Routine name")
-                        FieldLabel("Notes")
-                        DarkTextField(text: Binding(
-                            get: { routine.notes ?? "" },
-                            set: { routine.notes = $0.isEmpty ? nil : $0 }
-                        ), placeholder: "Add notes", axis: .vertical)
+                        Card {
+                            VStack(alignment: .leading, spacing: Space.md) {
+                                FieldLabel("Routine name")
+                                DarkTextField(text: $routine.name, placeholder: "Routine name")
+                                FieldLabel("Notes")
+                                DarkTextField(text: Binding(
+                                    get: { routine.notes ?? "" },
+                                    set: { routine.notes = $0.isEmpty ? nil : $0 }
+                                ), placeholder: "Add notes", axis: .vertical)
+                            }
+                        }
+
+                        SectionHeader("Exercises") {
+                            if sortedExercises.count > 1 {
+                                Button("Reorder") { withAnimation { reordering = true } }
+                                    .font(.bodyStrong).foregroundStyle(theme.accent)
+                                    .accessibilityIdentifier("reorder-exercises-button")
+                            }
+                        }
+
+                        ForEach(sortedExercises) { re in
+                            ExerciseEditRow(
+                                routineExercise: re,
+                                exercise: exercises.first { $0.id == re.exerciseID },
+                                availableSupersetGroups: supersetGroups,
+                                onAssignSuperset: { assignSuperset($0, to: re) },
+                                onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: re) },
+                                onUngroupSuperset: { ungroupSuperset($0) },
+                                onReplace: { replaceTarget = re },
+                                onRemove: { remove(re) }
+                            )
+                        }
+
+                        SecondaryButton(title: "Add Exercise", systemImage: "plus") { showPicker = true }
                     }
+                    .padding(.horizontal, Space.lg)
+                    .padding(.bottom, Space.tabBarClearance)
                 }
-
-                Text("Exercises").font(.sectionTitle).foregroundStyle(theme.textPrimary)
-
-                ForEach(sortedExercises) { re in
-                    ExerciseEditRow(
-                        routineExercise: re,
-                        exercise: exercises.first { $0.id == re.exerciseID },
-                        availableSupersetGroups: supersetGroups,
-                        onAssignSuperset: { assignSuperset($0, to: re) },
-                        onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: re) },
-                        onUngroupSuperset: { ungroupSuperset($0) },
-                        onRemove: { remove(re) }
-                    )
-                }
-
-                SecondaryButton(title: "Add Exercise", systemImage: "plus") { showPicker = true }
+                .background(theme.background)
             }
-            .padding(.horizontal, Space.lg)
-            .padding(.bottom, Space.tabBarClearance)
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+        .onAppear {
+            if entrySnapshot == nil { entrySnapshot = RoutineSnapshot(of: routine) }
+        }
+        .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Save Changes") { save(); dismiss() }
+            Button("Discard Changes", role: .destructive) {
+                if let entrySnapshot { entrySnapshot.restore(onto: routine, in: modelContext) }
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("You've made changes to this routine.")
+        }
         .sheet(isPresented: $showPicker) {
             ExercisePickerView(context: exercisesInRoutine, history: allWorkouts) { added in added.forEach(add) }
+        }
+        .sheet(item: $replaceTarget) { target in
+            ExercisePickerView(singleSelection: true, context: exercisesInRoutine, history: allWorkouts) { picked in
+                if let first = picked.first { replace(target, with: first) }
+            }
         }
         .navigationDestination(for: UUID.self) { exerciseID in
             ExerciseDetailView(exerciseID: exerciseID, workouts: allWorkouts, exercises: exercises)
@@ -75,14 +114,80 @@ struct RoutineEditorView: View {
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left") { save(); dismiss() }
-            Spacer()
-            Text("Edit Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
-            Spacer()
-            Button("Save") { save(); dismiss() }
-                .font(.bodyStrong).foregroundStyle(theme.accent)
+            if reordering {
+                Text("Reorder").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Spacer()
+                Button("Done") { withAnimation { reordering = false } }
+                    .font(.bodyStrong).foregroundStyle(theme.accent)
+                    .accessibilityIdentifier("reorder-done-button")
+            } else {
+                // Back offers to save or discard when the routine changed — it no
+                // longer silently saves, so Save actually means something.
+                CircleIconButton(systemImage: "chevron.left") {
+                    if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
+                        showDiscardConfirm = true
+                    } else {
+                        dismiss()
+                    }
+                }
+                Spacer()
+                Text("Edit Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Spacer()
+                Button("Save") { save(); dismiss() }
+                    .font(.bodyStrong).foregroundStyle(theme.accent)
+            }
         }
         .padding(.top, Space.sm)
+    }
+
+    /// Drag-to-reorder list, mirroring the live logger's reorder mode so the
+    /// gesture is consistent app-wide.
+    private var reorderList: some View {
+        List {
+            ForEach(sortedExercises) { re in
+                HStack(spacing: Space.md) {
+                    if let ex = exercises.first(where: { $0.id == re.exerciseID }) {
+                        ExerciseThumbnail(exercise: ex, size: 40)
+                        Text(ex.name).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "line.3.horizontal").foregroundStyle(theme.textTertiary)
+                }
+                .listRowBackground(theme.surface)
+                .listRowSeparatorTint(theme.separator)
+            }
+            .onMove(perform: moveExercises)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(theme.background)
+        .environment(\.editMode, .constant(.active))
+    }
+
+    private func moveExercises(from offsets: IndexSet, to destination: Int) {
+        var rows = sortedExercises
+        rows.move(fromOffsets: offsets, toOffset: destination)
+        for (index, row) in rows.enumerated() { row.position = index }
+        save()
+    }
+
+    /// Swap the exercise while keeping set targets when they still make sense
+    /// (strength → strength keeps reps/weight/RPE); duration vs rep-based
+    /// targets don't carry over, so a cardio/strength swap resets to a fresh
+    /// default set.
+    private func replace(_ target: RoutineExerciseModel, with exercise: ExerciseLibraryModel) {
+        let wasCardio = exercises.first { $0.id == target.exerciseID }?.isCardio == true
+        target.exerciseID = exercise.id
+        target.updatedAt = Date()
+        if exercise.isCardio != wasCardio {
+            target.sets.forEach(modelContext.delete)
+            let fresh = exercise.isCardio
+                ? RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
+                : RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
+            modelContext.insert(fresh)
+            target.sets = [fresh]
+        }
+        save()
     }
 
     private func add(_ exercise: ExerciseLibraryModel) {
@@ -168,6 +273,7 @@ private struct ExerciseEditRow: View {
     let onAssignSuperset: (Int?) -> Void
     let onCreateSuperset: () -> Void
     let onUngroupSuperset: (Int) -> Void
+    let onReplace: () -> Void
     let onRemove: () -> Void
 
     @State private var showIntervalBuilder = false
@@ -211,6 +317,7 @@ private struct ExerciseEditRow: View {
                         Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
                         Button("Add Working Set", systemImage: "plus") { addSet(type: .working) }
                         Divider()
+                        Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
                         Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
                     } label: {
                         Image(systemName: "ellipsis")
@@ -218,6 +325,7 @@ private struct ExerciseEditRow: View {
                             .foregroundStyle(theme.textSecondary)
                             .frame(width: 34, height: 34)
                     }
+                    .accessibilityIdentifier("routine-exercise-menu-\(exercise?.name ?? "")")
                 }
 
                 if isCardio {

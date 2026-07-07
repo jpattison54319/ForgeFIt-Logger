@@ -65,15 +65,26 @@ struct WorkoutHomeView: View {
     @State private var newRoutine: RoutineModel?
     @State private var renamingFolder: RoutineFolderModel?
     @State private var folderNameDraft = ""
+    @State private var sharePayload: ShareImagePayload?
     /// The item currently being dragged. SwiftUI's drop target callback only
     /// tells us whether something is hovering, so we keep the payload here to
     /// make folder hover feedback specific instead of vague.
     @State private var draggedPayload: DragPayload?
     @State private var dropFeedback: DropFeedback?
     @State private var showExploreLibrary = false
+    /// Accessible alternative to drag-reordering: a List with drag handles
+    /// that VoiceOver / Switch Control can operate, matching the reorder mode
+    /// already used in the routine editor and the live logger.
+    @State private var editingOrder = false
 
-    /// The active mesocycle: the folder whose routines Home rotates through.
-    @AppStorage("activeFolderID") private var activeFolderRaw = ""
+    /// The active macrocycle: when no mesocycle is more specifically active,
+    /// Home rotates through every mesocycle nested inside it.
+    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
+    /// The active mesocycle: the most specific "what am I actually running
+    /// right now" signal. A macrocycle can hold several mesocycles, so these
+    /// are independent — Home drills into the mesocycle first, then falls
+    /// back to the macrocycle, then to best-guessing from the full list.
+    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
 
     private var activeRoutines: [RoutineModel] {
         routines.filter { $0.deletedAt == nil }.sorted { $0.position < $1.position }
@@ -93,8 +104,28 @@ struct WorkoutHomeView: View {
     private func routines(in folder: RoutineFolderModel) -> [RoutineModel] {
         activeRoutines.filter { $0.folderID == folder.id }
     }
-    private func isActiveFolder(_ folder: RoutineFolderModel) -> Bool {
-        activeFolderRaw == folder.id.uuidString
+    private func isActiveMacro(_ folder: RoutineFolderModel) -> Bool {
+        activeMacroFolderRaw == folder.id.uuidString
+    }
+    private func isActiveMeso(_ folder: RoutineFolderModel) -> Bool {
+        activeMesoFolderRaw == folder.id.uuidString
+    }
+    /// Setting a mesocycle active also adopts its parent macrocycle (if any)
+    /// — drilling into a specific mesocycle means you're "in" that
+    /// macrocycle too, so the two stay consistent with each other.
+    private func setActiveMeso(_ folder: RoutineFolderModel) {
+        activeMesoFolderRaw = folder.id.uuidString
+        if let parentID = folder.parentID { activeMacroFolderRaw = parentID.uuidString }
+    }
+    /// Setting a macrocycle active keeps the current mesocycle active only if
+    /// it's actually nested inside this macrocycle — otherwise it no longer
+    /// makes sense as "the specific plan within the active macro".
+    private func setActiveMacro(_ folder: RoutineFolderModel) {
+        activeMacroFolderRaw = folder.id.uuidString
+        if let mesoID = UUID(uuidString: activeMesoFolderRaw),
+           mesoID != folder.id, !childFolders(of: folder).contains(where: { $0.id == mesoID }) {
+            activeMesoFolderRaw = ""
+        }
     }
 
     var body: some View {
@@ -108,12 +139,24 @@ struct WorkoutHomeView: View {
                 }
 
                 SectionHeader("Routines") {
-                    Button { createFolder() } label: {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
+                    HStack(spacing: Space.lg) {
+                        // Accessible alternative to drag-reordering — VoiceOver /
+                        // Switch Control have no other way to reorder routines
+                        // or folders (drag/drop only ever moved things BETWEEN
+                        // folders; nothing reordered position within one).
+                        if !ungrouped.isEmpty || !folders.isEmpty {
+                            Button("Edit Order") { editingOrder = true }
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                                .accessibilityIdentifier("edit-routine-order-button")
+                        }
+                        Button { createFolder() } label: {
+                            Image(systemName: "folder.badge.plus")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                        }
+                        .accessibilityIdentifier("new-folder-button")
                     }
-                    .accessibilityIdentifier("new-folder-button")
                 }
 
                 HStack(spacing: Space.sm) {
@@ -158,15 +201,33 @@ struct WorkoutHomeView: View {
                     templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
                     exercises: exercises,
                     onImport: { template in
-                        let activeFolderID = UUID(uuidString: activeFolderRaw)
+                        // Only a mesocycle (leaf folder) can directly hold a
+                        // routine — a macrocycle-only active state has
+                        // nowhere concrete to import into, so it lands
+                        // ungrouped instead.
                         _ = RoutineTemplateCatalog.importTemplate(
                             template,
-                            folderID: activeFolderID,
+                            folderID: UUID(uuidString: activeMesoFolderRaw),
                             existingRoutines: activeRoutines,
                             in: modelContext
                         )
                         showExploreLibrary = false
                     }
+                )
+            }
+            .sheet(item: $sharePayload) { payload in
+                ShareSheet(items: [payload.image])
+            }
+            .sheet(isPresented: $editingOrder) {
+                RoutineOrderEditorView(
+                    topLevelFolders: topLevelFolders,
+                    routineHoldingFolders: routineDestinationFolders,
+                    ungrouped: ungrouped,
+                    routines: { routines(in: $0) },
+                    label: { destinationLabel($0) },
+                    onMoveFolders: moveTopLevelFolders,
+                    onMoveUngrouped: moveUngroupedRoutines,
+                    onMoveRoutines: { folder, from, to in moveRoutines(in: folder, from: from, to: to) }
                 )
             }
         }
@@ -179,7 +240,9 @@ struct WorkoutHomeView: View {
         let isCollapsed = collapsed.contains(folder.id)
         let items = routines(in: folder)
         let children = childFolders(of: folder)
-        let isActive = isActiveFolder(folder)
+        // A folder is either a macrocycle (has children) or a mesocycle
+        // (leaf) — check whichever active slot applies to its role.
+        let isActive = children.isEmpty ? isActiveMeso(folder) : isActiveMacro(folder)
         let target = DropTarget.folder(folder.id)
         let feedback = feedback(for: target)
         let isTargeted = feedback != nil
@@ -329,12 +392,26 @@ struct WorkoutHomeView: View {
 
     private func folderMenu(_ folder: RoutineFolderModel, isActive: Bool, hasChildren: Bool) -> some View {
         Menu {
-            if isActive {
-                Button("Clear Active Mesocycle", systemImage: "star.slash") { activeFolderRaw = "" }
+            // Independent slots: a macrocycle and one of its mesocycles can
+            // both be active at once (that's the whole point — a macro can
+            // hold several mesocycles, only one of which you're running now).
+            if hasChildren {
+                if isActive {
+                    Button("Clear Active Macrocycle", systemImage: "star.slash") { activeMacroFolderRaw = "" }
+                } else {
+                    Button("Set as Active Macrocycle", systemImage: "star") { setActiveMacro(folder) }
+                }
             } else {
-                Button("Set as Active Mesocycle", systemImage: "star") { activeFolderRaw = folder.id.uuidString }
+                if isActive {
+                    Button("Clear Active Mesocycle", systemImage: "star.slash") { activeMesoFolderRaw = "" }
+                } else {
+                    Button("Set as Active Mesocycle", systemImage: "star") { setActiveMeso(folder) }
+                }
             }
             Divider()
+            Button(hasChildren ? "Share Macrocycle" : "Share Mesocycle", systemImage: "square.and.arrow.up") {
+                shareFolder(folder, hasChildren: hasChildren)
+            }
             Button("Rename", systemImage: "pencil") { startRename(folder) }
             // A folder with subfolders holds only folders — no loose routines.
             if !hasChildren {
@@ -361,6 +438,29 @@ struct WorkoutHomeView: View {
             Button("Delete Folder", systemImage: "trash", role: .destructive) { deleteFolder(folder) }
         } label: {
             Image(systemName: "ellipsis").foregroundStyle(theme.textSecondary).frame(width: 30, height: 30)
+        }
+    }
+
+    /// Render a training-cycle folder to a single tall image and present the
+    /// share sheet. A folder with subfolders shares as a macrocycle (routines
+    /// grouped under each mesocycle); otherwise as a mesocycle (its routines).
+    private func shareFolder(_ folder: RoutineFolderModel, hasChildren: Bool) {
+        let sections: [FolderShareCard.Section]
+        if hasChildren {
+            sections = childFolders(of: folder).map { sub in
+                FolderShareCard.Section(title: sub.name, routines: routines(in: sub))
+            }
+        } else {
+            sections = [FolderShareCard.Section(title: nil, routines: routines(in: folder))]
+        }
+        if let image = FolderShareRenderer.image(
+            name: folder.name,
+            isMacro: hasChildren,
+            sections: sections,
+            exercises: exercises,
+            theme: theme
+        ) {
+            sharePayload = ShareImagePayload(image: image)
         }
     }
 
@@ -482,13 +582,17 @@ struct WorkoutHomeView: View {
     }
 
     private func routineCard(_ routine: RoutineModel) -> some View {
-        RoutineCard(
+        let destinations = routineDestinationFolders.filter { $0.id != routine.folderID }
+        return RoutineCard(
             routine: routine,
             exercises: exercises,
             onStart: { start(routine) },
             onEdit: { edit(routine) },
             onDelete: { delete(routine) },
-            onDuplicate: { duplicate(routine) }
+            onDuplicate: { duplicate(routine) },
+            moveDestinations: destinations.map { ($0.id, destinationLabel($0)) },
+            showsMoveToRoot: routine.folderID != nil,
+            onMove: { folderID in moveRoutine(routine, toFolder: folderID) }
         )
         .contentShape(Rectangle())
         .onDrag {
@@ -591,7 +695,8 @@ struct WorkoutHomeView: View {
             child.parentID = folder.parentID
             child.updatedAt = now
         }
-        if isActiveFolder(folder) { activeFolderRaw = "" }
+        if isActiveMacro(folder) { activeMacroFolderRaw = "" }
+        if isActiveMeso(folder) { activeMesoFolderRaw = "" }
         folder.updatedAt = now
         folder.deletedAt = now
         save()
@@ -651,6 +756,128 @@ struct WorkoutHomeView: View {
     private func save() {
         try? modelContext.save()
     }
+
+    // MARK: - Move to folder (accessible alternative to drag & drop)
+
+    /// Folders that can directly hold a routine — leaf folders only, whether
+    /// standalone (a mesocycle) or nested under a macrocycle. A folder that
+    /// itself has subfolders holds only folders, matching the drag/drop rule
+    /// in `handleDrop`.
+    private var routineDestinationFolders: [RoutineFolderModel] {
+        folders.filter { childFolders(of: $0).isEmpty }
+    }
+
+    /// "Off-Season / Block 1" for a nested folder, plain name for a top-level
+    /// one — enough context to tell same-named folders apart.
+    private func destinationLabel(_ folder: RoutineFolderModel) -> String {
+        guard let parentID = folder.parentID, let parent = folders.first(where: { $0.id == parentID }) else {
+            return folder.name
+        }
+        return "\(parent.name) / \(folder.name)"
+    }
+
+    private func moveRoutine(_ routine: RoutineModel, toFolder folderID: UUID?) {
+        guard routine.folderID != folderID else { return }
+        routine.folderID = folderID
+        routine.updatedAt = Date()
+        save()
+    }
+
+    // MARK: - Edit Order (accessible alternative to drag reordering)
+
+    private func moveTopLevelFolders(from offsets: IndexSet, to destination: Int) {
+        var rows = topLevelFolders
+        rows.move(fromOffsets: offsets, toOffset: destination)
+        for (index, folder) in rows.enumerated() { folder.position = index; folder.updatedAt = Date() }
+        save()
+    }
+
+    private func moveUngroupedRoutines(from offsets: IndexSet, to destination: Int) {
+        var rows = ungrouped
+        rows.move(fromOffsets: offsets, toOffset: destination)
+        for (index, routine) in rows.enumerated() { routine.position = index; routine.updatedAt = Date() }
+        save()
+    }
+
+    private func moveRoutines(in folder: RoutineFolderModel, from offsets: IndexSet, to destination: Int) {
+        var rows = routines(in: folder)
+        rows.move(fromOffsets: offsets, toOffset: destination)
+        for (index, routine) in rows.enumerated() { routine.position = index; routine.updatedAt = Date() }
+        save()
+    }
+}
+
+/// Drag-handle reordering for routines and top-level folders — the
+/// accessible counterpart to the Workout tab's drag & drop, which only ever
+/// moves things BETWEEN folders and never reorders position within one.
+private struct RoutineOrderEditorView: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+    let topLevelFolders: [RoutineFolderModel]
+    /// Leaf folders only (no subfolders) — the ones that can hold routines.
+    let routineHoldingFolders: [RoutineFolderModel]
+    let ungrouped: [RoutineModel]
+    let routines: (RoutineFolderModel) -> [RoutineModel]
+    let label: (RoutineFolderModel) -> String
+    let onMoveFolders: (IndexSet, Int) -> Void
+    let onMoveUngrouped: (IndexSet, Int) -> Void
+    let onMoveRoutines: (RoutineFolderModel, IndexSet, Int) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !topLevelFolders.isEmpty {
+                    Section("Folders") {
+                        ForEach(topLevelFolders) { folder in
+                            row(icon: "folder.fill", title: folder.name)
+                        }
+                        .onMove(perform: onMoveFolders)
+                    }
+                }
+                if !ungrouped.isEmpty {
+                    Section("Ungrouped Routines") {
+                        ForEach(ungrouped) { routine in
+                            row(icon: "list.bullet.clipboard", title: routine.name)
+                        }
+                        .onMove(perform: onMoveUngrouped)
+                    }
+                }
+                ForEach(routineHoldingFolders) { folder in
+                    let items = routines(folder)
+                    if !items.isEmpty {
+                        Section(label(folder)) {
+                            ForEach(items) { routine in
+                                row(icon: "list.bullet.clipboard", title: routine.name)
+                            }
+                            .onMove { onMoveRoutines(folder, $0, $1) }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(theme.background)
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Edit Order")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.font(.bodyStrong)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func row(icon: String, title: String) -> some View {
+        HStack(spacing: Space.md) {
+            Image(systemName: icon).foregroundStyle(theme.textSecondary).frame(width: 20)
+            Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
+            Spacer()
+        }
+        .listRowBackground(theme.surface)
+        .listRowSeparatorTint(theme.separator)
+    }
 }
 
 /// A single routine card with title, exercise summary, and a blue Start button.
@@ -664,6 +891,11 @@ private struct RoutineCard: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
+    /// (folder id, display label) for every folder this routine could move
+    /// into — the accessible alternative to dragging the card onto a folder.
+    var moveDestinations: [(id: UUID, label: String)] = []
+    var showsMoveToRoot: Bool = false
+    var onMove: (UUID?) -> Void = { _ in }
 
     private var sortedRoutineExercises: [RoutineExerciseModel] {
         routine.exercises.sorted { $0.position < $1.position }
@@ -702,6 +934,22 @@ private struct RoutineCard: View {
                         Menu {
                             Button("Edit Routine", systemImage: "pencil", action: onEdit)
                             Button("Duplicate Routine", systemImage: "doc.on.doc", action: onDuplicate)
+                            // Accessible alternative to drag-and-drop nesting —
+                            // VoiceOver / Switch Control users have no other
+                            // way to move a routine between folders.
+                            if showsMoveToRoot || !moveDestinations.isEmpty {
+                                Menu {
+                                    if showsMoveToRoot {
+                                        Button("Ungrouped", systemImage: "tray") { onMove(nil) }
+                                    }
+                                    ForEach(moveDestinations, id: \.id) { destination in
+                                        Button(destination.label, systemImage: "folder") { onMove(destination.id) }
+                                    }
+                                } label: {
+                                    Label("Move to Folder…", systemImage: "folder.badge.gearshape")
+                                }
+                            }
+                            Divider()
                             Button("Delete Routine", systemImage: "xmark", role: .destructive, action: onDelete)
                         } label: {
                             Image(systemName: "ellipsis")
@@ -709,6 +957,7 @@ private struct RoutineCard: View {
                                 .foregroundStyle(theme.textSecondary)
                                 .frame(width: 30, height: 30)
                         }
+                        .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
                     if sortedRoutineExercises.isEmpty {

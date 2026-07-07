@@ -8,6 +8,60 @@ import SwiftUI
 /// exercises, rep ranges, weekday habit, e1RM movers), Cardio (minutes /
 /// distance trends, modality mix, HR zones, pace, bests), and Monthly
 /// (per-month report with deltas vs the previous month).
+/// A stat card with a persistent collapse toggle — Strength and Cardio each
+/// stack 7-8 cards below their headline summary, with no way to hide ones a
+/// user doesn't care about. Collapsed state is remembered per card (keyed by
+/// a stable id, independent of any dynamic display title) so a preference
+/// like "always collapse Training days" sticks across visits.
+private struct CollapsibleStatCard<Content: View>: View {
+    @Environment(\.theme) private var theme
+    let title: String
+    var systemImage: String?
+    var tint: Color?
+    @AppStorage private var isExpanded: Bool
+    @ViewBuilder let content: () -> Content
+
+    init(title: String, systemImage: String? = nil, tint: Color? = nil, key: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self._isExpanded = AppStorage(wrappedValue: true, "statsSectionExpanded.\(key)")
+        self.content = content
+    }
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
+                } label: {
+                    HStack {
+                        if let systemImage {
+                            Label(title, systemImage: systemImage)
+                                .font(.bodyStrong)
+                                .foregroundStyle(tint ?? theme.textPrimary)
+                        } else {
+                            Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                            .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("stats-section-\(title)")
+
+                if isExpanded {
+                    content()
+                }
+            }
+        }
+    }
+}
+
 struct StatisticsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
@@ -137,9 +191,8 @@ struct StatisticsView: View {
             slices.append(Slice(id: "other", label: "Other", sets: otherSets, color: theme.textTertiary))
         }
 
-        return Card {
+        return CollapsibleStatCard(title: "Muscle distribution", key: "muscleDistribution") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Muscle distribution").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 HStack(spacing: Space.lg) {
                     Chart(slices) { slice in
                         SectorMark(
@@ -188,9 +241,8 @@ struct StatisticsView: View {
 
     private var trainingSplitCard: some View {
         let split = analytics.trainingSplit(in: range)
-        return Card {
+        return CollapsibleStatCard(title: "Push · Pull · Legs balance", key: "trainingSplit") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Push · Pull · Legs balance").font(.bodyStrong).foregroundStyle(theme.textPrimary)
 
                 GeometryReader { geo in
                     HStack(spacing: 2) {
@@ -223,14 +275,10 @@ struct StatisticsView: View {
         let rows = distribution.prefix(8).map { share in
             MuscleVolumeBars.Row(muscle: share.muscle, sets: share.sets / weeks, target: 14)
         }
-        return Card {
+        return CollapsibleStatCard(title: "Weekly sets per muscle", key: "setsPerMuscle") {
             VStack(alignment: .leading, spacing: Space.md) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Weekly sets per muscle").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    Text("vs ~14-set target")
-                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
-                }
+                Text("vs ~14-set target")
+                    .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                 MuscleVolumeBars(rows: Array(rows))
             }
         }
@@ -239,9 +287,8 @@ struct StatisticsView: View {
     private var topExercisesCard: some View {
         let top = analytics.topExercises(in: range, limit: 5)
         let maxSets = top.map(\.workingSets).max() ?? 1
-        return Card {
+        return CollapsibleStatCard(title: "Main exercises", key: "topExercises") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Main exercises").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 ForEach(top) { usage in
                     NavigationLink(value: usage.id) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -277,9 +324,8 @@ struct StatisticsView: View {
 
     private var repRangeCard: some View {
         let buckets = analytics.repRangeDistribution(in: range)
-        return Card {
+        return CollapsibleStatCard(title: "Rep ranges", key: "repRanges") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Rep ranges").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 ForEach(buckets) { bucket in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
@@ -318,9 +364,8 @@ struct StatisticsView: View {
             let count: Int
         }
         let days = frequency.enumerated().map { DayCount(label: $1.label, position: $0, count: $1.count) }
-        return Card {
+        return CollapsibleStatCard(title: "Training days", key: "trainingDays") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Training days").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Chart(days) { day in
                     BarMark(
                         x: .value("Day", day.position),
@@ -355,11 +400,8 @@ struct StatisticsView: View {
     private var strengthGainersCard: some View {
         let gainers = analytics.topStrengthGainers(in: range)
         if !gainers.isEmpty {
-            Card {
+            CollapsibleStatCard(title: "Strength movers", systemImage: "chart.line.uptrend.xyaxis", tint: theme.recoveryHigh, key: "strengthGainers") {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Label("Strength movers", systemImage: "chart.line.uptrend.xyaxis")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.recoveryHigh)
                     ForEach(gainers) { gainer in
                         NavigationLink(value: gainer.id) {
                             HStack {
@@ -413,6 +455,8 @@ struct StatisticsView: View {
             cardioTrendCard
             modalityCard(breakdown)
             zoneCard
+            efficiencyCard
+            criticalPaceCard
             paceCard
             cardioBestsCard
         }
@@ -426,7 +470,7 @@ struct StatisticsView: View {
             HStack {
                 StatColumn(label: "Sessions", value: "\(sessions)")
                 StatColumn(label: "Time", value: Fmt.durationShort(Int(minutes * 60)), valueColor: theme.secondaryAccent)
-                StatColumn(label: "Distance", value: distance > 0 ? Fmt.distanceKm(distance) : "—")
+                StatColumn(label: "Distance", value: distance > 0 ? Fmt.distance(distance) : "—")
             }
         }
     }
@@ -435,11 +479,9 @@ struct StatisticsView: View {
         let points = cardioTrend == .minutes
             ? analytics.cardioWeeklyMinutes(weeks: range.weekCount)
             : analytics.cardioWeeklyDistance(weeks: range.weekCount)
-        return Card {
+        return CollapsibleStatCard(title: "Weekly \(cardioTrend.rawValue.lowercased())", key: "cardioTrend") {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Weekly \(cardioTrend.rawValue.lowercased())")
-                        .font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Text(cardioTrend == .minutes ? "min / week" : "km / week")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
@@ -457,9 +499,8 @@ struct StatisticsView: View {
 
     private func modalityCard(_ breakdown: [TrainingAnalytics.ModalityShare]) -> some View {
         let totalMinutes = max(1, breakdown.reduce(0.0) { $0 + $1.minutes })
-        return Card {
+        return CollapsibleStatCard(title: "By activity", key: "cardioModality") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("By activity").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 ForEach(breakdown) { share in
                     HStack(spacing: Space.md) {
                         Image(systemName: share.kind.systemImage)
@@ -496,7 +537,7 @@ struct StatisticsView: View {
 
     private func shareDetail(_ share: TrainingAnalytics.ModalityShare) -> String {
         var parts = ["\(share.sessions)×", Fmt.durationShort(Int(share.minutes * 60))]
-        if share.distanceMeters > 0 { parts.append(Fmt.distanceKm(share.distanceMeters)) }
+        if share.distanceMeters > 0 { parts.append(Fmt.distance(share.distanceMeters)) }
         return parts.joined(separator: " · ")
     }
 
@@ -504,9 +545,8 @@ struct StatisticsView: View {
     private var zoneCard: some View {
         let zones = analytics.cardioZoneTotals(in: range)
         if zones.contains(where: { $0 > 0 }) {
-            Card {
+            CollapsibleStatCard(title: "Intensity", key: "cardioZones") {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Text("Intensity").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     ZoneSecondsBar(zoneSeconds: zones)
                     Text("Zones 1–2 build the aerobic base; zones 4–5 are your hard interval work. Most endurance plans keep ~80% of time easy.")
                         .font(.system(size: 11))
@@ -518,16 +558,68 @@ struct StatisticsView: View {
     }
 
     @ViewBuilder
+    private var efficiencyCard: some View {
+        if let kind = analytics.dominantAerobicModality(in: range) {
+            let series = analytics.efficiencySeries(for: kind, in: range)
+            if series.count >= 2 {
+                let delta = series.last!.value - series.first!.value
+                let pct = series.first!.value > 0 ? delta / series.first!.value * 100 : 0
+                CollapsibleStatCard(title: "\(kind.title) efficiency", key: "cardioEfficiency") {
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Spacer()
+                            Text(pct >= 0 ? "▲ \(pct.formatted(.number.precision(.fractionLength(0))))%" : "▼ \(abs(pct).formatted(.number.precision(.fractionLength(0))))%")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(pct >= 0 ? theme.success : theme.danger)
+                        }
+                        Text("More distance per heartbeat at easy effort — cardio's version of adding weight to the bar.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        LineTrendChart(points: series, color: theme.accent)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var criticalPaceCard: some View {
+        let curve = analytics.criticalPaceCurve(in: range)
+        if curve.current.count >= 2 {
+            CollapsibleStatCard(title: "Critical pace", key: "criticalPace") {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Spacer()
+                        Text("best sustained pace").font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    }
+                    Text("Your fastest pace held for each duration — this is fitness change, not one session.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    CriticalPaceCurveView(current: curve.current, prior: curve.prior)
+                }
+            }
+        } else if curve.hasAnyData {
+            Card {
+                HStack(spacing: 8) {
+                    Image(systemName: "chart.xyaxis.line").foregroundStyle(theme.textTertiary)
+                    Text("Keep logging runs and your critical-pace curve will build here.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var paceCard: some View {
         if let kind = analytics.dominantPaceModality(in: range) {
             let series = analytics.paceSeries(for: kind, in: range)
             if series.count >= 2 {
-                Card {
+                CollapsibleStatCard(title: "\(kind.title) pace", key: "cardioPace") {
                     VStack(alignment: .leading, spacing: Space.md) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text("\(kind.title) pace").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             Spacer()
-                            Text("min/km · lower is faster")
+                            Text("min\(Fmt.distanceUnit.paceSuffix) · lower is faster")
                                 .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                         }
                         LineTrendChart(points: series, color: theme.secondaryAccent)
@@ -539,14 +631,11 @@ struct StatisticsView: View {
 
     private var cardioBestsCard: some View {
         let bests = analytics.cardioBests(in: range)
-        return Card {
+        return CollapsibleStatCard(title: "Cardio bests", systemImage: "trophy.fill", tint: theme.warmup, key: "cardioBests") {
             VStack(alignment: .leading, spacing: Space.md) {
-                Label("Cardio bests", systemImage: "trophy.fill")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.warmup)
                 HStack {
                     StatColumn(label: "Longest", value: bests.longestSeconds.map { Fmt.durationShort($0) } ?? "—")
-                    StatColumn(label: "Farthest", value: bests.longestDistanceMeters.map { Fmt.distanceKm($0) } ?? "—")
+                    StatColumn(label: "Farthest", value: bests.longestDistanceMeters.map { Fmt.distance($0) } ?? "—")
                     StatColumn(label: "Best pace", value: bests.bestPaceMinutesPerKm.map(paceText) ?? "—")
                 }
             }
@@ -554,8 +643,9 @@ struct StatisticsView: View {
     }
 
     private func paceText(_ minutesPerKm: Double) -> String {
-        let totalSeconds = Int((minutesPerKm * 60).rounded())
-        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))/km"
+        let unit = Fmt.distanceUnit
+        let totalSeconds = Int((minutesPerKm * 60 * (unit.metersPerUnit / 1000)).rounded())
+        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60)) \(unit.paceSuffix)"
     }
 
     // MARK: - Monthly tab
@@ -701,7 +791,7 @@ struct StatisticsView: View {
         if report.distanceMeters > 0 {
             Card {
                 HStack {
-                    StatColumn(label: "Distance", value: Fmt.distanceKm(report.distanceMeters), valueColor: theme.secondaryAccent)
+                    StatColumn(label: "Distance", value: Fmt.distance(report.distanceMeters), valueColor: theme.secondaryAccent)
                     StatColumn(label: "Cardio time", value: Fmt.durationShort(Int(report.cardioMinutes * 60)))
                 }
             }

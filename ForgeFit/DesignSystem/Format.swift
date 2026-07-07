@@ -1,9 +1,10 @@
 import Foundation
+import ForgeCore
 
 /// Display unit for loads. ForgeFit stores load in kilograms internally (see the
 /// data-layer model comments); this controls how it is shown. Defaults to lbs to
 /// match the way the reference screens are configured.
-enum WeightUnit: String, Codable {
+nonisolated enum WeightUnit: String, Codable {
     case lb, kg
 
     var suffix: String { self == .lb ? "lbs" : "kg" }
@@ -34,6 +35,9 @@ enum WeightUnit: String, Codable {
 ///
 enum Fmt {
     static var unit: WeightUnit = .lb
+    /// Display unit for cardio distance/pace/speed. Mirrored from
+    /// `@AppStorage("distanceUnitRaw")` at launch and on change, same as `unit`.
+    static var distanceUnit: DistanceUnit = .km
 
     /// A compact volume like "15k lbs" / "14,533 lbs".
     static func volume(_ value: Double?, unit: WeightUnit = Fmt.unit) -> String {
@@ -97,9 +101,19 @@ enum Fmt {
         return String(format: "%d:%02d", m, s)
     }
 
-    static func distanceKm(_ meters: Double?) -> String {
+    /// Land distance in the user's chosen unit (km or mi), e.g. "5.20 km".
+    static func distance(_ meters: Double?, unit: DistanceUnit = Fmt.distanceUnit) -> String {
         guard let meters else { return "—" }
-        return "\((meters / 1000).formatted(.number.precision(.fractionLength(0...2)))) km"
+        let value = unit.distance(fromMeters: meters)
+        return "\(value.formatted(.number.precision(.fractionLength(0...2)))) \(unit.abbreviation)"
+    }
+
+    /// Cardio distance that respects the modality: pool swims stay in meters,
+    /// everything else uses the user's km/mi preference.
+    static func cardioDistance(_ meters: Double?, kind: CardioKind, unit: DistanceUnit = Fmt.distanceUnit) -> String {
+        guard let meters else { return "—" }
+        if kind.usesFixedMeters { return "\(Int(meters)) m" }
+        return distance(meters, unit: unit)
     }
 
     static func bpm(_ value: Int?) -> String {

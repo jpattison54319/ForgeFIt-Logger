@@ -3,7 +3,7 @@ import ForgeCore
 import ForgeData
 import SwiftData
 
-struct ExerciseImportMatch: Identifiable, Hashable, Sendable {
+nonisolated struct ExerciseImportMatch: Identifiable, Hashable, Sendable {
     var id: String { importedName }
     var importedName: String
     var exerciseID: UUID?
@@ -12,7 +12,7 @@ struct ExerciseImportMatch: Identifiable, Hashable, Sendable {
     var willCreateCustom: Bool { exerciseID == nil }
 }
 
-struct WorkoutHistoryImportPreview: Sendable {
+nonisolated struct WorkoutHistoryImportPreview: Sendable {
     var parseResult: WorkoutHistoryImportParseResult
     var matches: [ExerciseImportMatch]
     var duplicateCount: Int
@@ -34,7 +34,7 @@ struct WorkoutHistoryImportPreview: Sendable {
     }
 }
 
-struct WorkoutHistoryImportCommitResult {
+nonisolated struct WorkoutHistoryImportCommitResult {
     var importedWorkouts: Int
     var skippedDuplicates: Int
     var createdExercises: Int
@@ -119,7 +119,7 @@ enum WorkoutHistoryImportService {
             guard let exerciseID = match.exerciseID else { return nil }
             return (match.importedName, exerciseID)
         })
-        var exerciseByID = Dictionary(uniqueKeysWithValues: existingExercises.map { ($0.id, $0) })
+        var exerciseByID = Dictionary(existingExercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var createdExercises = 0
         var flaggedForReview = 0
         var importedWorkouts = 0

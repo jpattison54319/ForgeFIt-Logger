@@ -4,6 +4,9 @@ import Foundation
 #if canImport(ActivityKit)
 import ActivityKit
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Manages the workout Live Activity: starts when a workout starts, updates
 /// on set/rest/HR changes (driven by ContentView's fingerprint), ends on
@@ -27,9 +30,11 @@ final class WorkoutActivityController {
         if let current = activity ?? Activity<WorkoutActivityAttributes>.activities.first {
             activity = current
             Task {
-                await current.update(ActivityContent(state: state, staleDate: nil))
-                for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current.id {
-                    await stale.end(nil, dismissalPolicy: .immediate)
+                await Self.withBackgroundTask(named: "UpdateWorkoutLiveActivity") {
+                    await current.update(ActivityContent(state: state, staleDate: nil))
+                    for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current.id {
+                        await stale.end(nil, dismissalPolicy: .immediate)
+                    }
                 }
             }
         } else {
@@ -40,18 +45,49 @@ final class WorkoutActivityController {
         }
     }
 
+    /// Ends the Live Activity. Wrapped in a background task assertion because
+    /// a watch-initiated finish delivers here via a WCSession message while
+    /// the phone can be backgrounded/locked — iOS only wakes the app for a
+    /// brief window to handle that message, and without extra time the async
+    /// `Activity.end()` call can be cut off mid-flight, leaving the Live
+    /// Activity stuck on the lock screen until the user manually starts and
+    /// stops another workout on the phone.
     func end() {
         let current = activity
         self.activity = nil
         Task {
-            if let current {
-                await current.end(nil, dismissalPolicy: .immediate)
-            }
-            for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current?.id {
-                await stale.end(nil, dismissalPolicy: .immediate)
+            await Self.withBackgroundTask(named: "EndWorkoutLiveActivity") {
+                if let current {
+                    await current.end(nil, dismissalPolicy: .immediate)
+                }
+                for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current?.id {
+                    await stale.end(nil, dismissalPolicy: .immediate)
+                }
             }
         }
     }
+
+    #if canImport(UIKit)
+    /// Requests extra background execution time for `work`, ending the
+    /// assertion when it completes (or immediately if the OS expires it
+    /// first, so we're never penalized for overstaying).
+    private static func withBackgroundTask(named name: String, _ work: () async -> Void) async {
+        var taskID: UIBackgroundTaskIdentifier = .invalid
+        taskID = UIApplication.shared.beginBackgroundTask(withName: name) {
+            UIApplication.shared.endBackgroundTask(taskID)
+            taskID = .invalid
+        }
+        await work()
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
+            taskID = .invalid
+        }
+    }
+    #else
+    private static func withBackgroundTask(named name: String, _ work: () async -> Void) async {
+        await work()
+    }
+    #endif
 
     private func contentState(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> WorkoutActivityAttributes.ContentState {
         let sorted = workout.exercises.sorted { $0.position < $1.position }
@@ -70,15 +106,25 @@ final class WorkoutActivityController {
         if pureCardio, let session = workout.cardioSessions.first {
             let kind = CardioKind.from(modality: session.modality)
             let duration = session.durationSeconds ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
+            // Prefer live distance (watch stream / phone GPS) so the lock screen
+            // and Dynamic Island tick in real time; treadmills stay manual-only.
+            let library = workout.exercises.first { $0.id == session.workoutExerciseID }
+                .flatMap { we in exercises.first { $0.id == we.exerciseID } }
+            let providesGPS = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
+            let liveDist: Double? = providesGPS
+                ? (WatchLink.shared.liveMetrics?.distanceMeters
+                    ?? CardioRouteRecorder.shared.liveDistanceMeters(for: session.id)
+                    ?? session.distanceMeters)
+                : session.distanceMeters
             let paceOrSpeed = kind.usesPace
-                ? CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: duration, unit: kind.distanceUnit)
-                : CardioMetrics.speedString(distanceMeters: session.distanceMeters, durationSeconds: duration)
+                ? CardioMetrics.paceString(distanceMeters: liveDist, durationSeconds: duration, kind: kind)
+                : CardioMetrics.speedString(distanceMeters: liveDist, durationSeconds: duration)
             // Structured session: the current interval step is the headline.
             let intervalStep = IntervalRunnerHub.shared.runner(for: session.id)?.currentStep?.label
             let paceMetric = paceOrSpeed == "—" ? Fmt.durationShort(duration) : paceOrSpeed
             let primaryMetric = intervalStep ?? paceMetric
             let detail = [
-                Fmt.distanceKm(session.distanceMeters),
+                Fmt.distance(liveDist),
                 session.avgHR.map { "\($0) bpm" } ?? WatchLink.shared.liveMetrics?.heartRate.map { "\($0) bpm" }
             ]
                 .compactMap { $0 }

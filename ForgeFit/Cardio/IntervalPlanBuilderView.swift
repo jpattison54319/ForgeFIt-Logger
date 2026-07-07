@@ -16,11 +16,13 @@ struct IntervalPlanBuilderView: View {
     @State private var recover: Int
     @State private var cooldown: Int
     @State private var enabled: Bool
+    /// 0 = no zone lock; 1...5 = target zone.
+    @State private var zoneTarget: Int
 
     init(routineExercise: RoutineExerciseModel) {
         self.routineExercise = routineExercise
         let existing = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
-        _enabled = State(initialValue: existing != nil)
+        _enabled = State(initialValue: existing?.hasSteps ?? false)
         // Seed from the existing plan's shape, or sensible defaults.
         let work = existing?.steps.first { $0.kind == .work }
         let recover = existing?.steps.first { $0.kind == .recover }
@@ -29,13 +31,15 @@ struct IntervalPlanBuilderView: View {
         _work = State(initialValue: work?.seconds ?? 60)
         _recover = State(initialValue: recover?.seconds ?? 90)
         _cooldown = State(initialValue: existing?.steps.first { $0.kind == .cooldown }?.seconds ?? 300)
+        _zoneTarget = State(initialValue: existing?.hrZoneTarget ?? 0)
     }
 
     private var plan: IntervalPlan {
-        IntervalPlan.build(
-            warmupSeconds: warmup, repeats: repeats,
-            workSeconds: work, recoverSeconds: recover, cooldownSeconds: cooldown
-        )
+        let steps = enabled
+            ? IntervalPlan.build(warmupSeconds: warmup, repeats: repeats,
+                                 workSeconds: work, recoverSeconds: recover, cooldownSeconds: cooldown).steps
+            : []
+        return IntervalPlan(steps: steps, hrZoneTarget: zoneTarget == 0 ? nil : zoneTarget)
     }
 
     var body: some View {
@@ -82,6 +86,32 @@ struct IntervalPlanBuilderView: View {
                             }
                         }
                     }
+
+                    // Zone lock — independent of time intervals.
+                    Card {
+                        VStack(alignment: .leading, spacing: Space.sm) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Zone lock").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                    Text("Audible + haptic cue when you leave or re-enter the zone.")
+                                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: Space.sm)
+                                Picker("Target zone", selection: $zoneTarget) {
+                                    Text("Off").tag(0)
+                                    ForEach(1...5, id: \.self) { z in Text("Z\(z)").tag(z) }
+                                }
+                                .pickerStyle(.menu)
+                                .tint(theme.secondaryAccent)
+                            }
+                            if zoneTarget != 0 {
+                                Text(HRZone.label(zoneTarget))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(theme.zoneColor(zoneTarget))
+                            }
+                        }
+                    }
                 }
                 .padding(Space.lg)
             }
@@ -110,7 +140,7 @@ struct IntervalPlanBuilderView: View {
     }
 
     private func save() {
-        routineExercise.intervalPlanJSON = enabled ? plan.encodedJSON() : nil
+        routineExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
         routineExercise.updatedAt = Date()
         dismiss()
     }

@@ -58,8 +58,12 @@ struct ExercisePickerView: View {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = "\(exerciseFingerprint)|\(normalizedSearch.lowercased())|\(muscle ?? "")|\(equipment ?? "")"
         return filteredMemo(key) {
+            // Dedupe by id while filtering: CloudKit can't enforce unique
+            // constraints, and duplicate IDs in a ForEach corrupt LazyVStack
+            // layout (rows collapse to zero height / spacing goes erratic).
+            var seen = Set<UUID>()
             let base = exercises.filter { ex in
-                guard ex.deletedAt == nil else { return false }
+                guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
                 if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                 if let equipment, ex.equipment != equipment { return false }
                 return true
@@ -70,7 +74,7 @@ struct ExercisePickerView: View {
                 aliases: GlobalExerciseLibrary.snapshot.aliases
             )
             let rankedIDs = snapshot.search(normalizedSearch, limit: base.count).map(\.exercise.id)
-            let byID = Dictionary(uniqueKeysWithValues: base.map { ($0.id, $0) })
+            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             return rankedIDs.compactMap { byID[$0] }
         }
     }
@@ -96,8 +100,9 @@ struct ExercisePickerView: View {
             guard !muscleScore.isEmpty || !usage.isEmpty else { return [] }
 
             let alreadyIn = Set(context.map(\.id))
+            var seen = Set<UUID>()
             let scored: [(ExerciseLibraryModel, Double)] = exercises.compactMap { ex in
-                guard ex.deletedAt == nil, !alreadyIn.contains(ex.id) else { return nil }
+                guard ex.deletedAt == nil, !alreadyIn.contains(ex.id), seen.insert(ex.id).inserted else { return nil }
                 var score = 0.0
                 for m in ex.primaryMuscles { score += (muscleScore[m] ?? 0) }
                 for m in ex.secondaryMuscles { score += (muscleScore[m] ?? 0) * 0.4 }
@@ -139,10 +144,13 @@ struct ExercisePickerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityIdentifier("create-exercise-button")
                 }
             }
             .sheet(isPresented: $showCreate) {
-                CreateExerciseView { created in commit([created]) }
+                CreateExerciseView(
+                    initialName: search.trimmingCharacters(in: .whitespacesAndNewlines)
+                ) { created in commit([created]) }
             }
             .sheet(item: $detailExercise) { exercise in
                 NavigationStack {
@@ -229,10 +237,49 @@ struct ExercisePickerView: View {
                     )
                     .padding(.horizontal, Space.lg)
                 }
+
+                // Escape hatch under the results: if none of the matches is the
+                // exercise being searched for, create it with the name prefilled.
+                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    createFromSearchButton
+                        .padding(.horizontal, Space.lg)
+                        .padding(.top, Space.sm)
+                }
             }
             .padding(.vertical, Space.sm)
             .padding(.bottom, 90)
         }
+    }
+
+    /// "None of these? Create it" — rendered under search results and reused
+    /// as the primary action of the no-results empty state. Opens the create
+    /// form with the searched name prefilled.
+    private var createFromSearchButton: some View {
+        Button { showCreate = true } label: {
+            HStack(spacing: Space.sm) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Create \"\(search.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                        .font(.system(size: 15, weight: .bold))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("New custom exercise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .opacity(0.8)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(theme.accent)
+            .padding(Space.md)
+            .frame(maxWidth: .infinity)
+            .background(theme.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("create-from-search")
     }
 
     private var emptyState: some View {
@@ -242,8 +289,9 @@ struct ExercisePickerView: View {
             Text("No matches").font(.bodyStrong).foregroundStyle(theme.textPrimary)
             Text("Try a different search or create a custom exercise.")
                 .font(.system(size: 14)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
-            SecondaryButton(title: "Create \"\(search)\"", systemImage: "plus") { showCreate = true }
-                .padding(.horizontal, Space.xxl)
+            // Same prefilled create flow as the button under results.
+            createFromSearchButton
+                .padding(.horizontal, Space.lg)
             Spacer()
         }
         .padding(Space.lg)
@@ -274,9 +322,13 @@ private struct ExerciseRowLabel: View {
                 HStack(spacing: Space.md) {
                     ExerciseThumbnail(exercise: exercise)
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                        // Full name, wrapped — users are *finding* an exercise
+                        // here, so truncating to "…" hides the differentiator
+                        // (routine-card previews still truncate by design).
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                             if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
                         }
                         Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
@@ -294,6 +346,7 @@ private struct ExerciseRowLabel: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("exercise-row-\(exercise.name)")
 
             Button(action: onInfo) {
                 Image(systemName: "info.circle")
@@ -340,6 +393,12 @@ struct CreateExerciseView: View {
     /// inserting a new one. Callback fires with the saved model in both modes.
     let editing: ExerciseLibraryModel?
     let onCreate: (ExerciseLibraryModel) -> Void
+    /// True when the form was reached from a search that found nothing — the
+    /// name is prefilled and duplicate suggestions are skipped (the user just
+    /// established the exercise doesn't exist).
+    private let cameFromSearch: Bool
+
+    @Query(sort: \ExerciseLibraryModel.name) private var allExercises: [ExerciseLibraryModel]
 
     @State private var name = ""
     @State private var primaryMuscle = "chest"
@@ -352,9 +411,40 @@ struct CreateExerciseView: View {
 
     private var isEditing: Bool { editing != nil }
 
-    init(editing: ExerciseLibraryModel? = nil, onCreate: @escaping (ExerciseLibraryModel) -> Void) {
+    /// Duplicate matches for the typed name. Populated by a debounced task —
+    /// NOT a computed property — so keystrokes never pay for snapshot building
+    /// or fuzzy scoring inside the render transaction (it caused visible input
+    /// latency). Cleared and frozen once Create is tapped, so the just-created
+    /// exercise can't flash in as its own "duplicate" while the sheet closes.
+    @State private var duplicateCandidates: [ExerciseLibraryModel] = []
+    @State private var snapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
+    @State private var isSaving = false
+
+    /// Library exercises whose names closely match `query` — the same tolerant
+    /// scorer as search (case, diacritics, small typos), strong matches only.
+    /// The normalized snapshot is memoized per library state, so a keystroke
+    /// costs one ranked search, not a full library re-normalization.
+    private func duplicateMatches(for query: String) -> [ExerciseLibraryModel] {
+        guard query.count >= 3 else { return [] }
+        var seen = Set<UUID>()
+        let live = allExercises.filter { $0.deletedAt == nil && seen.insert($0.id).inserted }
+        var latest = Date.distantPast
+        for exercise in live { latest = max(latest, exercise.updatedAt) }
+        let snapshot = snapshotMemo("\(live.count)|\(latest.timeIntervalSince1970)") {
+            ExerciseLibrarySnapshot(exercises: live.map(\.domainInfo))
+        }
+        let strong = snapshot.search(query, limit: 3).filter { $0.score >= 62 }
+        let byID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return strong.compactMap { byID[$0.exercise.id] }
+    }
+
+    init(editing: ExerciseLibraryModel? = nil, initialName: String = "", onCreate: @escaping (ExerciseLibraryModel) -> Void) {
         self.editing = editing
         self.onCreate = onCreate
+        self.cameFromSearch = !initialName.isEmpty
+        if editing == nil, !initialName.isEmpty {
+            _name = State(initialValue: initialName)
+        }
         if let editing {
             _name = State(initialValue: editing.name)
             _primaryMuscle = State(initialValue: editing.primaryMuscles.first ?? "chest")
@@ -374,6 +464,52 @@ struct CreateExerciseView: View {
                         VStack(alignment: .leading, spacing: Space.md) {
                             FieldLabel("Name")
                             DarkTextField(text: $name, placeholder: "e.g. Atlantis Leg Press")
+                                .accessibilityIdentifier("create-exercise-name")
+
+                            // Duplicate guard: fuzzy-match the library as the user
+                            // types (case / spelling tolerant) and offer the
+                            // existing exercise instead of creating a twin.
+                            if !isEditing, !isSaving, !cameFromSearch, !duplicateCandidates.isEmpty {
+                                VStack(alignment: .leading, spacing: Space.sm) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.circle.fill")
+                                            .font(.system(size: 12, weight: .bold))
+                                        Text("Similar exercise\(duplicateCandidates.count == 1 ? "" : "s") already exist\(duplicateCandidates.count == 1 ? "s" : "")")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .foregroundStyle(theme.warmup)
+                                    ForEach(duplicateCandidates) { candidate in
+                                        Button {
+                                            isSaving = true
+                                            onCreate(candidate)
+                                            dismiss()
+                                        } label: {
+                                            HStack(spacing: Space.sm) {
+                                                ExerciseThumbnail(exercise: candidate, size: 34)
+                                                VStack(alignment: .leading, spacing: 1) {
+                                                    Text(candidate.name)
+                                                        .font(.system(size: 14, weight: .semibold))
+                                                        .foregroundStyle(theme.textPrimary)
+                                                        .multilineTextAlignment(.leading)
+                                                        .fixedSize(horizontal: false, vertical: true)
+                                                    Text("Use this instead")
+                                                        .font(.system(size: 11, weight: .semibold))
+                                                        .foregroundStyle(theme.accent)
+                                                }
+                                                Spacer(minLength: 0)
+                                                Image(systemName: "plus.circle.fill")
+                                                    .font(.system(size: 18))
+                                                    .foregroundStyle(theme.accent)
+                                            }
+                                            .padding(8)
+                                            .background(theme.surfaceElevated)
+                                            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityIdentifier("use-existing-\(candidate.name)")
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -423,6 +559,20 @@ struct CreateExerciseView: View {
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
             .navigationBarTitleDisplayMode(.inline)
+            // Debounced duplicate matching: restarts on every keystroke (task
+            // id) and only does the fuzzy work after typing pauses, off the
+            // keystroke's render pass.
+            .task(id: name) {
+                guard !isEditing, !isSaving, !cameFromSearch else { return }
+                let query = name.trimmingCharacters(in: .whitespaces)
+                guard query.count >= 3 else {
+                    if !duplicateCandidates.isEmpty { duplicateCandidates = [] }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, !isSaving else { return }
+                duplicateCandidates = duplicateMatches(for: query)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -525,6 +675,11 @@ struct CreateExerciseView: View {
     }
 
     private func save() {
+        // Freeze and clear suggestions before the insert: the @Query update
+        // would otherwise match the just-created exercise against its own name
+        // and flash the "already exists" card while the sheet dismisses.
+        isSaving = true
+        duplicateCandidates = []
         if let editing {
             apply(to: editing)
             editing.userModified = true

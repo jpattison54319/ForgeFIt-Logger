@@ -321,6 +321,103 @@ extension TrainingAnalytics {
             .sorted { $0.date < $1.date }
     }
 
+    // MARK: - Efficiency Factor (aerobic progression)
+
+    /// Efficiency Factor: distance covered per minute per heartbeat (or watts
+    /// per heartbeat for power sports). Higher = more output per beat = fitter.
+    /// Only meaningful at aerobic intensity — filter with `isAerobicSession`.
+    func efficiencyFactor(for session: CardioSessionModel) -> Double? {
+        guard let avgHR = session.avgHR, avgHR > 0 else { return nil }
+        if let watts = session.avgPowerWatts, watts > 0 {
+            return watts / Double(avgHR)
+        }
+        guard let meters = session.distanceMeters, meters > 0,
+              let seconds = session.durationSeconds, seconds > 0 else { return nil }
+        let metersPerMinute = meters / (Double(seconds) / 60)
+        return metersPerMinute / Double(avgHR)
+    }
+
+    /// A session is "aerobic" (comparable for EF trending) when its average HR
+    /// sits in the endurance band (zones 1–3 of the user's model) and it's a
+    /// real sustained effort — not a sprint session or a token few minutes.
+    func isAerobicSession(_ session: CardioSessionModel, config: HRZoneConfig) -> Bool {
+        guard let avgHR = session.avgHR,
+              let seconds = session.durationSeconds, seconds >= 600 else { return false }
+        return config.zone(for: avgHR) <= 3 && (session.distanceMeters ?? 0) > 1000
+    }
+
+    /// EF over time for one modality's aerobic sessions — the cardio equivalent
+    /// of a strength progression line.
+    func efficiencySeries(for kind: CardioKind, in range: TimeChartRange) -> [MetricPoint] {
+        let config = HRZoneConfigStore.load()
+        return cardioSessions(in: range)
+            .filter { CardioKind.from(modality: $0.session.modality) == kind && isAerobicSession($0.session, config: config) }
+            .compactMap { item -> MetricPoint? in
+                guard let ef = efficiencyFactor(for: item.session), ef.isFinite, ef > 0 else { return nil }
+                return MetricPoint(date: item.workout.startedAt, value: ef)
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// The modality with the most aerobic EF-eligible sessions (drives which EF
+    /// trend to surface).
+    func dominantAerobicModality(in range: TimeChartRange) -> CardioKind? {
+        let config = HRZoneConfigStore.load()
+        let aerobic = cardioSessions(in: range).filter {
+            isAerobicSession($0.session, config: config) && efficiencyFactor(for: $0.session) != nil
+        }
+        let byKind = Dictionary(grouping: aerobic) { CardioKind.from(modality: $0.session.modality) }
+        return byKind.max { $0.value.count < $1.value.count }?.key
+    }
+
+    // MARK: - Critical pace curve
+
+    static let criticalPaceWindows = [60, 180, 300, 600, 1200, 1800, 3600]
+
+    struct CriticalPacePoint: Identifiable {
+        var id: Int { windowSeconds }
+        var windowSeconds: Int
+        var paceSecPerKm: Double
+    }
+
+    struct CriticalPaceCurve {
+        var current: [CriticalPacePoint]
+        var prior: [CriticalPacePoint]
+        var hasAnyData: Bool
+    }
+
+    /// The best sustained pace at each duration window across the range, plus the
+    /// same for the immediately-preceding equal-length period (the overlay that
+    /// shows whether the ceiling moved).
+    func criticalPaceCurve(in range: TimeChartRange) -> CriticalPaceCurve {
+        let windows = Self.criticalPaceWindows
+        let currentSessions = cardioSessions(in: range).map(\.session)
+        let current = bestPaces(windows: windows, sessions: currentSessions)
+        let prior = bestPaces(windows: windows, sessions: cardioSessionsInPriorPeriod(range))
+        let hasAnyData = currentSessions.contains { $0.sampleSeriesJSON != nil }
+        return CriticalPaceCurve(current: current, prior: prior, hasAnyData: hasAnyData)
+    }
+
+    private func bestPaces(windows: [Int], sessions: [CardioSessionModel]) -> [CriticalPacePoint] {
+        let seriesList = sessions
+            .compactMap { CardioSampleSeries.decode(from: $0.sampleSeriesJSON) }
+            .filter { $0.hasDistance }
+        guard !seriesList.isEmpty else { return [] }
+        return windows.compactMap { window in
+            let best = seriesList.compactMap { $0.bestPaceSecPerKm(windowSeconds: window) }.min()
+            return best.map { CriticalPacePoint(windowSeconds: window, paceSecPerKm: $0) }
+        }
+    }
+
+    private func cardioSessionsInPriorPeriod(_ range: TimeChartRange) -> [CardioSessionModel] {
+        guard range != .all,
+              let start = calendar.date(byAdding: .weekOfYear, value: -range.weekCount, to: now),
+              let priorStart = calendar.date(byAdding: .weekOfYear, value: -2 * range.weekCount, to: now) else { return [] }
+        return completed
+            .filter { $0.startedAt >= priorStart && $0.startedAt < start }
+            .flatMap { $0.cardioSessions }
+    }
+
     struct CardioBests {
         var longestSeconds: Int?
         var longestDistanceMeters: Double?

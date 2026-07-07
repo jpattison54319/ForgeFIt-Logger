@@ -61,7 +61,12 @@ struct HomeView: View {
 
     // MARK: - Smart next-workout suggestion
 
-    @AppStorage("activeFolderID") private var activeFolderRaw = ""
+    /// A macrocycle can hold several mesocycles, only one of which you're
+    /// actually running — these are independent so both can be active at
+    /// once. `suggestion` drills into the mesocycle first, then falls back
+    /// to the macrocycle, then to best-guessing across every routine.
+    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
+    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
     @Query private var allFolders: [RoutineFolderModel]
 
     /// The active folder plus its whole subtree, so an active macrocycle picks
@@ -79,37 +84,18 @@ struct HomeView: View {
         return result
     }
 
-    /// What the app thinks you'll want to train next: rotates through the
-    /// active mesocycle folder's routines in order; otherwise rotates through
-    /// all routines based on what you performed last.
+    /// What the app thinks you'll want to train next — see
+    /// `NextRoutineSuggestion` for the drilldown logic (mesocycle → macrocycle
+    /// → best guess).
     private var suggestion: (routine: RoutineModel, reason: String)? {
-        let active = routines
-            .filter { $0.deletedAt == nil && !$0.exercises.isEmpty }
-            .sorted { $0.position < $1.position }
-        guard !active.isEmpty else { return nil }
-
-        let folderID = UUID(uuidString: activeFolderRaw)
-        let inFolder: [RoutineModel] = folderID.map { id in
-            let subtree = folderSubtree(rootID: id)
-            return active.filter { r in r.folderID.map(subtree.contains) ?? false }
-        } ?? []
-        let usingMeso = !inFolder.isEmpty
-        let pool = usingMeso ? inFolder : active
-
-        let completed = workouts
-            .filter { $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-
-        if let lastDone = completed.first(where: { w in pool.contains { $0.id == w.routineID } }),
-           let lastIndex = pool.firstIndex(where: { $0.id == lastDone.routineID }) {
-            let next = pool[(lastIndex + 1) % pool.count]
-            var reason = usingMeso ? "Next in your mesocycle" : "Up after \(pool[lastIndex].name)"
-            if let lastTime = completed.first(where: { $0.routineID == next.id })?.startedAt {
-                reason += " · last done \(lastTime.formatted(.relative(presentation: .named)))"
-            }
-            return (next, reason)
-        }
-        return (pool[0], usingMeso ? "Start your mesocycle" : "Start your plan")
+        guard let result = NextRoutineSuggestion.suggest(
+            routines: routines,
+            completedWorkouts: workouts,
+            activeMesoFolderID: UUID(uuidString: activeMesoFolderRaw),
+            activeMacroFolderID: UUID(uuidString: activeMacroFolderRaw),
+            macroSubtree: folderSubtree(rootID:)
+        ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
+        return (routine, result.reason)
     }
 
     var body: some View {
@@ -211,7 +197,10 @@ struct HomeView: View {
                     templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
                     exercises: exercises,
                     onImport: { template in
-                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeFolderRaw), existingRoutines: routines, in: modelContext)
+                        // Only a mesocycle (leaf folder) can directly hold a
+                        // routine — an active macrocycle alone has nowhere
+                        // concrete to import into.
+                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeMesoFolderRaw), existingRoutines: routines, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
@@ -278,8 +267,12 @@ struct HomeView: View {
                 targetMuscles: targetMuscles(for: routine)
             ).report()
         }
+        let coachPlan = CoachAdjustments.plan(for: targetReport.action)
+        // This is THE answer to "what should I do today" — the one card on
+        // Home that should visually outrank everything else, so its Start
+        // button is a full-width PrimaryButton, not a small corner capsule.
         return Card {
-            HStack(spacing: Space.md) {
+            VStack(alignment: .leading, spacing: Space.md) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Up next")
                         .font(.system(size: 11, weight: .bold))
@@ -301,22 +294,50 @@ struct HomeView: View {
                     }
                     .foregroundStyle(targetReport.action.tint)
                 }
-                Spacer(minLength: Space.sm)
-                Button {
+
+                // Always "Start" — the coach's modified dose lives entirely
+                // in the button below, so this one never needs to say
+                // anything other than what it does.
+                PrimaryButton(title: "Start", systemImage: "play.fill") {
                     appState.requestStart {
                         _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
                         appState.showingLogger = true
                     }
-                } label: {
-                    Text("Start")
-                        .font(.system(size: 15, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
                 }
-                .buttonStyle(.glassProminent)
-                .tint(theme.accent)
-                .buttonBorderShape(.capsule)
                 .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
+
+                // One-tap coach modification: today only, routine untouched.
+                if let coachPlan {
+                    Button {
+                        appState.requestStart {
+                            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                            CoachAdjustments.apply(coachPlan, to: workout, in: modelContext)
+                            appState.showingLogger = true
+                        }
+                    } label: {
+                        HStack(spacing: Space.sm) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 13, weight: .bold))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Start coach's version")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text("\(coachPlan.summary) · routine unchanged")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .opacity(0.85)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(targetReport.action.tint)
+                        .padding(10)
+                        .frame(maxWidth: .infinity)
+                        .background(targetReport.action.tint.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("start-coach-version-\(routine.name)")
+                }
             }
         }
         .overlay(
@@ -338,14 +359,29 @@ struct HomeView: View {
 
     private var quickStart: some View {
         VStack(spacing: Space.md) {
-            SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
-                appState.requestStart {
-                    _ = WorkoutFactory.startEmpty(in: modelContext)
-                    appState.showingLogger = true
-                }
-            }
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: Space.md) {
+                    // Fixed leading tile, not part of the customizable/
+                    // reorderable quick-start actions (it's a fundamental
+                    // capability, not a preference) — folded in here instead
+                    // of its own full-width button so it stops competing
+                    // with the "Up next" suggestion's Start button above.
+                    QuickStartTile(
+                        title: "Empty",
+                        systemImage: "square.and.pencil",
+                        accessibilityIdentifier: "start-empty-workout",
+                        isEditing: false,
+                        isDragging: false,
+                        onTap: {
+                            appState.requestStart {
+                                _ = WorkoutFactory.startEmpty(in: modelContext)
+                                appState.showingLogger = true
+                            }
+                        },
+                        onLongPress: {},
+                        onRemove: {}
+                    )
+
                     ForEach(quickStartActions) { action in
                         QuickStartTile(
                             title: title(for: action),
@@ -603,6 +639,17 @@ private struct QuickStartTile: View {
                 .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 .onTapGesture { onTap() }
                 .onLongPressGesture(minimumDuration: 0.35) { onLongPress() }
+                // Without an explicit accessibility boundary here, the
+                // `.accessibilityIdentifier` applied below (on the outer view)
+                // has no single element of its own to bind to and lands on an
+                // arbitrary descendant leaf — in practice the tiny SF Symbol
+                // Image instead of the full tappable tile, which made this
+                // control unreliably hittable for UI testing (and for
+                // VoiceOver/Switch Control, since a custom `.onTapGesture`
+                // isn't announced as a button on its own).
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(title)
+                .accessibilityAddTraits(.isButton)
 
                 if isEditing {
                     Button(action: onRemove) {
