@@ -466,7 +466,7 @@ struct SetBlockView: View {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 11, weight: .semibold))
                 Text("Match previous · \(ghost)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.tag)
                     .lineLimit(1)
             }
             .foregroundStyle(theme.textTertiary)

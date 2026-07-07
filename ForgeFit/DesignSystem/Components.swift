@@ -93,7 +93,7 @@ struct CircleIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.bodyStrong)
                 .foregroundStyle(tint ?? theme.textPrimary)
                 .frame(width: 44, height: 44)   // HIG minimum touch target
         }

@@ -201,7 +201,7 @@ struct ProfileView: View {
             Card(fill: theme.danger.opacity(0.12)) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.cardTitle)
                         .foregroundStyle(theme.danger)
                         .frame(width: 42, height: 42)
                         .background(theme.danger.opacity(0.14))
@@ -268,7 +268,7 @@ private struct XPProgressBar: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Capsule())
             Text("\(progress.xpIntoLevel) / \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(theme.textSecondary)
         }
         .accessibilityElement(children: .combine)
@@ -383,7 +383,7 @@ struct ExercisesListView: View {
             HStack {
                 CircleIconButton(systemImage: "chevron.left") { dismiss() }
                 Spacer()
-                Text("Exercises").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text("Exercises").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
                 CircleIconButton(systemImage: "plus") { showCreate = true }
             }
@@ -508,7 +508,7 @@ struct MeasuresView: View {
                                     Text(Fmt.load(latest.value))
                                         .font(.system(size: 34, weight: .bold, design: .rounded))
                                         .foregroundStyle(theme.textPrimary)
-                                    Text(Fmt.unit.suffix).font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                                    Text(Fmt.unit.suffix).font(.bodyStrong).foregroundStyle(theme.textSecondary)
                                 }
                             }
                             Spacer()
@@ -659,7 +659,7 @@ struct DashboardScaffold<Content: View>: View {
                 HStack {
                     CircleIconButton(systemImage: "chevron.left") { dismiss() }
                     Spacer()
-                    Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Color.clear.frame(width: 38, height: 38)
                 }

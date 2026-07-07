@@ -115,7 +115,7 @@ struct RoutineEditorView: View {
     private var header: some View {
         HStack {
             if reordering {
-                Text("Reorder").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text("Reorder").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Button("Done") { withAnimation { reordering = false } }
                     .font(.bodyStrong).foregroundStyle(theme.accent)
@@ -131,7 +131,7 @@ struct RoutineEditorView: View {
                     }
                 }
                 Spacer()
-                Text("Edit Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Button("Save") { save(); dismiss() }
                     .font(.bodyStrong).foregroundStyle(theme.accent)
@@ -349,7 +349,7 @@ private struct ExerciseEditRow: View {
                 Text("RPE").frame(width: 48, alignment: .leading)
                 Image(systemName: "trash").opacity(0).frame(width: 32)
             }
-            .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            .font(.tag).foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
                 SetTargetEditRow(
@@ -368,7 +368,7 @@ private struct ExerciseEditRow: View {
                             addDropSet(below: set, index: index)
                         } label: {
                             Label("Drop set", systemImage: "arrow.down.right")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                         }
                         .foregroundStyle(theme.accent)
                     }
@@ -396,7 +396,7 @@ private struct ExerciseEditRow: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(theme.secondaryAccent)
                 Text("Cardio target")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.tag)
                     .foregroundStyle(theme.textTertiary)
                 Spacer()
             }
@@ -654,7 +654,7 @@ struct OptionalIntField: View {
             set: { value = Int($0); onChange() }
         ))
         .keyboardType(.numberPad)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.bodyStrong)
         .multilineTextAlignment(.center)
         .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)
@@ -682,7 +682,7 @@ struct OptionalRepsTargetField: View {
         ))
         .focused($isFocused)
         .keyboardType(.numbersAndPunctuation)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.bodyStrong)
         .multilineTextAlignment(.center)
         .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: .infinity, minHeight: 44)
@@ -739,7 +739,7 @@ struct OptionalDoubleField: View {
             set: { value = Double($0); onChange() }
         ))
         .keyboardType(.decimalPad)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.bodyStrong)
         .multilineTextAlignment(.center)
         .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)
@@ -763,7 +763,7 @@ struct OptionalLoadField: View {
             set: { value = Fmt.loadKilograms(from: $0, unit: unit); onChange() }
         ))
         .keyboardType(.decimalPad)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.bodyStrong)
         .multilineTextAlignment(.center)
         .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)

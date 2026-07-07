@@ -105,7 +105,7 @@ struct RoutineShareCard: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         Text(rpeText(set))
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                            .font(.tag).foregroundStyle(theme.textTertiary)
                             .frame(width: 54, alignment: .trailing)
                     }
                     .padding(.vertical, 1)

@@ -190,7 +190,7 @@ private struct RecordRow: View {
                         Text("Best estimated 1RM").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Button(action: onInfo) {
                             Image(systemName: "info.circle")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textTertiary)
                         }
                         .buttonStyle(.plain)
@@ -219,7 +219,7 @@ private struct RecordsListView: View {
                 HStack {
                     CircleIconButton(systemImage: "chevron.left") { dismiss() }
                     Spacer()
-                    Text("Records").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    Text("Records").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Color.clear.frame(width: 38, height: 38)
                 }
@@ -313,7 +313,7 @@ struct ExerciseDetailView: View {
                 HStack {
                     CircleIconButton(systemImage: "chevron.left") { dismiss() }
                     Spacer()
-                    Text("Exercise").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    Text("Exercise").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     if exercise != nil {
                         CircleIconButton(systemImage: "square.and.pencil") { showingEdit = true }

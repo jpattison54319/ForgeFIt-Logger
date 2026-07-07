@@ -107,7 +107,7 @@ struct IntervalPlanBuilderView: View {
                             }
                             if zoneTarget != 0 {
                                 Text(HRZone.label(zoneTarget))
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.tag)
                                     .foregroundStyle(theme.zoneColor(zoneTarget))
                             }
                         }

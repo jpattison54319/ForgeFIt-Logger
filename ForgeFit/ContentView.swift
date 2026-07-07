@@ -675,7 +675,7 @@ private struct BootSplashView: View {
 
                 VStack(spacing: Space.sm) {
                     Text("ForgeFit")
-                        .font(.system(size: 34, weight: .bold))
+                        .font(.screenTitle)
                         .foregroundStyle(theme.textPrimary)
 
                     Text("Loading your training")

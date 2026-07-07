@@ -97,7 +97,7 @@ struct RecoveryDetailView: View {
         HStack {
             CircleIconButton(systemImage: "chevron.left") { dismiss() }
             Spacer()
-            Text("Recovery").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+            Text("Recovery").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             Color.clear.frame(width: 38, height: 38)
         }
@@ -149,7 +149,7 @@ private struct HRVTrendCard: View {
                     Text("HRV vs baseline").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Text("\(Int(trend.today.rounded())) ms · \(trend.usedRMSSD ? "RMSSD" : "SDNN")")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                        .font(.tag).foregroundStyle(theme.textSecondary)
                 }
                 HRVBaselineBandChart(points: trend.points, mean: trend.mean, sd: trend.sd)
                 HStack(alignment: .top, spacing: Space.sm) {
@@ -286,7 +286,7 @@ private struct RecoverySummaryCard: View {
                             Image(systemName: "chart.line.uptrend.xyaxis")
                                 .font(.system(size: 11, weight: .bold))
                             Text("7-day trend \(Int(trend * 100))")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                         }
                         .foregroundStyle(theme.readinessColor(trend))
                     }
@@ -583,7 +583,7 @@ private struct HealthSignalRows: View {
                 Card(padding: Space.md) {
                     HStack(spacing: Space.md) {
                         Image(systemName: signal.systemImage)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.bodyStrong)
                             .foregroundStyle(signal.connected ? theme.accent : theme.textTertiary)
                             .frame(width: 38, height: 38)
                             .background(theme.surfaceElevated)
@@ -668,7 +668,7 @@ private struct AdvancedLoadDisclosure: View {
 
                     if !report.missingInputs.isEmpty {
                         Text("Missing: \(report.missingInputs.joined(separator: ", "))")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.label)
                             .foregroundStyle(theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

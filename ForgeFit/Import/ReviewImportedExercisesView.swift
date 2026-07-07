@@ -71,11 +71,11 @@ struct ReviewImportedExercisesView: View {
             Spacer()
             VStack(spacing: 1) {
                 Text("Imported Exercises")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.rowValue)
                     .foregroundStyle(theme.textPrimary)
                 if !reviewItems.isEmpty {
                     Text("\(reviewItems.count) to review")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.tag)
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -188,7 +188,7 @@ private struct ReviewImportedExerciseRow: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .top, spacing: Space.md) {
                     Image(systemName: exercise.isCardio ? "heart.fill" : "dumbbell.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.rowValue)
                         .foregroundStyle(exercise.isCardio ? theme.danger : theme.accent)
                         .frame(width: 40, height: 40)
                         .background((exercise.isCardio ? theme.danger : theme.accent).opacity(0.14))
@@ -258,7 +258,7 @@ private struct ReviewImportedExerciseRow: View {
     private func muscleSection(_ title: String, muscles: [String]) -> some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(theme.textTertiary)
             if muscles.isEmpty {
                 Tag(text: "No guess", color: theme.danger, background: theme.danger.opacity(0.14))

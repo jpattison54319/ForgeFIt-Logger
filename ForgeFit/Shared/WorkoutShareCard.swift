@@ -87,7 +87,7 @@ struct WorkoutShareCard: View {
                     .font(.system(size: 24, weight: .bold)).foregroundStyle(theme.textPrimary)
                     .lineLimit(2)
                 Text(workout.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    .font(.label).foregroundStyle(theme.textSecondary)
             }
             Spacer(minLength: 0)
         }
@@ -184,7 +184,7 @@ struct WorkoutShareCard: View {
                                 Text(row.0).font(.system(size: 12, weight: .bold, design: .rounded))
                                     .foregroundStyle(theme.textSecondary).frame(width: 30, alignment: .leading)
                                 Text("\(row.1.peakHR) bpm peak")
-                                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                                    .font(.tag).foregroundStyle(theme.textPrimary)
                                     .frame(width: 92, alignment: .leading)
                                 GeometryReader { geo in
                                     ZStack(alignment: .leading) {
@@ -195,7 +195,7 @@ struct WorkoutShareCard: View {
                                 }
                                 .frame(height: 7)
                                 Text(row.1.recoveryBPM.map { "▼\($0)" } ?? "—")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.tag)
                                     .foregroundStyle(row.1.recoveryBPM != nil ? theme.success : theme.textTertiary)
                                     .frame(width: 40, alignment: .trailing)
                             }
@@ -216,7 +216,7 @@ struct WorkoutShareCard: View {
                 ForEach(rows, id: \.muscle) { row in
                     VStack(spacing: 4) {
                         HStack {
-                            Text(row.muscle.capitalized).font(.system(size: 13, weight: .medium)).foregroundStyle(theme.textPrimary)
+                            Text(row.muscle.capitalized).font(.label).foregroundStyle(theme.textPrimary)
                             Spacer()
                             Text("\(row.sets.formatted(.number.precision(.fractionLength(0...1)))) sets")
                                 .font(.system(size: 12)).foregroundStyle(theme.textSecondary)

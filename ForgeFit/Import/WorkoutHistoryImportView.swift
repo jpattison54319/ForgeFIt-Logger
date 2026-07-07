@@ -60,7 +60,7 @@ struct WorkoutHistoryImportView: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "tray.and.arrow.down.fill")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.cardTitle)
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
                         .background(theme.accent)
@@ -194,7 +194,7 @@ struct WorkoutHistoryImportView: View {
                         }
                         if preview.parseResult.warnings.count > 6 {
                             Text("+\(preview.parseResult.warnings.count - 6) more")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textTertiary)
                         }
                     }

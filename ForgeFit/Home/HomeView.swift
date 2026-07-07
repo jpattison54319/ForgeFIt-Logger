@@ -289,7 +289,7 @@ struct HomeView: View {
                         Image(systemName: targetReport.action.systemImage)
                             .font(.system(size: 11, weight: .bold))
                         Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.tag)
                             .lineLimit(2)
                     }
                     .foregroundStyle(targetReport.action.tint)
@@ -415,7 +415,7 @@ struct HomeView: View {
                             Image(systemName: "plus")
                                 .font(.system(size: 19, weight: .bold))
                             Text("Add")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                         }
                         .foregroundStyle(theme.textSecondary)
                         .frame(width: 104, height: 76)
@@ -631,7 +631,7 @@ private struct QuickStartTile: View {
                 GlassTile(tint: theme.secondaryAccent.opacity(0.12), verticalPadding: Space.md, horizontalPadding: Space.sm) {
                     VStack(spacing: 6) {
                         Image(systemName: systemImage).font(.system(size: 18, weight: .semibold))
-                        Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text(title).font(.tag).lineLimit(1)
                     }
                     .foregroundStyle(theme.textPrimary)
                     .frame(maxWidth: .infinity)

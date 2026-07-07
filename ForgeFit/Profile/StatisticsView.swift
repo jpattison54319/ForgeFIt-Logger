@@ -207,7 +207,7 @@ struct StatisticsView: View {
                     .chartBackground { _ in
                         VStack(spacing: 0) {
                             Text("\(Int(totalSets.rounded()))")
-                                .font(.system(size: 22, weight: .bold))
+                                .font(.sectionTitle)
                                 .foregroundStyle(theme.textPrimary)
                             Text("sets")
                                 .font(.system(size: 11, weight: .medium))
@@ -220,7 +220,7 @@ struct StatisticsView: View {
                             HStack(spacing: 7) {
                                 Circle().fill(slice.color).frame(width: 8, height: 8)
                                 Text(slice.label)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.tag)
                                     .foregroundStyle(theme.textPrimary)
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
@@ -260,7 +260,7 @@ struct StatisticsView: View {
                         HStack(spacing: 5) {
                             Circle().fill(splitColor(share.name)).frame(width: 8, height: 8)
                             Text("\(share.name) \(Int((share.fraction * 100).rounded()))%")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textSecondary)
                         }
                     }
@@ -337,7 +337,7 @@ struct StatisticsView: View {
                                 .foregroundStyle(theme.textTertiary)
                             Spacer()
                             Text("\(bucket.sets) sets · \(Int((bucket.fraction * 100).rounded()))%")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textSecondary)
                         }
                         GeometryReader { geo in

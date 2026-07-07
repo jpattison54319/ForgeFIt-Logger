@@ -208,7 +208,7 @@ struct WorkoutDetailView: View {
         HStack {
             CircleIconButton(systemImage: "chevron.left") { dismiss() }
             Spacer()
-            Text("Workout").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+            Text("Workout").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.xs) {
                 // The share image includes an async GPS route snapshot
@@ -286,7 +286,7 @@ struct WorkoutDetailView: View {
                     Spacer()
                     if let readiness = workout.readinessAtStart {
                         Text("Started at \(readiness)% ready")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.tag)
                             .foregroundStyle(theme.readinessColor(Double(readiness) / 100))
                     }
                 }
@@ -341,7 +341,7 @@ struct WorkoutDetailView: View {
                     Spacer()
                     if let peak = hrSamples.map(\.bpm).max() {
                         Text("peak \(peak) bpm")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.tag)
                             .foregroundStyle(theme.danger)
                     }
                 }
@@ -421,7 +421,7 @@ struct WorkoutDetailView: View {
             }
             .frame(height: 8)
             Text(point.recoveryBPM.map { "▼\($0)" } ?? "—")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(point.recoveryBPM != nil ? theme.success : theme.textTertiary)
                 .frame(width: 44, alignment: .trailing)
         }
@@ -588,7 +588,7 @@ struct WorkoutDetailView: View {
                     Text(pct >= 0
                          ? "▲ \(pct.formatted(.number.precision(.fractionLength(0))))% vs 30-day"
                          : "▼ \(abs(pct).formatted(.number.precision(.fractionLength(0))))% vs 30-day")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.tag)
                         .foregroundStyle(pct >= 0 ? theme.success : theme.danger)
                 }
                 Spacer(minLength: 0)
@@ -768,7 +768,7 @@ struct WorkoutDetailView: View {
         let structured = splits.contains { $0.label != nil }
         return VStack(alignment: .leading, spacing: 8) {
             Text(structured ? "Intervals" : "Splits")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(theme.textSecondary)
             ForEach(splits) { split in
                 HStack {

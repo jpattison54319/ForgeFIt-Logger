@@ -79,12 +79,12 @@ struct RoutineDetailView: View {
         HStack {
             CircleIconButton(systemImage: "chevron.left") { dismiss() }
             Spacer()
-            Text("Routine").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+            Text("Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.sm) {
                 Button { shareRoutine() } label: {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                         .frame(width: 38, height: 38)
                 }
@@ -95,7 +95,7 @@ struct RoutineDetailView: View {
                     Button("Edit Routine", systemImage: "pencil") { editing = true }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                         .frame(width: 38, height: 38)
                         .background(theme.surfaceElevated)
@@ -227,7 +227,7 @@ private struct RoutineExerciseSummary: View {
                 Text(displayUnit.suffix.uppercased()).frame(maxWidth: .infinity, alignment: .leading)
                 Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(.tag)
             .foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in

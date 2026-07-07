@@ -177,7 +177,7 @@ struct CardioExerciseCard: View {
                     Image(systemName: "chart.bar.doc.horizontal")
                         .font(.system(size: 12, weight: .bold))
                     Text(intervalPlanSummary(plan))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.tag)
                     Spacer()
                 }
                 .foregroundStyle(theme.secondaryAccent)
@@ -238,7 +238,7 @@ struct CardioExerciseCard: View {
                         Circle().fill(theme.danger).frame(width: 10, height: 10)
                         Text("Recording").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.danger)
                         Spacer()
-                        Text(Fmt.elapsed(elapsed)).font(.system(size: 30, weight: .bold)).monospacedDigit().foregroundStyle(theme.textPrimary)
+                        Text(Fmt.elapsed(elapsed)).font(.metricValue).monospacedDigit().foregroundStyle(theme.textPrimary)
                     }
                     let liveDist = liveDistance(session)
                     HStack {
@@ -294,7 +294,7 @@ struct CardioExerciseCard: View {
             let intervalSplits = session.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
             if !intervalSplits.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Intervals").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    Text("Intervals").font(.tag).foregroundStyle(theme.textSecondary)
                     ForEach(intervalSplits) { split in
                         HStack {
                             Text(split.label ?? "Step \(split.index + 1)")
@@ -414,7 +414,7 @@ struct CardioExerciseCard: View {
     private var header: some View {
         HStack(spacing: Space.md) {
             Image(systemName: kind.systemImage)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.rowValue)
                 .foregroundStyle(theme.secondaryAccent)
                 .frame(width: 38, height: 38)
                 .background(theme.surfaceElevated).clipShape(Circle())
@@ -435,7 +435,7 @@ struct CardioExerciseCard: View {
                     Text("Cardio").font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccent)
                 }
                 HStack(spacing: 6) {
-                    Text(kind.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    Text(kind.title).font(.tag).foregroundStyle(theme.textSecondary)
                     if let group = workoutExercise.supersetGroup {
                         SupersetChip(group: group)
                     }
@@ -575,7 +575,7 @@ private struct CardioSessionEditor: View {
                     set: { set(Double($0)); onChange() }
                 ))
                 .keyboardType(.decimalPad)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.rowValue)
                 .foregroundStyle(theme.textPrimary)
             }
             Text(unit).font(.system(size: 11)).foregroundStyle(theme.textTertiary)
@@ -604,10 +604,10 @@ struct HRZoneBar: View {
         let zone = HRZone.zone(forAvgHR: avgHR)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Heart-rate zones").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                Text("Heart-rate zones").font(.tag).foregroundStyle(theme.textSecondary)
                 Spacer()
                 Text("\(avgHR) bpm avg · \(HRZone.label(zone))")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.zoneColor(zone))
+                    .font(.tag).foregroundStyle(theme.zoneColor(zone))
             }
             if !distribution.isEmpty, let total = durationSeconds, total > 0 {
                 GeometryReader { geo in
@@ -635,7 +635,7 @@ struct ZoneSecondsBar: View {
     var body: some View {
         let total = zoneSeconds.reduce(0, +)
         VStack(alignment: .leading, spacing: 6) {
-            Text("Time in zones").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+            Text("Time in zones").font(.tag).foregroundStyle(theme.textSecondary)
             if total > 0 {
                 GeometryReader { geo in
                     HStack(spacing: 2) {
@@ -673,13 +673,13 @@ struct MuscleChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Works").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+            Text("Works").font(.tag).foregroundStyle(theme.textSecondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(muscles, id: \.self) { muscle in
                         let isCardio = muscle == "cardiovascular"
                         Text(muscle.capitalized)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.tag)
                             .foregroundStyle(isCardio ? theme.danger : theme.textPrimary)
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(isCardio ? theme.danger.opacity(0.15) : theme.surfaceHighlight)
@@ -783,7 +783,7 @@ struct CardioSummaryCard: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(Fmt.durationShort(session.durationSeconds)).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                if let zone { Text(HRZone.label(zone)).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.zoneColor(zone)) }
+                if let zone { Text(HRZone.label(zone)).font(.tag).foregroundStyle(theme.zoneColor(zone)) }
             }
         }
     }
@@ -921,7 +921,7 @@ struct CardioZoneInsightsCard: View {
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                     Text(info.hrRange).font(.system(size: 11)).foregroundStyle(theme.textTertiary)
                 }
-                Text(info.adaptation).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.zoneColor(info.zone))
+                Text(info.adaptation).font(.tag).foregroundStyle(theme.zoneColor(info.zone))
                 Text(info.detail).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

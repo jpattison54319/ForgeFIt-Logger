@@ -263,7 +263,7 @@ struct ActiveWorkoutLoggerView: View {
                             }
                         ) {
                             Image(systemName: "timer")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.bodyStrong)
                                 .foregroundStyle(theme.textPrimary)
                                 .frame(width: 40, height: 40)
                         }
@@ -912,7 +912,7 @@ private struct PostWorkoutSummaryView: View {
                     .background(theme.surfaceElevated)
                     .clipShape(Capsule())
                 Text("\(projectedXPProgress.xpIntoLevel) / \(projectedXPProgress.xpNeededForNextLevel) XP to Level \(projectedXPProgress.level + 1)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.tag)
                     .foregroundStyle(theme.textSecondary)
             }
         }
@@ -1244,7 +1244,7 @@ private struct ExerciseLogCard: View {
 	                                    addDropSet(below: set, index: index)
 	                                } label: {
 	                                    Label("Drop set", systemImage: "arrow.down.right")
-	                                        .font(.system(size: 12, weight: .semibold))
+	                                        .font(.tag)
 	                                        .padding(.vertical, 10)
 	                                        .padding(.horizontal, 4)
 	                                        .contentShape(Rectangle())
@@ -1323,7 +1323,7 @@ private struct ExerciseLogCard: View {
 	            HStack(spacing: Space.sm) {
 	                Button(action: onReorder) {
 	                    Image(systemName: "line.3.horizontal")
-	                        .font(.system(size: 16, weight: .semibold))
+	                        .font(.bodyStrong)
 	                        .foregroundStyle(theme.textTertiary)
 	                        .frame(width: 44, height: 44)
 	                }
@@ -1385,7 +1385,7 @@ private struct ExerciseLogCard: View {
         // Rows carry 6pt horizontal padding (their done-state background);
         // mirror it here so every column lines up with its header.
         .padding(.horizontal, 6)
-        .font(.system(size: 12, weight: .semibold))
+        .font(.tag)
         .foregroundStyle(theme.textTertiary)
     }
 
@@ -1913,7 +1913,7 @@ private struct SetRow: View {
                 toggleCompletion()
             } label: {
                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.sectionTitle)
                     .foregroundStyle(isDone ? theme.success : theme.textTertiary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -2272,7 +2272,7 @@ private struct SetRow: View {
         return ZStack {
             if text.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.bodyStrong)
                     .foregroundStyle(theme.textTertiary)
                     .allowsHitTesting(false)
             }
@@ -2282,7 +2282,7 @@ private struct SetRow: View {
                 .submitLabel(submitLabel(for: field))
                 .focused(focusedInput, equals: SetInputFocus(setID: set.id, field: field))
                 .multilineTextAlignment(.center)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.bodyStrong)
                 .foregroundStyle(theme.textPrimary)
                 .textFieldStyle(.plain)
                 .accessibilityLabel(label)
@@ -2326,7 +2326,7 @@ private struct SetRow: View {
             }
         } label: {
             Text(rpeDisplay)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.bodyStrong)
                 .foregroundStyle(set.rpe == nil ? theme.textTertiary : theme.textPrimary)
                 .frame(width: width, height: 44)
                 .background(theme.surfaceElevated)

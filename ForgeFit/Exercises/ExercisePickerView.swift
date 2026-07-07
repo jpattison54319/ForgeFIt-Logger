@@ -200,7 +200,7 @@ struct ExercisePickerView: View {
                 let picks = suggested
                 if !picks.isEmpty {
                     HStack(spacing: 6) {
-                        Image(systemName: "sparkles").font(.system(size: 12, weight: .semibold))
+                        Image(systemName: "sparkles").font(.tag)
                         Text("Suggested").font(.system(size: 13, weight: .bold))
                         Spacer()
                     }
@@ -369,7 +369,7 @@ struct FilterChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 12, weight: .semibold)) }
+            if let systemImage { Image(systemName: systemImage).font(.tag) }
             Text(title).font(.system(size: 14, weight: .semibold))
             Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).opacity(0.7)
         }

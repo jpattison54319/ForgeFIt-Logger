@@ -76,7 +76,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: Space.md) {
                     HStack(spacing: Space.md) {
                         Image(systemName: "heart.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.cardTitle)
                             .foregroundStyle(.white)
                             .frame(width: 44, height: 44)
                             .background(LinearGradient(colors: [theme.danger, Color(hex: 0xFF2D55)], startPoint: .top, endPoint: .bottom))
@@ -183,7 +183,7 @@ struct SettingsView: View {
 
     private func statusRow(_ icon: String, _ title: String, _ value: String, good: Bool) -> some View {
         HStack(spacing: Space.md) {
-            Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.textSecondary).frame(width: 24)
+            Image(systemName: icon).font(.bodyStrong).foregroundStyle(theme.textSecondary).frame(width: 24)
             Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(theme.textPrimary)
             Spacer()
             Text(value).font(.system(size: 14, weight: .semibold)).foregroundStyle(good ? theme.success : theme.textTertiary)
@@ -201,7 +201,7 @@ struct SettingsView: View {
                 Card {
                     HStack(spacing: Space.md) {
                         Image(systemName: "heart.text.square.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.cardTitle)
                             .foregroundStyle(theme.danger)
                             .frame(width: 44, height: 44)
                             .background(theme.surfaceElevated)
