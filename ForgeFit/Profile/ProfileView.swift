@@ -79,7 +79,7 @@ struct ProfileView: View {
                         .buttonStyle(.plain)
                     }
                     if completed.count > 10 {
-                        NavigationLink(value: ProfileRoute.calendar) {
+                        NavigationLink(value: ProfileRoute.history) {
                             Card(padding: Space.md) {
                                 HStack {
                                     Text("See all workouts").font(.bodyStrong).foregroundStyle(theme.accent)
@@ -98,7 +98,8 @@ struct ProfileView: View {
                 case .exercises: ExercisesListView(workouts: workouts, exercises: exercises)
                 case .importedExerciseReview: ReviewImportedExercisesView(workouts: workouts)
                 case .measures: MeasuresView()
-                case .calendar: CalendarView(workouts: workouts, exercises: exercises)
+                case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryListView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
                 case .workout(let id):
                     if let w = workouts.first(where: { $0.id == id }) {
@@ -236,7 +237,7 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.statistics) { DashboardTileLabel("Statistics", "chart.line.uptrend.xyaxis") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.exercises) { DashboardTileLabel("Exercises", "dumbbell") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
-            NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("History", "clock.arrow.circlepath") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
         }
     }
@@ -317,7 +318,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar, wrapped
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped
     case workout(UUID)
 }
 
@@ -605,7 +606,9 @@ struct MeasuresView: View {
     }
 }
 
-struct CalendarView: View {
+/// The classic month-grouped history list — still the "See all workouts"
+/// destination at the end of the Profile feed.
+struct WorkoutHistoryListView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
