@@ -101,8 +101,22 @@ struct WorkoutDetailView: View {
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
     @State private var splitsMemo = MemoTable<UUID, [CardioSplitModel]>()
     @State private var expandedRoute: ExpandedRouteTarget?
+    /// Cardio blocks currently expanded inline (mixed workouts only) —
+    /// independent per session, collapsed by default.
+    @State private var expandedCardioIDs: Set<UUID> = []
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
+
+    /// Mixed = strength and cardio in one session. Only then do cardio cards
+    /// collapse to compact rows; cardio-only workouts keep the full detail
+    /// rendering as the always-open source of truth.
+    private var isMixedWorkout: Bool {
+        CardioBlockSupport.isMixedWorkout(
+            exerciseIDs: workout.exercises.map(\.id),
+            cardioLinkedExerciseIDs: Set(workout.cardioSessions.compactMap(\.workoutExerciseID)),
+            cardioSessionCount: workout.cardioSessions.count
+        )
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -613,60 +627,176 @@ struct WorkoutDetailView: View {
         let name = exercise?.name ?? kind.title
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
-                HStack(spacing: Space.sm) {
-                    Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
-                        .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
-                    if let exercise {
-                        NavigationLink(value: exercise.id) {
-                            exerciseTitle(name, color: theme.secondaryAccent, showsChevron: true)
+                if isMixedWorkout {
+                    // In a mixed session the cardio block collapses to a
+                    // compact row so the strength timeline stays scannable;
+                    // expanding reveals the full cardio detail inline.
+                    let isExpanded = expandedCardioIDs.contains(cardio.id)
+                    cardioBlockHeader(cardio, kind: kind, name: name, isExpanded: isExpanded)
+                    if isExpanded {
+                        cardioDetailContent(cardio, kind: kind, showPerBlockHR: true)
+                        if let exercise {
+                            cardioLibraryLink(exercise, name: name)
                         }
-                        .buttonStyle(.plain)
-                    } else {
-                        exerciseTitle(name, color: theme.secondaryAccent)
                     }
+                } else {
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                            .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
+                        if let exercise {
+                            NavigationLink(value: exercise.id) {
+                                exerciseTitle(name, color: theme.secondaryAccent, showsChevron: true)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            exerciseTitle(name, color: theme.secondaryAccent)
+                        }
+                    }
+
+                    cardioDetailContent(cardio, kind: kind, showPerBlockHR: false)
                 }
-
-                // Primary Strava-style read-outs
-                HStack {
-                    metric(kind.usesPace ? "Pace" : "Speed",
-                           kind.usesPace
-                           ? CardioMetrics.paceString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds, kind: kind)
-                           : CardioMetrics.speedString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds),
-                           color: theme.secondaryAccent)
-                    metric("Distance", Fmt.distance(cardio.distanceMeters))
-                    metric("Time", Fmt.durationShort(cardio.durationSeconds))
-                }
-
-                // Secondary metrics
-                HStack {
-                    if let hr = cardio.avgHR { metric("Avg HR", "\(hr)") }
-                    if let cal = cardio.activeEnergyKcal { metric("Calories", "\(Int(cal))") }
-                    if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
-                    if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
-                    if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
-                }
-
-                efficiencyRow(for: cardio)
-
-                if cardio.intervalsAutoApplied {
-                    autoIntervalBanner(cardio)
-                }
-
-                routeSection(for: cardio, kind: kind)
-
-                // Interval laps for sessions without a GPS map (e.g. treadmill)
-                // — the route section already renders laps under the map.
-                if cardio.routePoints.count < 2 {
-                    let laps = cardio.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
-                    if !laps.isEmpty { splitsTable(laps) }
-                }
-
-                if let hr = cardio.avgHR {
-                    HRZoneBar(avgHR: hr, maxHR: cardio.maxHR, durationSeconds: cardio.durationSeconds)
-                }
-                MuscleChips(muscles: kind.musclesWorked)
             }
         }
+    }
+
+    /// Compact collapsed row for a cardio block in a mixed workout:
+    /// "18min Run", a one-line metric summary, and a rotating chevron. The
+    /// whole row toggles the inline detail.
+    private func cardioBlockHeader(_ cardio: CardioSessionModel, kind: CardioKind, name: String, isExpanded: Bool) -> some View {
+        Button {
+            withAnimation(.spring(duration: 0.25)) {
+                if isExpanded {
+                    expandedCardioIDs.remove(cardio.id)
+                } else {
+                    expandedCardioIDs.insert(cardio.id)
+                }
+            }
+        } label: {
+            HStack(spacing: Space.sm) {
+                Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                    .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CardioBlockSupport.compactTitle(durationSeconds: cardio.durationSeconds, name: name))
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.secondaryAccent)
+                    if let subtitle = CardioBlockSupport.compactSubtitle(
+                        distance: cardio.distanceMeters.map { Fmt.cardioDistance($0, kind: kind) },
+                        avgHR: cardio.avgHR,
+                        calories: cardio.activeEnergyKcal,
+                        effort: cardio.effort
+                    ) {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: Space.sm)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+            .contentShape(Rectangle())
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(name) cardio block")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
+        .accessibilityIdentifier("cardio-block-header")
+    }
+
+    /// Library navigation for an expanded block — lives at the bottom of the
+    /// detail so the header tap can unambiguously mean expand/collapse.
+    private func cardioLibraryLink(_ exercise: ExerciseLibraryModel, name: String) -> some View {
+        NavigationLink(value: exercise.id) {
+            HStack(spacing: 4) {
+                Text("View \(name) history")
+                    .font(.system(size: 13, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(theme.secondaryAccent)
+            .contentShape(Rectangle())
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The full cardio detail experience — identical for cardio-only workouts
+    /// and expanded mixed blocks. `showPerBlockHR` adds this block's slice of
+    /// the workout HR series (mixed only; cardio-only workouts already show it
+    /// at the workout level).
+    @ViewBuilder
+    private func cardioDetailContent(_ cardio: CardioSessionModel, kind: CardioKind, showPerBlockHR: Bool) -> some View {
+        // Primary Strava-style read-outs
+        HStack {
+            metric(kind.usesPace ? "Pace" : "Speed",
+                   kind.usesPace
+                   ? CardioMetrics.paceString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds, kind: kind)
+                   : CardioMetrics.speedString(distanceMeters: cardio.distanceMeters, durationSeconds: cardio.durationSeconds),
+                   color: theme.secondaryAccent)
+            metric("Distance", Fmt.distance(cardio.distanceMeters))
+            metric("Time", Fmt.durationShort(cardio.durationSeconds))
+        }
+
+        // Secondary metrics
+        HStack {
+            if let hr = cardio.avgHR { metric("Avg HR", "\(hr)") }
+            if let cal = cardio.activeEnergyKcal { metric("Calories", "\(Int(cal))") }
+            if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
+            if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
+            if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+        }
+
+        efficiencyRow(for: cardio)
+
+        if cardio.intervalsAutoApplied {
+            autoIntervalBanner(cardio)
+        }
+
+        routeSection(for: cardio, kind: kind)
+
+        // Interval laps for sessions without a GPS map (e.g. treadmill)
+        // — the route section already renders laps under the map.
+        if cardio.routePoints.count < 2 {
+            let laps = cardio.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
+            if !laps.isEmpty { splitsTable(laps) }
+        }
+
+        if let hr = cardio.avgHR {
+            HRZoneBar(avgHR: hr, maxHR: cardio.maxHR, durationSeconds: cardio.durationSeconds)
+        }
+
+        if showPerBlockHR {
+            // Measured watch zones + this block's slice of the
+            // whole-workout HR series — the standalone detail shows
+            // these at the workout level, so mixed blocks carry their
+            // own copies inline.
+            if cardio.hrZoneSeconds.contains(where: { $0 > 0 }) {
+                ZoneSecondsBar(zoneSeconds: cardio.hrZoneSeconds)
+            }
+            if let window = CardioBlockSupport.blockWindow(
+                startedAt: cardio.startedAt,
+                liveStartedAt: cardio.liveStartedAt,
+                endedAt: cardio.endedAt,
+                durationSeconds: cardio.durationSeconds
+            ) {
+                let slice = CardioBlockSupport.hrSlice(samples: hrSamples, window: window)
+                if slice.count >= 2 {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Heart rate")
+                            .font(.tag)
+                            .foregroundStyle(theme.textSecondary)
+                        HeartRateTrendChart(samples: slice)
+                    }
+                }
+            }
+        }
+
+        MuscleChips(muscles: kind.musclesWorked)
     }
 
     /// Start (green) / finish (red) markers for a route — without them a bare
@@ -907,3 +1037,130 @@ private struct ExpandedRouteMapView: View {
         }
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+@MainActor
+private func previewContainer() -> ModelContainer {
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    return try! ModelContainer(for: Schema(ForgeDataSchema.models), configurations: config)
+}
+
+/// Mixed session: strength + cardio interleaved — cardio blocks collapse.
+@MainActor
+private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibraryModel]) {
+    let start = Date(timeIntervalSinceNow: -7200)
+    let bench = ExerciseLibraryModel(name: "Bench Press", primaryMuscles: ["Chest"])
+    let run = ExerciseLibraryModel(name: "Treadmill Run", isCardio: true)
+    let pulldown = ExerciseLibraryModel(name: "Lat Pulldown", primaryMuscles: ["Lats"])
+    let bike = ExerciseLibraryModel(name: "Bike", isCardio: true)
+
+    let benchWE = WorkoutExerciseModel(userID: userID, exerciseID: bench.id, position: 0, sets: [
+        SetModel(userID: userID, position: 0, reps: 8, weight: 80, rpe: 7, completedAt: start.addingTimeInterval(300)),
+        SetModel(userID: userID, position: 1, reps: 8, weight: 82.5, rpe: 8, completedAt: start.addingTimeInterval(600)),
+        SetModel(userID: userID, position: 2, reps: 7, weight: 82.5, rpe: 9, completedAt: start.addingTimeInterval(900)),
+    ])
+    let runWE = WorkoutExerciseModel(userID: userID, exerciseID: run.id, position: 1)
+    let pulldownWE = WorkoutExerciseModel(userID: userID, exerciseID: pulldown.id, position: 2, sets: [
+        SetModel(userID: userID, position: 0, reps: 10, weight: 60, completedAt: start.addingTimeInterval(2600)),
+        SetModel(userID: userID, position: 1, reps: 10, weight: 62.5, completedAt: start.addingTimeInterval(2900)),
+    ])
+    let bikeWE = WorkoutExerciseModel(userID: userID, exerciseID: bike.id, position: 3)
+
+    let runStart = start.addingTimeInterval(1000)
+    var runRoutePoints: [CardioRoutePointModel] = []
+    for i in 0..<20 {
+        let latJitter: Double = i % 3 == 0 ? 0.0004 : 0
+        let lonJitter: Double = i % 4 == 0 ? 0.0006 : 0
+        runRoutePoints.append(CardioRoutePointModel(
+            userID: userID, cardioSessionID: UUID(),
+            timestamp: runStart.addingTimeInterval(Double(i) * 54),
+            latitude: 37.334 + Double(i) * 0.0008 + latJitter,
+            longitude: -122.009 + Double(i) * 0.0005 - lonJitter))
+    }
+    var runSplits: [CardioSplitModel] = []
+    for i in 0..<3 {
+        runSplits.append(CardioSplitModel(
+            userID: userID, cardioSessionID: UUID(), index: i,
+            distanceMeters: 1000, durationSeconds: 330 + i * 8, paceSecondsPerKm: Double(330 + i * 8),
+            startedAt: runStart.addingTimeInterval(Double(i) * 340),
+            endedAt: runStart.addingTimeInterval(Double(i + 1) * 340)))
+    }
+    let runSession = CardioSessionModel(
+        userID: userID, workoutExerciseID: runWE.id, modality: "run",
+        startedAt: runStart, liveStartedAt: runStart, endedAt: runStart.addingTimeInterval(1080),
+        durationSeconds: 1080, distanceMeters: 3200, activeEnergyKcal: 240,
+        avgHR: 152, maxHR: 171, hrZoneSeconds: [60, 240, 480, 240, 60],
+        routePoints: runRoutePoints,
+        splits: runSplits)
+
+    let bikeStart = start.addingTimeInterval(3100)
+    var bikeSplits: [CardioSplitModel] = []
+    for i in 0..<4 {
+        let label = i.isMultiple(of: 2) ? "Work \(i / 2 + 1)" : "Recovery \(i / 2 + 1)"
+        bikeSplits.append(CardioSplitModel(
+            userID: userID, cardioSessionID: UUID(), index: i,
+            distanceMeters: 1000, durationSeconds: 150, paceSecondsPerKm: 150,
+            label: label,
+            autoDetected: true,
+            startedAt: bikeStart.addingTimeInterval(Double(i) * 150),
+            endedAt: bikeStart.addingTimeInterval(Double(i + 1) * 150)))
+    }
+    let bikeSession = CardioSessionModel(
+        userID: userID, workoutExerciseID: bikeWE.id, modality: "cycle",
+        startedAt: bikeStart, liveStartedAt: bikeStart, endedAt: bikeStart.addingTimeInterval(600),
+        durationSeconds: 600, distanceMeters: 4000, activeEnergyKcal: 110, avgHR: 138, effort: 6,
+        intervalsAutoApplied: true,
+        splits: bikeSplits)
+
+    // Legacy whole-workout cardio session (not linked to an exercise).
+    let legacySession = CardioSessionModel(
+        userID: userID, modality: "row",
+        startedAt: start.addingTimeInterval(3800),
+        durationSeconds: 480, distanceMeters: 1200, avgHR: 129)
+
+    let workout = WorkoutModel(
+        userID: userID, title: "Push + Engine", startedAt: start, endedAt: start.addingTimeInterval(4400),
+        avgHR: 128, maxHR: 171, activeEnergyKcal: 520, hrZoneSeconds: [600, 1200, 1400, 300, 80],
+        exercises: [benchWE, runWE, pulldownWE, bikeWE],
+        cardioSessions: [runSession, bikeSession, legacySession])
+    return (workout, [bench, run, pulldown, bike])
+}
+
+#Preview("Mixed workout") {
+    let container = previewContainer()
+    let (workout, exercises) = previewMixedWorkout(userID: UUID())
+    container.mainContext.insert(workout)
+    exercises.forEach { container.mainContext.insert($0) }
+    return NavigationStack {
+        WorkoutDetailView(workout: workout, exercises: exercises)
+    }
+    .modelContainer(container)
+}
+
+/// Cardio-only session — must render exactly like production today: full
+/// detail, no chevron, no collapse.
+#Preview("Cardio only") {
+    let container = previewContainer()
+    let userID = UUID()
+    let run = ExerciseLibraryModel(name: "Outdoor Run", isCardio: true)
+    let runWE = WorkoutExerciseModel(userID: userID, exerciseID: run.id, position: 0)
+    let start = Date(timeIntervalSinceNow: -3600)
+    let session = CardioSessionModel(
+        userID: userID, workoutExerciseID: runWE.id, modality: "run",
+        startedAt: start, liveStartedAt: start, endedAt: start.addingTimeInterval(1620),
+        durationSeconds: 1620, distanceMeters: 5000, activeEnergyKcal: 380,
+        avgHR: 156, maxHR: 178, hrZoneSeconds: [120, 300, 720, 360, 120])
+    let workout = WorkoutModel(
+        userID: userID, title: "Morning Run", startedAt: start, endedAt: start.addingTimeInterval(1700),
+        avgHR: 156, maxHR: 178, activeEnergyKcal: 380,
+        exercises: [runWE], cardioSessions: [session])
+    container.mainContext.insert(workout)
+    container.mainContext.insert(run)
+    return NavigationStack {
+        WorkoutDetailView(workout: workout, exercises: [run])
+    }
+    .modelContainer(container)
+}
+#endif
