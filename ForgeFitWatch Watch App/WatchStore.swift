@@ -34,6 +34,10 @@ final class WatchStore: NSObject {
         engine.onMetrics = { [weak self] metrics in
             self?.send(.liveMetrics(metrics))
         }
+        // If watchOS relaunched us mid-workout (crash/jetsam), the workout
+        // session may still be running headless — reattach before the phone's
+        // next snapshot arrives so metric collection resumes immediately.
+        engine.recoverSessionIfNeeded()
     }
 
     var activeWorkout: WatchWorkoutSnapshot? { context?.workout }
@@ -49,6 +53,15 @@ final class WatchStore: NSObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               let data = WatchWire.encode(command) else { return }
         let payload = [WatchWire.commandKey: data]
+        // Live metrics are ephemeral — a heart-rate reading queued while the
+        // phone is unreachable arrives minutes stale and shows up as a bogus
+        // "current" HR, masking the actual gap. Drop those; everything else
+        // (set toggles, finish, etc.) gets guaranteed delivery via the queue.
+        if case .liveMetrics = command {
+            guard WCSession.default.isReachable else { return }
+            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            return
+        }
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: { _ in
                 WCSession.default.transferUserInfo(payload)
@@ -260,7 +273,13 @@ extension WatchStore: WCSessionDelegate {
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        Task { @MainActor in self.isReachable = session.isReachable }
+        Task { @MainActor in
+            self.isReachable = session.isReachable
+            // Any reconnection is a chance to notice "phone says a workout is
+            // live but our engine is idle" (e.g. the engine died while we
+            // were unreachable) and restart collection.
+            if session.isReachable { self.ensureWorkoutSessionRunning() }
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
