@@ -34,6 +34,7 @@ enum AccountResetService {
         try deleteAll(WorkoutImportBatchModel.self, in: context)
         try deleteAll(WorkoutXPEventModel.self, in: context)
         try deleteAll(UserProgressModel.self, in: context)
+        try deleteAll(WrappedReportModel.self, in: context)
         try deleteAll(RoutineSetModel.self, in: context)
         try deleteAll(RoutineExerciseModel.self, in: context)
         try deleteAll(RoutineModel.self, in: context)

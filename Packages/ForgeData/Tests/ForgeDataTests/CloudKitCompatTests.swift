@@ -39,4 +39,15 @@ import Testing
         #expect(set.side2MiniReps.isEmpty)
         #expect(!set.hasSide2Data)
     }
+
+    @Test func wrappedReportModelHasCloudKitSafeDefaults() {
+        let report = WrappedReportModel(userID: UUID(), reportTypeRaw: "monthly", year: 2026, month: 6)
+
+        #expect(report.viewedAt == nil)
+        #expect(!report.isViewed)
+        #expect(report.isMonthly)
+        #expect(report.payloadJSON == "{}")
+        #expect(report.reportVersion == 1)
+        #expect(report.deletedAt == nil)
+    }
 }

@@ -20,7 +20,8 @@ public enum ForgeDataSchema {
             WorkoutXPEventModel.self,
             CardioSessionModel.self,
             CardioRoutePointModel.self,
-            CardioSplitModel.self
+            CardioSplitModel.self,
+            WrappedReportModel.self
         ]
     }
 }
@@ -1151,4 +1152,74 @@ public final class CardioSplitModel {
         self.endedAt = endedAt
         self.createdAt = createdAt
     }
+}
+
+/// A generated Wrapped report (monthly or yearly training story). The report
+/// is a SNAPSHOT: every stat and page it shows is computed once at generation
+/// time and frozen into `payloadJSON`, because the analytics inputs it's
+/// derived from drift (daily health metrics only reach ~60 days back, and
+/// workouts/exercises can be edited later). Old reports must render exactly
+/// as generated, never recompute.
+///
+/// Uniqueness is (reportTypeRaw, year, month), enforced by the generation
+/// service via query-before-insert — CloudKit-backed SwiftData can't express
+/// unique constraints.
+@Model
+public final class WrappedReportModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// "monthly" or "yearly".
+    public var reportTypeRaw: String = "monthly"
+    public var year: Int = 0
+    /// 1–12 for monthly reports; 0 for yearly.
+    public var month: Int = 0
+    public var generatedAt: Date = Date()
+    public var updatedAt: Date = Date()
+    /// When the user first OPENED the report (any page) — drives the Home
+    /// card's disappearance. Nil = unviewed.
+    public var viewedAt: Date?
+    /// Payload schema version, so future decoders can migrate or hide pages
+    /// they no longer understand.
+    public var reportVersion: Int = 1
+    /// JSON-encoded `WrappedPayload` — the frozen page/stat snapshot.
+    public var payloadJSON: String = "{}"
+    public var sourceRangeStart: Date = Date()
+    public var sourceRangeEnd: Date = Date()
+    public var createdAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        reportTypeRaw: String,
+        year: Int,
+        month: Int = 0,
+        generatedAt: Date = Date(),
+        updatedAt: Date = Date(),
+        viewedAt: Date? = nil,
+        reportVersion: Int = 1,
+        payloadJSON: String = "{}",
+        sourceRangeStart: Date = Date(),
+        sourceRangeEnd: Date = Date(),
+        createdAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.reportTypeRaw = reportTypeRaw
+        self.year = year
+        self.month = month
+        self.generatedAt = generatedAt
+        self.updatedAt = updatedAt
+        self.viewedAt = viewedAt
+        self.reportVersion = reportVersion
+        self.payloadJSON = payloadJSON
+        self.sourceRangeStart = sourceRangeStart
+        self.sourceRangeEnd = sourceRangeEnd
+        self.createdAt = createdAt
+        self.deletedAt = deletedAt
+    }
+
+    public var isViewed: Bool { viewedAt != nil }
+    public var isMonthly: Bool { reportTypeRaw == "monthly" }
 }
