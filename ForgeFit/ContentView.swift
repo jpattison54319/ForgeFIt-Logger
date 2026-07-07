@@ -63,7 +63,6 @@ struct ContentView: View {
 
     @State private var appState = AppState()
     @State private var restTimer = RestTimerController.shared
-    @State private var watchLink = WatchLink.shared
     @State private var intervalHub = IntervalRunnerHub.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
@@ -184,7 +183,11 @@ struct ContentView: View {
                 WatchLink.shared.publishState()
                 WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
             }
-            .onChange(of: watchLink.liveMetrics?.heartRate) { _, heartRate in handleLiveHeartRateChange(heartRate) }
+            // HR observation lives in a zero-sized child view: reading
+            // watchLink.liveMetrics here would register the Observation
+            // dependency on ContentView itself and re-render the whole app
+            // shell on every heart-rate tick (~1/s during workouts).
+            .background(LiveHeartRateObserver(onChange: handleLiveHeartRateChange))
             .onChange(of: activeWorkout?.id) { oldID, newID in
                 handleActiveWorkoutChange(oldID: oldID, newID: newID)
             }
@@ -648,6 +651,22 @@ struct ContentView: View {
         )
         modelContext.insert(note)
         try modelContext.save()
+    }
+}
+
+/// Watches the live heart-rate stream in a zero-sized view so the Observation
+/// dependency registers HERE, not on whatever view embeds it — the embedder
+/// stays out of the per-second re-render path while still getting callbacks.
+private struct LiveHeartRateObserver: View {
+    var watchLink = WatchLink.shared
+    let onChange: (Int?) -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: watchLink.liveMetrics?.heartRate) { _, heartRate in
+                onChange(heartRate)
+            }
     }
 }
 

@@ -62,6 +62,7 @@ struct ActiveWorkoutLoggerView: View {
     /// record award. Computed once; history doesn't change mid-session.
     @State private var recordBaselines: [UUID: ExerciseRecordBaseline] = [:]
     @State private var widgetSnapshotTask: Task<Void, Never>?
+    @State private var liveSurfacePublishTask: Task<Void, Never>?
     @State private var previousSetsByExerciseID: [UUID: [SetModel]] = [:]
     @State private var liveStats = WorkoutLiveStats()
     @State private var inputRouter = SetInputRouter()
@@ -366,8 +367,8 @@ struct ActiveWorkoutLoggerView: View {
                 StatColumn(label: "Duration", value: Fmt.elapsed(elapsed))
                 StatColumn(label: "Volume", value: Fmt.volume(liveStats.volume))
                 StatColumn(label: "Sets", value: "\(liveStats.completedSets)")
-                if !isHistoricalEdit, let hr = WatchLink.shared.liveMetrics?.heartRate {
-                    StatColumn(label: "HR", value: "\(hr)", valueColor: theme.danger)
+                if !isHistoricalEdit {
+                    LiveHeartRateStat()
                 }
             }
         }
@@ -383,6 +384,19 @@ struct ActiveWorkoutLoggerView: View {
     private struct WorkoutLiveStats {
         var volume: Double = 0
         var completedSets: Int = 0
+    }
+
+    /// Reads `WatchLink` inside its OWN body so the Observation dependency
+    /// registers here — a heart-rate tick (~every second while streaming)
+    /// re-renders this one column instead of the entire logger.
+    private struct LiveHeartRateStat: View {
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            if let hr = WatchLink.shared.liveMetrics?.heartRate {
+                StatColumn(label: "HR", value: "\(hr)", valueColor: theme.danger)
+            }
+        }
     }
 
     private struct ReferenceCaches {
@@ -701,9 +715,24 @@ struct ActiveWorkoutLoggerView: View {
     }
 
     private func publishWorkoutChange() {
+        // Local UI reacts immediately; the external surfaces don't need to.
         refreshLiveStats()
-        WatchLink.shared.publishState()
-        WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
+        // Watch snapshots and Live Activity content are both rebuilt by
+        // walking the full workout — running them synchronously on every
+        // keystroke-level change puts avoidable work on the interaction
+        // path. Coalesce bursts into one publish shortly after the last
+        // change (same pattern as the widget snapshot below, shorter window
+        // since the wrist should feel close to live).
+        liveSurfacePublishTask?.cancel()
+        liveSurfacePublishTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            WatchLink.shared.publishState()
+            // A finish inside the debounce window must not re-request the
+            // Live Activity that ContentView just ended.
+            guard workout.endedAt == nil, workout.deletedAt == nil else { return }
+            WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
+        }
         scheduleWidgetSnapshot()
     }
 
