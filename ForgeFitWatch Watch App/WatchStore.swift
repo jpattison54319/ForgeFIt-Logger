@@ -46,7 +46,7 @@ final class WatchStore: NSObject {
 
     func ensureWorkoutSessionRunning() {
         guard let workout = activeWorkout, !engine.isRunning else { return }
-        engine.start(startDate: workout.startedAt)
+        engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
     }
 
     // MARK: - Commands (watch → phone)
@@ -216,7 +216,7 @@ final class WatchStore: NSObject {
         // phone) ends it.
         if let workout = newContext.workout {
             if !engine.isRunning {
-                engine.start(startDate: workout.startedAt)
+                engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
             }
         } else if engine.isRunning {
             if let old = previous?.workout {

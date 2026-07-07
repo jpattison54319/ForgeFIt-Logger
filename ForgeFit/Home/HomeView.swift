@@ -502,6 +502,7 @@ struct HomeView: View {
             switch action.kind {
             case .cardio: true
             case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil }
+            case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
             }
         }
     }
@@ -548,6 +549,14 @@ struct HomeView: View {
             case .routine(let id):
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil }) else { return }
                 _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+            case .yoga(let slug):
+                guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }
+                _ = WorkoutFactory.startYoga(
+                    flow: YogaFlowCatalog.plan(for: seed),
+                    named: seed.name,
+                    exercises: exercises,
+                    in: modelContext
+                )
             }
             appState.showingLogger = true
         }
@@ -557,6 +566,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): modality.title
         case .routine(let id): routines.first { $0.id == id }?.name ?? "Routine"
+        case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug)?.name ?? "Yoga"
         }
     }
 
@@ -564,6 +574,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): modality.systemImage
         case .routine: "list.bullet.clipboard"
+        case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug)?.style.systemImage ?? "figure.yoga"
         }
     }
 
@@ -571,6 +582,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): "start-cardio-\(modality.rawValue)"
         case .routine(let id): "start-home-routine-\(id.uuidString)"
+        case .yoga(let slug): "start-yoga-\(slug)"
         }
     }
 
@@ -589,6 +601,8 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
     enum Kind: Hashable {
         case cardio(CardioModality)
         case routine(UUID)
+        /// A built-in guided yoga class, keyed by its catalog flow slug.
+        case yoga(String)
     }
 
     var kind: Kind
@@ -597,6 +611,7 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         switch kind {
         case .cardio(let modality): "cardio:\(modality.rawValue)"
         case .routine(let id): "routine:\(id.uuidString)"
+        case .yoga(let slug): "yoga:\(slug)"
         }
     }
 
@@ -608,6 +623,10 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
 
     static func routine(_ id: UUID) -> HomeQuickStartAction {
         HomeQuickStartAction(kind: .routine(id))
+    }
+
+    static func yoga(_ slug: String) -> HomeQuickStartAction {
+        HomeQuickStartAction(kind: .yoga(slug))
     }
 
     init(kind: Kind) {
@@ -623,6 +642,8 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         } else if let idRaw = raw.removingPrefix("routine:"),
                   let id = UUID(uuidString: idRaw) {
             kind = .routine(id)
+        } else if let slug = raw.removingPrefix("yoga:") {
+            kind = .yoga(slug)
         } else {
             kind = .cardio(.run)
         }
@@ -685,7 +706,17 @@ private struct QuickStartTile: View {
                 GlassTile(tint: theme.secondaryAccent.opacity(0.12), verticalPadding: Space.md, horizontalPadding: Space.sm) {
                     VStack(spacing: 6) {
                         Image(systemName: systemImage).font(.system(size: 18, weight: .semibold))
-                        Text(title).font(.tag).lineLimit(1)
+                        // Two-word titles ("Treadmill Walk") wrap to a second
+                        // line instead of spilling past the fixed-width tile.
+                        // `reservesSpace` keeps every tile the same height so the
+                        // row stays aligned whether the label is one line or two;
+                        // `minimumScaleFactor` is a last-resort guard for an
+                        // unbreakable long word.
+                        Text(title)
+                            .font(.tag)
+                            .lineLimit(2, reservesSpace: true)
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(theme.textPrimary)
                     .frame(maxWidth: .infinity)
@@ -772,6 +803,21 @@ private struct QuickStartAddSheet: View {
                         presetRow(.cycle)
                         presetRow(.row)
                         presetRow(.walk)
+                    }
+
+                    SectionHeader("Guided Yoga")
+                    VStack(spacing: Space.sm) {
+                        ForEach(YogaFlowCatalog.load(), id: \.slug) { seed in
+                            let plan = YogaFlowCatalog.plan(for: seed)
+                            addRow(
+                                title: seed.name,
+                                subtitle: "\(seed.style.title) · \(Fmt.durationShort(plan.totalSeconds)) · \(plan.steps.count) poses",
+                                systemImage: seed.style.systemImage,
+                                isAdded: configuredIDs.contains(HomeQuickStartAction.yoga(seed.slug).id)
+                            ) {
+                                onAdd(.yoga(seed.slug))
+                            }
+                        }
                     }
 
                     SectionHeader("Your Routines")

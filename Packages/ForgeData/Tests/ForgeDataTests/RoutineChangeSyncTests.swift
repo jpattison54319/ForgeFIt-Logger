@@ -337,3 +337,109 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(sorted.last?.position, 1)
     }
 }
+
+// MARK: - Yoga flow drift
+
+@MainActor
+final class RoutineChangeSyncYogaTests: XCTestCase {
+
+    private func makeContainer() throws -> ModelContainer {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        return try ModelContainer(for: schema, configurations: [configuration])
+    }
+
+    private func plan(_ names: [String]) -> YogaFlowPlan {
+        YogaFlowPlan(style: .hatha, steps: names.map {
+            YogaFlowPlan.PoseStep(poseID: UUID(), name: $0, holdSeconds: 30)
+        })
+    }
+
+    /// Routine had an authored flow; the user edited it mid-session → the
+    /// change is detected and applying it updates the routine's flow.
+    func testEditedFlowSyncsBackToRoutine() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+
+        let original = plan(["Pigeon Pose"]).encodedJSON()
+        let routineExercise = RoutineExerciseModel(
+            userID: userID, exerciseID: UUID(), position: 0, yogaFlowJSON: original
+        )
+        let routine = RoutineModel(userID: userID, name: "Evening", exercises: [routineExercise])
+        let edited = plan(["Pigeon Pose", "Child's Pose"]).encodedJSON()
+        let we = WorkoutExerciseModel(
+            userID: userID, exerciseID: routineExercise.exerciseID, position: 0,
+            yogaFlowJSON: edited, sourceRoutineExerciseID: routineExercise.id
+        )
+        let workout = WorkoutModel(userID: userID, endedAt: Date(), exercises: [we])
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let detected = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertTrue(detected.hasChanges)
+        XCTAssertTrue(detected.exercisePlans.contains(where: \.flowChanged))
+        XCTAssertTrue(detected.summary.contains("yoga flow updated"))
+
+        RoutineChangeSync.apply(detected, to: routine, from: workout, in: context)
+        XCTAssertEqual(routineExercise.yogaFlowJSON, edited)
+        _ = container
+    }
+
+    /// The factory synthesizes a single-pose flow when the routine has none —
+    /// that scaffolding must NOT read as user drift.
+    func testSynthesizedSinglePoseFlowIsNotDrift() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+
+        let routineExercise = RoutineExerciseModel(userID: userID, exerciseID: UUID(), position: 0)
+        let routine = RoutineModel(userID: userID, name: "Wind Down", exercises: [routineExercise])
+        let synthesized = plan(["Child's Pose"]).encodedJSON()
+        let we = WorkoutExerciseModel(
+            userID: userID, exerciseID: routineExercise.exerciseID, position: 0,
+            yogaFlowJSON: synthesized, sourceRoutineExerciseID: routineExercise.id
+        )
+        let workout = WorkoutModel(userID: userID, endedAt: Date(), exercises: [we])
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let detected = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertFalse(detected.exercisePlans.contains(where: \.flowChanged))
+        XCTAssertFalse(detected.hasChanges)
+        _ = container
+    }
+
+    /// A yoga exercise added mid-session carries its flow into the routine
+    /// (and gets no cardio duration-target set).
+    func testYogaExerciseAddedMidSessionCopiesFlow() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+
+        let routine = RoutineModel(userID: userID, name: "Mixed", exercises: [])
+        let flow = plan(["Warrior II", "Triangle Pose"]).encodedJSON()
+        let we = WorkoutExerciseModel(
+            userID: userID, exerciseID: UUID(), position: 0, yogaFlowJSON: flow
+        )
+        let session = CardioSessionModel(
+            userID: userID, workoutExerciseID: we.id,
+            modality: CardioSessionModel.yogaModality, durationSeconds: 600
+        )
+        let workout = WorkoutModel(userID: userID, endedAt: Date(), exercises: [we], cardioSessions: [session])
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let detected = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertEqual(detected.addedExerciseIDs, [we.id])
+        RoutineChangeSync.apply(detected, to: routine, from: workout, in: context)
+
+        let added = try XCTUnwrap(routine.exercises.first)
+        XCTAssertEqual(added.yogaFlowJSON, flow)
+        XCTAssertTrue(added.sets.isEmpty)
+        _ = container
+    }
+}

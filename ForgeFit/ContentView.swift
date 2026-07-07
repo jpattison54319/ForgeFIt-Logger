@@ -64,6 +64,7 @@ struct ContentView: View {
     @State private var appState = AppState()
     @State private var restTimer = RestTimerController.shared
     @State private var intervalHub = IntervalRunnerHub.shared
+    @State private var yogaHub = YogaFlowRunnerHub.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
     @State private var cleanedOnboardingSlate = false
@@ -180,6 +181,15 @@ struct ContentView: View {
             .onChange(of: restTimer.endsAt) { _, endsAt in handleRestTimerChange(endsAt) }
             // Interval step transitions repaint the watch + Live Activity.
             .onChange(of: intervalHub.runner?.stepEndsAt) {
+                WatchLink.shared.publishState()
+                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+            }
+            // Yoga pose transitions (and pause/resume) do the same.
+            .onChange(of: yogaHub.runner?.stepEndsAt) {
+                WatchLink.shared.publishState()
+                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+            }
+            .onChange(of: yogaHub.runner?.isPaused) {
                 WatchLink.shared.publishState()
                 WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
             }
@@ -560,6 +570,11 @@ struct ContentView: View {
             }
             try ExerciseSeedRepository.seedGlobalLibrary(in: modelContext)
             ExerciseCatalog.seed(into: modelContext)
+            YogaPoseCatalog.seed(into: modelContext)
+            // CloudKit can't enforce unique constraints, so re-seed/sync races
+            // can leave several rows sharing one id. Collapse them to a single
+            // deterministic survivor now that all seeding for this launch is done.
+            try ExerciseLibraryDeduplicator.removeDuplicates(in: modelContext)
             if shouldSeedStarterContent {
                 try seedStarterSetupNote()
                 try seedStarterRoutine()

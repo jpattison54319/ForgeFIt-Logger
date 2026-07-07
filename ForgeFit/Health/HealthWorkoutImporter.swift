@@ -46,25 +46,48 @@ final class HealthWorkoutImporter {
             let workoutExercise = kind.exerciseID.map {
                 WorkoutExerciseModel(userID: ForgeFitDemo.userID, exerciseID: $0, position: 0)
             }
-            let cardioSession = kind.cardioKind.map {
-                CardioSessionModel(
+            let cardioSession: CardioSessionModel?
+            if kind.isYoga {
+                // Yoga/flexibility import: a yoga session — no distance (the
+                // mat doesn't move) and no pace-based TSS.
+                cardioSession = CardioSessionModel(
                     userID: ForgeFitDemo.userID,
-                    workoutExerciseID: workoutExercise?.id,
-                    modality: $0.rawValue,
+                    workoutExerciseID: nil,
+                    modality: CardioSessionModel.yogaModality,
                     startedAt: healthWorkout.startDate,
                     liveStartedAt: healthWorkout.startDate,
                     endedAt: healthWorkout.endDate,
                     hkWorkoutUUID: healthWorkout.uuid,
                     sourceDevice: source,
                     durationSeconds: durationSeconds,
-                    distanceMeters: distanceMeters,
                     activeEnergyKcal: energyKcal,
                     avgHR: avgHR,
                     maxHR: maxHR,
                     hrZoneSeconds: zones,
                     effort: estimatedEffort(avgHR: avgHR),
-                    tss: estimatedTSS(durationSeconds: durationSeconds, avgHR: avgHR)
+                    yogaStyleRaw: kind.yogaStyle?.rawValue
                 )
+            } else {
+                cardioSession = kind.cardioKind.map {
+                    CardioSessionModel(
+                        userID: ForgeFitDemo.userID,
+                        workoutExerciseID: workoutExercise?.id,
+                        modality: $0.rawValue,
+                        startedAt: healthWorkout.startDate,
+                        liveStartedAt: healthWorkout.startDate,
+                        endedAt: healthWorkout.endDate,
+                        hkWorkoutUUID: healthWorkout.uuid,
+                        sourceDevice: source,
+                        durationSeconds: durationSeconds,
+                        distanceMeters: distanceMeters,
+                        activeEnergyKcal: energyKcal,
+                        avgHR: avgHR,
+                        maxHR: maxHR,
+                        hrZoneSeconds: zones,
+                        effort: estimatedEffort(avgHR: avgHR),
+                        tss: estimatedTSS(durationSeconds: durationSeconds, avgHR: avgHR)
+                    )
+                }
             }
 
             let workout = WorkoutModel(
@@ -200,6 +223,10 @@ final class HealthWorkoutImporter {
     private struct ImportedKind {
         var cardioKind: CardioKind?
         var exerciseID: UUID?
+        /// Yoga/flexibility activity: imports as a yoga session (its own
+        /// pillar) instead of a generic titled workout.
+        var isYoga = false
+        var yogaStyle: YogaStyle?
     }
 
     private func cardioKind(for activity: HKWorkoutActivityType) -> ImportedKind {
@@ -224,6 +251,12 @@ final class HealthWorkoutImporter {
             return ImportedKind(cardioKind: .swim, exerciseID: nil)
         case .highIntensityIntervalTraining, .crossTraining:
             return ImportedKind(cardioKind: .other, exerciseID: nil)
+        case .yoga, .mindAndBody:
+            return ImportedKind(cardioKind: nil, exerciseID: nil, isYoga: true)
+        case .flexibility:
+            // Stretching sessions count toward the flexibility pillar as
+            // gentle (recovery-classified) practice.
+            return ImportedKind(cardioKind: nil, exerciseID: nil, isYoga: true, yogaStyle: .gentle)
         default:
             return ImportedKind(cardioKind: nil, exerciseID: nil)
         }
@@ -245,7 +278,8 @@ final class HealthWorkoutImporter {
         case .coreTraining: "Core Training"
         case .highIntensityIntervalTraining: "HIIT"
         case .crossTraining: "Cross Training"
-        case .yoga: "Yoga"
+        case .yoga, .mindAndBody: "Yoga"
+        case .flexibility: "Stretching"
         case .pilates: "Pilates"
         default: "Apple Health Workout"
         }

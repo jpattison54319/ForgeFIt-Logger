@@ -71,6 +71,7 @@ struct StatisticsView: View {
     private enum StatsTab: String, CaseIterable {
         case strength = "Strength"
         case cardio = "Cardio"
+        case yoga = "Yoga"
         case monthly = "Monthly"
     }
 
@@ -95,6 +96,7 @@ struct StatisticsView: View {
             switch tab {
             case .strength: strengthSections
             case .cardio: cardioSections
+            case .yoga: yogaSections
             case .monthly: monthlySections
             }
         }
@@ -459,6 +461,88 @@ struct StatisticsView: View {
             criticalPaceCard
             paceCard
             cardioBestsCard
+        }
+    }
+
+    // MARK: - Yoga tab
+
+    @ViewBuilder
+    private var yogaSections: some View {
+        let overview = analytics.yogaOverview(in: range)
+        let styles = analytics.yogaStyleBreakdown(in: range)
+
+        HStack {
+            SectionHeader("Yoga")
+            Spacer()
+            TimeChartRangePicker(selection: $range)
+        }
+
+        if overview.sessions == 0 && overview.topRegions.isEmpty {
+            EmptyStateCard(
+                title: "No yoga in range",
+                message: "Start a guided class from Home or add poses to a routine — your practice stats will appear here.",
+                systemImage: "figure.yoga"
+            )
+        } else {
+            yogaTotalsCard(overview)
+            if !styles.isEmpty { yogaStylesCard(styles) }
+            if !overview.topRegions.isEmpty { yogaRegionsCard(overview.topRegions) }
+        }
+    }
+
+    private func yogaTotalsCard(_ overview: TrainingAnalytics.YogaOverview) -> some View {
+        Card {
+            HStack {
+                StatColumn(label: "Sessions", value: "\(overview.sessions)")
+                StatColumn(label: "Minutes", value: "\(overview.minutes)")
+                StatColumn(label: "Poses", value: overview.poses > 0 ? "\(overview.poses)" : "—")
+            }
+        }
+    }
+
+    private func yogaStylesCard(_ styles: [TrainingAnalytics.YogaStyleShare]) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("By style").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                ForEach(styles) { share in
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: share.style.systemImage)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(share.style.isRestorative ? theme.warmup : theme.accent)
+                            .frame(width: 22)
+                        Text(share.style.title)
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        if share.style.isRestorative {
+                            Tag(text: "Recovery", color: theme.warmup, background: theme.warmup.opacity(0.14))
+                        }
+                        Spacer()
+                        Text("\(share.sessions)× · \(Int(share.minutes))min")
+                            .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func yogaRegionsCard(_ regions: [FlexibilityAnalytics.RegionWeek]) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("Stretch time by region").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                ForEach(regions) { region in
+                    HStack {
+                        Text(MuscleTaxonomy.displayName(region.region))
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        Text(Fmt.durationShort(region.seconds))
+                            .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(theme.accent)
+                    }
+                }
+                Text("Primary regions count in full, secondary at half — the same convention as muscle volume.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

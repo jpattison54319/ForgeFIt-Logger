@@ -74,7 +74,7 @@ final class WatchWorkoutEngine: NSObject {
 
     // MARK: - Session lifecycle
 
-    func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date()) {
+    func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date(), isYoga: Bool = false) {
         guard !isRunning, !isStarting, HKHealthStore.isHealthDataAvailable() else { return }
         isStarting = true
         didAttemptFailureRestart = false
@@ -83,7 +83,18 @@ final class WatchWorkoutEngine: NSObject {
         Task {
             let authorized = await requestAuthorization()
             if authorized {
-                beginSession(configuration: configuration, startDate: startDate)
+                // Yoga sessions record as .yoga so the Fitness app shows the
+                // right rings and title (unless the phone handed a config).
+                let resolved: HKWorkoutConfiguration?
+                if configuration == nil, isYoga {
+                    let c = HKWorkoutConfiguration()
+                    c.activityType = .yoga
+                    c.locationType = .indoor
+                    resolved = c
+                } else {
+                    resolved = configuration
+                }
+                beginSession(configuration: resolved, startDate: startDate)
             }
             isStarting = false
         }

@@ -61,6 +61,11 @@ struct WrappedPageView: View {
                 mixBar(mix)
                 statRow("Strength", "\(mix.strengthCount) sessions · \(Fmt.durationShort(mix.strengthMinutes * 60))")
                 statRow("Cardio", "\(mix.cardioCount) sessions · \(Fmt.durationShort(mix.cardioMinutes * 60))")
+                // Yoga row only exists on v2 payloads with yoga in them —
+                // frozen v1 reports render exactly as generated.
+                if let yogaCount = mix.yogaCount, yogaCount > 0 {
+                    statRow("Yoga", "\(yogaCount) sessions · \(Fmt.durationShort((mix.yogaMinutes ?? 0) * 60))")
+                }
             }
 
         case .calendar(let heatmap):
@@ -340,7 +345,8 @@ struct WrappedPageView: View {
     }
 
     private func mixBar(_ mix: WrappedPage.TrainingMix) -> some View {
-        let total = max(1, mix.strengthCount + mix.cardioCount)
+        let yoga = mix.yogaCount ?? 0
+        let total = max(1, mix.strengthCount + mix.cardioCount + yoga)
         return GeometryReader { geo in
             HStack(spacing: 3) {
                 RoundedRectangle(cornerRadius: 5)
@@ -348,10 +354,19 @@ struct WrappedPageView: View {
                     .frame(width: geo.size.width * CGFloat(mix.strengthCount) / CGFloat(total))
                 RoundedRectangle(cornerRadius: 5)
                     .fill(theme.secondaryAccent)
+                if yoga > 0 {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(theme.warmup)
+                        .frame(width: geo.size.width * CGFloat(yoga) / CGFloat(total))
+                }
             }
         }
         .frame(height: 14)
-        .accessibilityLabel("\(mix.strengthCount) strength, \(mix.cardioCount) cardio sessions")
+        .accessibilityLabel(
+            yoga > 0
+                ? "\(mix.strengthCount) strength, \(mix.cardioCount) cardio, \(yoga) yoga sessions"
+                : "\(mix.strengthCount) strength, \(mix.cardioCount) cardio sessions"
+        )
     }
 }
 

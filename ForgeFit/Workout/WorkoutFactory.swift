@@ -8,28 +8,31 @@ enum CardioModality: String, CaseIterable, Identifiable {
     case run, cycle, row, walk
 
     var id: String { rawValue }
+    // Titles name the exact exercise the tile launches — no aspirational
+    // "Zone 2" branding, which would imply a heart-rate lock the quick-start
+    // never configures.
     var title: String {
         switch self {
-        case .run: "Run"
-        case .cycle: "Ride"
+        case .run: "Outdoor Run"
+        case .cycle: "Indoor Bike"
         case .row: "Row"
-        case .walk: "Zone 2 Walk"
+        case .walk: "Treadmill Walk"
         }
     }
     var systemImage: String {
         switch self {
         case .run: "figure.run"
-        case .cycle: "figure.outdoor.cycle"
+        case .cycle: "figure.indoor.cycle"
         case .row: "figure.rower"
         case .walk: "figure.walk"
         }
     }
     var exerciseID: UUID? {
         switch self {
-        case .run: GlobalExerciseLibrary.treadmillRunID
+        case .run: GlobalExerciseLibrary.outdoorRunID
         case .cycle: GlobalExerciseLibrary.indoorCycleID
         case .row: GlobalExerciseLibrary.rowErgID
-        case .walk: GlobalExerciseLibrary.treadmillRunID
+        case .walk: GlobalExerciseLibrary.treadmillWalkID
         }
     }
 }
@@ -73,7 +76,9 @@ enum WorkoutFactory {
                 let setupNote = resolvedSetupNotes.first {
                     $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID
                 }
-                let pendingSets: [SetModel] = exercise?.isCardio == true ? [] : routineExercise.sets
+                // Cardio and yoga exercises log as sessions, not set rows.
+                let isSessionBased = exercise?.isCardio == true || exercise?.isYoga == true
+                let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
                         SetModel(
@@ -96,10 +101,28 @@ enum WorkoutFactory {
                     notes: routineExercise.notes ?? setupNote?.note,
                     notePinned: routineExercise.notes == nil && setupNote != nil,
                     intervalPlanJSON: routineExercise.intervalPlanJSON,
+                    yogaFlowJSON: routineExercise.yogaFlowJSON,
                     sourceRoutineExerciseID: routineExercise.id,
                     sets: pendingSets
                 )
-                if let exercise, exercise.isCardio {
+                if let exercise, exercise.isYoga {
+                    // A pose with no authored sequence still gets a runnable
+                    // single-pose flow, so the guided player always works.
+                    let plan = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
+                        ?? .singlePose(from: exercise)
+                    if workoutExercise.yogaFlowJSON == nil {
+                        workoutExercise.yogaFlowJSON = plan.encodedJSON()
+                    }
+                    cardioSessions.append(CardioSessionModel(
+                        userID: ForgeFitDemo.userID,
+                        workoutExerciseID: workoutExercise.id,
+                        modality: CardioSessionModel.yogaModality,
+                        startedAt: workout.startedAt,
+                        sourceDevice: "iphone-yoga",
+                        durationSeconds: plan.totalSeconds > 0 ? plan.totalSeconds : nil,
+                        yogaStyleRaw: plan.styleRaw
+                    ))
+                } else if let exercise, exercise.isCardio {
                     let target = routineExercise.sets.sorted { $0.position < $1.position }.first
                     let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
                     cardioSessions.append(CardioSessionModel(
@@ -114,6 +137,50 @@ enum WorkoutFactory {
                 return workoutExercise
             }
         workout.cardioSessions = cardioSessions
+        context.insert(workout)
+        try? context.save()
+        return workout
+    }
+
+    /// Quick-start a guided yoga class from a flow (built-in or user-saved).
+    /// The workout exercise anchors on the flow's first pose so history and
+    /// analytics have a real library reference.
+    @discardableResult
+    static func startYoga(
+        flow: YogaFlowPlan,
+        named title: String,
+        exercises: [ExerciseLibraryModel],
+        in context: ModelContext
+    ) -> WorkoutModel {
+        let startedAt = Date()
+        let anchorID = flow.steps.first?.poseID
+        let anchor = exercises.first { $0.id == anchorID && $0.deletedAt == nil }
+        let workoutExercise = anchor.map {
+            WorkoutExerciseModel(
+                userID: ForgeFitDemo.userID,
+                exerciseID: $0.id,
+                position: 0,
+                yogaFlowJSON: flow.encodedJSON()
+            )
+        }
+        let session = CardioSessionModel(
+            userID: ForgeFitDemo.userID,
+            workoutExerciseID: workoutExercise?.id,
+            modality: CardioSessionModel.yogaModality,
+            startedAt: startedAt,
+            sourceDevice: "iphone-yoga",
+            durationSeconds: flow.totalSeconds > 0 ? flow.totalSeconds : nil,
+            yogaStyleRaw: flow.styleRaw
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: title,
+            startedAt: startedAt,
+            sourceDevice: "iphone-yoga",
+            notes: "Yoga session",
+            exercises: workoutExercise.map { [$0] } ?? [],
+            cardioSessions: [session]
+        )
         context.insert(workout)
         try? context.save()
         return workout

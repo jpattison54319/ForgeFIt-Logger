@@ -56,6 +56,9 @@ public enum RoutineChangeSync {
             /// Matched routine set ids whose set type differs from the
             /// workout set that originated from them.
             public let setTypeChangedRoutineSetIDs: [UUID]
+            /// The workout's guided yoga flow differs from the routine's
+            /// (edited mid-session), so the routine's flow gets updated.
+            public let flowChanged: Bool
 
             public init(
                 workoutExerciseID: UUID,
@@ -64,7 +67,8 @@ public enum RoutineChangeSync {
                 supersetChanged: Bool,
                 addedWorkoutSetIDs: [UUID],
                 removedRoutineSetIDs: [UUID],
-                setTypeChangedRoutineSetIDs: [UUID]
+                setTypeChangedRoutineSetIDs: [UUID],
+                flowChanged: Bool = false
             ) {
                 self.workoutExerciseID = workoutExerciseID
                 self.matchedRoutineExerciseID = matchedRoutineExerciseID
@@ -73,6 +77,7 @@ public enum RoutineChangeSync {
                 self.addedWorkoutSetIDs = addedWorkoutSetIDs
                 self.removedRoutineSetIDs = removedRoutineSetIDs
                 self.setTypeChangedRoutineSetIDs = setTypeChangedRoutineSetIDs
+                self.flowChanged = flowChanged
             }
         }
 
@@ -101,6 +106,7 @@ public enum RoutineChangeSync {
                         || !$0.addedWorkoutSetIDs.isEmpty
                         || !$0.removedRoutineSetIDs.isEmpty
                         || !$0.setTypeChangedRoutineSetIDs.isEmpty
+                        || $0.flowChanged
                 }
         }
 
@@ -125,6 +131,7 @@ public enum RoutineChangeSync {
             if typeChanged > 0 { parts.append("\(typeChanged) set type\(typeChanged == 1 ? "" : "s") changed") }
             if moved { parts.append("order changed") }
             if regrouped { parts.append("supersets changed") }
+            if exercisePlans.contains(where: \.flowChanged) { parts.append("yoga flow updated") }
             return parts.isEmpty ? "No changes" : parts.joined(separator: " · ")
         }
     }
@@ -173,6 +180,16 @@ public enum RoutineChangeSync {
         let movedPosition = we.position != re.position
         let supersetChanged = we.supersetGroup != re.supersetGroup
 
+        // Guided-flow drift: the routine had a flow that was edited
+        // mid-session, or a bare pose grew a real multi-pose flow. A workout
+        // flow synthesized from a single pose (routine flow nil) is factory
+        // scaffolding, not a user change.
+        let flowChanged: Bool = {
+            guard let workoutFlow = we.yogaFlowJSON else { return false }
+            if let routineFlow = re.yogaFlowJSON { return workoutFlow != routineFlow }
+            return (YogaFlowPlan.decode(from: workoutFlow)?.steps.count ?? 0) > 1
+        }()
+
         let routineSets = re.sets.sorted { $0.position < $1.position }
         let isCardio = routineSets.allSatisfy { $0.targetDurationSeconds != nil }
         if isCardio {
@@ -183,7 +200,8 @@ public enum RoutineChangeSync {
                 supersetChanged: supersetChanged,
                 addedWorkoutSetIDs: [],
                 removedRoutineSetIDs: [],
-                setTypeChangedRoutineSetIDs: []
+                setTypeChangedRoutineSetIDs: [],
+                flowChanged: flowChanged
             )
         }
 
@@ -246,6 +264,7 @@ public enum RoutineChangeSync {
                   let re = ep.matchedRoutineExerciseID.flatMap({ routineByID[$0] }) else { continue }
             if ep.movedPosition { re.position = we.position }
             if ep.supersetChanged { re.supersetGroup = we.supersetGroup }
+            if ep.flowChanged { re.yogaFlowJSON = we.yogaFlowJSON }
             re.updatedAt = Date()
             applySets(ep, workoutExercise: we, routineExercise: re, in: context)
         }
@@ -271,13 +290,18 @@ public enum RoutineChangeSync {
             let sortedWorkoutSets = we.sets.sorted { $0.position < $1.position }
             if sortedWorkoutSets.isEmpty {
                 let session = workout.cardioSessions.first { $0.workoutExerciseID == we.id }
-                let cardioTarget = RoutineSetModel(
-                    userID: routine.userID,
-                    position: 0,
-                    targetDurationSeconds: session?.durationSeconds ?? 1_800
-                )
-                context.insert(cardioTarget)
-                re.sets = [cardioTarget]
+                if session?.modality == CardioSessionModel.yogaModality {
+                    // Yoga blocks carry no target sets — the flow is the target.
+                    re.yogaFlowJSON = we.yogaFlowJSON
+                } else {
+                    let cardioTarget = RoutineSetModel(
+                        userID: routine.userID,
+                        position: 0,
+                        targetDurationSeconds: session?.durationSeconds ?? 1_800
+                    )
+                    context.insert(cardioTarget)
+                    re.sets = [cardioTarget]
+                }
             } else {
                 let newSets = sortedWorkoutSets.map { ws -> RoutineSetModel in
                     let target = routineTarget(from: ws, userID: routine.userID)

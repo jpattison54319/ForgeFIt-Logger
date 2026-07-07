@@ -157,3 +157,53 @@ struct WatchSyncTests {
         #expect(matches(decoded))
     }
 }
+
+// MARK: - Yoga mirroring
+
+extension WatchSyncTests {
+    @Test func workoutSnapshotRoundTripsYogaFields() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            title: "Morning Flow",
+            startedAt: Date(timeIntervalSinceReferenceDate: 1_000),
+            exercises: [
+                WatchExerciseSnapshot(
+                    id: UUID(),
+                    name: "Guided Flow",
+                    isCardio: true,       // yoga shares cardio's wrist lifecycle
+                    isYoga: true,
+                    cardioState: .running
+                )
+            ],
+            intervalStepName: "Pigeon Pose — Left",
+            intervalStepEndsAt: Date(timeIntervalSinceReferenceDate: 1_060),
+            intervalStepKind: "pose",
+            intervalNextName: "Pigeon Pose — Right",
+            intervalRound: "Pose 3 of 12",
+            isYogaWorkout: true
+        )
+        let context = WatchAppContext(workout: snapshot)
+        let data = try #require(WatchWire.encode(context))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+
+        #expect(decoded.workout?.isYogaWorkout == true)
+        #expect(decoded.workout?.intervalStepKind == "pose")
+        #expect(decoded.workout?.intervalRound == "Pose 3 of 12")
+        #expect(decoded.workout?.exercises.first?.isYoga == true)
+        #expect(decoded.workout?.exercises.first?.cardioState == .running)
+    }
+
+    /// Pre-yoga snapshots (no yoga fields in the JSON) still decode — the
+    /// additive fields are optional.
+    @Test func legacySnapshotWithoutYogaFieldsDecodes() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 0)
+        )
+        let context = WatchAppContext(workout: snapshot)
+        let data = try #require(WatchWire.encode(context))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        #expect(decoded.workout?.isYogaWorkout == nil)
+        #expect(decoded.workout?.exercises.first?.isYoga == nil)
+    }
+}

@@ -13,6 +13,9 @@ struct ExercisePickerView: View {
 
     /// When true the picker returns exactly one exercise (used by "Replace").
     var singleSelection = false
+    /// Pre-applies a modality filter (e.g. the yoga flow builder only offers
+    /// poses). The user can still clear or change it.
+    var presetModality: Modality?
     /// Exercises already in the routine/workout being added to — drives the
     /// muscle profile behind "Suggested".
     var context: [ExerciseLibraryModel] = []
@@ -23,6 +26,7 @@ struct ExercisePickerView: View {
     @State private var search = ""
     @State private var muscle: String?
     @State private var equipment: String?
+    @State private var modalityFilter: Modality?
     @State private var selected: Set<UUID> = []
     @State private var showCreate = false
     @State private var detailExercise: ExerciseLibraryModel?
@@ -56,7 +60,7 @@ struct ExercisePickerView: View {
 
     private var filtered: [ExerciseLibraryModel] {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = "\(exerciseFingerprint)|\(normalizedSearch.lowercased())|\(muscle ?? "")|\(equipment ?? "")"
+        let key = "\(exerciseFingerprint)|\(normalizedSearch.lowercased())|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")"
         return filteredMemo(key) {
             // Dedupe by id while filtering: CloudKit can't enforce unique
             // constraints, and duplicate IDs in a ForEach corrupt LazyVStack
@@ -64,6 +68,7 @@ struct ExercisePickerView: View {
             var seen = Set<UUID>()
             let base = exercises.filter { ex in
                 guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
+                if let modalityFilter, ex.modality != modalityFilter { return false }
                 // Parent-aware: a "Shoulders" filter also finds exercises
                 // tagged with a sub-muscle like "rear delts" (and legacy
                 // variants like "rear_delts").
@@ -154,7 +159,8 @@ struct ExercisePickerView: View {
             }
             .sheet(isPresented: $showCreate) {
                 CreateExerciseView(
-                    initialName: search.trimmingCharacters(in: .whitespacesAndNewlines)
+                    initialName: search.trimmingCharacters(in: .whitespacesAndNewlines),
+                    initialModality: modalityFilter ?? .strength
                 ) { created in commit([created]) }
             }
             .sheet(item: $detailExercise) { exercise in
@@ -162,6 +168,20 @@ struct ExercisePickerView: View {
                     ExerciseDetailView(exerciseID: exercise.id, workouts: history, exercises: exercises)
                 }
             }
+            .onAppear {
+                if let presetModality, modalityFilter == nil {
+                    modalityFilter = presetModality
+                }
+            }
+        }
+    }
+
+    private var modalityFilterTitle: String {
+        switch modalityFilter {
+        case .strength: "Lifts"
+        case .cardio: "Cardio"
+        case .yoga: "Yoga"
+        case nil: "Type"
         }
     }
 
@@ -169,6 +189,18 @@ struct ExercisePickerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             GlassEffectContainer(spacing: Space.sm) {
                 HStack(spacing: Space.sm) {
+                    Menu {
+                        Button("All types") { modalityFilter = nil }
+                        Button("Lifts") { modalityFilter = .strength }
+                        Button("Cardio") { modalityFilter = .cardio }
+                        Button("Yoga") { modalityFilter = .yoga }
+                    } label: {
+                        FilterChip(
+                            title: modalityFilterTitle,
+                            active: modalityFilter != nil,
+                            systemImage: "square.grid.2x2"
+                        )
+                    }
                     Menu {
                         Button("All muscles") { muscle = nil }
                         ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
@@ -195,9 +227,9 @@ struct ExercisePickerView: View {
                     } label: {
                         FilterChip(title: equipment?.capitalized ?? "Equipment", active: equipment != nil, systemImage: "dumbbell")
                     }
-                    if muscle != nil || equipment != nil {
+                    if muscle != nil || equipment != nil || modalityFilter != nil {
                         Button {
-                            muscle = nil; equipment = nil
+                            muscle = nil; equipment = nil; modalityFilter = nil
                         } label: {
                             FilterChip(title: "Clear", active: false, systemImage: "xmark")
                         }
@@ -355,6 +387,9 @@ private struct ExerciseRowLabel: View {
                         if exercise.isCardio {
                             Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
                                 .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
+                        } else if exercise.isYoga {
+                            Text(yogaSubtitle)
+                                .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
                         }
                     }
                     Spacer()
@@ -378,6 +413,19 @@ private struct ExerciseRowLabel: View {
         .padding(Space.md)
         .background(selected ? theme.accentSoft : theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+    }
+
+    /// "Sanskrit name · hold 30s" — Sanskrit from the bundled catalog, so
+    /// custom poses just show the hold.
+    private var yogaSubtitle: String {
+        var parts: [String] = []
+        if let sanskrit = YogaPoseCatalog.pose(forSlug: YogaPoseCatalog.slug(for: exercise))?.sanskrit {
+            parts.append(sanskrit)
+        }
+        if let hold = exercise.defaultHoldSeconds {
+            parts.append("Hold \(hold)s")
+        }
+        return parts.isEmpty ? "Yoga" : parts.joined(separator: " · ")
     }
 }
 
@@ -424,12 +472,18 @@ struct CreateExerciseView: View {
     @State private var equipment = "barbell"
     @State private var weightMode: WeightMode = .external
     @State private var preferredUnit: WeightUnit = Fmt.unit
-    @State private var isCardio = false
+    @State private var modality: Modality = .strength
     @State private var isUnilateral = false
     @State private var secondaryMusclesExpanded = false
     /// Explicit cardio modality; nil = auto-detect from name/equipment. Only
     /// meaningful while the Cardio mode is selected.
     @State private var cardioKindChoice: CardioKind?
+    /// Yoga-only fields: optional Sanskrit name (saved as a searchable alias)
+    /// and the default hold the flow builder starts from.
+    @State private var sanskritName = ""
+    @State private var defaultHoldSeconds = 30
+
+    private var isCardio: Bool { modality == .cardio }
 
     private var isEditing: Bool { editing != nil }
 
@@ -460,12 +514,24 @@ struct CreateExerciseView: View {
         return strong.compactMap { byID[$0.exercise.id] }
     }
 
-    init(editing: ExerciseLibraryModel? = nil, initialName: String = "", onCreate: @escaping (ExerciseLibraryModel) -> Void) {
+    init(
+        editing: ExerciseLibraryModel? = nil,
+        initialName: String = "",
+        initialModality: Modality = .strength,
+        onCreate: @escaping (ExerciseLibraryModel) -> Void
+    ) {
         self.editing = editing
         self.onCreate = onCreate
         self.cameFromSearch = !initialName.isEmpty
         if editing == nil, !initialName.isEmpty {
             _name = State(initialValue: initialName)
+        }
+        if editing == nil, initialModality != .strength {
+            _modality = State(initialValue: initialModality)
+            _equipment = State(initialValue: ExerciseCatalog.primaryEquipment(modality: initialModality).first ?? "body only")
+            if initialModality == .yoga {
+                _primaryMuscle = State(initialValue: "hips")
+            }
         }
         if let editing {
             _name = State(initialValue: editing.name)
@@ -474,9 +540,10 @@ struct CreateExerciseView: View {
             _equipment = State(initialValue: editing.equipment ?? "barbell")
             _weightMode = State(initialValue: editing.defaultWeightMode)
             _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? "") ?? Fmt.unit)
-            _isCardio = State(initialValue: editing.isCardio)
+            _modality = State(initialValue: editing.modality)
             _isUnilateral = State(initialValue: editing.isUnilateral)
             _cardioKindChoice = State(initialValue: editing.cardioKindRaw.flatMap(CardioKind.init(rawValue:)))
+            _defaultHoldSeconds = State(initialValue: editing.defaultHoldSeconds ?? 30)
         }
     }
 
@@ -488,15 +555,25 @@ struct CreateExerciseView: View {
             equipment: equipment)
     }
 
+    /// "30s" / "1min 30s" / "2min" — precise (never drops a remainder, so the
+    /// 60s and 90s menu options stay distinguishable).
+    private static func holdLabel(_ seconds: Int) -> String {
+        let m = seconds / 60, s = seconds % 60
+        if m > 0 && s > 0 { return "\(m)min \(s)s" }
+        if m > 0 { return "\(m)min" }
+        return "\(s)s"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    // Modality first: creating a lift and creating a cardio
-                    // exercise are different forms, not a metadata toggle.
-                    Picker("Exercise type", selection: $isCardio) {
-                        Text("Lift").tag(false)
-                        Text("Cardio").tag(true)
+                    // Modality first: creating a lift, a cardio exercise, and
+                    // a yoga pose are different forms, not a metadata toggle.
+                    Picker("Exercise type", selection: $modality) {
+                        Text("Lift").tag(Modality.strength)
+                        Text("Cardio").tag(Modality.cardio)
+                        Text("Yoga").tag(Modality.yoga)
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("exercise-modality")
@@ -554,18 +631,48 @@ struct CreateExerciseView: View {
                         }
                     }
 
-                    if isCardio {
+                    switch modality {
+                    case .cardio:
                         cardioFieldsCard
-                    } else {
+                    case .yoga:
+                        yogaFieldsCard
+                    case .strength:
                         liftFieldsCard
                     }
                 }
                 .padding(Space.lg)
-                .animation(.spring(duration: 0.25), value: isCardio)
+                .animation(.spring(duration: 0.25), value: modality)
+            }
+            // Keep the equipment pick coherent with the type: snap to the new
+            // discipline's default only when the current value belongs to the
+            // OTHER discipline's primary set, so a deliberate edge-case pick
+            // (kettlebell cardio, treadmill "lift") is left untouched.
+            .onChange(of: modality) { was, now in
+                let primary = ExerciseCatalog.primaryEquipment(modality: now)
+                if !primary.contains(equipment) {
+                    equipment = primary.first ?? equipment
+                }
+                // Landing on the yoga form with the lift default still in
+                // place: start from a stretch-shaped region instead of chest.
+                if now == .yoga, primaryMuscle == "chest" { primaryMuscle = "hips" }
+                if was == .yoga, now == .strength, primaryMuscle == "hips" { primaryMuscle = "chest" }
             }
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
             .navigationBarTitleDisplayMode(.inline)
+            // Editing a pose: prefill the Sanskrit field from its alias once.
+            .task {
+                guard let editing, editing.isYoga, sanskritName.isEmpty else { return }
+                let exerciseID = editing.id
+                let aliases = (try? modelContext.fetch(
+                    FetchDescriptor<ExerciseAliasModel>(predicate: #Predicate { $0.exerciseID == exerciseID })
+                )) ?? []
+                // Prefer the user's own alias over the seeded catalog one.
+                if let alias = aliases.first(where: { $0.ownerID != nil }) ?? aliases.first,
+                   sanskritName.isEmpty {
+                    sanskritName = alias.alias
+                }
+            }
             // Debounced duplicate matching: restarts on every keystroke (task
             // id) and only does the fuzzy work after typing pauses, off the
             // keystroke's render pass.
@@ -598,7 +705,7 @@ struct CreateExerciseView: View {
                 Divider().overlay(theme.separator)
                 secondaryMuscleRow
                 Divider().overlay(theme.separator)
-                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentTypes)
+                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentOptions(isCardio: false))
                 Divider().overlay(theme.separator)
                 HStack {
                     Text("Weight mode").font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -678,7 +785,7 @@ struct CreateExerciseView: View {
                     .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 Divider().overlay(theme.separator)
-                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentTypes)
+                pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentOptions(isCardio: true))
                 Divider().overlay(theme.separator)
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("Works").font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -686,6 +793,63 @@ struct CreateExerciseView: View {
                     Text("Cardio counts toward Cardiovascular volume, plus the movement's main muscles.")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Yoga pose fields: stretch-target regions, hold default, laterality,
+    /// props, and an optional Sanskrit name saved as a searchable alias.
+    private var yogaFieldsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                musclePickerRow("Primary region", selection: $primaryMuscle)
+                Divider().overlay(theme.separator)
+                secondaryMuscleRow
+                Divider().overlay(theme.separator)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Default hold").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Text("The hold length this pose starts with in a flow.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                    Menu {
+                        ForEach([15, 20, 30, 45, 60, 90, 120, 180], id: \.self) { seconds in
+                            Button(Self.holdLabel(seconds)) { defaultHoldSeconds = seconds }
+                        }
+                    } label: {
+                        Text(Self.holdLabel(defaultHoldSeconds))
+                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                    }
+                    .accessibilityIdentifier("yoga-default-hold")
+                }
+                Divider().overlay(theme.separator)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sides").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Text("One-sided poses (Pigeon, Warrior) run left then right in a guided flow.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Menu {
+                        Button("Both sides at once") { isUnilateral = false }
+                        Button("One side at a time") { isUnilateral = true }
+                    } label: {
+                        Text(isUnilateral ? "One at a time" : "Both at once")
+                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                    }
+                }
+                Divider().overlay(theme.separator)
+                pickerRow("Props", selection: $equipment, options: ExerciseCatalog.equipmentOptions(modality: .yoga))
+                Divider().overlay(theme.separator)
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    FieldLabel("Sanskrit name (optional)")
+                    DarkTextField(text: $sanskritName, placeholder: "e.g. Balasana")
+                        .accessibilityIdentifier("yoga-sanskrit-name")
+                    Text("Searchable alongside the English name.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                 }
             }
         }
@@ -827,12 +991,14 @@ struct CreateExerciseView: View {
             editing.classificationSource = ClassificationSource.manual
             editing.classificationConfidence = 1.0
             editing.updatedAt = Date()
+            upsertSanskritAlias(for: editing)
             try? modelContext.save()
             onCreate(editing)
         } else {
             let exercise = ExerciseLibraryModel(ownerID: ForgeFitDemo.userID, name: name)
             apply(to: exercise)
             modelContext.insert(exercise)
+            upsertSanskritAlias(for: exercise)
             try? modelContext.save()
             onCreate(exercise)
         }
@@ -844,19 +1010,58 @@ struct CreateExerciseView: View {
     private func apply(to exercise: ExerciseLibraryModel) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         // Every field branches on the selected modality, so values left over
-        // from the other mode's hidden form can never leak into the save.
+        // from the other modes' hidden forms can never leak into the save.
         let kind = resolvedKind
+        let isYoga = modality == .yoga
         exercise.name = trimmed
-        exercise.movementPattern = isCardio ? "cardio" : nil
+        exercise.modality = modality  // writes modalityRaw and keeps isCardio in sync
+        exercise.movementPattern = isCardio ? "cardio" : (isYoga ? "yoga" : nil)
         exercise.primaryMuscles = isCardio ? kind.musclesWorked : [primaryMuscle]
         exercise.secondaryMuscles = isCardio ? [] : secondaryMuscles.subtracting([primaryMuscle]).sorted()
         exercise.equipment = equipment
-        exercise.defaultWeightMode = isCardio ? .bodyweight : weightMode
-        exercise.preferredWeightUnitRaw = isCardio ? nil : preferredUnit.rawValue
-        exercise.isCardio = isCardio
+        exercise.defaultWeightMode = isCardio || isYoga ? .bodyweight : weightMode
+        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit.rawValue
         exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
+        // Yoga keeps laterality (one-sided poses run L/R in guided flows).
         exercise.isUnilateral = isCardio ? false : isUnilateral
-        exercise.category = isCardio ? "cardio" : "strength"
+        exercise.defaultHoldSeconds = isYoga ? defaultHoldSeconds : nil
+        switch modality {
+        case .strength: exercise.category = "strength"
+        case .cardio: exercise.category = "cardio"
+        case .yoga: exercise.category = "yoga"
+        }
+    }
+
+    /// Keep the pose's Sanskrit alias in step with the form: update the one we
+    /// manage, create it when first filled in, remove it when cleared.
+    private func upsertSanskritAlias(for exercise: ExerciseLibraryModel) {
+        guard modality == .yoga || editing?.isYoga == true else { return }
+        let trimmed = sanskritName.trimmingCharacters(in: .whitespaces)
+        let exerciseID = exercise.id
+        let existing = (try? modelContext.fetch(
+            FetchDescriptor<ExerciseAliasModel>(predicate: #Predicate { $0.exerciseID == exerciseID })
+        )) ?? []
+
+        if modality == .yoga, !trimmed.isEmpty {
+            // Seeded catalog aliases (ownerID nil) belong to the re-seed and
+            // would be reverted next launch — user edits live on their own
+            // user-owned alias row instead.
+            if let owned = existing.first(where: { $0.ownerID != nil }) {
+                if owned.alias != trimmed { owned.alias = trimmed }
+            } else if !existing.contains(where: { $0.alias == trimmed }) {
+                modelContext.insert(ExerciseAliasModel(
+                    exerciseID: exerciseID,
+                    ownerID: ForgeFitDemo.userID,
+                    alias: trimmed
+                ))
+            }
+        } else {
+            // Cleared, or the pose was retyped to another modality: only drop
+            // user-owned aliases; seeded (catalog) aliases are not ours to remove.
+            for alias in existing where alias.ownerID != nil {
+                modelContext.delete(alias)
+            }
+        }
     }
 }
 

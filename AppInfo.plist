@@ -14,6 +14,10 @@
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
+		<!-- audio: spoken yoga cues while the phone is locked. The audio
+		     session is only ever active around an utterance (see
+		     YogaCueSpeaker) — never a silent keep-alive. -->
+		<string>audio</string>
 		<string>remote-notification</string>
 	</array>
 </dict>

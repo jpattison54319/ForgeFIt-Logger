@@ -24,6 +24,9 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
         public var restEndsAt: Date?
         /// Live heart rate from the Apple Watch, when streaming.
         public var heartRate: Int?
+        /// Yoga mode: wall-clock end of the current pose hold, so the lock
+        /// screen renders a native countdown. Nil outside a guided class.
+        public var poseEndsAt: Date?
 
         public init(
             startedAt: Date,
@@ -36,7 +39,8 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
             cardioMetric: String? = nil,
             cardioDetail: String? = nil,
             restEndsAt: Date? = nil,
-            heartRate: Int? = nil
+            heartRate: Int? = nil,
+            poseEndsAt: Date? = nil
         ) {
             self.startedAt = startedAt
             self.exerciseName = exerciseName
@@ -49,12 +53,14 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
             self.cardioDetail = cardioDetail
             self.restEndsAt = restEndsAt
             self.heartRate = heartRate
+            self.poseEndsAt = poseEndsAt
         }
     }
 
     public enum WorkoutActivityMode: String, Codable, Hashable {
         case strength
         case cardio
+        case yoga
     }
 
     public var workoutTitle: String

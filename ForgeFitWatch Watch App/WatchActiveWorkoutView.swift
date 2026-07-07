@@ -100,6 +100,7 @@ struct WatchMetricsPage: View {
         case "work": WTheme.teal
         case "recover": WTheme.accent
         case "warmup", "cooldown": WTheme.gold
+        case "pose": WTheme.accent   // yoga hold — calm sage, not work-teal
         default: WTheme.teal
         }
         return VStack(alignment: .leading, spacing: 0) {

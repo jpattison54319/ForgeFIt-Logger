@@ -6,7 +6,8 @@ import WidgetKit
 /// Lock-screen and Dynamic Island presence for the active workout: elapsed
 /// time, current exercise, set progress, live HR — and while resting, the
 /// countdown takes over (the number the lifter actually needs on a locked
-/// phone between sets).
+/// phone between sets). Cardio headlines pace/step; guided yoga headlines the
+/// current pose with a native hold countdown.
 struct WorkoutLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
@@ -17,10 +18,10 @@ struct WorkoutLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Image(systemName: context.state.mode == .cardio ? "figure.run" : "dumbbell.fill")
+                        Image(systemName: WActivityTheme.icon(for: context.state.mode))
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(WActivityTheme.accent)
-                        Text(context.state.mode == .cardio ? (context.state.cardioTitle ?? context.attributes.workoutTitle) : context.attributes.workoutTitle)
+                        Text(headerTitle(context))
                             .font(.system(size: 14, weight: .bold))
                             .lineLimit(1)
                     }
@@ -34,6 +35,19 @@ struct WorkoutLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.center) {
                     if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                         restCountdown(until: restEndsAt, size: 30)
+                    } else if context.state.mode == .yoga {
+                        VStack(spacing: 1) {
+                            Text(context.state.cardioMetric ?? "In session")
+                                .font(.system(size: 16, weight: .semibold))
+                                .lineLimit(1)
+                            if let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
+                                Text(timerInterval: Date.now...poseEndsAt, countsDown: true)
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(WActivityTheme.accent)
+                            }
+                        }
                     } else if context.state.mode == .cardio {
                         Text(context.state.cardioMetric ?? "Recording")
                             .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -55,7 +69,7 @@ struct WorkoutLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
-                        Text(context.state.mode == .cardio ? (context.state.cardioDetail ?? "Cardio") : "\(context.state.completedSets)/\(context.state.totalSets) sets")
+                        Text(detailLine(context))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(WActivityTheme.accent)
                             .lineLimit(1)
@@ -71,16 +85,18 @@ struct WorkoutLiveActivity: Widget {
                 if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     Image(systemName: "timer")
                         .foregroundStyle(WActivityTheme.accent)
-                } else if context.state.mode == .cardio {
-                    Image(systemName: "figure.run")
-                        .foregroundStyle(WActivityTheme.accent)
                 } else {
-                    Image(systemName: "dumbbell.fill")
+                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
                         .foregroundStyle(WActivityTheme.accent)
                 }
             } compactTrailing: {
                 if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     restCountdown(until: restEndsAt, size: 14)
+                        .frame(maxWidth: 44)
+                } else if context.state.mode == .yoga,
+                          let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
+                    // The current hold is the number a yogi glances for.
+                    restCountdown(until: poseEndsAt, size: 14)
                         .frame(maxWidth: 44)
                 } else {
                     elapsedText(context)
@@ -92,12 +108,30 @@ struct WorkoutLiveActivity: Widget {
             } minimal: {
                 if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     restCountdown(until: restEndsAt, size: 11)
+                } else if context.state.mode == .yoga,
+                          let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
+                    restCountdown(until: poseEndsAt, size: 11)
                 } else {
-                    Image(systemName: "dumbbell.fill")
+                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
                         .foregroundStyle(WActivityTheme.accent)
                 }
             }
             .keylineTint(WActivityTheme.accent)
+        }
+    }
+
+    private func headerTitle(_ context: ActivityViewContext<WorkoutActivityAttributes>) -> String {
+        switch context.state.mode {
+        case .cardio, .yoga: context.state.cardioTitle ?? context.attributes.workoutTitle
+        case .strength: context.attributes.workoutTitle
+        }
+    }
+
+    private func detailLine(_ context: ActivityViewContext<WorkoutActivityAttributes>) -> String {
+        switch context.state.mode {
+        case .cardio: context.state.cardioDetail ?? "Cardio"
+        case .yoga: context.state.cardioDetail ?? "Yoga"
+        case .strength: "\(context.state.completedSets)/\(context.state.totalSets) sets"
         }
     }
 
@@ -119,19 +153,23 @@ struct WorkoutLiveActivity: Widget {
 private struct LockScreenWorkoutView: View {
     let context: ActivityViewContext<WorkoutActivityAttributes>
 
+    private var isSessionMode: Bool {
+        context.state.mode == .cardio || context.state.mode == .yoga
+    }
+
     var body: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: context.state.mode == .cardio ? "figure.run" : "dumbbell.fill")
+                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(WActivityTheme.accent)
-                    Text(context.state.mode == .cardio ? (context.state.cardioTitle ?? context.attributes.workoutTitle) : context.attributes.workoutTitle)
+                    Text(isSessionMode ? (context.state.cardioTitle ?? context.attributes.workoutTitle) : context.attributes.workoutTitle)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                 }
-                if context.state.mode == .cardio {
+                if isSessionMode {
                     Text(context.state.cardioMetric ?? "Recording")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.7))
@@ -149,7 +187,7 @@ private struct LockScreenWorkoutView: View {
                         .lineLimit(1)
                 }
                 HStack(spacing: 10) {
-                    Text(context.state.mode == .cardio ? (context.state.cardioDetail ?? "Cardio") : "\(context.state.completedSets)/\(context.state.totalSets) sets")
+                    Text(detailLine)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(WActivityTheme.accent)
                         .lineLimit(1)
@@ -172,6 +210,19 @@ private struct LockScreenWorkoutView: View {
                         .multilineTextAlignment(.trailing)
                         .foregroundStyle(WActivityTheme.accent)
                         .frame(maxWidth: 90)
+                } else if context.state.mode == .yoga,
+                          let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
+                    // The hold countdown is the yoga equivalent of the rest
+                    // timer — the number that matters on a locked phone.
+                    Text("HOLD")
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(WActivityTheme.accent)
+                    Text(timerInterval: Date.now...poseEndsAt, countsDown: true)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(WActivityTheme.accent)
+                        .frame(maxWidth: 90)
                 } else {
                     Text("ELAPSED")
                         .font(.system(size: 10, weight: .heavy))
@@ -187,6 +238,14 @@ private struct LockScreenWorkoutView: View {
         }
         .padding(16)
     }
+
+    private var detailLine: String {
+        switch context.state.mode {
+        case .cardio: context.state.cardioDetail ?? "Cardio"
+        case .yoga: context.state.cardioDetail ?? "Yoga"
+        case .strength: "\(context.state.completedSets)/\(context.state.totalSets) sets"
+        }
+    }
 }
 
 /// Sage palette for the activity surfaces (extension has no app theme).
@@ -195,4 +254,12 @@ enum WActivityTheme {
     static let accent = Color(red: 85 / 255, green: 179 / 255, blue: 116 / 255)     // 0x55B374
     static let gold = Color(red: 245 / 255, green: 185 / 255, blue: 58 / 255)       // 0xF5B93A
     static let danger = Color(red: 255 / 255, green: 90 / 255, blue: 100 / 255)
+
+    static func icon(for mode: WorkoutActivityAttributes.WorkoutActivityMode) -> String {
+        switch mode {
+        case .strength: "dumbbell.fill"
+        case .cardio: "figure.run"
+        case .yoga: "figure.yoga"
+        }
+    }
 }

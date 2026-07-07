@@ -130,10 +130,15 @@ struct WorkoutDetailView: View {
                 }
 
                 let s = analytics.summary(for: workout)
+                let allYoga = !workout.cardioSessions.isEmpty && workout.cardioSessions.allSatisfy(\.isYogaSession)
                 Card {
                     HStack {
                         StatColumn(label: "Duration", value: Fmt.durationShort(s.durationSeconds))
-                        if s.isCardio {
+                        if s.isCardio, allYoga {
+                            StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
+                            let poses = workout.cardioSessions.compactMap(\.posesCompleted).reduce(0, +)
+                            StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—")
+                        } else if s.isCardio {
                             StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
                             StatColumn(label: "Distance", value: Fmt.distance(workout.cardioSessions.first?.distanceMeters))
                         } else {
@@ -164,13 +169,21 @@ struct WorkoutDetailView: View {
 
                 ForEach(workout.exercises.sorted { $0.position < $1.position }) { we in
                     if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
-                        cardioCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                        if session.isYogaSession {
+                            yogaCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                        } else {
+                            cardioCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                        }
                     } else {
                         exerciseCard(we)
                     }
                 }
+                // Yoga sessions without an anchor exercise (Health imports).
+                ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && $0.isYogaSession }) { session in
+                    yogaCard(session, exercise: nil)
+                }
                 // Legacy cardio sessions not linked to an exercise.
-                ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil }) { session in
+                ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && !$0.isYogaSession }) { session in
                     cardioCard(session, exercise: nil)
                 }
             }
@@ -620,6 +633,59 @@ struct WorkoutDetailView: View {
             .compactMap { analytics.efficiencyFactor(for: $0) }
         guard efs.count >= 2 else { return nil }
         return efs.reduce(0, +) / Double(efs.count)
+    }
+
+    /// A completed yoga session: style, duration/poses/HR, and the pose-by-
+    /// pose hold list — the history mirror of the live yoga card.
+    private func yogaCard(_ session: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
+        let style = session.resolvedYogaStyle
+        let name = exercise.map { ex in
+            YogaFlowPlan.decode(from: workout.exercises.first { $0.exerciseID == ex.id }?.yogaFlowJSON)?.steps.count ?? 1 > 1
+                ? "Guided Flow" : ex.name
+        } ?? "Yoga"
+        let splits = session.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
+        return Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(spacing: Space.sm) {
+                    Image(systemName: style.systemImage).foregroundStyle(theme.accent)
+                        .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
+                    if let exercise {
+                        NavigationLink(value: exercise.id) {
+                            exerciseTitle(name, color: theme.accent, showsChevron: true)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        exerciseTitle(name, color: theme.accent)
+                    }
+                    Spacer()
+                    Tag(text: "\(style.title) Yoga", color: theme.accent, background: theme.accentSoft)
+                }
+                HStack {
+                    StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
+                    StatColumn(label: "Poses", value: session.posesCompleted.map(String.init) ?? "—")
+                    StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
+                    StatColumn(label: "kcal", value: session.activeEnergyKcal.map { String(Int($0)) } ?? "—")
+                }
+                if let hr = session.avgHR {
+                    HRZoneBar(avgHR: hr, maxHR: session.maxHR, durationSeconds: session.durationSeconds)
+                }
+                if !splits.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Poses").font(.tag).foregroundStyle(theme.textSecondary)
+                        ForEach(splits) { split in
+                            HStack {
+                                Text(split.label ?? "Pose \(split.index + 1)")
+                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                                Spacer()
+                                Text(Fmt.durationShort(split.durationSeconds))
+                                    .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                                    .foregroundStyle(theme.accent)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func cardioCard(_ cardio: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {

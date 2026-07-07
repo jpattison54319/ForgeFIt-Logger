@@ -671,6 +671,12 @@ extension RecoveryEngine {
         var everLoggedCardio = false
         for workout in completed {
             for cardio in workout.cardioSessions {
+                // Yoga: restorative practice is zero aerobic stress; active
+                // practice counts only when a real HR was measured (matching
+                // the training-load classifier in RecoveryEngine).
+                if cardio.isYogaSession {
+                    guard !cardio.resolvedYogaStyle.isRestorative, cardio.avgHR != nil else { continue }
+                }
                 everLoggedCardio = true
                 guard calendarDaysBetween(workout.startedAt, and: now) <= 7 else { continue }
                 let minutes = Double(cardio.durationSeconds ?? 0) / 60

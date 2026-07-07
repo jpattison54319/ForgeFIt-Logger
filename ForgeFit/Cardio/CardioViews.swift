@@ -132,7 +132,7 @@ struct CardioExerciseCard: View {
                 Button {
                     showIntervalEditor = true
                 } label: {
-                    Label("Intervals…", systemImage: "timer")
+                    Label("Zone & intervals…", systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Text(plan?.isMeaningful == true ? "Change" : "Set")

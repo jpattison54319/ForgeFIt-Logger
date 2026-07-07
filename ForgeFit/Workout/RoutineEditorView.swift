@@ -176,16 +176,17 @@ struct RoutineEditorView: View {
     /// targets don't carry over, so a cardio/strength swap resets to a fresh
     /// default set.
     private func replace(_ target: RoutineExerciseModel, with exercise: ExerciseLibraryModel) {
-        let wasCardio = exercises.first { $0.id == target.exerciseID }?.isCardio == true
+        let wasModality = exercises.first { $0.id == target.exerciseID }?.modality ?? .strength
         target.exerciseID = exercise.id
         target.updatedAt = Date()
-        if exercise.isCardio != wasCardio {
+        if exercise.modality != wasModality {
+            // Targets don't carry across disciplines: rep sets, duration
+            // targets, interval plans, and yoga flows are all shaped by the
+            // modality they were built for.
             target.sets.forEach(modelContext.delete)
-            let fresh = exercise.isCardio
-                ? RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
-                : RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
-            modelContext.insert(fresh)
-            target.sets = [fresh]
+            target.sets = defaultTargetSets(for: exercise)
+            target.intervalPlanJSON = nil
+            target.yogaFlowJSON = nil
         }
         save()
     }
@@ -196,14 +197,28 @@ struct RoutineEditorView: View {
             exerciseID: exercise.id,
             position: routine.exercises.count
         )
-        let target = exercise.isCardio
-            ? RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
-            : RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
         modelContext.insert(re)
-        modelContext.insert(target)
-        re.sets = [target]
+        re.sets = defaultTargetSets(for: exercise)
         routine.exercises.append(re)
         save()
+    }
+
+    /// The starter target rows an exercise gets when added: one rep set for
+    /// lifts, one 30-min duration target for cardio, none for yoga (the
+    /// session's duration comes from its flow).
+    private func defaultTargetSets(for exercise: ExerciseLibraryModel) -> [RoutineSetModel] {
+        switch exercise.modality {
+        case .yoga:
+            return []
+        case .cardio:
+            let target = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
+            modelContext.insert(target)
+            return [target]
+        case .strength:
+            let target = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
+            modelContext.insert(target)
+            return [target]
+        }
     }
 
     private func remove(_ re: RoutineExerciseModel) {
@@ -277,9 +292,11 @@ private struct ExerciseEditRow: View {
     let onRemove: () -> Void
 
     @State private var showIntervalBuilder = false
+    @State private var showFlowBuilder = false
 
     private var sortedSets: [RoutineSetModel] { routineExercise.sets.sorted { $0.position < $1.position } }
     private var isCardio: Bool { exercise?.isCardio == true }
+    private var isYoga: Bool { exercise?.isYoga == true }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
 
     var body: some View {
@@ -313,9 +330,11 @@ private struct ExerciseEditRow: View {
                             onCreate: onCreateSuperset,
                             onUngroup: onUngroupSuperset
                         )
-                        Divider()
-                        Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
-                        Button("Add Working Set", systemImage: "plus") { addSet(type: .working) }
+                        if !isCardio && !isYoga {
+                            Divider()
+                            Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
+                            Button("Add Working Set", systemImage: "plus") { addSet(type: .working) }
+                        }
                         Divider()
                         Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
                         Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
@@ -328,7 +347,9 @@ private struct ExerciseEditRow: View {
                     .accessibilityIdentifier("routine-exercise-menu-\(exercise?.name ?? "")")
                 }
 
-                if isCardio {
+                if isYoga {
+                    yogaTargetEditor
+                } else if isCardio {
                     cardioTargetEditor
                     if let exercise {
                         MuscleChips(muscles: CardioKind.infer(name: exercise.name, equipment: exercise.equipment).musclesWorked)
@@ -388,6 +409,59 @@ private struct ExerciseEditRow: View {
         }
     }
 
+    /// Yoga block target: the attached flow (or the pose's default hold) and
+    /// the door into the flow builder. No set rows — yoga is session-shaped.
+    private var yogaTargetEditor: some View {
+        let plan = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
+        return VStack(alignment: .leading, spacing: Space.md) {
+            HStack(spacing: 8) {
+                Image(systemName: (plan?.style ?? .hatha).systemImage)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                Text("Guided flow")
+                    .font(.tag)
+                    .foregroundStyle(theme.textTertiary)
+                Spacer()
+            }
+
+            Button {
+                showFlowBuilder = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: plan?.hasSteps == true ? "figure.yoga" : "plus.circle")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(yogaGoalLabel(plan))
+                        .font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).opacity(0.7)
+                    Spacer()
+                }
+                .foregroundStyle(theme.accent)
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showFlowBuilder) {
+                YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON) { json in
+                    routineExercise.yogaFlowJSON = json
+                    routineExercise.updatedAt = Date()
+                    try? modelContext.save()
+                }
+            }
+
+            if let exercise {
+                MuscleChips(muscles: exercise.primaryMuscles + exercise.secondaryMuscles)
+            }
+        }
+    }
+
+    private func yogaGoalLabel(_ plan: YogaFlowPlan?) -> String {
+        if let plan, plan.hasSteps {
+            return "\(plan.structureSummary) · \(plan.style.title)"
+        }
+        if let hold = exercise?.defaultHoldSeconds {
+            return "Single pose · \(hold)s hold — tap to build a flow"
+        }
+        return "Build a flow"
+    }
+
     private var cardioTargetEditor: some View {
         let kind = CardioKind.infer(name: exercise?.name ?? "Cardio", equipment: exercise?.equipment)
         return VStack(alignment: .leading, spacing: Space.md) {
@@ -405,21 +479,18 @@ private struct ExerciseEditRow: View {
                 CardioDurationTargetRow(set: first)
             }
 
-            // Structured intervals: warmup → N × (work/recover) → cooldown.
+            // Pacing goal — a steady zone lock or structured intervals. Both
+            // live behind one CTA so zone locking is discoverable without being
+            // mislabeled as an "interval".
             Button {
                 showIntervalBuilder = true
             } label: {
+                let plan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
                 HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.doc.horizontal")
+                    Image(systemName: cardioGoalIcon(plan))
                         .font(.system(size: 12, weight: .bold))
-                    if let plan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON) {
-                        let workCount = plan.steps.count { $0.kind == .work }
-                        Text("Intervals: \(workCount)× · \(Fmt.durationShort(plan.totalSeconds)) total")
-                            .font(.system(size: 13, weight: .semibold))
-                    } else {
-                        Text("Add structured intervals")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
+                    Text(cardioGoalLabel(plan))
+                        .font(.system(size: 13, weight: .semibold))
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).opacity(0.7)
                     Spacer()
                 }
@@ -438,8 +509,27 @@ private struct ExerciseEditRow: View {
         .onAppear(perform: ensureCardioTarget)
     }
 
+    /// Icon for the cardio pacing-goal CTA: a target for a steady zone lock,
+    /// a bar chart for structured intervals, a plain target when unset.
+    private func cardioGoalIcon(_ plan: IntervalPlan?) -> String {
+        if plan?.hasSteps == true { return "chart.bar.doc.horizontal" }
+        return "target"
+    }
+
+    /// Label for the cardio pacing-goal CTA, reflecting whichever shape is set.
+    private func cardioGoalLabel(_ plan: IntervalPlan?) -> String {
+        if let plan, plan.hasSteps {
+            let workCount = plan.steps.count { $0.kind == .work }
+            return "Intervals: \(workCount)× · \(Fmt.durationShort(plan.totalSeconds)) total"
+        }
+        if let zone = plan?.hrZoneTarget {
+            return "Zone \(zone) lock"
+        }
+        return "Add zone lock or intervals"
+    }
+
     private func addSet(type: SetType) {
-        guard !isCardio else { return }
+        guard !isCardio, !isYoga else { return }
         let last = sortedSets.last
         let carriedType = type == .working ? (last?.setType.isBlockType == true ? last!.setType : type) : type
         let set = RoutineSetModel(

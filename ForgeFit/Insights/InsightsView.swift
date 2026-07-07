@@ -70,6 +70,8 @@ struct InsightsView: View {
                 }
 
                 CardioSummaryCard(analytics: analytics, range: $range)
+
+                FlexibilityInsightsCard(analytics: analytics)
             }
             .navigationDestination(for: InsightsRoute.self) { route in
                 switch route {

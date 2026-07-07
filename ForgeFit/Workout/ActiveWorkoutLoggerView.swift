@@ -183,7 +183,21 @@ struct ActiveWorkoutLoggerView: View {
             LazyVStack(alignment: .leading, spacing: Space.lg) {
                 ForEach(sortedExercises, id: \.id) { we in
                     let ex = exercises.first { $0.id == we.exerciseID }
-                    if ex?.isCardio == true {
+                    if ex?.isYoga == true {
+                        YogaExerciseCard(
+                            workout: workout,
+                            workoutExercise: we,
+                            exercise: ex,
+                            allowsLiveControls: !isHistoricalEdit,
+                            availableSupersetGroups: supersetGroups,
+                            onAssignSuperset: { assignSuperset($0, to: we) },
+                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
+                            onUngroupSuperset: { ungroupSuperset($0) },
+                            onShowExerciseDetail: { exercise in detailExercise = exercise },
+                            onReplace: { replaceTarget = we },
+                            onRemove: { removeExercise(we) }
+                        )
+                    } else if ex?.isCardio == true {
                         CardioExerciseCard(
                             workout: workout,
                             workoutExercise: we,
@@ -335,6 +349,14 @@ struct ActiveWorkoutLoggerView: View {
         }
     }
 
+    /// A session that is all yoga gets a calm, session-shaped header —
+    /// duration, poses, heart rate — instead of volume/sets.
+    private var isPureYoga: Bool {
+        !workout.exercises.isEmpty && workout.exercises.allSatisfy { we in
+            exercises.first { $0.id == we.exerciseID }?.isYoga == true
+        }
+    }
+
     @ViewBuilder
     private var statsBar: some View {
         if isHistoricalEdit {
@@ -353,7 +375,17 @@ struct ActiveWorkoutLoggerView: View {
 
     private func statsContent(elapsed: Int) -> some View {
         HStack {
-            if isPureCardio {
+            if isPureYoga {
+                let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
+                let poses = workout.cardioSessions.compactMap { $0.posesCompleted }.reduce(0, +)
+                let hrs = workout.cardioSessions.compactMap { $0.avgHR }
+                StatColumn(label: "Duration", value: Fmt.durationShort(loggedTime > 0 ? loggedTime : elapsed), valueColor: theme.accent)
+                StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—")
+                StatColumn(label: "Avg HR", value: hrs.isEmpty ? "—" : "\(hrs.reduce(0,+) / hrs.count)")
+                if !isHistoricalEdit {
+                    LiveHeartRateStat()
+                }
+            } else if isPureCardio {
                 let totalDist = workout.cardioSessions.compactMap { $0.distanceMeters }.reduce(0, +)
                 let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
                 let hrs = workout.cardioSessions.compactMap { $0.avgHR }

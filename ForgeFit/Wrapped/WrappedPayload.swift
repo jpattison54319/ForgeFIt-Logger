@@ -9,7 +9,8 @@ import Foundation
 /// Missing-data handling is by construction: a page whose data doesn't exist
 /// for the period simply isn't in `pages`.
 struct WrappedPayload: Codable, Equatable {
-    var version: Int = 1
+    // v2: TrainingMix gained the yoga bucket.
+    var version: Int = 2
     /// "June Wrapped" / "2026 Wrapped".
     var title: String
     /// "June 2026" / "2026".
@@ -65,6 +66,10 @@ enum WrappedPage: Codable, Equatable {
         var cardioCount: Int
         var strengthMinutes: Int
         var cardioMinutes: Int
+        /// Yoga bucket, added in payload v2. Optional-with-nil so frozen v1
+        /// reports decode (and render) exactly as generated.
+        var yogaCount: Int?
+        var yogaMinutes: Int?
     }
 
     struct CalendarHeatmap: Codable, Equatable {

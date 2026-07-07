@@ -251,8 +251,11 @@ struct TrainingAnalytics {
 
     // MARK: - Cardio
 
+    /// Real cardio only — yoga rides `CardioSessionModel` but has its own
+    /// analytics pillar (`FlexibilityAnalytics`), so every cardio surface
+    /// excludes it here at the source.
     var cardioSessions: [CardioSessionModel] {
-        completed.flatMap { $0.cardioSessions }
+        completed.flatMap { $0.cardioSessions }.filter { !$0.isYogaSession }
     }
 
     func cardioWeeklyMinutes(weeks: Int = 12) -> [MetricPoint] {

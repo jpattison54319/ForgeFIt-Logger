@@ -21,7 +21,9 @@ public enum ForgeDataSchema {
             CardioSessionModel.self,
             CardioRoutePointModel.self,
             CardioSplitModel.self,
-            WrappedReportModel.self
+            WrappedReportModel.self,
+            IntervalPresetModel.self,
+            YogaFlowModel.self
         ]
     }
 }
@@ -81,6 +83,14 @@ public final class ExerciseLibraryModel {
     /// Nil = infer from name/equipment, which stays correct for the built-in
     /// library and legacy custom exercises. Additive-optional for CloudKit.
     public var cardioKindRaw: String?
+    /// Explicit `Modality` raw value. Nil = legacy row: fall back to `isCardio`
+    /// (see `modality`). New rows write both so old and new code agree.
+    /// Additive-optional for CloudKit.
+    public var modalityRaw: String?
+    /// Default hold duration for yoga poses (seconds), used by the flow
+    /// builder when a pose is added to a sequence. Nil for non-yoga rows.
+    /// Additive-optional for CloudKit.
+    public var defaultHoldSeconds: Int?
     public var mappedGlobalID: UUID?
     public var instructions: [String] = []
     public var mechanic: String?
@@ -122,6 +132,8 @@ public final class ExerciseLibraryModel {
         difficulty: String? = nil,
         isCardio: Bool = false,
         cardioKindRaw: String? = nil,
+        modalityRaw: String? = nil,
+        defaultHoldSeconds: Int? = nil,
         mappedGlobalID: UUID? = nil,
         instructions: [String] = [],
         mechanic: String? = nil,
@@ -151,6 +163,8 @@ public final class ExerciseLibraryModel {
         self.difficulty = difficulty
         self.isCardio = isCardio
         self.cardioKindRaw = cardioKindRaw
+        self.modalityRaw = modalityRaw
+        self.defaultHoldSeconds = defaultHoldSeconds
         self.mappedGlobalID = mappedGlobalID
         self.instructions = instructions
         self.mechanic = mechanic
@@ -172,6 +186,20 @@ public final class ExerciseLibraryModel {
         get { WeightMode(rawValue: defaultWeightModeRaw) ?? .external }
         set { defaultWeightModeRaw = newValue.rawValue }
     }
+
+    /// Resolved discipline. Legacy rows (nil `modalityRaw`) fall back to the
+    /// `isCardio` flag, so the whole pre-yoga library resolves correctly
+    /// without any migration. Setting keeps `isCardio` in sync so old code
+    /// paths (and old app versions reading synced rows) stay honest.
+    public var modality: Modality {
+        get { modalityRaw.flatMap(Modality.init(rawValue:)) ?? (isCardio ? .cardio : .strength) }
+        set {
+            modalityRaw = newValue.rawValue
+            isCardio = newValue == .cardio
+        }
+    }
+
+    public var isYoga: Bool { modality == .yoga }
 
     public var classificationSource: ClassificationSource? {
         get { classificationSourceRaw.flatMap(ClassificationSource.init(rawValue:)) }
@@ -322,6 +350,9 @@ public final class RoutineExerciseModel {
     /// Structured cardio interval template (JSON-encoded `IntervalPlan`),
     /// nil for strength or steady-state cardio. Additive-optional.
     public var intervalPlanJSON: String?
+    /// Guided yoga sequence (JSON-encoded `YogaFlowPlan`), nil for non-yoga
+    /// exercises. Additive-optional.
+    public var yogaFlowJSON: String?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var routine: RoutineModel?
@@ -341,6 +372,7 @@ public final class RoutineExerciseModel {
         progressionRuleID: UUID? = nil,
         notes: String? = nil,
         intervalPlanJSON: String? = nil,
+        yogaFlowJSON: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         sets: [RoutineSetModel] = []
@@ -353,6 +385,7 @@ public final class RoutineExerciseModel {
         self.progressionRuleID = progressionRuleID
         self.notes = notes
         self.intervalPlanJSON = intervalPlanJSON
+        self.yogaFlowJSON = yogaFlowJSON
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.sets = sets
@@ -642,6 +675,9 @@ public final class WorkoutExerciseModel {
     /// Structured cardio interval template (JSON-encoded `IntervalPlan`),
     /// copied from the routine at start. Additive-optional.
     public var intervalPlanJSON: String?
+    /// Guided yoga sequence (JSON-encoded `YogaFlowPlan`), copied from the
+    /// routine at start. Additive-optional.
+    public var yogaFlowJSON: String?
     /// The `RoutineExerciseModel.id` this exercise was seeded from when the
     /// workout was started from a routine. Nil for ad-hoc exercises added
     /// mid-session or workouts not started from a routine. Used by
@@ -668,6 +704,7 @@ public final class WorkoutExerciseModel {
         restSeconds: Int? = nil,
         microRestSeconds: Int? = nil,
         intervalPlanJSON: String? = nil,
+        yogaFlowJSON: String? = nil,
         sourceRoutineExerciseID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -683,6 +720,7 @@ public final class WorkoutExerciseModel {
         self.restSeconds = restSeconds
         self.microRestSeconds = microRestSeconds
         self.intervalPlanJSON = intervalPlanJSON
+        self.yogaFlowJSON = yogaFlowJSON
         self.sourceRoutineExerciseID = sourceRoutineExerciseID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -979,6 +1017,15 @@ public final class CardioSessionModel {
     /// True once ForgeFit has auto-detected and applied interval segments to this
     /// session, so we can offer a revert and not re-detect on reopen.
     public var intervalsAutoApplied: Bool = false
+    /// Yoga sessions ride this model (modality == "yoga") to reuse the live
+    /// state machine, HealthKit auto-fill, and watch plumbing. These fields
+    /// are nil on real cardio sessions. Additive-optional for CloudKit.
+    public var yogaStyleRaw: String?
+    /// Per-region seconds-under-stretch snapshot (JSON `[String: Int]`),
+    /// computed once at finish so analytics never re-derive from splits.
+    public var flexibilityExposureJSON: String?
+    /// Number of pose holds completed in a guided class.
+    public var posesCompleted: Int?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -1026,6 +1073,9 @@ public final class CardioSessionModel {
         tss: Double? = nil,
         sampleSeriesJSON: String? = nil,
         intervalsAutoApplied: Bool = false,
+        yogaStyleRaw: String? = nil,
+        flexibilityExposureJSON: String? = nil,
+        posesCompleted: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -1061,12 +1111,27 @@ public final class CardioSessionModel {
         self.tss = tss
         self.sampleSeriesJSON = sampleSeriesJSON
         self.intervalsAutoApplied = intervalsAutoApplied
+        self.yogaStyleRaw = yogaStyleRaw
+        self.flexibilityExposureJSON = flexibilityExposureJSON
+        self.posesCompleted = posesCompleted
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
         self.routePoints = routePoints
         self.splits = splits
     }
+
+    /// Yoga rides the cardio session model; every cardio-specific analytics
+    /// or UI path must exclude sessions where this is true.
+    public var isYogaSession: Bool { modality == Self.yogaModality }
+
+    public var yogaStyle: YogaStyle? {
+        get { yogaStyleRaw.flatMap(YogaStyle.init(rawValue:)) }
+        set { yogaStyleRaw = newValue?.rawValue }
+    }
+
+    /// The `modality` string marking a yoga session (vs a `CardioKind` raw).
+    public static let yogaModality = "yoga"
 }
 
 @Model
@@ -1228,4 +1293,86 @@ public final class WrappedReportModel {
 
     public var isViewed: Bool { viewedAt != nil }
     public var isMonthly: Bool { reportTypeRaw == "monthly" }
+}
+
+/// A user-saved cardio interval template, named for one-tap reuse in the plan
+/// builder alongside the built-in presets. The structure is frozen into
+/// `planJSON` (a JSON-encoded `IntervalPlan`, the same shape stored on
+/// `RoutineExerciseModel.intervalPlanJSON`); loading a preset decodes it back
+/// into the editor's steppers, which stay editable after. Soft-deleted via
+/// `deletedAt` so the management list can remove one without a hard delete.
+@Model
+public final class IntervalPresetModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// JSON-encoded `IntervalPlan` — the frozen structure this preset restores.
+    public var planJSON: String = "{}"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String,
+        planJSON: String = "{}",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.planJSON = planJSON
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+}
+
+/// A user-saved yoga flow (guided pose sequence), named for reuse from the
+/// flow browser and the routine editor. The sequence is frozen into
+/// `planJSON` (a JSON-encoded `YogaFlowPlan`, the same shape stored on
+/// `RoutineExerciseModel.yogaFlowJSON`); attaching a flow value-copies the
+/// JSON, so later edits to the saved flow don't rewrite old routines.
+/// Built-in flows are catalog-only (bundled JSON) and never stored here.
+/// Soft-deleted via `deletedAt`, matching `IntervalPresetModel`.
+@Model
+public final class YogaFlowModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// `YogaStyle` raw value; denormalized from the plan for cheap filtering.
+    public var styleRaw: String = ""
+    /// JSON-encoded `YogaFlowPlan` — the frozen sequence this flow restores.
+    public var planJSON: String = "{}"
+    public var position: Int = 0
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String,
+        styleRaw: String = "",
+        planJSON: String = "{}",
+        position: Int = 0,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.styleRaw = styleRaw
+        self.planJSON = planJSON
+        self.position = position
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    public var plan: YogaFlowPlan? { YogaFlowPlan.decode(from: planJSON) }
 }

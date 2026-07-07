@@ -243,7 +243,9 @@ extension TrainingAnalytics {
 
     func cardioSessions(in range: TimeChartRange) -> [RangedCardioSession] {
         completed(in: range).flatMap { workout in
-            workout.cardioSessions.map { RangedCardioSession(workout: workout, session: $0) }
+            workout.cardioSessions
+                .filter { !$0.isYogaSession }   // yoga has its own pillar
+                .map { RangedCardioSession(workout: workout, session: $0) }
         }
     }
 
@@ -422,6 +424,7 @@ extension TrainingAnalytics {
         return completed
             .filter { $0.startedAt >= priorStart && $0.startedAt < start }
             .flatMap { $0.cardioSessions }
+            .filter { !$0.isYogaSession }
     }
 
     struct CardioBests {
@@ -591,5 +594,65 @@ extension TrainingAnalytics {
     /// private to the main file).
     private var exerciseByIDPublic: [UUID: ExerciseLibraryModel] {
         Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+}
+
+// MARK: - Yoga (Profile → Statistics)
+
+extension TrainingAnalytics {
+
+    /// Yoga sessions in range (the complement of `cardioSessions(in:)`).
+    func yogaSessions(in range: TimeChartRange) -> [RangedCardioSession] {
+        completed(in: range).flatMap { workout in
+            workout.cardioSessions
+                .filter(\.isYogaSession)
+                .map { RangedCardioSession(workout: workout, session: $0) }
+        }
+    }
+
+    struct YogaStyleShare: Identifiable {
+        var id: String { style.rawValue }
+        let style: YogaStyle
+        let sessions: Int
+        let minutes: Double
+    }
+
+    /// Session count + minutes per style, most-practiced first.
+    func yogaStyleBreakdown(in range: TimeChartRange) -> [YogaStyleShare] {
+        var sessions: [YogaStyle: Int] = [:]
+        var minutes: [YogaStyle: Double] = [:]
+        for item in yogaSessions(in: range) {
+            let style = item.session.resolvedYogaStyle
+            sessions[style, default: 0] += 1
+            minutes[style, default: 0] += Double(item.session.durationSeconds ?? 0) / 60
+        }
+        return sessions.keys
+            .map { style in
+                YogaStyleShare(style: style, sessions: sessions[style] ?? 0, minutes: minutes[style] ?? 0)
+            }
+            .sorted { $0.minutes > $1.minutes }
+    }
+
+    struct YogaOverview {
+        var sessions: Int
+        var minutes: Int
+        var poses: Int
+        var topRegions: [FlexibilityAnalytics.RegionWeek]
+    }
+
+    func yogaOverview(in range: TimeChartRange) -> YogaOverview {
+        let items = yogaSessions(in: range)
+        let start = calendar.date(byAdding: .weekOfYear, value: -range.weekCount, to: now) ?? .distantPast
+        let regions = FlexibilityAnalytics.regionSeconds(
+            workouts: completed,
+            exercises: exercises,
+            range: (range == .all ? Date.distantPast : start)...now
+        )
+        return YogaOverview(
+            sessions: items.count,
+            minutes: items.reduce(0) { $0 + (($1.session.durationSeconds ?? 0) / 60) },
+            poses: items.reduce(0) { $0 + ($1.session.posesCompleted ?? 0) },
+            topRegions: Array(regions.prefix(6))
+        )
     }
 }

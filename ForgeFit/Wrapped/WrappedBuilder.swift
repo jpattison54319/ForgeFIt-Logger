@@ -190,10 +190,14 @@ struct WrappedBuilder {
     }
 
     private func trainingMix(of period: [WorkoutModel]) -> WrappedPage.TrainingMix {
-        var strengthCount = 0, cardioCount = 0, strengthMinutes = 0, cardioMinutes = 0
+        var strengthCount = 0, cardioCount = 0, yogaCount = 0
+        var strengthMinutes = 0, cardioMinutes = 0, yogaMinutes = 0
         for workout in period {
             let minutes = Int((workout.endedAt ?? workout.startedAt).timeIntervalSince(workout.startedAt) / 60)
-            if isPureCardio(workout) {
+            if isPureYoga(workout) {
+                yogaCount += 1
+                yogaMinutes += minutes
+            } else if isPureCardio(workout) {
                 cardioCount += 1
                 cardioMinutes += minutes
             } else {
@@ -201,11 +205,25 @@ struct WrappedBuilder {
                 strengthMinutes += minutes
             }
         }
-        return .init(strengthCount: strengthCount, cardioCount: cardioCount, strengthMinutes: strengthMinutes, cardioMinutes: cardioMinutes)
+        return .init(
+            strengthCount: strengthCount,
+            cardioCount: cardioCount,
+            strengthMinutes: strengthMinutes,
+            cardioMinutes: cardioMinutes,
+            yogaCount: yogaCount,
+            yogaMinutes: yogaMinutes
+        )
     }
 
     private func isPureCardio(_ workout: WorkoutModel) -> Bool {
-        guard !workout.cardioSessions.isEmpty else { return false }
+        guard workout.cardioSessions.contains(where: { !$0.isYogaSession }) else { return false }
+        return !workout.exercises.flatMap(\.sets).contains { $0.completedAt != nil }
+    }
+
+    /// All-yoga sessions, no completed strength sets, no real cardio.
+    private func isPureYoga(_ workout: WorkoutModel) -> Bool {
+        guard !workout.cardioSessions.isEmpty,
+              workout.cardioSessions.allSatisfy(\.isYogaSession) else { return false }
         return !workout.exercises.flatMap(\.sets).contains { $0.completedAt != nil }
     }
 

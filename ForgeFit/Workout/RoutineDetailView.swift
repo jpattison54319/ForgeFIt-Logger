@@ -168,7 +168,7 @@ private struct RoutineExerciseSummary: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: Space.md) {
-                    Image(systemName: exercise?.isCardio == true ? "figure.run" : "dumbbell.fill")
+                    Image(systemName: exercise?.isYoga == true ? "figure.yoga" : (exercise?.isCardio == true ? "figure.run" : "dumbbell.fill"))
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(theme.textPrimary)
                         .frame(width: 40, height: 40)
@@ -204,7 +204,9 @@ private struct RoutineExerciseSummary: View {
                     ExerciseNoteBanner(note: setupNote, context: .routine)
                 }
 
-                if exercise?.isCardio == true {
+                if exercise?.isYoga == true {
+                    yogaSummary
+                } else if exercise?.isCardio == true {
                     cardioSummary
                 } else {
                     strengthSummary
@@ -212,6 +214,28 @@ private struct RoutineExerciseSummary: View {
             }
         }
         .accessibilityIdentifier("routine-exercise-\(exercise?.name ?? "Exercise")")
+    }
+
+    /// Yoga block: the attached flow's shape (or the pose's default hold) —
+    /// no set rows, matching the editor.
+    private var yogaSummary: some View {
+        let plan = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
+        return HStack(spacing: 6) {
+            Image(systemName: (plan?.style ?? .hatha).systemImage)
+                .font(.system(size: 13, weight: .semibold))
+            if let plan, plan.hasSteps {
+                Text("\(plan.structureSummary) · \(plan.style.title)")
+                    .font(.system(size: 14, weight: .semibold))
+            } else if let hold = exercise?.defaultHoldSeconds {
+                Text("Single pose · \(hold)s hold")
+                    .font(.system(size: 14, weight: .semibold))
+            } else {
+                Text("Guided pose")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            Spacer()
+        }
+        .foregroundStyle(theme.accent)
     }
 
     private var strengthSummary: some View {

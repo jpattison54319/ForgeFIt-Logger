@@ -23,6 +23,9 @@ final class IntervalRunnerHub {
 
     func start(planJSON: String?, session: CardioSessionModel, context: ModelContext) {
         runner?.stop()
+        // One timed runner at a time: intervals and a guided yoga class can't
+        // both own the clock, cues, and watch mirroring.
+        YogaFlowRunnerHub.shared.stop()
         guard let runner = IntervalRunner(planJSON: planJSON, session: session, context: context) else { return }
         self.runner = runner
         runner.start()

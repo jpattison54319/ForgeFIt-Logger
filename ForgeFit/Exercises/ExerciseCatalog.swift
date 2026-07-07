@@ -177,7 +177,11 @@ enum ExerciseCatalog {
     static let muscleGroups = [
         "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "back", "lats",
         "middle back", "upper back", "lower back", "traps", "quadriceps", "hamstrings",
-        "glutes", "calves", "forearms", "abductors", "adductors", "neck"
+        "glutes", "calves", "forearms", "abductors", "adductors", "neck",
+        // Pseudo-regions for yoga/mobility work, following the
+        // `cardiovascular` precedent: broad stretch targets the strict muscle
+        // list can't express.
+        "hips", "spine"
     ]
 
     /// The picker's grouped view of `muscleGroups`: parents that drill down
@@ -200,6 +204,59 @@ enum ExerciseCatalog {
         "exercise ball", "e-z curl bar", "foam roll", "other"
     ]
 
+    /// Equipment you actually do cardio on (plus bodyweight, for outdoor runs
+    /// and calisthenic-style conditioning). Ordered for the cardio editor.
+    static let cardioEquipmentTypes = [
+        "treadmill", "bike", "rower", "elliptical", "stair", "body only"
+    ]
+
+    /// Resistance-training equipment. Ordered for the lift editor.
+    static let strengthEquipmentTypes = [
+        "barbell", "dumbbell", "machine", "cable", "body only", "kettlebells",
+        "bands", "medicine ball", "exercise ball", "e-z curl bar", "foam roll"
+    ]
+
+    /// Yoga props. Ordered for the pose editor; poses are body-only by
+    /// default with props as the exception.
+    static let yogaEquipmentTypes = [
+        "body only", "block", "strap", "bolster"
+    ]
+
+    /// The primary equipment set for a given exercise type — used to decide
+    /// whether a selection is "on-discipline" (e.g. keeping the picker's
+    /// current value coherent when the user flips Lift ⇄ Cardio ⇄ Yoga).
+    static func primaryEquipment(isCardio: Bool) -> [String] {
+        isCardio ? cardioEquipmentTypes : strengthEquipmentTypes
+    }
+
+    static func primaryEquipment(modality: Modality) -> [String] {
+        switch modality {
+        case .strength: strengthEquipmentTypes
+        case .cardio: cardioEquipmentTypes
+        case .yoga: yogaEquipmentTypes
+        }
+    }
+
+    /// Equipment options for the exercise editor, ordered by relevance to the
+    /// chosen type: the matching discipline's equipment first, then the other
+    /// discipline's kept at the bottom (a kettlebell cardio circuit, a treadmill
+    /// finisher — uncommon but real), then "other" last. Nothing is removed, so
+    /// every edge case stays reachable — just out of the way.
+    static func equipmentOptions(isCardio: Bool) -> [String] {
+        equipmentOptions(modality: isCardio ? .cardio : .strength)
+    }
+
+    static func equipmentOptions(modality: Modality) -> [String] {
+        let primary = primaryEquipment(modality: modality)
+        // Yoga keeps its list tight — props plus bodyweight cover real
+        // practice; the machine/barbell tail would just be noise.
+        guard modality != .yoga else { return primary + ["other"] }
+        let secondary = modality == .cardio ? strengthEquipmentTypes : cardioEquipmentTypes
+        var seen = Set(primary)
+        let crossover = secondary.filter { seen.insert($0).inserted }
+        return primary + crossover + ["other"]
+    }
+
     /// Equipment loaded by stacking plates on a bar — the plate calculator
     /// only makes sense for these.
     static func isBarbellLoaded(_ equipment: String?) -> Bool {
@@ -216,21 +273,34 @@ struct ExerciseThumbnail: View {
 
     var body: some View {
         ZStack {
-            #if canImport(UIKit)
-            if let image = ExerciseCatalog.localThumbnail(path: exercise.mediaSlug) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                .background(Color(white: 0.96))
+            if exercise.isYoga {
+                yogaArt
             } else {
+                #if canImport(UIKit)
+                if let image = ExerciseCatalog.localThumbnail(path: exercise.mediaSlug) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                    .background(Color(white: 0.96))
+                } else {
+                    fallback
+                }
+                #else
                 fallback
+                #endif
             }
-            #else
-            fallback
-            #endif
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
+    }
+
+    /// Pose line-art: a bundled template asset (`yoga_<slug>`, tintable) when
+    /// present, else the pose's SF Symbol stand-in from the catalog.
+    private var yogaArt: some View {
+        ZStack {
+            theme.surfaceElevated
+            YogaPoseArt(exercise: exercise, size: size * 0.62)
+        }
     }
 
     private var fallback: some View {
@@ -241,4 +311,51 @@ struct ExerciseThumbnail: View {
                 .foregroundStyle(theme.accent)
         }
     }
+}
+
+/// The pose illustration used across rows, cards, and the guided player:
+/// prefers a bundled line-art template asset named `yoga_<slug>` (theme
+/// tinted), falling back to the catalog's SF Symbol. Custom poses (no
+/// catalog slug) always use the generic symbol.
+struct YogaPoseArt: View {
+    @Environment(\.theme) private var theme
+    let exercise: ExerciseLibraryModel?
+    var slug: String?
+    var size: CGFloat = 46
+
+    init(exercise: ExerciseLibraryModel?, size: CGFloat = 46) {
+        self.exercise = exercise
+        self.slug = exercise.flatMap(YogaPoseCatalog.slug(for:))
+        self.size = size
+    }
+
+    init(slug: String?, size: CGFloat = 46) {
+        self.exercise = nil
+        self.slug = slug
+        self.size = size
+    }
+
+    var body: some View {
+        Group {
+            if let slug, let uiImage = Self.asset(for: slug) {
+                Image(uiImage: uiImage)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: YogaPoseCatalog.pose(forSlug: slug)?.symbol ?? "figure.yoga")
+                    .font(.system(size: size * 0.72, weight: .medium))
+            }
+        }
+        .foregroundStyle(theme.accent)
+    }
+
+    #if canImport(UIKit)
+    private static func asset(for slug: String) -> UIImage? {
+        UIImage(named: "yoga_" + slug.replacingOccurrences(of: "-", with: "_"))
+    }
+    #else
+    private static func asset(for slug: String) -> UIImage? { nil }
+    #endif
 }

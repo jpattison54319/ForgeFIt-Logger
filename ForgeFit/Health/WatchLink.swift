@@ -148,6 +148,27 @@ final class WatchLink: NSObject {
                     .first { $0.liveStartedAt != nil && $0.endedAt == nil }
                     .flatMap { session in active.exercises.first { $0.id == session.workoutExerciseID } }
                     .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hrZoneTarget }
+            // At most one timed runner is live (interval XOR yoga); either
+            // one mirrors into the same step fields the watch already renders.
+            let intervalRunner = IntervalRunnerHub.shared.runner
+            let yogaRunner = YogaFlowRunnerHub.shared.runner
+            let stepName = intervalRunner?.currentStep?.label
+                ?? yogaRunner?.currentStep?.displayName
+            let stepEndsAt: Date? = intervalRunner?.currentStep != nil
+                ? intervalRunner?.stepEndsAt
+                : ((yogaRunner?.currentStep != nil && yogaRunner?.isPaused == false) ? yogaRunner?.stepEndsAt : nil)
+            let stepKind = intervalRunner?.currentStep?.kind.rawValue
+                ?? (yogaRunner?.currentStep != nil ? "pose" : nil)
+            let nextName = intervalRunner?.nextStep?.label
+                ?? yogaRunner?.nextStep?.displayName
+            let round = intervalRunner?.roundInfo.map { "Round \($0.round) of \($0.total)" }
+                ?? yogaRunner.flatMap { runner in
+                    runner.currentStep != nil
+                        ? "Pose \(min(runner.currentIndex + 1, runner.steps.count)) of \(runner.steps.count)"
+                        : nil
+                }
+            let isYogaWorkout = !active.cardioSessions.isEmpty
+                && active.cardioSessions.allSatisfy(\.isYogaSession)
             snapshot = WatchWorkoutSnapshot(
                 workoutID: active.id,
                 title: active.title,
@@ -155,26 +176,27 @@ final class WatchLink: NSObject {
                 exercises: active.exercises.sorted { $0.position < $1.position }.map { we in
                     let library = exerciseByID[we.exerciseID]
                     let isCardio = library?.isCardio == true
+                    let isYoga = library?.isYoga == true
                     let session = active.cardioSessions.first { $0.workoutExerciseID == we.id }
                     return WatchExerciseSnapshot(
                         id: we.id,
                         name: library?.name ?? "Exercise",
-                        isCardio: isCardio,
+                        isCardio: isCardio || isYoga,
+                        isYoga: isYoga ? true : nil,
                         supersetGroup: we.supersetGroup,
-                        cardioState: isCardio ? cardioState(of: session) : nil,
+                        cardioState: (isCardio || isYoga) ? cardioState(of: session) : nil,
                         sets: setSnapshots(for: we, exercise: library)
                     )
                 },
                 restEndsAt: timer.isRunning && !timer.isMicro ? timer.endsAt : nil,
                 restTotalSeconds: timer.isRunning && !timer.isMicro ? timer.totalSeconds : nil,
-                intervalStepName: IntervalRunnerHub.shared.runner?.currentStep?.label,
-                intervalStepEndsAt: IntervalRunnerHub.shared.runner?.currentStep != nil
-                    ? IntervalRunnerHub.shared.runner?.stepEndsAt : nil,
-                intervalStepKind: IntervalRunnerHub.shared.runner?.currentStep?.kind.rawValue,
-                intervalNextName: IntervalRunnerHub.shared.runner?.nextStep?.label,
-                intervalRound: IntervalRunnerHub.shared.runner?.roundInfo
-                    .map { "Round \($0.round) of \($0.total)" },
-                hrZoneTarget: activeZoneTarget
+                intervalStepName: stepName,
+                intervalStepEndsAt: stepEndsAt,
+                intervalStepKind: stepKind,
+                intervalNextName: nextName,
+                intervalRound: round,
+                hrZoneTarget: activeZoneTarget,
+                isYogaWorkout: isYogaWorkout ? true : nil
             )
         }
 
@@ -295,24 +317,48 @@ final class WatchLink: NSObject {
             session.liveStartedAt = Date()
             session.updatedAt = Date()
             try? context.save()
+            // A yoga session started from the wrist also starts the guided
+            // flow on the phone (execution authority), so cues + pose
+            // mirroring work exactly as a phone-started class.
+            if session.isYogaSession,
+               let we = active?.exercises.first(where: { $0.id == workoutExerciseID }) {
+                var library: ExerciseLibraryModel?
+                let exerciseID = we.exerciseID
+                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
+                if let plan = YogaFlowPlan.resolved(for: we, exercise: library), plan.hasSteps {
+                    YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
+                }
+            }
             publishState()
 
         case .completeCardio(let workoutExerciseID):
             guard let session = active?.cardioSessions.first(where: { $0.workoutExerciseID == workoutExerciseID }),
                   session.endedAt == nil else { return }
             let start = session.liveStartedAt ?? session.startedAt
-            let now = Date()
+            let now = Date.now
             session.endedAt = now
             session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
+            let workoutExercise = active?.exercises.first(where: { $0.id == workoutExerciseID })
+            var library: ExerciseLibraryModel?
+            if let exerciseID = workoutExercise?.exerciseID {
+                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
+            }
+            if session.isYogaSession {
+                YogaFlowRunnerHub.shared.stop(for: session.id)
+                YogaSessionCompletion.complete(
+                    session: session,
+                    workoutExercise: workoutExercise,
+                    exercise: library,
+                    context: context,
+                    endedAt: now,
+                    useClockDuration: false
+                )
+            }
             let kind = CardioKind.from(modality: session.modality)
             // Look up the exercise to tell an outdoor run from a treadmill —
             // the stored modality alone can't (both resolve to `.run`).
-            var library: ExerciseLibraryModel?
-            if let exerciseID = active?.exercises.first(where: { $0.id == workoutExerciseID })?.exerciseID {
-                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
-            }
             let providesGPSDistance = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
-            let hadManualIntervalPlan = active?.exercises.first { $0.id == workoutExerciseID }
+            let hadManualIntervalPlan = workoutExercise
                 .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
             try? context.save()
             publishState()
