@@ -29,12 +29,18 @@ public enum ExerciseSeedRepository {
             model.ownerID = nil
             model.name = exercise.name
             model.movementPattern = exercise.movementPattern
+            // Lifts get broad shoulders/chest tags refined into taxonomy
+            // sub-muscles from the name; already-granular tags pass through.
+            let refined = MuscleRefinement.refine(
+                name: exercise.name,
+                primaryMuscles: exercise.primaryMuscles,
+                secondaryMuscles: exercise.secondaryMuscles)
             model.primaryMuscles = exercise.movementPattern == "cardio"
                 ? normalizedCardioMuscles(exercise.primaryMuscles)
-                : exercise.primaryMuscles
+                : refined.primary
             model.secondaryMuscles = exercise.movementPattern == "cardio"
                 ? exercise.secondaryMuscles.filter { $0 != "cardiorespiratory" && $0 != "cardiovascular" }
-                : exercise.secondaryMuscles
+                : refined.secondary
             model.equipment = exercise.equipment
             model.isUnilateral = exercise.isUnilateral
             model.isCardio = exercise.movementPattern == "cardio"

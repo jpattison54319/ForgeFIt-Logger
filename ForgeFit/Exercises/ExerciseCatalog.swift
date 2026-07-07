@@ -121,7 +121,13 @@ enum ExerciseCatalog {
             let kind = CardioKind.infer(name: seed.name, equipment: seed.equipment)
             // Cardio exercises get proper muscles-worked from their modality,
             // including the cardiovascular system, and are updated on reseed.
-            let primary = isCardio ? kind.musclesWorked : seed.primaryMuscles
+            // Lifts get broad shoulders/chest tags refined into taxonomy
+            // sub-muscles from the name (side delts, upper chest, ...).
+            let refined = MuscleRefinement.refine(
+                name: seed.name,
+                primaryMuscles: seed.primaryMuscles,
+                secondaryMuscles: seed.secondaryMuscles)
+            let primary = isCardio ? kind.musclesWorked : refined.primary
             let model = existingByID[id] ?? ExerciseLibraryModel(id: id, name: seed.name)
             var modelChanged = false
 
@@ -142,7 +148,7 @@ enum ExerciseCatalog {
             set(\.name, seed.name)
             set(\.movementPattern, isCardio ? "cardio" : seed.force)
             set(\.primaryMuscles, primary)
-            set(\.secondaryMuscles, isCardio ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" } : seed.secondaryMuscles)
+            set(\.secondaryMuscles, isCardio ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" } : refined.secondary)
             set(\.equipment, seed.equipment)
             set(\.isUnilateral, false)
             let desiredWeightMode = isCardio ? WeightMode.bodyweight : weightMode(equipment: seed.equipment, name: seed.name)
