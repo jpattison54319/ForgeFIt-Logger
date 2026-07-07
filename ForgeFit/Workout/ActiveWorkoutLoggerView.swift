@@ -99,8 +99,16 @@ struct ActiveWorkoutLoggerView: View {
                     statsBar
                         .padding(.horizontal, Space.lg)
                         .padding(.bottom, Space.sm)
+                    // The rest countdown gets its own full-width strip below
+                    // the stats instead of cramming into the top bar.
+                    if !isHistoricalEdit {
+                        RestTimerBar()
+                            .padding(.horizontal, Space.lg)
+                            .padding(.bottom, Space.sm)
+                    }
                 }
             }
+            .animation(.snappy(duration: 0.25), value: RestTimerController.shared.isRunning)
         }
         .environment(inputRouter)
         // One keyboard toolbar for every set input in the logger, driven by
@@ -279,10 +287,6 @@ struct ActiveWorkoutLoggerView: View {
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
                     Spacer()
-                    if !isHistoricalEdit {
-                        LiveHeartRatePill(heartRate: WatchLink.shared.liveMetrics?.heartRate)
-                        RestTimerPill()
-                    }
                     if !isHistoricalEdit && !RestTimerController.shared.isRunning {
                         // Start a rest manually at any point.
                         RestDurationMenu(
@@ -1043,30 +1047,6 @@ private struct PostWorkoutSummaryView: View {
                 }
             }
         }
-    }
-}
-
-private struct LiveHeartRatePill: View {
-    @Environment(\.theme) private var theme
-    let heartRate: Int?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "heart.fill")
-                .font(.system(size: 11, weight: .bold))
-            Text(heartRate.map { "\($0)" } ?? "—")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            Text("BPM")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(theme.textTertiary)
-        }
-        .foregroundStyle(heartRate == nil ? theme.textSecondary : theme.danger)
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background((heartRate == nil ? theme.surfaceElevated : theme.danger.opacity(0.12)))
-        .clipShape(Capsule())
-        .accessibilityLabel(heartRate.map { "Live heart rate \($0) beats per minute" } ?? "Live heart rate unavailable")
     }
 }
 

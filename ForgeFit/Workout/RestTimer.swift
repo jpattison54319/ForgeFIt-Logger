@@ -133,84 +133,84 @@ final class RestTimerController {
     }
 }
 
-// MARK: - Countdown pill
+// MARK: - Countdown bar
 
-/// Live glass countdown shown in the logger header while resting. −15 / +15 /
-/// Skip are exposed directly (not behind a menu tap) so adjusting rest
-/// mid-set is a single tap, matching the pace of actually lifting.
-struct RestTimerPill: View {
+/// Full-width rest countdown strip shown under the logger's stats bar while
+/// resting: a right-to-left draining progress line, the remaining time, and
+/// direct −15 / +15 / Skip controls (no menu tap) at full 44pt targets.
+///
+/// Structure matters here: only the progress line + time live inside the
+/// half-second `TimelineView` — the three buttons sit OUTSIDE it as stable
+/// views. The previous pill design recreated its Buttons on every tick,
+/// which dropped in-flight taps (the reported "skip / +/− don't work" bug)
+/// and had no room in the top bar to breathe.
+struct RestTimerBar: View {
     @Environment(\.theme) private var theme
     var timer = RestTimerController.shared
 
     var body: some View {
         if timer.isRunning {
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                let remaining = timer.remaining(at: context.date)
-                let fraction = timer.totalSeconds > 0 ? Double(remaining) / Double(timer.totalSeconds) : 0
-                let tint = timer.isMicro ? theme.secondaryAccent : theme.accent
+            let tint = timer.isMicro ? theme.secondaryAccent : theme.accent
 
-                // This pill is a compact, fixed-height (40pt) HUD that floats
-                // over the active workout — there's no room to grow these
-                // buttons to the full 44x44 HIG target without either
-                // overflowing the pill or overlapping a neighboring button's
-                // hit area. `.contentShape` widens each one's tappable region
-                // by 3pt a side instead (the max that fits the 6pt gaps here
-                // without any two buttons' hit areas touching), which grows
-                // the smallest of them from 22x22 to 28x28 without changing
-                // the pill's footprint or its visible glyph sizes.
-                HStack(spacing: 6) {
-                    Button { timer.adjust(by: -15) } label: {
-                        Image(systemName: "minus")
-                            .font(.system(size: 11, weight: .bold))
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle().inset(by: -3))
-                    .accessibilityLabel("Subtract 15 seconds")
+            HStack(spacing: Space.sm) {
+                Button { timer.adjust(by: -15) } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Subtract 15 seconds")
 
-                    HStack(spacing: 7) {
-                        ZStack {
-                            Circle().stroke(tint.opacity(0.25), lineWidth: 3)
-                            Circle()
-                                .trim(from: 0, to: fraction)
-                                .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
+                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    let remaining = timer.remaining(at: context.date)
+                    let fraction = timer.totalSeconds > 0 ? Double(remaining) / Double(timer.totalSeconds) : 0
+
+                    HStack(spacing: Space.md) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(tint.opacity(0.18))
+                                Capsule()
+                                    .fill(tint)
+                                    .frame(width: max(6, geo.size.width * fraction))
+                            }
                         }
-                        .frame(width: 18, height: 18)
+                        .frame(height: 6)
                         .animation(.linear(duration: 0.5), value: fraction)
+
                         Text(Fmt.restTimer(remaining))
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(theme.textPrimary)
                             .contentTransition(.numericText(countsDown: true))
+                            .frame(minWidth: 44, alignment: .trailing)
                     }
-
-                    Button { timer.adjust(by: 15) } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .bold))
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle().inset(by: -3))
-                    .accessibilityLabel("Add 15 seconds")
-
-                    Rectangle().fill(tint.opacity(0.3)).frame(width: 1, height: 16)
-
-                    Button { timer.skip() } label: {
-                        Image(systemName: "forward.end.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle().inset(by: -3))
-                    .accessibilityLabel("Skip rest")
                 }
-                .foregroundStyle(tint)
-                .padding(.horizontal, 10)
-                .frame(height: 40)
-                .glassEffect(.regular.tint(tint.opacity(0.28)).interactive(), in: Capsule())
-                .transition(.scale.combined(with: .opacity))
+                .frame(height: 44)
+
+                Button { timer.adjust(by: 15) } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add 15 seconds")
+
+                Button { timer.skip() } label: {
+                    Image(systemName: "forward.end.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Skip rest")
+                .accessibilityIdentifier("skip-rest-timer")
             }
+            .foregroundStyle(tint)
+            .padding(.horizontal, Space.md)
+            .glassEffect(.regular.tint(tint.opacity(0.22)), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 }

@@ -321,6 +321,31 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Next"].firstMatch.exists, "Weight field should offer Next to advance to reps.")
     }
 
+    /// The rest countdown bar's controls must respond — the old header pill
+    /// recreated its buttons inside a half-second TimelineView, which dropped
+    /// in-flight taps (reported as "skip / +/− don't work"). Completing a set
+    /// auto-starts rest; skipping it must actually clear the bar.
+    @MainActor
+    func testRestTimerBarAppearsAndSkipWorks() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let completeSet = app.buttons["complete-set-1"].firstMatch
+        XCTAssertTrue(completeSet.waitForExistence(timeout: 10), "Expected the live logger with a completable set.")
+        tapWhenReady(completeSet)
+
+        let skip = app.buttons["skip-rest-timer"].firstMatch
+        XCTAssertTrue(skip.waitForExistence(timeout: 5), "Completing a set should start rest and show the countdown bar.")
+        tapWhenReady(skip)
+
+        let deadline = Date().addingTimeInterval(3)
+        while skip.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(skip.exists, "Skip should stop the rest timer and remove the bar.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
