@@ -82,4 +82,25 @@ struct ShareCardRenderTests {
         )
         #expect(macro != nil)
     }
+
+    /// Every representative Wrapped page kind must render as a share card —
+    /// a page that draws blank ships a broken share button.
+    @Test func wrappedPagesRenderAsShareCards() {
+        let pages: [WrappedPage] = [
+            .cover(.init(title: "Your June Wrapped", subtitle: "Let's look at what you built.")),
+            .identity(.init(label: "Hybrid Builder", line: "Strength and engine work, side by side.")),
+            .bigStats(.init(workouts: 18, trainingMinutes: 1_040, activeDays: 16, totalVolumeKg: 42_000)),
+            .trainingMix(.init(strengthCount: 12, cardioCount: 6, strengthMinutes: 700, cardioMinutes: 340)),
+            .calendar(.init(year: 2026, month: 6, activeDays: [2, 3, 5, 9, 11, 14, 18, 21, 25, 27])),
+            .signatureExercise(.init(name: "Bench Press", sets: 36, sessions: 9)),
+            .cardioEngine(.init(minutes: 340, distanceMeters: 52_000, zoneSeconds: [600, 9_000, 5_400, 2_400, 900], longestSessionMinutes: 62, longestSessionKind: "Run")),
+            .bossBattle(.init(workoutTitle: "Leg Day", dayLabel: "Jun 21", durationMinutes: 82, volumeKg: 9_400, avgRPE: 8.6)),
+            .nextFocus(.init(primary: "Add 2 easy Zone 2 sessions per week.", secondary: "Add 2 pulling exercises per week.", maintain: "Maintain your 18-session pace.")),
+            .recap(.init(title: "June 2026", workouts: 18, trainingMinutes: 1_040, volumeKg: 42_000, activeDays: 16, identityLabel: "Hybrid Builder", highlight: "3 records set")),
+        ]
+        for page in pages {
+            let image = WrappedShareRenderer.image(page: page, periodLabel: "June 2026", theme: .sage)
+            #expect(image != nil, "page \(page.kind) failed to render")
+        }
+    }
 }
