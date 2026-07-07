@@ -1317,39 +1317,44 @@ private struct ExerciseLogCard: View {
 		        SupersetChip(group: group)
 		    }
 	            Spacer()
-	            Button(action: onReorder) {
-	                Image(systemName: "line.3.horizontal")
-	                    .font(.system(size: 16, weight: .semibold))
-	                    .foregroundStyle(theme.textTertiary)
-	                    .frame(width: 34, height: 34)
-	            }
-	            .buttonStyle(.plain)
-	            .accessibilityLabel("Reorder exercises")
-	            Menu {
-                if let exercise {
-                    Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
+	            // Explicit gap (rather than relying on the outer HStack's
+	            // ambient spacing) so both controls can sit at the HIG's
+	            // 44x44 minimum without their hit areas overlapping.
+	            HStack(spacing: Space.sm) {
+	                Button(action: onReorder) {
+	                    Image(systemName: "line.3.horizontal")
+	                        .font(.system(size: 16, weight: .semibold))
+	                        .foregroundStyle(theme.textTertiary)
+	                        .frame(width: 44, height: 44)
+	                }
+	                .buttonStyle(.plain)
+	                .accessibilityLabel("Reorder exercises")
+	                Menu {
+                    if let exercise {
+                        Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
+                        Divider()
+                    }
+                    if workoutExercise.notes == nil {
+                        Button("Add Note", systemImage: "note.text") { workoutExercise.notes = ""; try? modelContext.save() }
+                    }
+                    Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
+                    SupersetMenuItems(
+                        currentGroup: workoutExercise.supersetGroup,
+                        availableGroups: availableSupersetGroups,
+                        onAssign: onAssignSuperset,
+                        onCreate: onCreateSuperset,
+                        onUngroup: onUngroupSuperset
+                    )
+                    Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
+                    Button("Reorder Exercises", systemImage: "arrow.up.arrow.down", action: onReorder)
                     Divider()
+                    Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 44, height: 44)
                 }
-                if workoutExercise.notes == nil {
-                    Button("Add Note", systemImage: "note.text") { workoutExercise.notes = ""; try? modelContext.save() }
-                }
-                Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
-                SupersetMenuItems(
-                    currentGroup: workoutExercise.supersetGroup,
-                    availableGroups: availableSupersetGroups,
-                    onAssign: onAssignSuperset,
-                    onCreate: onCreateSuperset,
-                    onUngroup: onUngroupSuperset
-                )
-                Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
-                Button("Reorder Exercises", systemImage: "arrow.up.arrow.down", action: onReorder)
-                Divider()
-                Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 34, height: 34)
             }
         }
     }

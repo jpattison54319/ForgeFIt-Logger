@@ -459,7 +459,7 @@ struct CardioExerciseCard: View {
                 Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary).frame(width: 34, height: 34)
+                    .foregroundStyle(theme.textSecondary).frame(width: 44, height: 44)   // HIG minimum touch target
             }
         }
     }

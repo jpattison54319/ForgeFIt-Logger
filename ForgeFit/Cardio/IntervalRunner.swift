@@ -208,7 +208,7 @@ struct IntervalRunnerStrip: View {
                         Image(systemName: "forward.end.fill")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
                             .background(theme.surfaceElevated)
                             .clipShape(Circle())
                     }

@@ -350,7 +350,7 @@ private struct ExerciseRowLabel: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)   // HIG minimum touch target
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Exercise details")

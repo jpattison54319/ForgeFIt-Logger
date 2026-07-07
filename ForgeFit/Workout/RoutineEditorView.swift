@@ -323,7 +323,7 @@ private struct ExerciseEditRow: View {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
                     }
                     .accessibilityIdentifier("routine-exercise-menu-\(exercise?.name ?? "")")
                 }

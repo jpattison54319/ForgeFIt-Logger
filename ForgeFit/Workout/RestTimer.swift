@@ -149,6 +149,15 @@ struct RestTimerPill: View {
                 let fraction = timer.totalSeconds > 0 ? Double(remaining) / Double(timer.totalSeconds) : 0
                 let tint = timer.isMicro ? theme.secondaryAccent : theme.accent
 
+                // This pill is a compact, fixed-height (40pt) HUD that floats
+                // over the active workout — there's no room to grow these
+                // buttons to the full 44x44 HIG target without either
+                // overflowing the pill or overlapping a neighboring button's
+                // hit area. `.contentShape` widens each one's tappable region
+                // by 3pt a side instead (the max that fits the 6pt gaps here
+                // without any two buttons' hit areas touching), which grows
+                // the smallest of them from 22x22 to 28x28 without changing
+                // the pill's footprint or its visible glyph sizes.
                 HStack(spacing: 6) {
                     Button { timer.adjust(by: -15) } label: {
                         Image(systemName: "minus")
@@ -156,6 +165,7 @@ struct RestTimerPill: View {
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle().inset(by: -3))
                     .accessibilityLabel("Subtract 15 seconds")
 
                     HStack(spacing: 7) {
@@ -181,6 +191,7 @@ struct RestTimerPill: View {
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle().inset(by: -3))
                     .accessibilityLabel("Add 15 seconds")
 
                     Rectangle().fill(tint.opacity(0.3)).frame(width: 1, height: 16)
@@ -191,6 +202,7 @@ struct RestTimerPill: View {
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle().inset(by: -3))
                     .accessibilityLabel("Skip rest")
                 }
                 .foregroundStyle(tint)
