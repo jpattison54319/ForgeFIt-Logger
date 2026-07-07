@@ -68,7 +68,8 @@ enum AccountResetService {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [
             NotificationScheduler.NotificationID.restTimer,
             NotificationScheduler.NotificationID.streakNudge,
-            NotificationScheduler.NotificationID.intervalCue
+            NotificationScheduler.NotificationID.intervalCue,
+            NotificationScheduler.NotificationID.wrappedReady
         ] + NotificationScheduler.NotificationID.allReminderIDs)
     }
 

@@ -99,6 +99,7 @@ struct ProfileView: View {
                 case .importedExerciseReview: ReviewImportedExercisesView(workouts: workouts)
                 case .measures: MeasuresView()
                 case .calendar: CalendarView(workouts: workouts, exercises: exercises)
+                case .wrapped: WrappedListView()
                 case .workout(let id):
                     if let w = workouts.first(where: { $0.id == id }) {
                         WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
@@ -236,6 +237,7 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.exercises) { DashboardTileLabel("Exercises", "dumbbell") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("History", "clock.arrow.circlepath") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
         }
     }
 
@@ -315,7 +317,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar
+    case statistics, exercises, importedExerciseReview, measures, calendar, wrapped
     case workout(UUID)
 }
 

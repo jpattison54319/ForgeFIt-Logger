@@ -308,6 +308,9 @@ struct ContentView: View {
             }
             NotificationScheduler.shared.refreshStatus()
             refreshStreakNudge()
+            // Covers "the app was already running when the month rolled
+            // over" — launch alone would miss it.
+            generateWrappedIfDue()
             updateWidgetSnapshot()
         } else if phase == .background {
             // Leave the widget with the freshest snapshot we have — otherwise it
@@ -324,6 +327,18 @@ struct ContentView: View {
             streak: analytics.currentStreak(),
             trainedToday: analytics.trainedToday()
         )
+    }
+
+    /// Wrapped generation is launch/foreground-driven (idempotent, keyed by
+    /// period — cheap when nothing is due). A newly created report gets the
+    /// one-shot "ready" notification; the Home card appears either way.
+    private func generateWrappedIfDue() {
+        let created = WrappedReportService.generateIfDue(in: modelContext)
+        if let newest = created.first {
+            NotificationScheduler.shared.scheduleWrappedReady(
+                reportTitle: WrappedReportService.title(for: newest)
+            )
+        }
     }
 
     private func handleActiveWorkoutChange(oldID: UUID?, newID: UUID?) {
@@ -409,6 +424,12 @@ struct ContentView: View {
         WatchLink.shared.onWorkoutFinishedFromWatch = { appState.showingLogger = false }
         await seedLaunchData()
         await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
+            WrappedDemoSeed.run(in: modelContext)
+        }
+        #endif
+        generateWrappedIfDue()
         if let raw = UserDefaults.standard.string(forKey: "initialTab"),
            let tab = AppTab(rawValue: raw) {
             appState.selectedTab = tab

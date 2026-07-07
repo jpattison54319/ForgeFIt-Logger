@@ -18,6 +18,14 @@ struct HomeView: View {
     @State private var draggedQuickStartAction: HomeQuickStartAction?
     @State private var showQuickStartAdd = false
     @State private var editingRoutine: RoutineModel?
+    @State private var presentedWrappedReport: WrappedReportModel?
+
+    /// New (unopened) Wrapped reports — drives the "Report Available" card,
+    /// which disappears the moment the story is opened (viewedAt set).
+    @Query(
+        filter: #Predicate<WrappedReportModel> { $0.viewedAt == nil && $0.deletedAt == nil },
+        sort: \WrappedReportModel.generatedAt, order: .reverse
+    ) private var unviewedWrappedReports: [WrappedReportModel]
 
     let workouts: [WorkoutModel]
     let routines: [RoutineModel]
@@ -119,6 +127,11 @@ struct HomeView: View {
                     weekCard
                         .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
 
+                    if let newReport = unviewedWrappedReports.first {
+                        wrappedAvailableCard(newReport)
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
                     SectionHeader("Jump back in")
                     if let suggestion {
                         suggestionCard(suggestion.routine, reason: suggestion.reason)
@@ -162,6 +175,9 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             // Pull down to re-query Apple Health and recompute readiness.
             .refreshable { await AppRefresh.run(in: modelContext) }
+            .fullScreenCover(item: $presentedWrappedReport) { report in
+                WrappedStoryView(report: report)
+            }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showCoach) {
                 AICoachChatView(
@@ -241,6 +257,44 @@ struct HomeView: View {
                 .buttonBorderShape(.capsule)
             }
         }
+    }
+
+    /// "Your June Wrapped is ready" — shown until the story is opened, then
+    /// gone for good (the report lives on in Profile).
+    private func wrappedAvailableCard(_ report: WrappedReportModel) -> some View {
+        Button {
+            presentedWrappedReport = report
+        } label: {
+            Card {
+                HStack(spacing: Space.md) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.accentSoft)
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(report.isMonthly ? "Monthly" : "Yearly") Report Available")
+                            .font(.tag)
+                            .foregroundStyle(theme.accent)
+                        Text("Your \(WrappedReportService.title(for: report)) is ready.")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        Text("View Report")
+                            .font(.label)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityIdentifier("wrapped-report-available")
     }
 
     private var weekCard: some View {

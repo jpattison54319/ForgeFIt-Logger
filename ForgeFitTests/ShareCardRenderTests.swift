@@ -97,6 +97,15 @@ struct ShareCardRenderTests {
             .bossBattle(.init(workoutTitle: "Leg Day", dayLabel: "Jun 21", durationMinutes: 82, volumeKg: 9_400, avgRPE: 8.6)),
             .nextFocus(.init(primary: "Add 2 easy Zone 2 sessions per week.", secondary: "Add 2 pulling exercises per week.", maintain: "Maintain your 18-session pace.")),
             .recap(.init(title: "June 2026", workouts: 18, trainingMinutes: 1_040, volumeKg: 42_000, activeDays: 16, identityLabel: "Hybrid Builder", highlight: "3 records set")),
+            // Yearly-only kinds.
+            .mostActiveMonth(.init(monthName: "August", workouts: 22)),
+            .longestStreak(.init(days: 9, endedLabel: "ended Aug 14")),
+            .topWorkouts(.init(entries: [
+                .init(title: "Leg Day", dayLabel: "Aug 3", volumeKg: 11_200),
+                .init(title: "Push Day", dayLabel: "May 19", volumeKg: 10_400),
+                .init(title: "Pull Day", dayLabel: "Sep 2", volumeKg: 9_900),
+            ])),
+            .badges(.init(earned: ["Century Club — 100+ workouts", "Streak Master — 9 days straight"])),
         ]
         for page in pages {
             let image = WrappedShareRenderer.image(page: page, periodLabel: "June 2026", theme: .sage)

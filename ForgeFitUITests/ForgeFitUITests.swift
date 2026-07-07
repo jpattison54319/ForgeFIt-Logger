@@ -346,6 +346,43 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(skip.exists, "Skip should stop the rest timer and remove the bar.")
     }
 
+    /// Wrapped acceptance: the Home "Report Available" card shows for a
+    /// fresh report, opening it presents the story, and after closing, the
+    /// card is gone (viewed) — while the report stays reachable in Profile.
+    @MainActor
+    func testWrappedCardOpensStoryThenDisappearsFromHome() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-wrapped-demo", "-weightUnitRaw", "kg", "-didOnboard", "YES"]
+        app.launch()
+
+        let card = app.descendants(matching: .any)["wrapped-report-available"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "Expected the Monthly Report Available card on Home.")
+        // The card renders below the week card without scrolling. Coordinate
+        // tap because XCUITest never resolves this Card-labeled Button as
+        // hittable (and scrolling to chase hittability lands taps on the
+        // wrong card).
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        // Story is up: page through a few pages via the right tap zone.
+        let close = app.buttons["Close report"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "Expected the Wrapped story to present.")
+        let shareButton = app.buttons["Share this page"].firstMatch
+        XCTAssertTrue(shareButton.exists, "Every page should carry a share button.")
+        for _ in 0..<3 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.6)).tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        tapWhenReady(close)
+
+        // Opening counted as viewed: the Home card is gone.
+        let deadline = Date().addingTimeInterval(4)
+        while card.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(card.exists, "The Home card must disappear once the report is viewed.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
