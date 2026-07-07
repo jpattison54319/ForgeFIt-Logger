@@ -215,7 +215,9 @@ extension RecoveryEngine {
         // copy can never contradict the number.
         var flags: [String] = []
         if acuteHRVBelowRange { flags.append("HRV low today") }
-        if sleepingHRElevated { flags.append("Sleeping HR elevated") }
+        if let hrAssessment = sleepingHRAssessment(), hrAssessment.elevated {
+            flags.append(hrAssessment.isDaytimeFallback ? "Resting HR elevated" : "Sleeping HR elevated")
+        }
         if lastNightSleepShort { flags.append("Short sleep") }
 
         return DailyReadiness(state: .ready(score), parts: parts, flags: flags, guidance: dailyGuidance(score, flags: flags))
@@ -252,6 +254,7 @@ extension RecoveryEngine {
         switch flag {
         case "HRV low today": return "HRV dipped below your normal range this morning"
         case "Sleeping HR elevated": return "your sleeping heart rate was elevated overnight"
+        case "Resting HR elevated": return "your resting heart rate is running above your usual"
         case "Short sleep": return "you came up short on sleep last night"
         default: return nil
         }
@@ -260,7 +263,6 @@ extension RecoveryEngine {
     // These mirror the acute parts' internal decisions so the flags match the
     // exact thresholds that shaped each sub-score.
     private var acuteHRVBelowRange: Bool { acuteHRVAssessment()?.belowRange ?? false }
-    private var sleepingHRElevated: Bool { sleepingHRAssessment()?.elevated ?? false }
     private var lastNightSleepShort: Bool {
         guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else { return false }
         return Double(sleep) / Double(personalizedSleepNeedMinutes()) < 0.85
@@ -310,20 +312,49 @@ extension RecoveryEngine {
         )
     }
 
-    private struct SleepingHR { let score: Double; let today: Int; let baseline: Double; let elevated: Bool }
+    private struct SleepingHR {
+        let score: Double
+        let today: Int
+        let baseline: Double
+        let elevated: Bool
+        /// True when today's value is Apple's daytime resting-HR estimate,
+        /// not a captured sleeping HR — labeled differently and judged
+        /// against the daytime baseline.
+        let isDaytimeFallback: Bool
+    }
 
+    /// Compares like with like. A true sleeping HR is judged against the
+    /// sleeping-HR baseline; when tonight hasn't been captured yet (e.g.
+    /// it's 1am, the user is still awake, and Apple has already published an
+    /// early resting-HR estimate for the new calendar day), that daytime
+    /// value is judged against the daytime resting-HR baseline instead.
+    /// Mixing kinds was a real bug: awake HR always reads "elevated" against
+    /// a sleeping baseline, so the card claimed an elevated *sleeping* HR
+    /// for a user who hadn't slept yet.
     private func sleepingHRAssessment() -> SleepingHR? {
-        guard let current = latestHealthMetric(), let today = current.bestRestingHR else { return nil }
-        let baseline = baselineMetrics(days: 60)
+        guard let current = latestHealthMetric() else { return nil }
+        let priorDays = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) >= 1 }
-            .compactMap { $0.bestRestingHR.map(Double.init) }
-        guard baseline.count >= 14 else { return nil }
+        if let today = current.sleepingHR {
+            let baseline = priorDays.compactMap { $0.sleepingHR.map(Double.init) }
+            guard baseline.count >= 14 else { return nil }
+            return assessRestingHR(today: today, baseline: baseline, isDaytimeFallback: false)
+        }
+        if let today = current.restingHR {
+            let baseline = priorDays.compactMap { $0.restingHR.map(Double.init) }
+            guard baseline.count >= 14 else { return nil }
+            return assessRestingHR(today: today, baseline: baseline, isDaytimeFallback: true)
+        }
+        return nil
+    }
+
+    private func assessRestingHR(today: Int, baseline: [Double], isDaytimeFallback: Bool) -> SleepingHR {
         let mean = average(baseline) ?? Double(today)
         let sd = max(standardDeviation(baseline), max(2, mean * 0.03))
         let z = (Double(today) - mean) / sd             // elevated = worse
         let score = min(1, max(0, 0.9 - 0.25 * min(3.0, max(-0.5, z))))
         let elevated = Double(today) > mean + max(3, sd)
-        return SleepingHR(score: score, today: today, baseline: mean, elevated: elevated)
+        return SleepingHR(score: score, today: today, baseline: mean, elevated: elevated, isDaytimeFallback: isDaytimeFallback)
     }
 
     private func sleepingHRPart() -> ScorePart {
@@ -332,13 +363,13 @@ extension RecoveryEngine {
                              valueText: latestHealthMetric()?.bestRestingHR.map { "\($0) bpm" } ?? "—",
                              detailText: "Wear your watch to bed to capture sleeping heart rate")
         }
+        let comparison = "\(Int(assessment.baseline.rounded())) bpm baseline"
+        let suffix = assessment.isDaytimeFallback ? " (daytime — sleep not captured yet)" : ""
         return ScorePart(
-            name: "Sleeping HR",
+            name: assessment.isDaytimeFallback ? "Resting HR" : "Sleeping HR",
             state: .ready(assessment.score),
             valueText: "\(assessment.today) bpm",
-            detailText: assessment.elevated
-                ? "Elevated vs \(Int(assessment.baseline.rounded())) bpm baseline"
-                : "vs \(Int(assessment.baseline.rounded())) bpm baseline"
+            detailText: (assessment.elevated ? "Elevated vs \(comparison)" : "vs \(comparison)") + suffix
         )
     }
 
