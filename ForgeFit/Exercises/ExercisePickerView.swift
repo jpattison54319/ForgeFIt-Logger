@@ -317,7 +317,12 @@ struct ExercisePickerView: View {
     }
 
     private func commit(_ list: [ExerciseLibraryModel]) {
-        onAdd(list)
+        // The library can hold duplicate rows for one exercise id (CloudKit
+        // sync / re-seed races — same condition the display list dedupes
+        // for). The "Add N" path filters the raw @Query array by selected
+        // ids, so without this guard one tap adds the exercise twice.
+        var seen = Set<UUID>()
+        onAdd(list.filter { seen.insert($0.id).inserted })
         dismiss()
     }
 }
