@@ -40,9 +40,17 @@ struct WorkoutLiveActivity: Widget {
                             .monospacedDigit()
                             .lineLimit(1)
                     } else if let exercise = context.state.exerciseName {
-                        Text(exercise)
-                            .font(.system(size: 16, weight: .semibold))
-                            .lineLimit(1)
+                        VStack(spacing: 1) {
+                            Text(exercise)
+                                .font(.system(size: 16, weight: .semibold))
+                                .lineLimit(1)
+                            if let next = context.state.nextExerciseName {
+                                Text("Next: \(next)")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -132,6 +140,12 @@ private struct LockScreenWorkoutView: View {
                     Text(exercise)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                    // What's coming, so the lifter can set up without
+                    // reopening the app; the last exercise says so instead.
+                    Text(context.state.nextExerciseName.map { "Next: \($0)" } ?? "Final exercise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
                 }
                 HStack(spacing: 10) {

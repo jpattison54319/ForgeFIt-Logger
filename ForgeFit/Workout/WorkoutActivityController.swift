@@ -99,6 +99,15 @@ final class WorkoutActivityController {
             we.sets.contains { $0.completedAt == nil } || we.sets.isEmpty
         } ?? sorted.last
         let currentName = current.flatMap { we in exercises.first { $0.id == we.exerciseID }?.name }
+        // "Next" = the first exercise after the current one that still has
+        // work left; nil on the final exercise (the UI labels that state).
+        let next = current.flatMap { cur in
+            sorted
+                .drop { $0.id != cur.id }
+                .dropFirst()
+                .first { we in we.sets.contains { $0.completedAt == nil } || we.sets.isEmpty }
+        }
+        let nextName = next.flatMap { we in exercises.first { $0.id == we.exerciseID }?.name }
 
         let timer = RestTimerController.shared
         let resting = timer.isRunning && !timer.isMicro
@@ -148,6 +157,7 @@ final class WorkoutActivityController {
         return WorkoutActivityAttributes.ContentState(
             startedAt: workout.startedAt,
             exerciseName: currentName,
+            nextExerciseName: nextName,
             completedSets: allSets.filter { $0.completedAt != nil }.count,
             totalSets: allSets.count,
             restEndsAt: resting ? timer.endsAt : nil,
