@@ -1171,6 +1171,10 @@ private struct ExerciseLogCard: View {
     /// Set being plate-calculated (barbell-loaded exercises only).
     @State private var plateSet: SetModel?
     @State private var editedSuggestionSetIDs = Set<UUID>()
+    /// Per-set fields the user explicitly typed into (suggestion-backed rows
+    /// only). Lives here, not in SetRow @State, so LazyVStack row recycling
+    /// can't forget which fields hold real entries vs placeholder suggestions.
+    @State private var editedSuggestionFields: [UUID: Set<SetInputField>] = [:]
     /// The one set row whose swipe-to-delete tray is currently open (only one
     /// at a time, Mail-style).
     @State private var openSwipeSetID: UUID?
@@ -1277,7 +1281,12 @@ private struct ExerciseLogCard: View {
                                 suggestedReps: suggestedReps(for: set, index: index),
                                 suggestedDurationSeconds: suggestedDurationSeconds(for: set, index: index),
                                 suggestedRPE: suggestedRPE(for: set, index: index),
-                                onSuggestionEdited: { editedSuggestionSetIDs.insert(set.id) },
+                                editedFields: editedSuggestionFields[set.id] ?? [],
+                                onSuggestionFieldEdited: { field, isEdited in
+                                    var fields = editedSuggestionFields[set.id] ?? []
+                                    if isEdited { fields.insert(field) } else { fields.remove(field) }
+                                    editedSuggestionFields[set.id] = fields
+                                },
 	                                onMaterializeSuggestion: { materializeSuggestion(for: set, index: index) },
 	                            onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
 	                            onMatchPrevious: { matchPrevious(set, from: previousSet(index: index)) },
@@ -1476,19 +1485,23 @@ private struct ExerciseLogCard: View {
         previousSet(index: index)?.rpe ?? set.rpe
     }
 
+    /// Runs at completion: commits exactly what the row's placeholders were
+    /// displaying (typed fields win; untouched fields take the suggestion —
+    /// see SetSuggestionPolicy). Marking the set edited afterwards is what
+    /// makes uncompleting preserve the committed values as real entries
+    /// instead of reverting them to placeholders.
     private func materializeSuggestion(for set: SetModel, index: Int) {
-        guard usesSuggestedValues(for: set) else { return }
+        let edited = editedSuggestionFields[set.id] ?? []
+        var policyFields = Set<SetSuggestionPolicy.Field>()
+        if edited.contains(.weight) { policyFields.insert(.weight) }
+        if edited.contains(.primary) { policyFields.insert(.primary) }
+        SetSuggestionPolicy.materialize(
+            set: set,
+            previous: previousSet(index: index),
+            suggestionBacked: usesSuggestedValues(for: set),
+            editedFields: policyFields
+        )
         editedSuggestionSetIDs.insert(set.id)
-        if let previous = previousSet(index: index) {
-            set.weight = previous.weight ?? set.weight
-            set.reps = previous.reps ?? set.reps
-            set.durationSeconds = previous.durationSeconds ?? set.durationSeconds
-            // Values the user already chose win over the suggestion — RPE can
-            // be picked from its menu before any field is touched, and
-            // materializing must never overwrite that pick.
-            set.rpe = set.rpe ?? previous.rpe
-            set.rir = set.rir ?? previous.rir
-        }
     }
 
 	    private func previousText(index: Int) -> String {
@@ -1515,6 +1528,9 @@ private struct ExerciseLogCard: View {
         set.rpe = previous.rpe
         set.rir = previous.rir
         set.recomputeDerivedMetrics()
+        // An explicit "copy my previous set" is a manual materialization —
+        // the values are real entries now, not placeholder suggestions.
+        editedSuggestionSetIDs.insert(set.id)
         recompute()
     }
 
@@ -1819,7 +1835,11 @@ private struct SetRow: View {
     var suggestedReps: Int?
     var suggestedDurationSeconds: Int?
     var suggestedRPE: Double?
-    var onSuggestionEdited: () -> Void = {}
+    /// Fields the user explicitly typed into (suggestion-backed rows only) —
+    /// those display their real stored values; untouched fields stay empty so
+    /// the grayed placeholder suggestion shows through.
+    var editedFields: Set<SetInputField> = []
+    var onSuggestionFieldEdited: (SetInputField, Bool) -> Void = { _, _ in }
     var onMaterializeSuggestion: () -> Void = {}
     var onCompleted: () -> Void = {}
     var onMatchPrevious: () -> Void = {}
@@ -1849,7 +1869,8 @@ private struct SetRow: View {
         suggestedReps: Int? = nil,
         suggestedDurationSeconds: Int? = nil,
         suggestedRPE: Double? = nil,
-        onSuggestionEdited: @escaping () -> Void = {},
+        editedFields: Set<SetInputField> = [],
+        onSuggestionFieldEdited: @escaping (SetInputField, Bool) -> Void = { _, _ in },
         onMaterializeSuggestion: @escaping () -> Void = {},
         onCompleted: @escaping () -> Void = {},
         onMatchPrevious: @escaping () -> Void = {},
@@ -1877,7 +1898,8 @@ private struct SetRow: View {
         self.suggestedReps = suggestedReps
         self.suggestedDurationSeconds = suggestedDurationSeconds
         self.suggestedRPE = suggestedRPE
-        self.onSuggestionEdited = onSuggestionEdited
+        self.editedFields = editedFields
+        self.onSuggestionFieldEdited = onSuggestionFieldEdited
         self.onMaterializeSuggestion = onMaterializeSuggestion
         self.onCompleted = onCompleted
         self.onMatchPrevious = onMatchPrevious
@@ -2092,22 +2114,19 @@ private struct SetRow: View {
         showWeight ? .weight : .primary
     }
 
+    /// On suggestion-backed rows, an untouched field renders EMPTY: the
+    /// suggested previous value shows through as the grayed placeholder
+    /// instead of masquerading as an entered value. The moment the user
+    /// commits a value into a field, that field renders its real text.
     private var weightText: String {
-        if usesSuggestedValues, let suggestedWeight {
-            return Fmt.load(suggestedWeight, unit: displayUnit)
-        }
+        if usesSuggestedValues && !editedFields.contains(.weight) { return "" }
         return set.modeWeight.map { Fmt.load($0, unit: displayUnit) } ?? ""
     }
 
     private var primaryText: String {
+        if usesSuggestedValues && !editedFields.contains(.primary) { return "" }
         if isCardio {
-            if usesSuggestedValues, let suggestedDurationSeconds {
-                return String(suggestedDurationSeconds / 60)
-            }
             return set.durationSeconds.map { String($0 / 60) } ?? ""
-        }
-        if usesSuggestedValues, let suggestedReps {
-            return String(suggestedReps)
         }
         return set.reps.map(String.init) ?? ""
     }
@@ -2175,17 +2194,15 @@ private struct SetRow: View {
     }
 
     private func setRPE(_ value: Double) {
-        // Picking an RPE adopts the row's suggestion like typing in a field
-        // does (materializeSuggestion fills only still-nil values, so this
-        // pick is never overwritten by it).
-        if usesSuggestedValues { onMaterializeSuggestion() }
+        // Writes only the RPE — the completion-time policy's
+        // `set.rpe ?? previous.rpe` precedence means a pick is never
+        // overwritten, and the other fields stay in placeholder state.
         set.rpe = value
         rpeDraft = formattedRPE(value)
         onChange()
     }
 
     private func clearRPE() {
-        if usesSuggestedValues { onMaterializeSuggestion() }
         set.rpe = nil
         rpeDraft = ""
         onChange()
@@ -2199,9 +2216,8 @@ private struct SetRow: View {
     }
 
     private func seedDraft(for field: SetInputField) {
-        if usesSuggestedValues {
-            onMaterializeSuggestion()
-        }
+        // Suggestion-backed fields stay logically empty on focus — the user
+        // types straight over the placeholder, no erasing.
         syncDraft(field, force: true)
         editedDraftFields.remove(field)
     }
@@ -2225,9 +2241,6 @@ private struct SetRow: View {
     }
 
     private func editDraft(_ field: SetInputField, value: String) {
-        if usesSuggestedValues {
-            onMaterializeSuggestion()
-        }
         switch field {
         case .weight:
             weightDraft = value
@@ -2260,11 +2273,10 @@ private struct SetRow: View {
 
     private func commitWeightDraft() {
         let next = Fmt.loadKilograms(from: weightDraft, unit: displayUnit)
-        if usesSuggestedValues {
-            onSuggestionEdited()
-        }
+        // Clearing a field back to empty returns it to suggestion state —
+        // display and commit-on-complete stay consistent either way.
+        if usesSuggestedValues { onSuggestionFieldEdited(.weight, next != nil) }
         guard !sameLoad(set.modeWeight, next) else { return }
-        onSuggestionEdited()
         set.setModeWeight(next)
         onChange()
     }
@@ -2272,19 +2284,13 @@ private struct SetRow: View {
     private func commitPrimaryDraft() {
         if isCardio {
             let next = parsedInt(primaryDraft).map { $0 * 60 }
-            if usesSuggestedValues {
-                onSuggestionEdited()
-            }
+            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
             guard set.durationSeconds != next else { return }
-            onSuggestionEdited()
             set.durationSeconds = next
         } else {
             let next = parsedInt(primaryDraft)
-            if usesSuggestedValues {
-                onSuggestionEdited()
-            }
+            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
             guard set.reps != next else { return }
-            onSuggestionEdited()
             set.reps = next
         }
         onChange()
