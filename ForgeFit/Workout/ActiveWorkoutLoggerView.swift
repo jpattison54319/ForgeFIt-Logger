@@ -101,7 +101,6 @@ struct ActiveWorkoutLoggerView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         // Reference caches walk the full workout history — built after the
         // first frame so the cover presents instantly. Rows show "—" for the
         // previous column for a frame or two, then fill in.
@@ -138,7 +137,6 @@ struct ActiveWorkoutLoggerView: View {
                     exercises: exercises
                 )
             }
-            .preferredColorScheme(.dark)
         }
     }
 
@@ -874,7 +872,6 @@ private struct PostWorkoutSummaryView: View {
             .background(theme.background)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled()
         .confirmationDialog(
             routineUpdatePromptTitle,

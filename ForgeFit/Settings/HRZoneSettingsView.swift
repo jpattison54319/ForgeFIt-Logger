@@ -329,7 +329,6 @@ struct HRZoneFieldTestView: View {
                 Text("Your progress and observed peak heart rate will be lost.")
             }
         }
-        .preferredColorScheme(.dark)
         .onChange(of: watch.liveMetrics?.heartRate) { _, hr in trackPeak(hr) }
         .onChange(of: watch.liveMetrics?.maxHR) { _, hr in trackPeak(hr) }
     }

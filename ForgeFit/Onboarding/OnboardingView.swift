@@ -105,7 +105,6 @@ struct OnboardingView: View {
                 .padding(.vertical, Space.xxl)
             }
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled()
         .onAppear {
             if selectedTemplateID == nil {

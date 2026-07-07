@@ -866,7 +866,6 @@ private struct RoutineOrderEditorView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func row(icon: String, title: String) -> some View {

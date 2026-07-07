@@ -168,7 +168,6 @@ private struct InsightsInfoSheet: View {
         }
         .padding(Space.lg)
         .background(theme.background)
-        .preferredColorScheme(.dark)
     }
 }
 

@@ -125,7 +125,6 @@ struct IntervalPlanBuilderView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func durationRow(_ label: String, seconds: Binding<Int>, step: Int, tint: Color? = nil) -> some View {

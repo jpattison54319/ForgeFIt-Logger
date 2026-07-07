@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var themeManager: ThemeManager
 
     @AppStorage("liveSyncEnabled") private var liveSyncEnabled = true
     @AppStorage("healthWriteEnabled") private var healthWriteEnabled = true
@@ -28,6 +29,7 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Space.xl) {
+                    appearanceCard
                     healthCard
                     historyImportCard
                     watchCard
@@ -50,7 +52,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $showHistoryImporter) {
             WorkoutHistoryImportView()
         }
@@ -221,6 +222,27 @@ struct SettingsView: View {
     }
 
     // MARK: - Units
+
+    // MARK: - Appearance
+
+    private var appearanceCard: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionHeader("Appearance")
+            Card {
+                HStack {
+                    Text("Theme").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("Appearance", selection: $themeManager.mode) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+            }
+        }
+    }
 
     private var unitsCard: some View {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -444,7 +466,6 @@ private struct ResetDataSheet: View {
             .background(theme.background)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(isResetting)
     }
 

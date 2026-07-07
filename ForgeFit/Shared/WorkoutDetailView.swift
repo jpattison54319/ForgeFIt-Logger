@@ -74,7 +74,6 @@ private struct IntervalSplitsEditor: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -906,6 +905,5 @@ private struct ExpandedRouteMapView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 }

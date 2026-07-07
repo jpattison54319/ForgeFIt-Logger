@@ -759,7 +759,6 @@ private struct QuickStartAddSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func presetRow(_ modality: CardioModality) -> some View {

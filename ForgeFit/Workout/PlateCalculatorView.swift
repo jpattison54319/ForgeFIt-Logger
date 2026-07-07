@@ -55,7 +55,6 @@ struct PlateCalculatorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private var targetCard: some View {

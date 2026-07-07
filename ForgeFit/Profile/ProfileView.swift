@@ -310,7 +310,6 @@ private struct ProfileEditSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .onAppear { draftName = displayName }
     }
 }
@@ -586,7 +585,6 @@ struct MeasuresView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func saveWeight() {

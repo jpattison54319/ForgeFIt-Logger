@@ -53,7 +53,8 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var systemColorScheme
+    @EnvironmentObject private var themeManager: ThemeManager
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
@@ -84,6 +85,16 @@ struct ContentView: View {
         activeWorkouts.first
     }
 
+    /// The single source of truth for the app's appearance: combines the
+    /// user's chosen mode with the device's live system scheme so `.system`
+    /// mode tracks appearance changes without a restart.
+    private var resolvedColorScheme: ColorScheme {
+        themeManager.mode.resolvedColorScheme(system: systemColorScheme)
+    }
+    private var activeTheme: AppTheme {
+        .active(for: themeManager.mode, system: systemColorScheme)
+    }
+
     /// Count of live completed workouts — changes when one is finished OR
     /// deleted, so downstream state (streak nudge, widget, watch) reacts to
     /// deletions immediately.
@@ -107,8 +118,9 @@ struct ContentView: View {
             }
         }
             .environment(appState)
-            .preferredColorScheme(.dark)
-            .tint(theme.accent)
+            .environment(\.theme, activeTheme)
+            .preferredColorScheme(resolvedColorScheme)
+            .tint(activeTheme.accent)
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
                 ActiveWorkoutLoggerView(
@@ -121,7 +133,16 @@ struct ContentView: View {
             }
             }
             .fullScreenCover(isPresented: $showOnboarding) {
+                // `showOnboarding` can already be `true` on the very first
+                // render (computed synchronously at launch, unlike other
+                // presentations that flip true reactively later) — a
+                // fullScreenCover presented that early doesn't reliably pick
+                // up the environment set higher in this same modifier chain,
+                // so the theme is pinned explicitly here rather than relied
+                // on to cascade.
                 OnboardingView(isPresented: $showOnboarding)
+                    .environment(\.theme, activeTheme)
+                    .preferredColorScheme(resolvedColorScheme)
             }
             .confirmationDialog(
                 "You have a workout in progress",
@@ -571,6 +592,7 @@ struct ContentView: View {
         cleanedOnboardingSlate = false
         lastHealthWorkoutImportAt = nil
         showOnboarding = true
+        themeManager.mode = .dark
         updateWidgetSnapshot()
     }
 
@@ -674,5 +696,6 @@ private struct BootSplashView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(ThemeManager())
         .modelContainer(for: ForgeDataSchema.models, inMemory: true)
 }

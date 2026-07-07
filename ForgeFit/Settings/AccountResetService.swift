@@ -80,6 +80,7 @@ enum AccountResetService {
             "openSettings",
             "activeMacroFolderID",
             "activeMesoFolderID",
+            ThemeManager.modeDefaultsKey,
             "profileDisplayName",
             "liveSyncEnabled",
             "healthWriteEnabled",

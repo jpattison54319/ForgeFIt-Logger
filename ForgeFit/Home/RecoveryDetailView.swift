@@ -749,7 +749,6 @@ private struct MetricInfoSheet: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(theme.background)
-        .preferredColorScheme(.dark)
     }
 }
 

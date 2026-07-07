@@ -156,10 +156,8 @@ struct ExercisePickerView: View {
                 NavigationStack {
                     ExerciseDetailView(exerciseID: exercise.id, workouts: history, exercises: exercises)
                 }
-                .preferredColorScheme(.dark)
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private var filterBar: some View {
@@ -581,7 +579,6 @@ struct CreateExerciseView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     /// Multi-select secondary muscles — each counts as half a set toward that

@@ -47,7 +47,6 @@ struct WorkoutHistoryImportView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .fileImporter(
             isPresented: $pickingFile,
             allowedContentTypes: [.commaSeparatedText, .json, .plainText, .text],

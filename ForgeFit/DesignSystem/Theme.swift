@@ -64,10 +64,14 @@ struct AppTheme {
     }
 }
 
-// MARK: - Sage (default theme)
+// MARK: - Sage (default theme: dark + light variants)
 
 extension AppTheme {
-    static let sage = AppTheme(
+    /// The original Sage look — slate obsidian canvas, Active Sage / Fresh
+    /// Mint accent duotone. `.sage` is kept as an alias so existing call
+    /// sites that want a theme-independent fixed reference (badge colors,
+    /// share-card rendering, tests) keep their exact current look.
+    static let sageDark = AppTheme(
         background: Color(hex: 0x0E1116),
         surface: Color(hex: 0x181B21),
         surfaceElevated: Color(hex: 0x20242B),
@@ -93,12 +97,80 @@ extension AppTheme {
         textSecondary: Color(hex: 0xA4ABA6),
         textTertiary: Color(hex: 0x747A74)
     )
+
+    static let sage = sageDark
+
+    /// Same Sage/Mint brand hues, tuned for a light canvas: signal colors are
+    /// deepened so they clear ~4.5:1 contrast against white/near-white
+    /// surfaces (the dark-mode values are pale enough to read fine on a
+    /// near-black canvas but wash out on white). Sticky-note colors are
+    /// intentionally unchanged — they represent a fixed "paper" surface, not
+    /// part of the app chrome.
+    static let sageLight = AppTheme(
+        background: Color(hex: 0xF3F5F1),
+        surface: Color(hex: 0xFFFFFF),
+        surfaceElevated: Color(hex: 0xFFFFFF),
+        surfaceHighlight: Color(hex: 0xE8F3EA),
+        separator: Color(hex: 0xDEE3DE),
+        accent: Color(hex: 0x2F9E58),
+        accentSoft: Color(hex: 0x2F9E58).opacity(0.14),
+        secondaryAccent: Color(hex: 0x159873),
+        warmup: Color(hex: 0xB8790A),
+        success: Color(hex: 0x1E9A55),
+        danger: Color(hex: 0xE0334C),
+        recoveryLow: Color(hex: 0xE0334C),
+        recoveryMid: Color(hex: 0xB8790A),
+        recoveryHigh: Color(hex: 0x1E9A55),
+        zone1: Color(hex: 0x6B6876),
+        zone2: Color(hex: 0x0E9A8E),
+        zone3: Color(hex: 0x9A7D00),
+        zone4: Color(hex: 0xC97400),
+        zone5: Color(hex: 0xE0334C),
+        stickyFill: Color(hex: 0xF6D66B),
+        stickyInk: Color(hex: 0x2A2410),
+        textPrimary: Color(hex: 0x14171A),
+        textSecondary: Color(hex: 0x50594F),
+        textTertiary: Color(hex: 0x82897F)
+    )
+
+    /// Resolves which variant is active for a chosen `ThemeMode` + the
+    /// device's live system appearance.
+    static func active(for mode: ThemeMode, system: ColorScheme) -> AppTheme {
+        mode.resolvedColorScheme(system: system) == .dark ? .sageDark : .sageLight
+    }
+}
+
+// MARK: - Appearance mode
+
+/// The user's chosen appearance. `.system` tracks the device's live
+/// light/dark setting; `.light`/`.dark` pin the app regardless of the
+/// device setting. Persisted via `ThemeManager`, surfaced in Settings.
+enum ThemeMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    func resolvedColorScheme(system: ColorScheme) -> ColorScheme {
+        switch self {
+        case .system: system
+        case .light: .light
+        case .dark: .dark
+        }
+    }
 }
 
 // MARK: - Environment
 
 private struct ThemeKey: EnvironmentKey {
-    static let defaultValue: AppTheme = .sage
+    static let defaultValue: AppTheme = .sageDark
 }
 
 extension EnvironmentValues {
