@@ -209,14 +209,19 @@ struct HomeView: View {
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
             }
             .sheet(isPresented: $showExploreLibrary) {
+                let templates = RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
                 RoutineLibraryView(
-                    templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
+                    programs: RoutineTemplateCatalog.validPrograms(
+                        from: RoutineTemplateCatalog.loadPrograms(),
+                        templates: templates,
+                        exercises: exercises
+                    ),
+                    templates: templates,
                     exercises: exercises,
-                    onImport: { template in
-                        // Only a mesocycle (leaf folder) can directly hold a
-                        // routine — an active macrocycle alone has nowhere
-                        // concrete to import into.
-                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeMesoFolderRaw), existingRoutines: routines, in: modelContext)
+                    onImport: { program in
+                        // A program is a whole mesocycle: it always lands as its
+                        // own new top-level folder with the day routines inside.
+                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
@@ -241,7 +246,7 @@ struct HomeView: View {
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Ready when you are").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Connect Health or add a starter routine to build your baseline.")
+                        Text("Connect Health or add a training program to build your baseline.")
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                 }
@@ -250,7 +255,7 @@ struct HomeView: View {
                         .font(.bodyStrong)
                         .buttonStyle(.glassProminent)
                         .tint(theme.accent)
-                    Button("Explore starters") { showExploreLibrary = true }
+                    Button("Explore programs") { showExploreLibrary = true }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                 }

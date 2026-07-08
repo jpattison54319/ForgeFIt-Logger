@@ -1,32 +1,36 @@
 import ForgeData
 import SwiftUI
 
+/// Explore surface for prebuilt training programs (mesocycles). Each card is a
+/// full program — a folder of day routines imported together — rather than a
+/// one-off routine.
 struct RoutineLibraryView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    let programs: [RoutineProgramTemplate]
     let templates: [RoutineTemplate]
     let exercises: [ExerciseLibraryModel]
-    let onImport: (RoutineTemplate) -> Void
+    let onImport: (RoutineProgramTemplate) -> Void
 
     @State private var selectedGoal: String?
     @State private var selectedLevel: String?
     @State private var selectedEquipment: String?
     @State private var selectedDays: Int?
-    @State private var selectedTemplate: RoutineTemplate?
+    @State private var selectedProgram: RoutineProgramTemplate?
 
-    private var filteredTemplates: [RoutineTemplate] {
-        templates.filter { template in
-            (selectedGoal == nil || template.goal == selectedGoal)
-            && (selectedLevel == nil || template.level == selectedLevel)
-            && (selectedEquipment == nil || template.equipment.contains(selectedEquipment!))
-            && (selectedDays == nil || template.daysPerWeek == selectedDays)
+    private var filteredPrograms: [RoutineProgramTemplate] {
+        programs.filter { program in
+            (selectedGoal == nil || program.goal == selectedGoal)
+            && (selectedLevel == nil || program.level == selectedLevel)
+            && (selectedEquipment == nil || program.equipment.contains(selectedEquipment!))
+            && (selectedDays == nil || program.daysPerWeek == selectedDays)
         }
     }
 
-    private var goals: [String] { Array(Set(templates.map(\.goal))).sorted() }
-    private var levels: [String] { Array(Set(templates.map(\.level))).sorted() }
-    private var equipment: [String] { Array(Set(templates.flatMap(\.equipment))).sorted() }
-    private var days: [Int] { Array(Set(templates.map(\.daysPerWeek))).sorted() }
+    private var goals: [String] { Array(Set(programs.map(\.goal))).sorted() }
+    private var levels: [String] { Array(Set(programs.map(\.level))).sorted() }
+    private var equipment: [String] { Array(Set(programs.flatMap(\.equipment))).sorted() }
+    private var days: [Int] { Array(Set(programs.map(\.daysPerWeek))).sorted() }
 
     var body: some View {
         NavigationStack {
@@ -34,15 +38,15 @@ struct RoutineLibraryView: View {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     filterRail
 
-                    if filteredTemplates.isEmpty {
+                    if filteredPrograms.isEmpty {
                         EmptyStateCard(
-                            title: "No matching templates",
-                            message: "Clear a filter to see more routines.",
+                            title: "No matching programs",
+                            message: "Clear a filter to see more training programs.",
                             systemImage: "line.3.horizontal.decrease.circle"
                         )
                     } else {
-                        ForEach(filteredTemplates) { template in
-                            templateCard(template)
+                        ForEach(filteredPrograms) { program in
+                            programCard(program)
                         }
                     }
                 }
@@ -50,7 +54,7 @@ struct RoutineLibraryView: View {
                 .padding(.bottom, Space.tabBarClearance)
             }
             .background(theme.background)
-            .navigationTitle("Explore Routines")
+            .navigationTitle("Explore Programs")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -58,8 +62,8 @@ struct RoutineLibraryView: View {
                         .foregroundStyle(theme.accent)
                 }
             }
-            .sheet(item: $selectedTemplate) { template in
-                templateDetail(template)
+            .sheet(item: $selectedProgram) { program in
+                programDetail(program)
             }
         }
     }
@@ -109,31 +113,44 @@ struct RoutineLibraryView: View {
         }
     }
 
-    private func templateCard(_ template: RoutineTemplate) -> some View {
-        Button {
-            selectedTemplate = template
+    private func programCard(_ program: RoutineProgramTemplate) -> some View {
+        let dayNames = program.routines(from: templates).map(\.name)
+        return Button {
+            selectedProgram = program
         } label: {
             Card(padding: Space.md) {
                 VStack(alignment: .leading, spacing: Space.md) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(template.name)
+                        Text(program.name)
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
                         Spacer()
-                        Text("\(template.daysPerWeek)x/wk")
+                        Text("\(program.daysPerWeek)x/wk")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(theme.accent)
                     }
 
-                    Text(template.description)
+                    Text(program.description)
                         .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    if !dayNames.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(theme.accent)
+                            Text(dayNames.joined(separator: " · "))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(2)
+                        }
+                    }
+
                     HStack {
-                        pill(template.level.capitalized, systemImage: "chart.bar")
-                        pill("\(template.estimatedMinutes) min", systemImage: "clock")
-                        pill(template.goal.capitalized, systemImage: "target")
+                        pill(program.level.capitalized, systemImage: "chart.bar")
+                        pill("\(dayNames.count) routine\(dayNames.count == 1 ? "" : "s")", systemImage: "list.bullet")
+                        pill(program.goal.capitalized, systemImage: "target")
                     }
                 }
             }
@@ -141,15 +158,16 @@ struct RoutineLibraryView: View {
         .buttonStyle(.plain)
     }
 
-    private func templateDetail(_ template: RoutineTemplate) -> some View {
-        NavigationStack {
+    private func programDetail(_ program: RoutineProgramTemplate) -> some View {
+        let dayRoutines = program.routines(from: templates)
+        return NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(template.name)
+                        Text(program.name)
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)
-                        Text(template.description)
+                        Text(program.description)
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -157,31 +175,44 @@ struct RoutineLibraryView: View {
 
                     Card {
                         HStack {
-                            StatColumn(label: "Goal", value: template.goal.capitalized)
-                            StatColumn(label: "Level", value: template.level.capitalized)
-                            StatColumn(label: "Time", value: "\(template.estimatedMinutes)m")
+                            StatColumn(label: "Goal", value: program.goal.capitalized)
+                            StatColumn(label: "Level", value: program.level.capitalized)
+                            StatColumn(label: "Days", value: "\(program.daysPerWeek)x/wk")
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        Text("Exercises")
-                            .font(.sectionTitle)
-                            .foregroundStyle(theme.textPrimary)
-                        Card {
-                            VStack(spacing: Space.md) {
-                                ForEach(Array(template.exercises.enumerated()), id: \.offset) { index, item in
-                                    exercisePreview(item, index: index)
-                                    if index != template.exercises.count - 1 {
-                                        Rectangle().fill(theme.separator).frame(height: 0.5)
+                    ForEach(dayRoutines) { routine in
+                        VStack(alignment: .leading, spacing: Space.md) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(routine.name)
+                                    .font(.sectionTitle)
+                                    .foregroundStyle(theme.textPrimary)
+                                Spacer()
+                                Text("~\(routine.estimatedMinutes) min")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            Card {
+                                VStack(spacing: Space.md) {
+                                    ForEach(Array(routine.exercises.enumerated()), id: \.offset) { index, item in
+                                        exercisePreview(item, index: index)
+                                        if index != routine.exercises.count - 1 {
+                                            Rectangle().fill(theme.separator).frame(height: 0.5)
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    PrimaryButton(title: "Add to My Routines", systemImage: "plus") {
-                        onImport(template)
+                    PrimaryButton(title: "Add Program to My Routines", systemImage: "folder.badge.plus") {
+                        onImport(program)
                     }
+                    Text("Adds a \"\(program.name)\" folder with \(dayRoutines.count) routine\(dayRoutines.count == 1 ? "" : "s") to your library.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textTertiary)
+                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
                 }
                 .padding(.horizontal, Space.lg)
                 .padding(.bottom, Space.tabBarClearance)
@@ -189,7 +220,7 @@ struct RoutineLibraryView: View {
             .background(theme.background)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { selectedTemplate = nil }
+                    Button("Close") { selectedProgram = nil }
                         .font(.bodyStrong)
                         .foregroundStyle(theme.accent)
                 }

@@ -1,0 +1,86 @@
+[
+  {
+    "id": "full-body-foundation",
+    "name": "Full Body Foundation",
+    "goal": "general fitness",
+    "level": "beginner",
+    "daysPerWeek": 3,
+    "weeks": 6,
+    "equipment": ["barbell", "dumbbell", "cable", "body only"],
+    "tags": ["full body", "beginner", "strength"],
+    "description": "Two alternating whole-body days, three sessions a week (A/B/A, then B/A/B). Every session hits squat, push, pull, and hinge patterns — the fastest way to build a base.",
+    "routineIDs": ["beginner-full-body-a", "beginner-full-body-b"]
+  },
+  {
+    "id": "upper-lower-split",
+    "name": "Upper / Lower Split",
+    "goal": "muscle gain",
+    "level": "intermediate",
+    "daysPerWeek": 4,
+    "weeks": 6,
+    "equipment": ["barbell", "dumbbell", "cable", "machine"],
+    "tags": ["upper lower", "hypertrophy", "strength"],
+    "description": "Four days a week: two upper and two lower sessions with complementary A/B emphases — horizontal vs vertical pressing up top, squat-led vs hip-led below.",
+    "routineIDs": ["upper-body-a", "lower-body-a", "upper-body-b", "lower-body-b"]
+  },
+  {
+    "id": "push-pull-legs",
+    "name": "Push Pull Legs",
+    "goal": "muscle gain",
+    "level": "intermediate",
+    "daysPerWeek": 6,
+    "weeks": 6,
+    "equipment": ["barbell", "dumbbell", "cable", "machine"],
+    "tags": ["ppl", "hypertrophy"],
+    "description": "The classic three-day rotation — push, pull, legs. Run it once through for 3 days a week or twice for 6.",
+    "routineIDs": ["push-day", "pull-day", "legs-day"]
+  },
+  {
+    "id": "dumbbell-home-builder",
+    "name": "Dumbbell Home Builder",
+    "goal": "muscle gain",
+    "level": "beginner",
+    "daysPerWeek": 3,
+    "weeks": 6,
+    "equipment": ["dumbbell"],
+    "tags": ["dumbbell only", "full body", "home gym"],
+    "description": "Two alternating full-body dumbbell days for home or apartment gyms — nothing but a pair of dumbbells required.",
+    "routineIDs": ["dumbbell-only-full-body", "dumbbell-only-full-body-b"]
+  },
+  {
+    "id": "machine-fundamentals",
+    "name": "Machine Fundamentals",
+    "goal": "muscle gain",
+    "level": "beginner",
+    "daysPerWeek": 3,
+    "weeks": 6,
+    "equipment": ["machine", "cable"],
+    "tags": ["machine", "beginner", "joint friendly"],
+    "description": "A joint-friendly upper/lower pair built on machines and cables — ideal for learning movement patterns with guided resistance.",
+    "routineIDs": ["machine-upper", "machine-lower"]
+  },
+  {
+    "id": "hybrid-engine",
+    "name": "Hybrid Engine",
+    "goal": "hybrid fitness",
+    "level": "intermediate",
+    "daysPerWeek": 4,
+    "weeks": 6,
+    "equipment": ["barbell", "machine", "outdoor"],
+    "tags": ["hybrid", "zone 2", "strength", "cardio"],
+    "description": "Strength plus aerobic base: two lift-then-zone-2 sessions and two easy run/walk days a week keep you strong without losing your engine.",
+    "routineIDs": ["strength-zone-2-hybrid", "run-walk-base"]
+  },
+  {
+    "id": "bodyweight-travel-kit",
+    "name": "Bodyweight Travel Kit",
+    "goal": "maintenance",
+    "level": "beginner",
+    "daysPerWeek": 3,
+    "weeks": 4,
+    "equipment": ["body only"],
+    "tags": ["travel", "bodyweight"],
+    "description": "One superset-driven bodyweight session you can run anywhere, three times a week — enough stimulus to hold muscle on the road.",
+    "routineIDs": ["bodyweight-travel"]
+  }
+]
