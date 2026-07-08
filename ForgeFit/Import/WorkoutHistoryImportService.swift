@@ -249,19 +249,21 @@ enum WorkoutHistoryImportService {
         for workouts: [ImportedWorkoutDraft],
         userExercises: [ExerciseInfo]
     ) -> [ExerciseImportMatch] {
-        let snapshot = ExerciseLibrarySnapshot(exercises: userExercises)
+        // Import uses a conservative identity matcher (not the picker's fuzzy
+        // search): a wrong auto-link silently corrupts logged history, whereas an
+        // unmatched name becomes a correctly-named custom exercise in the review
+        // queue. See `ImportExerciseMatcher`.
         let names = Array(Set(workouts.flatMap { $0.exercises.map(\.name) })).sorted()
         return names.map { name in
-            let result = snapshot.search(name, limit: 1).first
-            if let result, result.score >= 75 {
+            if let match = ImportExerciseMatcher.bestMatch(importedName: name, in: userExercises) {
                 return ExerciseImportMatch(
                     importedName: name,
-                    exerciseID: result.exercise.id,
-                    exerciseName: result.exercise.name,
-                    score: result.score
+                    exerciseID: match.exercise.id,
+                    exerciseName: match.exercise.name,
+                    score: match.score
                 )
             }
-            return ExerciseImportMatch(importedName: name, exerciseID: nil, exerciseName: nil, score: result?.score ?? 0)
+            return ExerciseImportMatch(importedName: name, exerciseID: nil, exerciseName: nil, score: 0)
         }
     }
 

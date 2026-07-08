@@ -97,6 +97,51 @@ struct WorkoutHistoryImportTests {
         #expect(custom.importedRawName == "Atlantis Cable Curl")
     }
 
+    // MARK: - Conservative import matching
+
+    private static let matcherLibrary: [ExerciseInfo] = [
+        ExerciseInfo(name: "Barbell Squat", equipment: "barbell"),
+        ExerciseInfo(name: "Dumbbell Squat", equipment: "dumbbell"),
+        ExerciseInfo(name: "Squat Jerk", equipment: "barbell"),
+        ExerciseInfo(name: "Goblet Squat", equipment: "kettlebell"),
+        ExerciseInfo(name: "Barbell Bench Press", equipment: "barbell"),
+        ExerciseInfo(name: "Band Assisted Pull-Up", equipment: "bands"),
+        ExerciseInfo(name: "Calf Press On The Leg Press Machine", equipment: "machine"),
+    ]
+
+    @Test func matcherReunitesHevyEquipmentSuffixWithCatalogOrdering() {
+        let match = ImportExerciseMatcher.bestMatch(importedName: "Squat (Barbell)", in: Self.matcherLibrary)
+        #expect(match?.exercise.name == "Barbell Squat")
+    }
+
+    @Test func matcherKeepsEquipmentVariantsDistinct() {
+        let match = ImportExerciseMatcher.bestMatch(importedName: "Squat (Dumbbell)", in: Self.matcherLibrary)
+        #expect(match?.exercise.name == "Dumbbell Squat")
+    }
+
+    @Test func matcherDoesNotLinkBareSquatToSquatJerk() {
+        // The old fuzzy scorer matched "Squat" -> "Squat Jerk" at 90. A bare,
+        // equipment-less "Squat" must stay unmatched (becomes a custom exercise)
+        // rather than silently becoming an olympic lift — or a goblet squat.
+        let match = ImportExerciseMatcher.bestMatch(importedName: "Squat", in: Self.matcherLibrary)
+        #expect(match == nil)
+    }
+
+    @Test func matcherDoesNotSubstringMatch() {
+        #expect(ImportExerciseMatcher.bestMatch(importedName: "Pull Up", in: Self.matcherLibrary) == nil)
+        #expect(ImportExerciseMatcher.bestMatch(importedName: "Leg Press", in: Self.matcherLibrary) == nil)
+    }
+
+    @Test func matcherMatchesWhenOnlyImportSpecifiesEquipment() {
+        let match = ImportExerciseMatcher.bestMatch(importedName: "Goblet Squat (Kettlebell)", in: Self.matcherLibrary)
+        #expect(match?.exercise.name == "Goblet Squat")
+    }
+
+    @Test func matcherHandlesPluralAndOrder() {
+        let match = ImportExerciseMatcher.bestMatch(importedName: "Bench Press (Barbell)", in: Self.matcherLibrary)
+        #expect(match?.exercise.name == "Barbell Bench Press")
+    }
+
     @Test func lowConfidenceCustomExerciseNeedsReview() throws {
         let draft = ImportedExerciseDraft(id: "mystery-implement", name: "Mystery Implement", sets: [
             ImportedSetDraft(id: "set-1", index: 0, setType: .working, weightKg: 20, reps: 10)
