@@ -3,11 +3,35 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
+extension ExerciseLibraryModel {
+    /// Every exercise added by a workout-history import that the user hasn't yet
+    /// confirmed or edited — plus any legacy low-confidence guess. Confirming or
+    /// editing an exercise sets `userModified`, which drops it from this set.
+    /// Callers still filter out non-owned / soft-deleted rows.
+    static var pendingImportReviewPredicate: Predicate<ExerciseLibraryModel> {
+        #Predicate<ExerciseLibraryModel> { exercise in
+            exercise.needsReview == true
+                || (exercise.importBatchID != nil && exercise.userModified == false)
+        }
+    }
+
+    /// Least-confident guesses first, then name. `needsReview` is flagged exactly
+    /// when confidence fell below the review threshold, so ascending confidence
+    /// naturally floats the items most in need of attention to the top. (Bool
+    /// keypaths aren't `Comparable`, so we can't sort on `needsReview` directly.)
+    static var pendingImportReviewSort: [SortDescriptor<ExerciseLibraryModel>] {
+        [
+            SortDescriptor(\.classificationConfidence),
+            SortDescriptor(\.name),
+        ]
+    }
+}
+
 struct ReviewImportedExercisesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true }, sort: \ExerciseLibraryModel.name)
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var queriedReviewItems: [ExerciseLibraryModel]
 
     let workouts: [WorkoutModel]
@@ -91,7 +115,7 @@ struct ReviewImportedExercisesView: View {
             Spacer()
             EmptyStateCard(
                 title: "All imported exercises reviewed",
-                message: "New low-confidence imports will appear here.",
+                message: "Exercises added from a workout-history import show up here to confirm or edit.",
                 systemImage: "checkmark.seal"
             )
             .padding(.horizontal, Space.lg)

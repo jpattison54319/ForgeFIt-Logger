@@ -142,6 +142,38 @@ struct WorkoutHistoryImportTests {
         #expect(match?.exercise.name == "Barbell Bench Press")
     }
 
+    // MARK: - Pending-import-review surface
+
+    @Test func pendingReviewIncludesConfidentBulkAddedExercises() throws {
+        let predicate = ExerciseLibraryModel.pendingImportReviewPredicate
+
+        // Confidently classified, added by an import, not yet confirmed → review.
+        let confident = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID, name: "Barbell Squat",
+            needsReview: false, classificationConfidence: 0.9, importBatchID: UUID()
+        )
+        #expect(try predicate.evaluate(confident))
+
+        // Legacy low-confidence guess with no batch → still review.
+        let lowConfidence = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID, name: "Mystery", needsReview: true
+        )
+        #expect(try predicate.evaluate(lowConfidence))
+
+        // Confirmed/edited (userModified) → drops off the list.
+        let confirmed = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID, name: "Confirmed",
+            userModified: true, needsReview: false, importBatchID: UUID()
+        )
+        #expect(try !predicate.evaluate(confirmed))
+
+        // A hand-created exercise (no import batch, confident) → not review.
+        let handMade = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID, name: "Custom", needsReview: false
+        )
+        #expect(try !predicate.evaluate(handMade))
+    }
+
     @Test func lowConfidenceCustomExerciseNeedsReview() throws {
         let draft = ImportedExerciseDraft(id: "mystery-implement", name: "Mystery Implement", sets: [
             ImportedSetDraft(id: "set-1", index: 0, setType: .working, weightKg: 20, reps: 10)

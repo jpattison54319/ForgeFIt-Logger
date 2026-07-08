@@ -9,7 +9,7 @@ import SwiftUI
 struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
     @Binding var selection: AppTab
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true })
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
     @Namespace private var pill
 

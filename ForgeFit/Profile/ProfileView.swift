@@ -17,7 +17,7 @@ struct ProfileView: View {
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true }, sort: \ExerciseLibraryModel.name)
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
 
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
