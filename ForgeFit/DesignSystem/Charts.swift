@@ -1,5 +1,6 @@
 import Charts
 import ForgeCore
+import ForgeData
 import SwiftUI
 
 /// A single (date, value) sample for the trend charts.
@@ -254,6 +255,9 @@ struct CriticalPaceCurveView: View {
 /// on the x-axis. The caller only renders this when samples exist.
 struct HeartRateTrendChart: View {
     let samples: [(date: Date, bpm: Int)]
+    /// Time windows shaded behind the trace — the cardio efforts of a hybrid
+    /// session, in the same time domain as `samples`.
+    var bands: [(start: Date, end: Date)] = []
 
     @Environment(\.theme) private var theme
 
@@ -264,6 +268,14 @@ struct HeartRateTrendChart: View {
 
     var body: some View {
         Chart {
+            // Declared first so the bands sit behind the line and area marks.
+            ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+                RectangleMark(
+                    xStart: .value("Start", band.start),
+                    xEnd: .value("End", band.end)
+                )
+                .foregroundStyle(theme.secondaryAccent.opacity(0.14))
+            }
             ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
                 LineMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
                     .interpolationMethod(.catmullRom)
@@ -298,6 +310,28 @@ struct HeartRateTrendChart: View {
             }
         }
         .frame(height: 160)
+    }
+}
+
+extension HeartRateTrendChart {
+    /// Cardio-effort windows for a hybrid workout's session HR chart. Only
+    /// live-tracked sessions carry trustworthy wall-clock windows — manually
+    /// logged ones are skipped rather than shading the wrong span. Pure-cardio
+    /// workouts return nothing: shading the entire chart says nothing.
+    static func cardioBands(for workout: WorkoutModel) -> [(start: Date, end: Date)] {
+        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap(\.workoutExerciseID))
+        let hasStrength = workout.exercises.contains { !cardioExerciseIDs.contains($0.id) }
+        guard hasStrength else { return [] }
+        return workout.cardioSessions
+            .filter { $0.deletedAt == nil }
+            .compactMap { session -> (start: Date, end: Date)? in
+                guard let start = session.liveStartedAt else { return nil }
+                let end = session.endedAt
+                    ?? session.durationSeconds.map { start.addingTimeInterval(Double($0)) }
+                guard let end, end > start else { return nil }
+                return (start, end)
+            }
+            .sorted { $0.start < $1.start }
     }
 }
 

@@ -136,7 +136,10 @@ struct WorkoutShareCard: View {
                 miniStat("Energy", workout.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
             if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
-                ZoneSecondsBar(zoneSeconds: workout.hrZoneSeconds)
+                ZoneSecondsBar(
+                    zoneSeconds: workout.hrZoneSeconds,
+                    totalDurationSeconds: summary.durationSeconds
+                )
             }
         }
     }
@@ -151,7 +154,7 @@ struct WorkoutShareCard: View {
                         .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.danger)
                 }
             }
-            HeartRateTrendChart(samples: hrSamples)
+            HeartRateTrendChart(samples: hrSamples, bands: HeartRateTrendChart.cardioBands(for: workout))
         }
     }
 

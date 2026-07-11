@@ -826,14 +826,29 @@ struct ZoneSecondsBar: View {
     @Environment(\.theme) private var theme
     let zoneSeconds: [Int]
     var source: ZoneDataSource = .measured
+    /// When provided, session time not credited to any zone (HR dropouts,
+    /// long rests between sets) renders as a leading "Rest" segment so the
+    /// bar spans the whole workout instead of silently summing short.
+    var totalDurationSeconds: Int? = nil
+
+    /// Gaps under a minute are sampling jitter, not a story worth a segment.
+    private var restSeconds: Int {
+        guard let totalDurationSeconds else { return 0 }
+        let gap = totalDurationSeconds - zoneSeconds.reduce(0, +)
+        return gap >= 60 ? gap : 0
+    }
 
     var body: some View {
-        let total = zoneSeconds.reduce(0, +)
+        let total = zoneSeconds.reduce(0, +) + restSeconds
         VStack(alignment: .leading, spacing: 6) {
             Text("Time in zones").font(.tag).foregroundStyle(theme.textSecondary)
             if total > 0 {
                 GeometryReader { geo in
                     HStack(spacing: 2) {
+                        if restSeconds > 0 {
+                            theme.surfaceHighlight
+                                .frame(width: max(3, geo.size.width * (Double(restSeconds) / Double(total))))
+                        }
                         ForEach(Array(zoneSeconds.enumerated()), id: \.offset) { index, seconds in
                             if seconds > 0 {
                                 theme.zoneColor(index + 1)
@@ -845,6 +860,11 @@ struct ZoneSecondsBar: View {
                 .frame(height: 10)
                 .clipShape(Capsule())
                 HStack {
+                    if restSeconds > 0 {
+                        Text("Rest \(Fmt.durationShort(restSeconds))")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                     ForEach(Array(zoneSeconds.enumerated()), id: \.offset) { index, seconds in
                         if seconds > 0 {
                             Text("Z\(index + 1) \(Fmt.durationShort(seconds))")

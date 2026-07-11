@@ -373,7 +373,10 @@ struct WorkoutDetailView: View {
                     StatColumn(label: "Energy", value: workout.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
                 }
                 if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
-                    ZoneSecondsBar(zoneSeconds: workout.hrZoneSeconds)
+                    ZoneSecondsBar(
+                        zoneSeconds: workout.hrZoneSeconds,
+                        totalDurationSeconds: analytics.summary(for: workout).durationSeconds
+                    )
                 }
             }
         }
@@ -422,7 +425,7 @@ struct WorkoutDetailView: View {
                             .foregroundStyle(theme.danger)
                     }
                 }
-                HeartRateTrendChart(samples: hrSamples)
+                HeartRateTrendChart(samples: hrSamples, bands: HeartRateTrendChart.cardioBands(for: workout))
             }
         }
     }
