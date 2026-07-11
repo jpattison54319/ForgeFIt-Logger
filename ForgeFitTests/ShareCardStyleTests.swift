@@ -118,13 +118,23 @@ struct ShareCardStyleTests {
     @Test func exercisesBeyondCapBecomeMoreCount() throws {
         let (container, context) = try Self.makeContainer()
         defer { _ = container }
-        let workout = WorkoutModel(userID: userID, exercises: (0..<8).map { _ in strengthExercise(sets: 2) })
-        context.insert(workout)
+        // Exactly maxExercises → all shown, no "+N more" line.
+        let exact = WorkoutModel(
+            userID: userID,
+            exercises: (0..<ShareTrainingLogPlan.maxExercises).map { _ in strengthExercise(sets: 2) }
+        )
+        context.insert(exact)
+        let exactPlan = ShareTrainingLogPlan.make(workout: exact, exercises: [], lineBudget: 14)
+        #expect(exactPlan.entries.count == ShareTrainingLogPlan.maxExercises)
+        #expect(exactPlan.moreExercises == 0)
 
-        let plan = ShareTrainingLogPlan.make(workout: workout, exercises: [], lineBudget: 14)
+        // Over-full → one entry is given up so the "+N more" line fits below.
+        let overfull = WorkoutModel(userID: userID, exercises: (0..<8).map { _ in strengthExercise(sets: 2) })
+        context.insert(overfull)
+        let plan = ShareTrainingLogPlan.make(workout: overfull, exercises: [], lineBudget: 14)
         let strengthEntries = plan.entries.filter { if case .strength = $0 { return true } else { return false } }
-        #expect(strengthEntries.count == ShareTrainingLogPlan.maxExercises)
-        #expect(plan.moreExercises == 2)
+        #expect(strengthEntries.count == ShareTrainingLogPlan.maxExercises - 1)
+        #expect(plan.moreExercises == 4)
     }
 
     // MARK: - Render smoke test

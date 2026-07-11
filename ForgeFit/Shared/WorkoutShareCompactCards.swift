@@ -60,25 +60,44 @@ struct WorkoutShareCardTrainingLog: View {
             ForEach(Array(plan.entries.enumerated()), id: \.offset) { _, entry in
                 switch entry {
                 case .strength(let block):
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(block.name)
-                            .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.textPrimary)
-                            .lineLimit(1)
-                        ForEach(Array(block.lines.enumerated()), id: \.offset) { _, line in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(block.name)
+                                .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.textPrimary)
+                                .lineLimit(1)
+                            if let group = block.supersetGroup {
+                                Text(SupersetUI.label(for: group))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(SupersetUI.color(for: group))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(SupersetUI.color(for: group).opacity(0.16), in: Capsule())
+                            }
+                        }
+                        ForEach(Array(block.lines.enumerated()), id: \.offset) { index, line in
+                            let style = SetTypeStyle.of(line.type)
                             HStack(spacing: 8) {
                                 Text(line.label)
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(theme.textSecondary)
+                                    .foregroundStyle(line.type == .working ? theme.textSecondary : style.color)
                                     .frame(width: 28, alignment: .leading)
                                 Text(line.value)
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(theme.textPrimary)
+                                if line.type != .working {
+                                    Text(style.label)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(style.color)
+                                }
+                                // Folded onto the top-set line: a row of its
+                                // own spent the card's scarcest resource
+                                // (height) on a footnote.
+                                if index == block.lines.count - 1, block.extraSets > 0 {
+                                    Text("+\(block.extraSets) more")
+                                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                                }
                                 Spacer(minLength: 0)
                             }
-                        }
-                        if block.extraSets > 0 {
-                            Text("+\(block.extraSets) more set\(block.extraSets == 1 ? "" : "s")")
-                                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
                         }
                     }
                 case .cardio(let session):
@@ -279,11 +298,14 @@ struct WorkoutShareCardMetrics: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             chrome.header(title: workout.title ?? "Workout", date: workout.startedAt, compact: true)
-            ShareHeroRow(workout: workout, summary: summary, shape: shape, theme: theme)
-            if !hrSamples.isEmpty {
-                chrome.surfaceBlock {
+            // Compact stat strip, not the big tile hero — this card's identity
+            // is physiology; the oversized duration/volume tiles belong to the
+            // other cards, and the tiles pushed this one past its fixed height.
+            ShareHeroRow(workout: workout, summary: summary, shape: shape, theme: theme, compact: true)
+            chrome.surfaceBlock {
+                if !hrSamples.isEmpty {
                     chrome.blockTitle("Heart rate", systemImage: "waveform.path.ecg", color: theme.danger) {
                         if let peak = hrSamples.map(\.bpm).max() {
                             Text("peak \(peak) bpm")
@@ -293,13 +315,11 @@ struct WorkoutShareCardMetrics: View {
                     HeartRateTrendChart(
                         samples: hrSamples,
                         bands: HeartRateTrendChart.cardioBands(for: workout),
-                        height: 118
+                        height: 96
                     )
                     .environment(\.theme, theme)
                 }
-            }
-            if zoneSeconds.contains(where: { $0 > 0 }) {
-                chrome.surfaceBlock {
+                if zoneSeconds.contains(where: { $0 > 0 }) {
                     ZoneSecondsBar(zoneSeconds: zoneSeconds, totalDurationSeconds: summary.durationSeconds)
                         .environment(\.theme, theme)
                 }
@@ -315,28 +335,26 @@ struct WorkoutShareCardMetrics: View {
     }
 
     private var chipsRow: some View {
-        chrome.surfaceBlock {
-            HStack(spacing: 12) {
-                if let readiness = workout.readinessAtStart {
-                    chrome.miniStat("Readiness", "\(readiness)%")
+        HStack(spacing: 12) {
+            if let readiness = workout.readinessAtStart {
+                chrome.miniStat("Readiness", "\(readiness)%")
+            }
+            if let kcal = workout.activeEnergyKcal {
+                chrome.miniStat("Energy", "\(Int(kcal)) kcal")
+            }
+            if let avg = workout.avgHR {
+                chrome.miniStat("Avg / Max HR", "\(avg) / \(workout.maxHR.map(String.init) ?? "—")")
+            }
+            if shape == .cardio {
+                if let session = workout.cardioSessions.first(where: { $0.deletedAt == nil }),
+                   session.distanceMeters ?? 0 > 0 {
+                    chrome.miniStat(
+                        "Pace",
+                        CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds)
+                    )
                 }
-                if let kcal = workout.activeEnergyKcal {
-                    chrome.miniStat("Energy", "\(Int(kcal)) kcal")
-                }
-                if let avg = workout.avgHR {
-                    chrome.miniStat("Avg / Max HR", "\(avg) / \(workout.maxHR.map(String.init) ?? "—")")
-                }
-                if shape == .cardio {
-                    if let session = workout.cardioSessions.first(where: { $0.deletedAt == nil }),
-                       session.distanceMeters ?? 0 > 0 {
-                        chrome.miniStat(
-                            "Pace",
-                            CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds)
-                        )
-                    }
-                } else if let bestDrop = recoveryPoints.compactMap(\.recoveryBPM).max() {
-                    chrome.miniStat("Best drop", "▼\(bestDrop) bpm")
-                }
+            } else if let bestDrop = recoveryPoints.compactMap(\.recoveryBPM).max() {
+                chrome.miniStat("Best drop", "▼\(bestDrop) bpm")
             }
         }
     }
@@ -427,39 +445,55 @@ struct WorkoutShareCardMinimal: View {
 
 // MARK: - Shared hero row
 
-/// The three-tile hero row all compact cards open with, adapted to shape.
+/// The hero row all compact cards open with, adapted to shape — big tiles by
+/// default, a thin miniStat strip when `compact` (the metrics card trades the
+/// tiles for chart room).
 private struct ShareHeroRow: View {
     let workout: WorkoutModel
     let summary: TrainingAnalytics.Summary
     let shape: WorkoutShareShape
     let theme: AppTheme
+    var compact = false
 
     private var chrome: ShareCardChrome { ShareCardChrome(theme: theme) }
 
+    private var entries: [(label: String, value: String, color: Color)] {
+        var out: [(label: String, value: String, color: Color)] = [
+            ("Duration", Fmt.durationShort(summary.durationSeconds), theme.textPrimary)
+        ]
+        switch shape {
+        case .strength, .hybrid:
+            out.append(("Volume", Fmt.volume(summary.volume), theme.secondaryAccent))
+            out.append(("Sets", "\(summary.sets)", theme.textPrimary))
+        case .cardio:
+            let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
+            let distance = sessions.compactMap(\.distanceMeters).reduce(0, +)
+            out.append(("Distance", distance > 0 ? Fmt.distance(distance) : "—", theme.secondaryAccent))
+            if sessions.count == 1, let session = sessions.first, session.distanceMeters ?? 0 > 0 {
+                out.append((
+                    "Pace",
+                    CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds),
+                    theme.textPrimary
+                ))
+            } else {
+                out.append(("Avg HR", workout.avgHR.map(String.init) ?? summary.avgHR.map(String.init) ?? "—", theme.danger))
+            }
+        case .yoga:
+            let session = workout.cardioSessions.first { $0.deletedAt == nil && $0.isYogaSession }
+            out.append(("Poses", session?.posesCompleted.map(String.init) ?? "—", theme.secondaryAccent))
+            out.append(("Style", session?.yogaStyleRaw?.capitalized ?? "Yoga", theme.textPrimary))
+        }
+        return out
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            chrome.stat("Duration", Fmt.durationShort(summary.durationSeconds), theme.textPrimary)
-            switch shape {
-            case .strength, .hybrid:
-                chrome.stat("Volume", Fmt.volume(summary.volume), theme.secondaryAccent)
-                chrome.stat("Sets", "\(summary.sets)", theme.textPrimary)
-            case .cardio:
-                let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
-                let distance = sessions.compactMap(\.distanceMeters).reduce(0, +)
-                chrome.stat("Distance", distance > 0 ? Fmt.distance(distance) : "—", theme.secondaryAccent)
-                if sessions.count == 1, let session = sessions.first, session.distanceMeters ?? 0 > 0 {
-                    chrome.stat(
-                        "Pace",
-                        CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds),
-                        theme.textPrimary
-                    )
+        HStack(spacing: compact ? 12 : 10) {
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                if compact {
+                    chrome.miniStat(entry.label, entry.value)
                 } else {
-                    chrome.stat("Avg HR", workout.avgHR.map(String.init) ?? summary.avgHR.map(String.init) ?? "—", theme.danger)
+                    chrome.stat(entry.label, entry.value, entry.color)
                 }
-            case .yoga:
-                let session = workout.cardioSessions.first { $0.deletedAt == nil && $0.isYogaSession }
-                chrome.stat("Poses", session?.posesCompleted.map(String.init) ?? "—", theme.secondaryAccent)
-                chrome.stat("Style", session?.yogaStyleRaw?.capitalized ?? "Yoga", theme.textPrimary)
             }
         }
     }
@@ -474,10 +508,12 @@ enum ShareTrainingLogPlan {
     struct SetLine: Equatable {
         var label: String
         var value: String
+        var type: SetType
     }
 
     struct StrengthBlock: Equatable {
         var name: String
+        var supersetGroup: Int?
         var lines: [SetLine]
         var extraSets: Int
     }
@@ -492,7 +528,9 @@ enum ShareTrainingLogPlan {
         var moreExercises: Int
     }
 
-    static let maxExercises = 6
+    /// Verified visually against the 4:5 canvas: five top-set entries plus a
+    /// cardio line fill it; six overflow.
+    static let maxExercises = 5
 
     static func make(
         workout: WorkoutModel,
@@ -512,6 +550,9 @@ enum ShareTrainingLogPlan {
             .filter { HistoricalSetPresentation.isCompleted($0) }
             .count
         let showAllSets = strengthExercises.count <= 5 && completedSetCount <= lineBudget
+        // Exactly `maxExercises` fits; a "+N more" line does not fit *below*
+        // them — so an over-full list gives up one entry to make room for it.
+        let cap = strengthExercises.count > maxExercises ? maxExercises - 1 : maxExercises
 
         var entries: [Entry] = []
         var shownExercises = 0
@@ -521,7 +562,7 @@ enum ShareTrainingLogPlan {
                 entries.append(.cardio(session))
                 continue
             }
-            guard shownExercises < maxExercises else {
+            guard shownExercises < cap else {
                 moreExercises += 1
                 continue
             }
@@ -546,21 +587,23 @@ enum ShareTrainingLogPlan {
             let lines = completed.map { index, set in
                 SetLine(
                     label: ShareSetLabels.numberedLabel(for: set, index: index, sets: sets),
-                    value: HistoricalSetPresentation.shareValue(set, unit: unit)
+                    value: HistoricalSetPresentation.shareValue(set, unit: unit),
+                    type: set.setType
                 )
             }
-            return StrengthBlock(name: name, lines: lines, extraSets: 0)
+            return StrengthBlock(name: name, supersetGroup: we.supersetGroup, lines: lines, extraSets: 0)
         }
         // Top set = the completed set moving the most weight; work sets
         // outrank warm-ups at equal volume by coming later in the list.
         let top = completed.max { a, b in
             (a.element.totalVolume ?? 0, a.offset) < (b.element.totalVolume ?? 0, b.offset)
         }
-        guard let top else { return StrengthBlock(name: name, lines: [], extraSets: 0) }
+        guard let top else { return StrengthBlock(name: name, supersetGroup: we.supersetGroup, lines: [], extraSets: 0) }
         let line = SetLine(
             label: "Top",
-            value: HistoricalSetPresentation.shareValue(top.element, unit: unit)
+            value: HistoricalSetPresentation.shareValue(top.element, unit: unit),
+            type: top.element.setType
         )
-        return StrengthBlock(name: name, lines: [line], extraSets: max(0, completed.count - 1))
+        return StrengthBlock(name: name, supersetGroup: we.supersetGroup, lines: [line], extraSets: max(0, completed.count - 1))
     }
 }

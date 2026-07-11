@@ -841,7 +841,14 @@ struct ZoneSecondsBar: View {
     var body: some View {
         let total = zoneSeconds.reduce(0, +) + restSeconds
         VStack(alignment: .leading, spacing: 6) {
-            Text("Time in zones").font(.tag).foregroundStyle(theme.textSecondary)
+            HStack {
+                Text("Time in zones").font(.tag).foregroundStyle(theme.textSecondary)
+                Spacer()
+                // Source tag lives up here: the label row below is already
+                // full when a Rest segment joins five zones, and a wrapped
+                // "Measure/d" reads worse than a right-aligned title tag.
+                Text(source.footnote).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+            }
             if total > 0 {
                 GeometryReader { geo in
                     HStack(spacing: 2) {
@@ -859,24 +866,27 @@ struct ZoneSecondsBar: View {
                 }
                 .frame(height: 10)
                 .clipShape(Capsule())
-                HStack {
+                HStack(spacing: 8) {
                     if restSeconds > 0 {
-                        Text("Rest \(Fmt.durationShort(restSeconds))")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(theme.textTertiary)
+                        zoneLabel("Rest \(Fmt.durationShort(restSeconds))", color: theme.textTertiary)
                     }
                     ForEach(Array(zoneSeconds.enumerated()), id: \.offset) { index, seconds in
                         if seconds > 0 {
-                            Text("Z\(index + 1) \(Fmt.durationShort(seconds))")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(theme.zoneColor(index + 1))
+                            zoneLabel("Z\(index + 1) \(Fmt.durationShort(seconds))", color: theme.zoneColor(index + 1))
                         }
                     }
-                    Spacer()
-                    Text(source.footnote).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                    Spacer(minLength: 0)
                 }
             }
         }
+    }
+
+    private func zoneLabel(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
     }
 }
 
