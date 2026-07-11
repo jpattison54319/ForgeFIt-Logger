@@ -329,15 +329,6 @@ private struct MorningCheckinCard: View {
     let selectedTags: Set<String>
     let onToggle: (String) -> Void
 
-    private static let tags: [(id: String, label: String, icon: String)] = [
-        ("feeling-great", "Feeling great", "sun.max.fill"),
-        ("slept-badly", "Slept badly", "moon.zzz.fill"),
-        ("sore", "Sore", "figure.strengthtraining.traditional"),
-        ("stressed", "Stressed", "brain.head.profile"),
-        ("alcohol", "Alcohol", "wineglass"),
-        ("sick", "Sick", "thermometer.variable"),
-    ]
-
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.sm) {
@@ -346,7 +337,7 @@ private struct MorningCheckinCard: View {
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], spacing: 8) {
-                    ForEach(Self.tags, id: \.id) { tag in
+                    ForEach(CheckinTags.all, id: \.id) { tag in
                         let on = selectedTags.contains(tag.id)
                         Button {
                             onToggle(tag.id)

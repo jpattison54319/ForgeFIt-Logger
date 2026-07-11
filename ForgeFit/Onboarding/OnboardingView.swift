@@ -59,7 +59,7 @@ struct OnboardingView: View {
 
                     VStack(alignment: .leading, spacing: Space.lg) {
                         feature("dumbbell.fill", theme.accent, "Log strength & cardio", "Advanced set types, Strava-style cardio, smart rest timers.")
-                        feature("applewatch", theme.secondaryAccent, "Live Apple Watch sync", "Start anywhere, log from the wrist, live heart rate. Garmin or a chest strap? Pair it in Settings → Heart Rate Monitor.")
+                        feature("applewatch", theme.secondaryAccent, "Live Apple Watch sync", "Start anywhere, log from the wrist, live heart rate.")
                         feature("waveform.path.ecg", theme.success, "Readiness scoring", "HRV, sleep & training load tell you when to push or back off.")
                     }
 

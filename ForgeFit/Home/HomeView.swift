@@ -52,17 +52,21 @@ struct HomeView: View {
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
     @State private var connectingHealth = false
+    // Keeps the check-in strip visible while the user is mid-selection —
+    // without it the row would vanish on the first tap. Resets when Home
+    // reloads, so an answered check-in stays collapsed on later visits.
+    @State private var checkinStripEngaged = false
     @State private var recoveryMemo = Memo<String, RecoveryEngine.Report>()
     @State private var targetRecoveryMemo = Memo<String, RoutineDoseContext>()
     @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var todayCheckinTags: [String] {
+    private var todayCheckin: DailyCheckinModel? {
         checkins
             .filter { $0.deletedAt == nil && Calendar.current.isDate($0.date, inSameDayAs: Date()) }
-            .max { $0.updatedAt < $1.updatedAt }?
-            .tags ?? []
+            .max { $0.updatedAt < $1.updatedAt }
     }
+    private var todayCheckinTags: [String] { todayCheckin?.tags ?? [] }
 
     private var recovery: RecoveryEngine.Report {
         recoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(todayCheckinTags.joined(separator: ","))") {
@@ -150,6 +154,11 @@ struct HomeView: View {
                         .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
                         readinessEmptyState
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
+                    if showsCheckinStrip {
+                        morningCheckinStrip
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
@@ -494,6 +503,63 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Morning check-in strip
+
+    /// The check-in's output (reason chips) leads the hero card, so its input
+    /// lives on the same screen: one row of tags, gone once answered. The full
+    /// card with explanations stays on the Recovery screen.
+    private var showsCheckinStrip: Bool { todayCheckinTags.isEmpty || checkinStripEngaged }
+
+    private var morningCheckinStrip: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("How do you feel?")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(CheckinTags.all, id: \.id) { tag in
+                        let on = todayCheckinTags.contains(tag.id)
+                        Button {
+                            checkinStripEngaged = true
+                            toggleCheckinTag(tag.id)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: tag.icon).font(.system(size: 11, weight: .semibold))
+                                Text(tag.label).font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(on ? .white : theme.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(on ? theme.accent : theme.surfaceElevated))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                        .accessibilityIdentifier("home-checkin-\(tag.id)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggleCheckinTag(_ tag: String) {
+        let model: DailyCheckinModel
+        if let existing = todayCheckin {
+            model = existing
+        } else {
+            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
+            modelContext.insert(model)
+        }
+        var tags = model.tags
+        if let index = tags.firstIndex(of: tag) {
+            tags.remove(at: index)
+        } else {
+            tags.append(tag)
+        }
+        model.tags = tags
+        model.updatedAt = Date()
+        try? modelContext.save()
     }
 
     private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
