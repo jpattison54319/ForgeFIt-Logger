@@ -383,7 +383,7 @@ private struct GarminHRVGapCard: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 Label("Garmin detected — HRV isn't synced", systemImage: "info.circle.fill")
                     .font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                Text("Garmin Connect shares sleep and heart rate with Apple Health, but not HRV. Your readiness automatically re-weights to sleeping heart rate and sleep — still a solid signal. To add HRV, a bridge app like HealthFit, RunGap, or Health Sync can copy it from Garmin into Apple Health.")
+                Text("Garmin doesn't share HRV with Apple Health, so readiness re-weights to sleeping heart rate and sleep — still a solid signal. A bridge app like HealthFit or Health Sync can copy HRV across.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -967,7 +967,7 @@ private struct AdvancedLoadDisclosure: View {
         Card {
             DisclosureGroup(isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    Text("These numbers are used behind the scenes to spot load spikes and trends. They should guide coaching adjustments, not diagnose injury risk.")
+                    Text("Used to spot load spikes and trends — a coaching guide, not injury prediction.")
                         .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1094,17 +1094,17 @@ private enum RecoveryInfoTopic: String, Identifiable {
     var explanation: String {
         switch self {
         case .dailyScore:
-            return "Daily readiness reads how stressed your body is this morning: last night's HRV and sleeping heart rate compared against your own baseline range (in log space, the way the HRV literature does it), plus last night's sleep versus your personal need. It's deliberately reactive — one genuinely rough night will move it."
+            return "Compares last night's HRV, sleeping heart rate, and sleep against your own baseline. It's deliberately reactive — one rough night will move it."
         case .systemicScore:
-            return "The recovery trend is the slow-moving picture: your 7-day rolling HRV versus baseline, 7-day sleep adequacy and debt, resting heart-rate trend, and training-load balance. It answers \"am I adapting or digging a hole\" rather than \"how am I today\" — training load can pull it down when you spike, but a tidy load can't inflate it."
+            return "The slow-moving picture: 7-day HRV, sleep, resting heart rate, and training load against your baseline. It answers \"am I adapting or digging a hole\" rather than \"how am I today\"."
         case .muscleScore:
-            return "Each muscle recovers on its own clock. A session deposits fatigue proportional to the sets you logged and how close to failure they were, then recovery follows an exponential curve — roughly 24–72 hours depending on the muscle and the dose. Bigger muscles (quads, hamstrings, back) recover more slowly than smaller ones (arms, calves)."
+            return "Each muscle recovers on its own clock — a session deposits fatigue based on your sets and how close to failure they were, clearing over roughly 24–72 hours. Bigger muscles recover more slowly."
         case .cardioScore:
-            return "Cardio stress depends on intensity, not just minutes. Easy Zone 2 work clears in about a day, threshold work needs one to two days, and high-intensity intervals suppress the nervous system for two to three. Sessions are weighted by time in heart-rate zones when available."
+            return "Cardio stress depends on intensity, not just minutes. Easy Zone 2 clears in about a day; hard intervals can take two to three."
         case .trainingLoad:
-            return "Training load compares recent work with your normal baseline using an exponentially weighted average. It helps flag big spikes or unusually flat weeks, but it is not an injury prediction."
+            return "Compares recent work against your own norm to flag spikes and unusually flat weeks."
         case .confidence:
-            return "Confidence reflects how much useful data was available. More logged workouts and more consistent Health data make the recommendation sharper."
+            return "Reflects how much useful data was available. More logged workouts and consistent Health data sharpen the recommendation."
         }
     }
 

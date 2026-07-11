@@ -318,14 +318,14 @@ struct HomeView: View {
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Ready when you are").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Connect Health or add a training program to build your baseline.")
+                        Text("Connect Apple Health or add a training program to build your baseline.")
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                 }
                 HStack(spacing: Space.md) {
                     // Triggers the Health permission directly — no detour
                     // through the full Settings sheet to find the right card.
-                    Button(connectingHealth ? "Connecting…" : "Connect Health") {
+                    Button(connectingHealth ? "Connecting…" : "Connect Apple Health") {
                         connectingHealth = true
                         Task {
                             _ = await HealthService.shared.requestAuthorization()
@@ -472,7 +472,7 @@ struct HomeView: View {
                     Text("Welcome back")
                         .font(.cardTitle)
                         .foregroundStyle(theme.textPrimary)
-                    Text("It's been \(welcomeBackGapDays) days — that's fine, it happens. The fastest way back is a lighter first session, not a heroic one.")
+                    Text("It's been \(welcomeBackGapDays) days. A lighter first session is the fastest way back.")
                         .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1151,7 +1151,7 @@ struct RecoveryHeroCard: View {
                     if isBuilding {
                         Text("Building your baseline")
                             .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textSecondary)
-                        Text("A few more nights of data and your readiness score unlocks. Recommendations stay conservative until then.")
+                        Text("Your readiness score unlocks after a few more nights of data.")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)

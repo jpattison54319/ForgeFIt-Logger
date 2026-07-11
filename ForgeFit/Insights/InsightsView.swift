@@ -143,7 +143,7 @@ private enum InsightsInfoTopic: Identifiable {
     var body: String {
         switch self {
         case .estimated1RM:
-            "Estimated 1RM turns a hard set into an estimated max. It is best for spotting strength trends, not for forcing max attempts."
+            "Estimates your one-rep max from hard sets. Best for spotting strength trends over time."
         case .muscleVolume:
             "Muscle volume counts hard sets by the muscles they train. The target line is a coaching landmark, not a rule every week must hit."
         }

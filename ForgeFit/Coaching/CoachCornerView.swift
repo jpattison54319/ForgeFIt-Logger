@@ -140,7 +140,7 @@ struct CoachCornerView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your folder, routines, and history stay exactly as they are — the coach just stops tracking a weekly target.")
+            Text("The coach stops tracking your weekly target. Your routines and history stay.")
         }
         .sheet(item: $attachFolderTarget) { folder in
             AttachPlanSheet(folder: folder) { sessionsPerWeek in
