@@ -62,6 +62,7 @@ struct ActiveWorkoutLoggerView: View {
     /// This session's progression suggestions, keyed by workout-exercise id.
     @State private var progressionByWorkoutExercise: [UUID: ProgressionSuggestionModel] = [:]
     @State private var showPostWorkoutSummary = false
+    @State private var showEmptyDiscardConfirm = false
     @State private var detailExercise: ExerciseLibraryModel?
     /// Best prior values per exercise — the bar a set must clear to earn a
     /// record award. Computed once; history doesn't change mid-session.
@@ -178,6 +179,19 @@ struct ActiveWorkoutLoggerView: View {
                 onSave: finishAndDismiss,
                 onCancel: { showPostWorkoutSummary = false }
             )
+        }
+        .confirmationDialog(
+            "Discard empty workout?",
+            isPresented: $showEmptyDiscardConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Workout", role: .destructive) {
+                WorkoutFinisher.discard(workout, in: modelContext)
+                dismiss()
+            }
+            Button("Keep Logging", role: .cancel) {}
+        } message: {
+            Text("Nothing was completed — there's nothing to save to your history or Apple Health.")
         }
         .sheet(isPresented: $showAddPicker) {
             ExercisePickerView(excludeYogaPoses: true, context: exercisesInWorkout, history: history) { added in addExercises(added) }
@@ -423,6 +437,12 @@ struct ActiveWorkoutLoggerView: View {
                     Button {
                         if isHistoricalEdit {
                             saveHistoricalEdit()
+                        } else if !WorkoutFinisher.hasSubstance(workout) {
+                            // Nothing logged: the celebratory summary would be
+                            // all zeros, and finishing would discard anyway
+                            // (WorkoutFinisher's empty-workout guard) — ask
+                            // the one honest question instead.
+                            showEmptyDiscardConfirm = true
                         } else {
                             // Straight to the summary — it IS the confirmation
                             // (Save Workout / Keep Logging live there). The old

@@ -16,6 +16,27 @@ import WidgetKit
 /// 4. kick a cloud sync.
 enum WorkoutFinisher {
 
+    /// A workout is worth keeping when something actually happened: a
+    /// completed set, a cardio/yoga session that ran live or was deliberately
+    /// logged, or typed exercise notes (never silently delete typed text).
+    /// An untouched planned block counts for nothing — matching the
+    /// auto-complete rules below, which ignore sessions that never started.
+    @MainActor
+    static func hasSubstance(_ workout: WorkoutModel) -> Bool {
+        if workout.exercises.contains(where: { we in we.sets.contains { $0.completedAt != nil } }) {
+            return true
+        }
+        if workout.cardioSessions.contains(where: { session in
+            guard session.deletedAt == nil else { return false }
+            return session.endedAt != nil
+                || session.liveStartedAt != nil
+                || (session.isYogaSession && session.sourceDevice == CardioSessionModel.yogaManualSource)
+        }) {
+            return true
+        }
+        return workout.exercises.contains { !($0.notes ?? "").isEmpty }
+    }
+
     /// Returns an error message when the terminal save fails (the workout
     /// stays live and nothing downstream runs) — `nil` on success. Callers
     /// with a UI surface the message; the watch path is best-effort.
@@ -27,6 +48,13 @@ enum WorkoutFinisher {
         liveMetrics: WatchLiveMetrics? = nil,
         watchSavedToHealth: Bool = false
     ) -> String? {
+        // Finishing an empty workout is a discard, not a completion: nothing
+        // lands in history, no XP is awarded, and no phantom HKWorkout is
+        // written to Apple Health. The phone UI asks before getting here;
+        // this guard makes the rule hold for watch-initiated finishes too.
+        guard hasSubstance(workout) else {
+            return discard(workout, in: context)
+        }
         let now = Date.now
         let workoutExercisesByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // The deferred HealthKit fills below outlive this call. If the
