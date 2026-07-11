@@ -258,6 +258,7 @@ struct HeartRateTrendChart: View {
     /// Time windows shaded behind the trace — the cardio efforts of a hybrid
     /// session, in the same time domain as `samples`.
     var bands: [(start: Date, end: Date)] = []
+    var height: CGFloat = 160
 
     @Environment(\.theme) private var theme
 
@@ -309,7 +310,7 @@ struct HeartRateTrendChart: View {
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
-        .frame(height: 160)
+        .frame(height: height)
     }
 }
 
