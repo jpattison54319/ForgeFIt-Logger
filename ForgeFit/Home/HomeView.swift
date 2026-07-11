@@ -533,27 +533,11 @@ struct HomeView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: recovery.action.systemImage)
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Today: \(recovery.preWorkoutAdjustment)")
-                            .font(.tag)
-                            .lineLimit(2)
-                    }
-                    .foregroundStyle(recovery.action.tint(in: theme))
-                    if let muscle = doseContext.muscles.first {
-                        HStack(spacing: 6) {
-                            Tag(
-                                text: "\(muscle.muscle.capitalized) \(Int(muscle.recoveryScore * 100))% local",
-                                color: theme.readinessColor(muscle.recoveryScore),
-                                background: theme.readinessColor(muscle.recoveryScore).opacity(0.14)
-                            )
-                            Text(muscle.detail)
-                                .font(.tag)
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(1)
-                        }
-                    }
+                    // No readiness action line here: the RecoveryHeroCard above
+                    // already makes today's call, and per-muscle state lives in
+                    // Recovery → Per muscle. This card answers one question —
+                    // "what's next" — and the coach button below carries any
+                    // adjustment.
                 }
 
                 // Always "Start" — the coach's modified dose lives entirely

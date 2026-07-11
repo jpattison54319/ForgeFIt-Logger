@@ -151,7 +151,6 @@ struct RecoveryDetailView: View {
                 Picker("View", selection: $selectedTab) {
                     Text("Today").tag(Tab.today)
                     Text("Trends").tag(Tab.trends)
-                    Text("Signals").tag(Tab.signals)
                 }
                 .pickerStyle(.segmented)
 
@@ -169,6 +168,10 @@ struct RecoveryDetailView: View {
                     AdvancedLoadDisclosure(report: report) { selectedInfo = $0 }
 
                 case .trends:
+                    if HealthMetricsStore.shared.hrvGapDetected {
+                        GarminHRVGapCard()
+                    }
+
                     SystemicScoreCard(systemic: report.recovery.systemic) { selectedInfo = $0 }
 
                     if let trend = hrvTrend {
@@ -206,11 +209,7 @@ struct RecoveryDetailView: View {
                         FitnessFatigueCard(points: fitnessFatigue)
                     }
 
-                case .signals:
-                    if HealthMetricsStore.shared.hrvGapDetected {
-                        GarminHRVGapCard()
-                    }
-
+                    SectionHeader("Today's signals")
                     HealthSignalRows(report: report)
                 }
             }
@@ -247,7 +246,7 @@ struct RecoveryDetailView: View {
 }
 
 private enum Tab: Hashable {
-    case today, trends, signals
+    case today, trends
 }
 
 /// The classic training-load chart: fitness (CTL, 42-day) builds slowly,
