@@ -205,15 +205,18 @@ struct YogaPoseCatalogTests {
         YogaPoseCatalog.seed(into: context)
 
         // A pose from a previous catalog version (no longer bundled).
-        let deprecatedID = YogaPoseCatalog.id(forSlug: "mountain-pose")
-        let deprecated = ExerciseLibraryModel(id: deprecatedID, name: "Mountain Pose")
-        deprecated.mediaSlug = "yoga/mountain-pose"
+        let deprecatedSlug = "eagle-pose"
+        #expect(!YogaPoseCatalog.catalogSlugs.contains(deprecatedSlug),
+                "test premise broken: \(deprecatedSlug) is back in the catalog — pick another deprecated slug")
+        let deprecatedID = YogaPoseCatalog.id(forSlug: deprecatedSlug)
+        let deprecated = ExerciseLibraryModel(id: deprecatedID, name: "Eagle Pose")
+        deprecated.mediaSlug = "yoga/eagle-pose"
         deprecated.modalityRaw = Modality.yoga.rawValue
         context.insert(deprecated)
         context.insert(ExerciseAliasModel(
-            id: ExerciseCatalog.deterministicID(for: "yoga-alias/mountain-pose"),
+            id: ExerciseCatalog.deterministicID(for: "yoga-alias/eagle-pose"),
             exerciseID: deprecatedID,
-            alias: "Tadasana"
+            alias: "Garudasana"
         ))
 
         // A user-modified deprecated pose — must be preserved.

@@ -50,9 +50,7 @@ watch destinations often fail to resolve.
   simulators have no iCloud account.
 - Reset-store UI tests intermittently crash in CloudKit ModelContainer init.
   Retry the failing test in isolation before treating it as a regression.
-- Some suites carry pre-existing failures (as of 2026-07:
-  `YogaPoseCatalogTests`, from pose-catalog data drift). Before chasing any
-  failure, confirm it also fails on an unmodified checkout.
+- Before chasing any failure, confirm it also fails on an unmodified checkout.
 
 ## Writing code
 
