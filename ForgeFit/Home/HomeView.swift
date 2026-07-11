@@ -1157,10 +1157,15 @@ struct RecoveryHeroCard: View {
     @Environment(\.theme) private var theme
     let report: RecoveryEngine.Report
 
-    /// Below this confidence the engine is still learning the user's
-    /// baselines — showing a precise 0–100 there is false authority, so the
-    /// card switches to an explicit building state instead.
-    private var isBuilding: Bool { report.confidence < 0.75 }
+    /// Three "no score" states, checked in order. Loading: Health hasn't
+    /// completed its first read this session, so claiming anything about the
+    /// baseline would be wrong. Building: no evidence-based score exists yet
+    /// (same predicate as the Recovery screen's ring, so the two surfaces
+    /// can never disagree — gating on `confidence` did, because confidence
+    /// also dips when today's sleep just hasn't synced yet).
+    private var isLoading: Bool { HealthMetricsStore.shared.lastRefreshed == nil }
+    private var isBuilding: Bool { !report.baselineReady }
+    private var showsScore: Bool { !isLoading && !isBuilding }
 
     var body: some View {
         Card {
@@ -1169,7 +1174,7 @@ struct RecoveryHeroCard: View {
                 // Exertion vs your own norm (acute:chronic) — promoted from
                 // the recovery screen's Advanced disclosure so the week's
                 // dose is visible where training decisions happen.
-                if !isBuilding, let acwr = report.acwr {
+                if showsScore, let acwr = report.acwr {
                     exertionGauge(acwr)
                 }
             }
@@ -1180,12 +1185,14 @@ struct RecoveryHeroCard: View {
             HStack(spacing: Space.lg) {
                 ZStack {
                     ProgressRing(
-                        progress: isBuilding ? max(0.05, report.confidence) : report.displayScore,
+                        progress: showsScore ? report.displayScore : max(0.05, report.confidence),
                         lineWidth: 10,
-                        color: isBuilding ? theme.textTertiary : theme.readinessColor(report.displayScore)
+                        color: showsScore ? theme.readinessColor(report.displayScore) : theme.textTertiary
                     )
                     .frame(width: 76, height: 76)
-                    if isBuilding {
+                    if isLoading {
+                        ProgressView()
+                    } else if isBuilding {
                         Image(systemName: "hourglass")
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(theme.textSecondary)
@@ -1198,7 +1205,14 @@ struct RecoveryHeroCard: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    if isBuilding {
+                    if isLoading {
+                        Text("Checking your signals")
+                            .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textSecondary)
+                        Text("Reading today's data from Apple Health.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if isBuilding {
                         Text("Building your baseline")
                             .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textSecondary)
                         Text("Your readiness score unlocks after a few more nights of data.")
@@ -1220,9 +1234,12 @@ struct RecoveryHeroCard: View {
                             .foregroundStyle(theme.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    HStack(spacing: 6) {
-                        ForEach(report.reasonChips.prefix(2)) { chip in
-                            Tag(text: chip.text, color: chip.tone.foreground(in: theme), background: chip.tone.background(in: theme))
+                    // Chips explain a computed report — meaningless mid-load.
+                    if !isLoading {
+                        HStack(spacing: 6) {
+                            ForEach(report.reasonChips.prefix(2)) { chip in
+                                Tag(text: chip.text, color: chip.tone.foreground(in: theme), background: chip.tone.background(in: theme))
+                            }
                         }
                     }
                 }

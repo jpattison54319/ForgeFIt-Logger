@@ -152,6 +152,16 @@ struct RecoveryEngine {
         /// The slow-moving chronic recovery trend (7-day), shown as context
         /// beside the daily number. Nil until it has enough history.
         var trendScore: Double? { recovery.systemic.state.value }
+
+        /// True once an evidence-based score backs `displayScore` (the acute
+        /// daily readiness or the chronic trend). Surfaces gate the score on
+        /// this, never on `confidence` — confidence also dips when today's
+        /// inputs are incomplete (sleep not yet synced at 1am), which is not
+        /// the same as a baseline still being built, and gating on it made
+        /// Home claim "building" while the Recovery screen showed a score.
+        var baselineReady: Bool {
+            recovery.daily.state.value != nil || recovery.systemic.state.value != nil
+        }
     }
 
     private struct LoadAssessment {
@@ -616,7 +626,7 @@ struct RecoveryEngine {
         var completenessPoints = 0.0
 
         if let current {
-            let hrvValue = current.bestHRV
+            let hrvValue = acuteComparableHRV(for: current)
             usedRMSSD = current.hrvRMSSD != nil
             if let hrvValue {
                 availableParts += 1
@@ -628,7 +638,7 @@ struct RecoveryEngine {
                     let lowCutoff = mean * 0.90
                     let recent = recentHealthMetrics(days: 3)
                     let lowRecent = recent.compactMap { metric -> Bool? in
-                        metric.bestHRV.map { $0 < lowCutoff }
+                        acuteComparableHRV(for: metric).map { $0 < lowCutoff }
                     }.filter { $0 }.count
                     singleLowHRV = hrvValue < lowCutoff
                     sustainedLowHRV = singleLowHRV && lowRecent >= 2
@@ -646,7 +656,7 @@ struct RecoveryEngine {
                     }
                     // Trend beats a single reading: show the 7-day rolling
                     // average against the longer baseline (Plews et al. 2013).
-                    let rolling = recentHealthMetrics(days: 7).compactMap { $0.bestHRV }
+                    let rolling = recentHealthMetrics(days: 7).compactMap { acuteComparableHRV(for: $0) }
                     let avg7 = average(rolling) ?? hrvValue
                     signals.append(Signal(
                         name: "HRV",
@@ -664,7 +674,13 @@ struct RecoveryEngine {
                 }
             } else {
                 missing.append("HRV")
-                signals.append(Signal(name: "HRV", systemImage: "waveform.path.ecg", value: "-", detail: "Connect Apple Health", connected: false))
+                // A nocturnal user past midnight is connected — the night
+                // just isn't in yet.
+                signals.append(Signal(
+                    name: "HRV", systemImage: "waveform.path.ecg", value: "-",
+                    detail: usesNocturnalHRV ? "No overnight HRV yet" : "Connect Apple Health",
+                    connected: usesNocturnalHRV
+                ))
             }
 
             if let restingHR = current.bestRestingHR {
@@ -884,9 +900,26 @@ struct RecoveryEngine {
         return healthMetrics.filter { $0.date >= cutoff && $0.date <= now }.sorted { $0.date > $1.date }
     }
 
+    /// True when this user's HRV history is overnight readings — the channel
+    /// every today-vs-baseline comparison must stick to. Awake readings only
+    /// stand in for users with no nocturnal history at all (no sleep
+    /// tracking), where awake-vs-awake is apples-to-apples.
+    var usesNocturnalHRV: Bool {
+        baselineMetrics(days: 60).filter { $0.nocturnalHRV != nil }.count >= 14
+    }
+
+    /// A day's HRV for baseline comparisons, channel-pure. Apple samples
+    /// awake HRV around the clock, so just past midnight the new day already
+    /// holds an awake spot reading while nocturnal HRV doesn't exist yet —
+    /// and "awake at 1am" scored against a sleeping baseline reads as a
+    /// crashed HRV (the 1am bug, HRV edition).
+    func acuteComparableHRV(for metric: DailyHealthMetric) -> Double? {
+        usesNocturnalHRV ? metric.nocturnalHRV : (metric.hrvRMSSD ?? metric.hrvSDNN)
+    }
+
     private func baselineHRVValues(preferRMSSD: Bool) -> [Double] {
         _ = preferRMSSD
-        return baselineMetrics(days: 60).compactMap { $0.bestHRV }
+        return baselineMetrics(days: 60).compactMap { acuteComparableHRV(for: $0) }
     }
 
     private func baselineRHRValues() -> [Double] {

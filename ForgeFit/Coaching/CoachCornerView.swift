@@ -199,10 +199,9 @@ struct CoachCornerView: View {
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
                         Spacer()
-                        // Below this confidence the engine is still building
-                        // baselines (mirrors `RecoveryHeroCard.isBuilding`) —
-                        // a precise number there would be false authority.
-                        if recovery.confidence >= 0.75 {
+                        // Mirrors `RecoveryHeroCard`: a number only once an
+                        // evidence-based score exists behind it.
+                        if recovery.baselineReady {
                             Text("\(Int(recovery.displayScore * 100)) ready")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)

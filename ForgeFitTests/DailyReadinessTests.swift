@@ -96,15 +96,85 @@ struct DailyReadinessTests {
         #expect(hrPart?.name == "Resting HR")
     }
 
+    /// The 1am bug, HRV edition: Apple samples awake HRV around the clock,
+    /// so just past midnight the new day holds an awake spot reading (47 ms,
+    /// low because the user is awake late — not because they're unrecovered)
+    /// while nocturnal HRV doesn't exist yet. Scored against the sleeping
+    /// baseline it tanked the daily score to ~20 until sleep synced. With no
+    /// overnight evidence the daily score must wait, falling back to the
+    /// (smooth) trend, and no HRV flag may fire off the awake sample.
+    @Test func awakeHRVBeforeSleepSyncsDoesNotTankDailyScore() {
+        let m = metrics(todayHRV: nil, todaySleepingHR: nil, todaySleepMinutes: nil).map { metric in
+            var copy = metric
+            if cal.startOfDay(for: copy.date) == cal.startOfDay(for: now) {
+                copy.hrvSDNN = 47   // awake spot sample vs the 80 ms sleeping baseline
+                copy.restingHR = 69 // Apple's early daytime resting-HR estimate
+            } else {
+                copy.restingHR = 67
+            }
+            return copy
+        }
+        let snapshot = engine(m).recoverySnapshot()
+        #expect(snapshot.daily.state.value == nil)   // pending, not a false 20
+        #expect(!snapshot.daily.flags.contains("HRV low today"))
+    }
+
+    /// Users with no sleep tracking keep their daily score: awake HRV
+    /// against an awake baseline is apples-to-apples, and it's all they have.
+    @Test func awakeOnlyUsersStillGetADailyScore() {
+        var m: [RecoveryEngine.DailyHealthMetric] = []
+        for day in 1...40 {
+            m.append(RecoveryEngine.DailyHealthMetric(
+                date: cal.date(byAdding: .day, value: -day, to: now)!,
+                hrvSDNN: 80, hrvRMSSD: nil, restingHR: 67,
+                sleepTotalMinutes: nil, source: "test", hrvSampleCount: 5,
+                nocturnalHRV: nil, sleepingHR: nil
+            ))
+        }
+        m.append(RecoveryEngine.DailyHealthMetric(
+            date: now, hrvSDNN: 78, hrvRMSSD: nil, restingHR: 67,
+            sleepTotalMinutes: nil, source: "test", hrvSampleCount: 5,
+            nocturnalHRV: nil, sleepingHR: nil
+        ))
+        let daily = engine(m).recoverySnapshot().daily
+        #expect((daily.state.value ?? 0) > 0.7)
+    }
+
+    /// The other 1am bug: with established baselines but tonight's sleep not
+    /// yet synced, `confidence` dips below the old 0.75 display gate while
+    /// the daily score is fully computable from HRV + sleeping HR — so Home
+    /// claimed "Building your baseline" while the Recovery screen showed the
+    /// score. Display surfaces gate on `baselineReady`, which must stay true
+    /// whenever an evidence-based score exists.
+    @Test func missingTonightSleepDoesNotReadAsBaselineBuilding() {
+        let report = engine(metrics(todaySleepMinutes: nil)).report()
+        #expect(report.recovery.daily.state.value != nil)
+        #expect(report.baselineReady)
+        // The scenario that exposed the bug: confidence alone would have
+        // hidden a score the detail screen was already showing.
+        #expect(report.confidence < 0.75)
+    }
+
+    /// With no health history and no workouts there is no evidence-based
+    /// score at all — that (and only that) is the building state.
+    @Test func noDataReadsAsBaselineBuilding() {
+        let report = RecoveryEngine(workouts: [], healthMetrics: [], calendar: cal, now: now).report()
+        #expect(!report.baselineReady)
+    }
+
     /// A genuinely elevated daytime resting HR (vs the daytime baseline)
-    /// still flags — as resting HR, never as sleeping HR.
+    /// still flags — as resting HR, never as sleeping HR. Run mid-afternoon:
+    /// by then a missing overnight record means the night was missed (watch
+    /// died), so the score degrades to daytime signals rather than waiting.
     @Test func daytimeRestingHRElevationFlagsHonestly() {
         let m = metrics(todayHRV: nil, todaySleepingHR: nil, todaySleepMinutes: nil).map { metric in
             var copy = metric
             copy.restingHR = cal.startOfDay(for: copy.date) == cal.startOfDay(for: now) ? 80 : 65
             return copy
         }
-        let daily = engine(m).recoverySnapshot().daily
+        let afternoon = now.addingTimeInterval(6 * 3600)
+        let daily = RecoveryEngine(workouts: [], healthMetrics: m, calendar: cal, now: afternoon)
+            .recoverySnapshot().daily
         #expect(daily.flags.contains("Resting HR elevated"))
         #expect(!daily.flags.contains("Sleeping HR elevated"))
     }

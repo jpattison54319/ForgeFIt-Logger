@@ -202,9 +202,30 @@ extension RecoveryEngine {
         for (part, weight) in [(hrv, DailyWeight.hrv), (hr, DailyWeight.sleepingHR), (sleep, DailyWeight.sleep)] {
             if let value = part.state.value { weighted += value * weight; weightSum += weight }
         }
-        guard weightSum >= 0.2 else {
+        // An acute "last night" score needs evidence a night happened: HRV
+        // (channel-pure — awake-only users' awake channel counts, it's all
+        // they have), sleep, or genuinely sleeping HR. Apple's daytime
+        // resting-HR estimate alone can't fabricate a night — before this
+        // gate, being up past midnight scored the new day from awake data
+        // and the score whipsawed until sleep synced.
+        //
+        // The gate only holds until mid-morning: before then, missing
+        // overnight data almost always means the night isn't in yet (still
+        // awake at 1am, or the watch hasn't synced). From mid-morning it
+        // means the night was missed, and the score degrades honestly to
+        // the daytime signals that exist (an elevated daytime resting HR
+        // must still flag on a watch-died day).
+        let hrMeasuredOvernight = sleepingHRAssessment().map { !$0.isDaytimeFallback } ?? false
+        let overnightEvidence = hrv.state.value != nil || sleep.state.value != nil
+            || (hr.state.value != nil && hrMeasuredOvernight)
+        let nightStillPending = calendar.component(.hour, from: now) < 9
+        guard weightSum >= 0.2, overnightEvidence || !nightStillPending else {
+            let overnightHistory = usesNocturnalHRV
+                || baselineMetrics(days: 60).contains { $0.sleepTotalMinutes != nil }
             return DailyReadiness(
-                state: .building("Wear a watch to bed — Apple Watch, or a Garmin synced through Garmin Connect — to capture last night's HRV, heart rate, and sleep."),
+                state: .building(overnightHistory
+                    ? "Waiting on last night's data — the score updates once your sleep syncs."
+                    : "Wear a watch to bed — Apple Watch, or a Garmin synced through Garmin Connect — to capture last night's HRV, heart rate, and sleep."),
                 parts: parts, flags: [],
                 guidance: "Daily readiness reads your nocturnal HRV, sleeping heart rate, and last night's sleep against your own baseline."
             )
@@ -265,10 +286,15 @@ extension RecoveryEngine {
     /// Last night's nocturnal HRV vs a 14–60 day baseline, in ln space (HRV is
     /// log-normal; ln-HRV is the standard for baseline/SWC math — Plews 2013).
     private func acuteHRVAssessment() -> AcuteHRV? {
-        guard let current = latestHealthMetric(), let today = current.bestHRV, today > 0 else { return nil }
+        // Channel-pure via `acuteComparableHRV`: nocturnal readings against
+        // nocturnal nights only. An awake spot sample taken just past
+        // midnight must never stand in for a night that hasn't happened —
+        // it scored "awake at 1am" as a crashed HRV.
+        guard let current = latestHealthMetric(),
+              let today = acuteComparableHRV(for: current), today > 0 else { return nil }
         let baseline = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) >= 1 }   // exclude today only
-            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
+            .compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }.map { log($0) }
         guard baseline.count >= 14 else { return nil }
         let lnToday = log(today)
         let mean = average(baseline) ?? lnToday
@@ -286,12 +312,22 @@ extension RecoveryEngine {
 
     private func acuteHRVPart() -> ScorePart {
         guard let assessment = acuteHRVAssessment() else {
-            let have = latestHealthMetric()?.bestHRV != nil
+            // A nocturnal user past midnight has a healthy baseline — the
+            // night just isn't in yet. Say that, not "baseline building".
+            if usesNocturnalHRV, latestHealthMetric()?.nocturnalHRV == nil {
+                return ScorePart(
+                    name: "HRV (today)",
+                    state: .building("Last night's HRV isn't in yet"),
+                    valueText: "—",
+                    detailText: "Updates when tonight's sleep syncs"
+                )
+            }
+            let todayValue = latestHealthMetric().flatMap { acuteComparableHRV(for: $0) }
             return ScorePart(
                 name: "HRV (today)",
-                state: .building(have ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
-                valueText: latestHealthMetric()?.bestHRV.map { "\(Int($0.rounded())) ms" } ?? "—",
-                detailText: have ? "Nocturnal HRV; baseline still forming" : "Wear a watch overnight to capture HRV"
+                state: .building(todayValue != nil ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
+                valueText: todayValue.map { "\(Int($0.rounded())) ms" } ?? "—",
+                detailText: todayValue != nil ? "Nocturnal HRV; baseline still forming" : "Wear a watch overnight to capture HRV"
             )
         }
         return ScorePart(
@@ -400,19 +436,20 @@ extension RecoveryEngine {
     ///
     /// All math runs in ln space: HRV is log-normally distributed, and the
     /// baseline / SWC / z-score literature is built on lnRMSSD (Plews 2013).
-    /// Signals come via `bestHRV` — the nocturnal window when present, else
-    /// all-day RMSSD, else SDNN. HealthKit only exposes SDNN, whose absolute ms
+    /// Signals come via `acuteComparableHRV` — nocturnal readings for
+    /// nocturnal users, awake RMSSD/SDNN only for users with no overnight
+    /// history, never mixed. HealthKit only exposes SDNN, whose absolute ms
     /// differ from RMSSD, but ln-space z-scores against the *user's own*
     /// baseline are scale-free, so the same constants apply to either metric.
     private func hrvPart() -> ScorePart {
-        let recent = recentHealthMetrics(days: 7).compactMap { $0.bestHRV }.filter { $0 > 0 }
+        let recent = recentHealthMetrics(days: 7).compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }
         guard recent.count >= 4 else {
             return ScorePart(name: "HRV trend", state: .building("Needs \(4 - recent.count) more morning\(4 - recent.count == 1 ? "" : "s") of HRV"),
                              valueText: "—", detailText: "Wear a watch overnight to capture HRV")
         }
         let baseline = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) > 7 }
-            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
+            .compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }.map { log($0) }
         guard baseline.count >= 14 else {
             return ScorePart(name: "HRV trend", state: .building("Baseline building — \(14 - baseline.count) more days"),
                              valueText: "\(Int((average(recent) ?? 0).rounded())) ms", detailText: "7-day average; baseline needs ~2 weeks more")
