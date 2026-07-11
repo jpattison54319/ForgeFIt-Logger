@@ -11,6 +11,9 @@ struct HRZoneSettingsView: View {
     @State private var showAdvanced = false
     @State private var showFieldTest = false
     @State private var manualAge = ""
+    @State private var appleSyncProposal: AppleHealthZoneSync?
+    @State private var appleSyncError: String?
+    @State private var syncingAppleHealth = false
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var healthAge: Int? { HealthService.shared.biologicalAge() }
@@ -36,6 +39,22 @@ struct HRZoneSettingsView: View {
                 config.maxHR = peak
             }
         }
+        .alert(item: $appleSyncProposal) { proposal in
+            Alert(
+                title: Text("Sync from Apple Health?"),
+                message: Text(proposal.message),
+                primaryButton: .default(Text("Apply")) {
+                    config.maxHR = proposal.maxHR
+                    config.restingHR = proposal.restingHR
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .alert("Apple Health unavailable", isPresented: appleSyncErrorPresented) {
+            Button("OK", role: .cancel) { appleSyncError = nil }
+        } message: {
+            Text(appleSyncError ?? "No recent heart-rate data was available.")
+        }
     }
 
     // MARK: - Max / resting HR
@@ -53,7 +72,9 @@ struct HRZoneSettingsView: View {
                                 .foregroundStyle(theme.secondaryAccent)
                         }
                     }
-                    Text("Zones are calculated as a percentage of this value.")
+                    Text(config.restingHR == nil
+                         ? "Zones are calculated as a percentage of this value."
+                         : "Zones use heart-rate reserve: resting HR plus a percentage of the gap to max.")
                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     Divider().overlay(theme.separator)
                     Toggle(isOn: restingEnabled) {
@@ -155,6 +176,18 @@ struct HRZoneSettingsView: View {
                         }
                     }
                     Divider().overlay(theme.separator)
+                    Text("Apple Health").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Text("Pull your latest resting heart rate and recent workout peak, then preview the updated zones before applying them.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    SecondaryButton(
+                        title: syncingAppleHealth ? "Syncing…" : "Sync from Apple Health",
+                        systemImage: "heart.text.square.fill"
+                    ) {
+                        syncFromAppleHealth()
+                    }
+                    .disabled(syncingAppleHealth)
+                    Divider().overlay(theme.separator)
                     // Field test
                     Text("Field test").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Text("Run an all-out effort while wearing your Apple Watch and we'll capture your true peak heart rate for a more accurate max.")
@@ -186,15 +219,11 @@ struct HRZoneSettingsView: View {
             if showAdvanced {
                 Card {
                     VStack(alignment: .leading, spacing: Space.sm) {
+                        Text("Edit each split as either percent or exact BPM. Both controls stay in sync.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                         ForEach(0..<4, id: \.self) { index in
-                            Stepper(value: boundaryBinding(index), in: boundaryRange(index), step: 1) {
-                                HStack {
-                                    Text("Z\(index + 1)/Z\(index + 2) split").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
-                                    Spacer()
-                                    Text("\(Int((config.zoneUpperBounds[index] * 100).rounded()))%")
-                                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textPrimary)
-                                }
-                            }
+                            boundaryRow(index)
                         }
                         SecondaryButton(title: "Reset to standard (60·70·80·90)", systemImage: "arrow.counterclockwise") {
                             config.zoneUpperBounds = HRZoneConfig.defaultBounds
@@ -216,12 +245,29 @@ struct HRZoneSettingsView: View {
         Binding(get: { config.restingHR ?? 60 }, set: { config.restingHR = $0 })
     }
 
+    private var appleSyncErrorPresented: Binding<Bool> {
+        Binding(get: { appleSyncError != nil }, set: { if !$0 { appleSyncError = nil } })
+    }
+
     private func boundaryBinding(_ index: Int) -> Binding<Int> {
         Binding(
             get: { Int((config.zoneUpperBounds[index] * 100).rounded()) },
             set: { newValue in
                 var bounds = config.zoneUpperBounds
                 bounds[index] = Double(newValue) / 100
+                config.zoneUpperBounds = bounds
+            }
+        )
+    }
+
+    private func boundaryBPMBinding(_ index: Int) -> Binding<Int> {
+        Binding(
+            get: { config.bpm(forFraction: config.zoneUpperBounds[index]) },
+            set: { newValue in
+                let range = boundaryBPMRange(index)
+                let bpm = min(max(newValue, range.lowerBound), range.upperBound)
+                var bounds = config.zoneUpperBounds
+                bounds[index] = max(0, min(1, config.fraction(forBPM: bpm)))
                 config.zoneUpperBounds = bounds
             }
         )
@@ -234,6 +280,45 @@ struct HRZoneSettingsView: View {
         return lower...max(lower, upper)
     }
 
+    private func boundaryBPMRange(_ index: Int) -> ClosedRange<Int> {
+        let minBPM = config.restingHR ?? 40
+        let lower = index == 0 ? minBPM : config.bpm(forFraction: config.zoneUpperBounds[index - 1]) + 1
+        let upper = index == 3 ? config.maxHR - 1 : config.bpm(forFraction: config.zoneUpperBounds[index + 1]) - 1
+        return lower...max(lower, upper)
+    }
+
+    private func boundaryRow(_ index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Stepper(value: boundaryBinding(index), in: boundaryRange(index), step: 1) {
+                HStack {
+                    Text("Z\(index + 1)/Z\(index + 2) split")
+                        .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    Text("\(Int((config.zoneUpperBounds[index] * 100).rounded()))%")
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                }
+            }
+            HStack(spacing: 8) {
+                Text("BPM")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+                TextField("BPM", value: boundaryBPMBinding(index), format: .number)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(theme.textPrimary)
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .background(theme.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("bpm")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textTertiary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func rangeText(_ zone: Int) -> String {
         let range = config.rangeBPM(forZone: zone)
         return zone == 5 ? "\(range.lowerBound)+ bpm" : "\(range.lowerBound)–\(range.upperBound) bpm"
@@ -242,12 +327,55 @@ struct HRZoneSettingsView: View {
     private func zonePercentText(_ zone: Int) -> String {
         let lower = zone == 1 ? 0 : Int((config.zoneUpperBounds[zone - 2] * 100).rounded())
         let upper = zone == 5 ? 100 : Int((config.zoneUpperBounds[zone - 1] * 100).rounded())
-        return "\(lower)–\(upper)% of max"
+        return "\(lower)–\(upper)% of \(config.usesHeartRateReserve ? "HR reserve" : "max")"
     }
 
     private func save() {
         HRZoneConfigStore.save(config)
         WatchLink.shared.publishState()
+        LiveMetricsHub.shared.reloadZoneConfig()
+    }
+
+    private func syncFromAppleHealth() {
+        guard !syncingAppleHealth else { return }
+        syncingAppleHealth = true
+        Task {
+            _ = await HealthService.shared.requestAuthorization()
+            async let resting = HealthService.shared.latestRestingHR()
+            async let walking = HealthService.shared.latestWalkingAverageHR()
+            async let peak = HealthService.shared.recentPeakHeartRate(days: 90)
+            let healthResting = await resting
+            let walkingFallback = await walking
+            let recentPeak = await peak
+            await MainActor.run {
+                syncingAppleHealth = false
+                let resolvedResting = healthResting ?? walkingFallback ?? config.restingHR
+                let resolvedMax = recentPeak ?? healthAge.map(HRZoneConfig.maxHR(forAge:)) ?? config.maxHR
+                guard resolvedResting != nil || recentPeak != nil else {
+                    appleSyncError = "ForgeFit could not find recent resting HR, walking HR, or workout peak HR in Apple Health."
+                    return
+                }
+                appleSyncProposal = AppleHealthZoneSync(
+                    maxHR: resolvedMax,
+                    restingHR: resolvedResting,
+                    maxSource: recentPeak == nil ? "fallback" : "peak from last 90 days",
+                    restingSource: healthResting != nil ? "latest resting HR" : (walkingFallback != nil ? "walking HR fallback" : "existing value")
+                )
+            }
+        }
+    }
+}
+
+private struct AppleHealthZoneSync: Identifiable {
+    let id = UUID()
+    let maxHR: Int
+    let restingHR: Int?
+    let maxSource: String
+    let restingSource: String
+
+    var message: String {
+        let restingText = restingHR.map { "\($0) bpm (\(restingSource))" } ?? "unchanged"
+        return "Max HR: \(maxHR) bpm (\(maxSource)). Resting HR: \(restingText). Your zones will use heart-rate reserve when resting HR is set."
     }
 }
 
@@ -275,7 +403,7 @@ struct HRZoneFieldTestView: View {
     private let plausibleRange = 100...230
 
     @State private var phase: Phase = .intro
-    @State private var watch = WatchLink.shared
+    @State private var live = LiveMetricsHub.shared
     @State private var peakHR = 0
     @State private var phaseEndsAt: Date?
     @State private var warmupMinutes = 10
@@ -329,8 +457,8 @@ struct HRZoneFieldTestView: View {
                 Text("Your progress and observed peak heart rate will be lost.")
             }
         }
-        .onChange(of: watch.liveMetrics?.heartRate) { _, hr in trackPeak(hr) }
-        .onChange(of: watch.liveMetrics?.maxHR) { _, hr in trackPeak(hr) }
+        .onChange(of: live.liveMetrics?.heartRate) { _, hr in trackPeak(hr) }
+        .onChange(of: live.liveMetrics?.maxHR) { _, hr in trackPeak(hr) }
     }
 
     private var intro: some View {
@@ -374,7 +502,7 @@ struct HRZoneFieldTestView: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "heart.fill").foregroundStyle(theme.danger).font(.system(size: 13))
-                Text(watch.liveMetrics?.heartRate.map(String.init) ?? "—")
+                Text(live.liveMetrics?.heartRate.map(String.init) ?? "—")
                     .font(.system(size: 20, weight: .bold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(theme.textPrimary)
                 Text("bpm").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
@@ -405,7 +533,7 @@ struct HRZoneFieldTestView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "heart.fill").foregroundStyle(theme.danger)
                             .symbolEffect(.pulse, isActive: true)
-                        Text(watch.liveMetrics?.heartRate.map(String.init) ?? "—")
+                        Text(live.liveMetrics?.heartRate.map(String.init) ?? "—")
                             .font(.system(size: 56, weight: .bold, design: .rounded)).monospacedDigit()
                             .foregroundStyle(theme.textPrimary)
                         Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
@@ -413,8 +541,8 @@ struct HRZoneFieldTestView: View {
                 }
             }
             StatColumn(label: "Peak so far", value: peakHR > 0 ? "\(peakHR) bpm" : "—", valueColor: theme.secondaryAccent)
-            if watch.liveMetrics?.heartRate == nil {
-                Text("Waiting for heart rate from your Watch… make sure the ForgeFit watch app opened into a workout.")
+            if live.liveMetrics?.heartRate == nil {
+                Text("Waiting for heart rate… make sure the ForgeFit watch app opened into a workout, or that your heart rate monitor is connected and broadcasting.")
                     .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
@@ -450,7 +578,7 @@ struct HRZoneFieldTestView: View {
                 SecondaryButton(title: "Discard") { finishAndDismiss() }
             } else {
                 Image(systemName: "heart.slash").font(.system(size: 40)).foregroundStyle(theme.textTertiary)
-                Text("No heart rate was recorded. Make sure your Apple Watch is on your wrist and the ForgeFit watch app started a workout, then try again.")
+                Text("No heart rate was recorded. Make sure your Apple Watch is on your wrist with the ForgeFit watch app in a workout — or that your heart rate monitor is connected and broadcasting — then try again.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 SecondaryButton(title: "Done") { finishAndDismiss() }
@@ -517,7 +645,7 @@ struct HRZoneFieldTestView: View {
 
     private func finishAndDismiss() {
         autoAdvanceTask?.cancel()
-        watch.clearLiveMetrics()
+        live.clearLiveMetrics()
         dismiss()
     }
 }

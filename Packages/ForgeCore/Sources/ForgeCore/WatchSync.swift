@@ -11,6 +11,14 @@ import Foundation
 public enum WatchWire {
     public static let contextKey = "forgefit.context"
     public static let commandKey = "forgefit.command"
+    /// Watch → phone "always latest" heart-rate channel. Carried through
+    /// `updateApplicationContext` (not `sendMessage`/`transferUserInfo`) so a
+    /// fresh reading is never dropped just because the watch display is off —
+    /// `isReachable` tracks screen-on state, not whether the workout session
+    /// is still streaming. Application context coalesces to a single latest
+    /// value and is delivered the moment the phone reconnects, so this never
+    /// replays a backlog of stale readings the way a queued transfer would.
+    public static let liveMetricsKey = "forgefit.livemetrics"
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         let encoder = JSONEncoder()
@@ -33,6 +41,10 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     public var workout: WatchWorkoutSnapshot?
     public var routines: [WatchRoutineSummary]
     public var readiness: Int?
+    /// Optional for compatibility with contexts encoded by older app versions.
+    /// The phone owns the daily verdict so the watch never reinterprets bands.
+    public var readinessAction: String?
+    public var readinessDetail: String?
     public var unitSuffix: String
     public var updatedAt: Date
     /// Optional so contexts encoded by an older watch/phone still decode; use
@@ -44,6 +56,8 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         workout: WatchWorkoutSnapshot? = nil,
         routines: [WatchRoutineSummary] = [],
         readiness: Int? = nil,
+        readinessAction: String? = nil,
+        readinessDetail: String? = nil,
         unitSuffix: String = "lb",
         updatedAt: Date = Date(),
         distanceUnit: DistanceUnit? = nil,
@@ -52,6 +66,8 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         self.workout = workout
         self.routines = routines
         self.readiness = readiness
+        self.readinessAction = readinessAction
+        self.readinessDetail = readinessDetail
         self.unitSuffix = unitSuffix
         self.updatedAt = updatedAt
         self.distanceUnit = distanceUnit
@@ -151,6 +167,12 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
     /// Yoga sessions share cardio's start/complete lifecycle on the wrist but
     /// render with yoga iconography. Additive-optional.
     public var isYoga: Bool?
+    /// Raw cardio kind ("run", "cycle", etc.) so the watch can choose the
+    /// correct HealthKit activity type. Additive-optional.
+    public var cardioKindRaw: String?
+    /// True for outdoor run/walk/ride sessions that should use outdoor
+    /// HealthKit/location semantics. Additive-optional.
+    public var supportsOutdoorRoute: Bool?
     public var supersetGroup: Int?
     public var cardioState: CardioState?
     public var sets: [WatchSetSnapshot]
@@ -160,6 +182,8 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
         name: String,
         isCardio: Bool = false,
         isYoga: Bool? = nil,
+        cardioKindRaw: String? = nil,
+        supportsOutdoorRoute: Bool? = nil,
         supersetGroup: Int? = nil,
         cardioState: CardioState? = nil,
         sets: [WatchSetSnapshot] = []
@@ -168,6 +192,8 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
         self.name = name
         self.isCardio = isCardio
         self.isYoga = isYoga
+        self.cardioKindRaw = cardioKindRaw
+        self.supportsOutdoorRoute = supportsOutdoorRoute
         self.supersetGroup = supersetGroup
         self.cardioState = cardioState
         self.sets = sets

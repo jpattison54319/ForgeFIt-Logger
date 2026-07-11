@@ -83,6 +83,9 @@ struct SetBlockView: View {
     let onDelete: () -> Void
 
     @Environment(\.theme) private var theme
+    // Block input fields grow with Dynamic Type alongside the text they hold.
+    @ScaledMetric(relativeTo: .body) private var blockFieldWidth: CGFloat = 58
+    @ScaledMetric(relativeTo: .body) private var blockFieldHeight: CGFloat = 30
     @Environment(SetInputRouter.self) private var inputRouter: SetInputRouter?
 
     /// Inline pill entry: `newEntryIndex` = typing a new mini-set, >= 0 =
@@ -182,7 +185,7 @@ struct SetBlockView: View {
     private var headerRow: some View {
         HStack(spacing: Space.sm) {
             Menu {
-                ForEach(SetType.allCases, id: \.self) { type in
+                ForEach(SetType.selectable, id: \.self) { type in
                     Button {
                         onSetType(type)
                     } label: {
@@ -305,7 +308,8 @@ struct SetBlockView: View {
                     get: { sideReps(side).map(String.init) ?? "" },
                     set: { setSideReps(side, Int($0)); onChange() }
                 ),
-                placeholder: activationPlaceholder(side: side)
+                placeholder: activationPlaceholder(side: side),
+                keyboardType: .numberPad
             )
             // Log the activation → the first micro-rest starts immediately.
             Button {
@@ -361,10 +365,21 @@ struct SetBlockView: View {
                         miniPill(side: side, index: index, reps: reps)
                     }
                 }
+                let ghosts = remainingPlannedGoals(side: side)
                 if editingIndex == Self.newEntryIndex && editingSide == side {
                     entryPill(side: side)
-                } else {
+                    ForEach(Array(ghosts.dropFirst().enumerated()), id: \.offset) { _, goal in
+                        ghostPill(side: side, goal: goal, isNext: false)
+                    }
+                } else if ghosts.isEmpty {
                     addMiniPill(side: side)
+                } else {
+                    // The routine's plan renders as dashed targets: the first
+                    // ghost is the live "log this mini" pill, the rest show
+                    // what's still ahead. Goals are never prefilled as reps.
+                    ForEach(Array(ghosts.enumerated()), id: \.offset) { index, goal in
+                        ghostPill(side: side, goal: goal, isNext: index == 0)
+                    }
                 }
             }
             .padding(.vertical, 2)
@@ -464,13 +479,68 @@ struct SetBlockView: View {
 
     private var entryAccessoryToken: String { "\(set.id.uuidString)-mini" }
 
-    /// nil = no target to repeat yet — the first mini must be typed. Side 2
-    /// falls back to side 1's pattern before history: same limb pair, same
-    /// plan.
+    /// nil = no target to repeat yet — the first mini must be typed. A cluster
+    /// plan's goal for the next segment wins; otherwise side 2 falls back to
+    /// side 1's pattern before history: same limb pair, same plan.
     private func nextMiniTarget(side: Int) -> Int? {
+        if isCluster {
+            let plan = set.plannedMiniReps
+            let next = sideMinis(side).count
+            if plan.indices.contains(next) { return plan[next] }
+        }
         if let last = sideMinis(side).last { return last }
         if side == 2, let mirror = set.miniReps.first { return mirror }
         return previous?.miniReps.first
+    }
+
+    /// Planned-but-unlogged mini targets for this side: cluster ghosts carry
+    /// their goal reps, myo ghosts are open slots (Int? = nil) to fill live.
+    /// Both sides of a unilateral block follow the same plan.
+    private func remainingPlannedGoals(side: Int) -> [Int?] {
+        let logged = sideMinis(side).count
+        if isCluster {
+            let plan = set.plannedMiniReps
+            guard logged < plan.count else { return [] }
+            return plan[logged...].map(Optional.init)
+        }
+        if set.setType == .myoRep, let planned = set.plannedMiniSetCount, logged < planned {
+            return Array(repeating: nil, count: planned - logged)
+        }
+        return []
+    }
+
+    /// A dashed plan target. The first ghost is live — tap logs the goal
+    /// (cluster) or repeats the usual target (myo); later ghosts just preview
+    /// the remaining plan.
+    private func ghostPill(side: Int, goal: Int?, isNext: Bool) -> some View {
+        let label = goal.map { "+\($0)" }
+            ?? (isNext ? nextMiniTarget(side: side).map { "+\($0)" } : nil)
+            ?? "+ reps"
+        return Menu {
+            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
+        } label: {
+            Text(label)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(isNext ? style.color : theme.textTertiary)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 7)
+                .overlay(
+                    Capsule().strokeBorder(
+                        (isNext ? style.color : theme.textTertiary).opacity(0.5),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                    )
+                )
+        } primaryAction: {
+            if let goal {
+                appendMini(side: side, goal)
+            } else if let target = nextMiniTarget(side: side) {
+                appendMini(side: side, target)
+            } else {
+                beginEntry(side: side, editing: Self.newEntryIndex)
+            }
+        }
+        .disabled(isDone || !isNext)
+        .accessibilityLabel(goal.map { "Planned mini-set: \($0) reps" } ?? "Planned mini-set")
     }
 
     private static let newEntryIndex = -1
@@ -567,13 +637,16 @@ struct SetBlockView: View {
 
     // MARK: - Field
 
-    private func blockField(text: Binding<String>, placeholder: String) -> some View {
+    /// Weight fields keep the decimal pad; rep fields must use `.numberPad` —
+    /// their setters parse with `Int(...)`, so a stray "." (e.g. "12.")
+    /// silently nils the reps out.
+    private func blockField(text: Binding<String>, placeholder: String, keyboardType: UIKeyboardType = .decimalPad) -> some View {
         TextField(placeholder, text: text)
             .font(.system(size: 15, weight: .semibold))
             .multilineTextAlignment(.center)
-            .keyboardType(.decimalPad)
+            .keyboardType(keyboardType)
             .foregroundStyle(theme.textPrimary)
-            .frame(width: 58, height: 30)
+            .frame(width: blockFieldWidth, height: blockFieldHeight)
             .background(theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }

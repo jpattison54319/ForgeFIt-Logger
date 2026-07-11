@@ -177,10 +177,10 @@ extension RecoveryEngine {
 
     private func systemicGuidance(_ score: Double) -> String {
         switch score {
-        case 0.8...: "Trending recovered — adaptation is on track."
-        case 0.65..<0.8: "Stable trend — training load and recovery are in balance."
-        case 0.5..<0.65: "Trend softening — watch load and sleep over the next few days."
-        default: "Downward trend — accumulated fatigue; plan a lighter week or deload."
+        case 0.85...: "Strong recovery trend — adaptation is on track."
+        case 0.7..<0.85: "Stable recovery trend — training load and recovery are in balance."
+        case 0.4..<0.7: "Recovery trend is softening — recent load or sleep may be accumulating."
+        default: "Downward recovery trend — accumulated fatigue is building."
         }
     }
 
@@ -204,7 +204,7 @@ extension RecoveryEngine {
         }
         guard weightSum >= 0.2 else {
             return DailyReadiness(
-                state: .building("Wear your watch overnight to capture last night's HRV, heart rate, and sleep."),
+                state: .building("Wear a watch to bed — Apple Watch, or a Garmin synced through Garmin Connect — to capture last night's HRV, heart rate, and sleep."),
                 parts: parts, flags: [],
                 guidance: "Daily readiness reads your nocturnal HRV, sleeping heart rate, and last night's sleep against your own baseline."
             )
@@ -224,32 +224,24 @@ extension RecoveryEngine {
     }
 
     private func dailyGuidance(_ score: Double, flags: [String]) -> String {
-        let base: String
-        switch score {
-        case 0.8...: base = "Recovered — full intensity is available today."
-        case 0.65..<0.8: base = "Solid — train as planned."
-        case 0.5..<0.65: base = "Partially recovered — keep volume moderate and stop short of failure."
-        default: base = "Under-recovered — favor Zone 2, mobility, or rest today."
+        let base = switch score {
+        case 0.85...: "Today’s overnight signals are exceptionally favorable."
+        case 0.7..<0.85: "Today’s overnight signals are within your ready range."
+        case 0.4..<0.7: "Today’s overnight signals show some recovery caution."
+        default: "Today’s overnight signals are below your ready range."
         }
-        // When the score is still green-ish but an acute flag is up, say so
-        // explicitly instead of a bare "train as planned" that ignores it —
-        // covers every flag the daily score can raise (HRV, sleeping HR,
-        // sleep), not just HRV, so the guidance never contradicts a visible
-        // flag chip.
-        guard score >= 0.6 else { return base }
+        guard !flags.isEmpty else { return base }
         let reasons = flags.compactMap(Self.acuteReasonClause)
         guard !reasons.isEmpty else { return base }
         let joined = reasons.count == 1
             ? reasons[0]
             : reasons.dropLast().joined(separator: ", ") + " and " + reasons.last!
         let sentence = joined.prefix(1).uppercased() + joined.dropFirst()
-        return "\(base) \(sentence), so hold back PR attempts."
+        return "\(base) \(sentence)."
     }
 
     /// User-facing clause per acute flag, phrased to read naturally alone or
-    /// joined with others ("X and Y, so hold back PR attempts"). Shared with
-    /// RecoveryEngine's interpretation() so both surfaces name every flag the
-    /// same way.
+    /// joined with others. Shared by the daily score and its evidence rows.
     static func acuteReasonClause(_ flag: String) -> String? {
         switch flag {
         case "HRV low today": return "HRV dipped below your normal range this morning"
@@ -299,7 +291,7 @@ extension RecoveryEngine {
                 name: "HRV (today)",
                 state: .building(have ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
                 valueText: latestHealthMetric()?.bestHRV.map { "\(Int($0.rounded())) ms" } ?? "—",
-                detailText: have ? "Nocturnal HRV; baseline still forming" : "Wear your watch overnight to capture HRV"
+                detailText: have ? "Nocturnal HRV; baseline still forming" : "Wear a watch overnight to capture HRV"
             )
         }
         return ScorePart(
@@ -361,7 +353,7 @@ extension RecoveryEngine {
         guard let assessment = sleepingHRAssessment() else {
             return ScorePart(name: "Sleeping HR", state: .building("No overnight heart rate yet"),
                              valueText: latestHealthMetric()?.bestRestingHR.map { "\($0) bpm" } ?? "—",
-                             detailText: "Wear your watch to bed to capture sleeping heart rate")
+                             detailText: "Wear a watch to bed to capture sleeping heart rate")
         }
         let comparison = "\(Int(assessment.baseline.rounded())) bpm baseline"
         let suffix = assessment.isDaytimeFallback ? " (daytime — sleep not captured yet)" : ""
@@ -376,7 +368,7 @@ extension RecoveryEngine {
     private func lastNightSleepPart() -> ScorePart {
         guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else {
             return ScorePart(name: "Sleep (last night)", state: .building("No sleep data from last night"),
-                             valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
+                             valueText: "—", detailText: "Wear a watch to bed or log sleep in Health")
         }
         let need = personalizedSleepNeedMinutes()
         let ratio = Double(sleep) / Double(need)
@@ -416,7 +408,7 @@ extension RecoveryEngine {
         let recent = recentHealthMetrics(days: 7).compactMap { $0.bestHRV }.filter { $0 > 0 }
         guard recent.count >= 4 else {
             return ScorePart(name: "HRV trend", state: .building("Needs \(4 - recent.count) more morning\(4 - recent.count == 1 ? "" : "s") of HRV"),
-                             valueText: "—", detailText: "Wear your watch overnight to capture HRV")
+                             valueText: "—", detailText: "Wear a watch overnight to capture HRV")
         }
         let baseline = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) > 7 }
@@ -453,7 +445,7 @@ extension RecoveryEngine {
         let recent = recentHealthMetrics(days: 7).compactMap { $0.bestRestingHR.map(Double.init) }
         guard let avg7 = average(recent) else {
             return ScorePart(name: "Resting HR", state: .building("No recent resting heart rate"),
-                             valueText: "—", detailText: "Connect Apple Health or wear your watch")
+                             valueText: "—", detailText: "Connect Apple Health or wear a watch")
         }
         let baseline = baselineMetrics(days: 60)
             .filter { calendarDaysBetween($0.date, and: now) > 7 }
@@ -483,7 +475,7 @@ extension RecoveryEngine {
         let nights = recentHealthMetrics(days: 7).compactMap { $0.sleepTotalMinutes }
         guard nights.count >= 3 else {
             return ScorePart(name: "Sleep trend", state: .building("Needs \(3 - nights.count) more night\(3 - nights.count == 1 ? "" : "s") of sleep data"),
-                             valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
+                             valueText: "—", detailText: "Wear a watch to bed or log sleep in Health")
         }
         let avgMinutes = Double(nights.reduce(0, +)) / Double(nights.count)
         let ratio = avgMinutes / Double(need)
@@ -803,16 +795,16 @@ extension RecoveryEngine {
         switch domain {
         case .severe:
             return score >= 0.8
-                ? "Recovered from recent intervals — another quality session is on the table."
-                : "High-intensity work suppresses the nervous system for 48–72 h. Zone 2 is fine; wait on the next hard interval day."
+                ? "Recent high-intensity work has largely cleared."
+                : "Recent high-intensity work is still contributing to local cardiovascular fatigue."
         case .threshold:
             return score >= 0.8
-                ? "Threshold work has cleared — train as planned."
-                : "Threshold sessions need about a day or two. Easy cardio today keeps the engine warm."
+                ? "Recent threshold work has largely cleared."
+                : "Recent threshold work remains a meaningful part of your recovery context."
         case .easy:
-            return "Low-intensity cardio clears within a day and can be done near-daily."
+            return "Recent cardio was low intensity and usually clears quickly."
         case nil:
-            return "No cardio in the last week — fully fresh on this front."
+            return "No cardio sessions were logged in the last week."
         }
     }
 

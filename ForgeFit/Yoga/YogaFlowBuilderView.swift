@@ -20,8 +20,10 @@ struct YogaFlowBuilderView: View {
     @State private var style: YogaStyle
     @State private var steps: [YogaFlowPlan.PoseStep]
     @State private var showPosePicker = false
+    @State private var showGenerator = false
     @State private var showSaveAsFlow = false
     @State private var newFlowName = ""
+    @State private var detailExercise: ExerciseLibraryModel?
 
     init(planJSON: String?, onSave: @escaping (String?) -> Void) {
         self.onSave = onSave
@@ -55,8 +57,8 @@ struct YogaFlowBuilderView: View {
                 }
             }
             .sheet(isPresented: $showPosePicker) {
-                ExercisePickerView(presetModality: .yoga) { picked in
-                    for exercise in picked where exercise.isYoga {
+                ExercisePickerView(presetModality: .yoga, excludeYogaSession: true) { picked in
+                    for exercise in picked where exercise.isYoga && !YogaPoseCatalog.isSessionExercise(exercise) {
                         steps.append(YogaFlowPlan.PoseStep(
                             poseID: exercise.id,
                             poseSlug: YogaPoseCatalog.slug(for: exercise),
@@ -65,6 +67,16 @@ struct YogaFlowBuilderView: View {
                             side: exercise.isUnilateral ? .bothSides : nil
                         ))
                     }
+                }
+            }
+            .sheet(item: $detailExercise) { exercise in
+                NavigationStack {
+                    ExerciseDetailView(exerciseID: exercise.id, workouts: [], exercises: exercises)
+                }
+            }
+            .sheet(isPresented: $showGenerator) {
+                YogaFlowGeneratorSheet { generated in
+                    load(generated)
                 }
             }
             .alert("Save as My Flow", isPresented: $showSaveAsFlow) {
@@ -112,8 +124,12 @@ struct YogaFlowBuilderView: View {
     private var stepsSection: some View {
         Section("Poses") {
             ForEach($steps) { $step in
-                PoseStepRow(step: $step, isUnilateral: isUnilateral(step))
-                    .listRowBackground(theme.surface)
+                PoseStepRow(step: $step, isUnilateral: isUnilateral(step)) {
+                    if let exercise = exercises.first(where: { $0.id == step.poseID }) {
+                        detailExercise = exercise
+                    }
+                }
+                .listRowBackground(theme.surface)
             }
             .onDelete { steps.remove(atOffsets: $0) }
             .onMove { steps.move(fromOffsets: $0, toOffset: $1) }
@@ -132,6 +148,15 @@ struct YogaFlowBuilderView: View {
 
     private var loadSection: some View {
         Section("Start From") {
+            Button {
+                showGenerator = true
+            } label: {
+                Label("Generate a class", systemImage: "wand.and.stars")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
+            }
+            .listRowBackground(theme.surface)
+            .accessibilityIdentifier("generate-yoga-flow")
+
             Menu {
                 ForEach(YogaFlowCatalog.load(), id: \.slug) { seed in
                     Button {
@@ -215,43 +240,53 @@ private struct PoseStepRow: View {
     @Environment(\.theme) private var theme
     @Binding var step: YogaFlowPlan.PoseStep
     let isUnilateral: Bool
+    let onInfo: () -> Void
 
     private static let holdOptions = [10, 15, 20, 30, 45, 60, 90, 120, 150, 180]
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            YogaPoseArt(slug: step.poseSlug, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(step.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                if isUnilateral {
-                    Menu {
-                        Button("Both sides") { step.side = .bothSides }
-                        Button("Left only") { step.side = .left }
-                        Button("Right only") { step.side = .right }
-                    } label: {
-                        Text(sideLabel)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(theme.accent)
+        Button(action: onInfo) {
+            HStack(spacing: Space.md) {
+                YogaPoseArt(slug: step.poseSlug, size: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(step.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                    if isUnilateral {
+                        Menu {
+                            Button("Both sides") { step.side = .bothSides }
+                            Button("Left only") { step.side = .left }
+                            Button("Right only") { step.side = .right }
+                        } label: {
+                            Text(sideLabel)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                        }
                     }
                 }
-            }
-            Spacer()
-            Menu {
-                ForEach(Self.holdOptions, id: \.self) { seconds in
-                    Button(Fmt.restTimer(seconds)) { step.holdSeconds = seconds }
+                Spacer()
+                Menu {
+                    ForEach(Self.holdOptions, id: \.self) { seconds in
+                        Button(Fmt.restTimer(seconds)) { step.holdSeconds = seconds }
+                    }
+                } label: {
+                    Text(Fmt.restTimer(step.holdSeconds))
+                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(theme.accentSoft)
+                        .clipShape(Capsule())
                 }
-            } label: {
-                Text(Fmt.restTimer(step.holdSeconds))
-                    .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                // The row opens the pose's detail page — say so. Sage chevron
+                // per the design rule: white names, accent disclosure only.
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(theme.accentSoft)
-                    .clipShape(Capsule())
             }
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("yoga-pose-row-\(step.name)")
     }
 
     private var sideLabel: String {

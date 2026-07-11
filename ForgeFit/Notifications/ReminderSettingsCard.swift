@@ -11,6 +11,7 @@ struct ReminderSettingsCard: View {
         return Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
     }()
     @State private var streakNudge = NotificationScheduler.shared.streakNudgeEnabled
+    @State private var morningReadiness = NotificationScheduler.shared.morningReadinessEnabled
 
     private static let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"] // 1...7 Sun–Sat
 
@@ -112,6 +113,20 @@ struct ReminderSettingsCard: View {
             .tint(theme.accent)
             .onChange(of: streakNudge) { _, newValue in
                 scheduler.streakNudgeEnabled = newValue
+            }
+        }
+        Card {
+            Toggle(isOn: $morningReadiness) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Morning readiness").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Text("Your score and the day's call (7 AM), computed from last night's sleep and HRV.")
+                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                }
+            }
+            .tint(theme.accent)
+            .onChange(of: morningReadiness) { _, newValue in
+                scheduler.morningReadinessEnabled = newValue
+                if newValue { ReadinessDelivery.shared.refreshMorningNotification() }
             }
         }
     }

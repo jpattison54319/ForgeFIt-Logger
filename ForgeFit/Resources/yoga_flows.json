@@ -1,213 +1,552 @@
 [
-  {
-    "slug": "morning-flow",
-    "name": "Morning Flow",
-    "styleRaw": "hatha",
-    "description": "Wake the whole body up: gentle folds, lunges, and a slow backbend before the day starts.",
-    "steps": [
-      { "poseSlug": "mountain-pose", "holdSeconds": 30 },
-      { "poseSlug": "upward-salute", "holdSeconds": 20 },
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 30 },
-      { "poseSlug": "halfway-lift", "holdSeconds": 15 },
-      { "poseSlug": "downward-facing-dog", "holdSeconds": 45 },
-      { "poseSlug": "low-lunge", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "cow-pose", "holdSeconds": 15 },
-      { "poseSlug": "cat-pose", "holdSeconds": 15 },
-      { "poseSlug": "cobra-pose", "holdSeconds": 20 },
-      { "poseSlug": "childs-pose", "holdSeconds": 60 },
-      { "poseSlug": "seated-twist", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "corpse-pose", "holdSeconds": 120 }
-    ]
-  },
-  {
-    "slug": "sun-salutation",
-    "name": "Sun Salutation",
-    "styleRaw": "vinyasa",
-    "description": "The classic breath-paced sequence — one deliberate round, pose by pose.",
-    "steps": [
-      { "poseSlug": "mountain-pose", "holdSeconds": 20 },
-      { "poseSlug": "upward-salute", "holdSeconds": 15 },
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 20 },
-      { "poseSlug": "halfway-lift", "holdSeconds": 10 },
-      { "poseSlug": "plank-pose", "holdSeconds": 20 },
-      { "poseSlug": "cobra-pose", "holdSeconds": 15 },
-      { "poseSlug": "downward-facing-dog", "holdSeconds": 30 },
-      { "poseSlug": "low-lunge", "holdSeconds": 20, "side": "bothSides" },
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 15 },
-      { "poseSlug": "upward-salute", "holdSeconds": 10 },
-      { "poseSlug": "mountain-pose", "holdSeconds": 20 }
-    ]
-  },
-  {
-    "slug": "hip-opener",
-    "name": "Hip Opener",
-    "styleRaw": "yin",
-    "description": "Long, patient holds for tight hips — pigeon, dragon, and friends.",
-    "steps": [
-      { "poseSlug": "butterfly-pose", "holdSeconds": 120 },
-      { "poseSlug": "pigeon-pose", "holdSeconds": 120, "side": "bothSides" },
-      { "poseSlug": "lizard-pose", "holdSeconds": 90, "side": "bothSides" },
-      { "poseSlug": "dragon-pose", "holdSeconds": 120, "side": "bothSides" },
-      { "poseSlug": "happy-baby", "holdSeconds": 60 },
-      { "poseSlug": "reclined-figure-four", "holdSeconds": 60, "side": "bothSides" },
-      { "poseSlug": "supine-twist", "holdSeconds": 60, "side": "bothSides" },
-      { "poseSlug": "corpse-pose", "holdSeconds": 120 }
-    ]
-  },
-  {
-    "slug": "post-leg-day",
-    "name": "Post Leg Day",
-    "styleRaw": "gentle",
-    "description": "Unwind squats and deadlifts: hamstrings, hips, and quads get their time back.",
-    "steps": [
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 45 },
-      { "poseSlug": "half-splits", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "low-lunge", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "pigeon-pose", "holdSeconds": 90, "side": "bothSides" },
-      { "poseSlug": "reclined-figure-four", "holdSeconds": 60, "side": "bothSides" },
-      { "poseSlug": "legs-up-the-wall", "holdSeconds": 180 },
-      { "poseSlug": "supine-twist", "holdSeconds": 60, "side": "bothSides" },
-      { "poseSlug": "corpse-pose", "holdSeconds": 60 }
-    ]
-  },
-  {
-    "slug": "post-upper-day",
-    "name": "Post Upper Day",
-    "styleRaw": "gentle",
-    "description": "Open pressing-day shoulders, chest, and upper back.",
-    "steps": [
-      { "poseSlug": "puppy-pose", "holdSeconds": 45 },
-      { "poseSlug": "thread-the-needle", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "melting-heart", "holdSeconds": 90 },
-      { "poseSlug": "cow-pose", "holdSeconds": 15 },
-      { "poseSlug": "cat-pose", "holdSeconds": 15 },
-      { "poseSlug": "sphinx-pose", "holdSeconds": 60 },
-      { "poseSlug": "eagle-pose", "holdSeconds": 25, "side": "bothSides" },
-      { "poseSlug": "standing-side-bend", "holdSeconds": 20, "side": "bothSides" },
-      { "poseSlug": "childs-pose", "holdSeconds": 90 }
-    ]
-  },
-  {
-    "slug": "bedtime-wind-down",
-    "name": "Bedtime Wind-Down",
-    "styleRaw": "restorative",
-    "description": "Slow everything down before sleep. Long supported holds, easy breathing.",
-    "steps": [
-      { "poseSlug": "childs-pose", "holdSeconds": 90 },
-      { "poseSlug": "cow-pose", "holdSeconds": 15 },
-      { "poseSlug": "cat-pose", "holdSeconds": 15 },
-      { "poseSlug": "melting-heart", "holdSeconds": 90 },
-      { "poseSlug": "butterfly-pose", "holdSeconds": 90 },
-      { "poseSlug": "seated-forward-fold", "holdSeconds": 60 },
-      { "poseSlug": "supine-twist", "holdSeconds": 90, "side": "bothSides" },
-      { "poseSlug": "happy-baby", "holdSeconds": 60 },
-      { "poseSlug": "legs-up-the-wall", "holdSeconds": 180 },
-      { "poseSlug": "corpse-pose", "holdSeconds": 180 }
-    ]
-  },
-  {
-    "slug": "full-body-hatha",
-    "name": "Full-Body Hatha",
-    "styleRaw": "hatha",
-    "description": "A complete classic practice: standing strength, balance, and a quiet finish.",
-    "steps": [
-      { "poseSlug": "mountain-pose", "holdSeconds": 30 },
-      { "poseSlug": "upward-salute", "holdSeconds": 20 },
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 30 },
-      { "poseSlug": "downward-facing-dog", "holdSeconds": 45 },
-      { "poseSlug": "warrior-i", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "warrior-ii", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "triangle-pose", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "tree-pose", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "bridge-pose", "holdSeconds": 30 },
-      { "poseSlug": "seated-forward-fold", "holdSeconds": 60 },
-      { "poseSlug": "supine-twist", "holdSeconds": 60, "side": "bothSides" },
-      { "poseSlug": "corpse-pose", "holdSeconds": 150 }
-    ]
-  },
-  {
-    "slug": "power-flow",
-    "name": "Power Flow",
-    "styleRaw": "power",
-    "description": "Strength-building holds and balances — expect your legs and core to work.",
-    "steps": [
-      { "poseSlug": "chair-pose", "holdSeconds": 30 },
-      { "poseSlug": "plank-pose", "holdSeconds": 30 },
-      { "poseSlug": "boat-pose", "holdSeconds": 25 },
-      { "poseSlug": "warrior-i", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "warrior-ii", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "reverse-warrior", "holdSeconds": 20, "side": "bothSides" },
-      { "poseSlug": "extended-side-angle", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "half-moon-pose", "holdSeconds": 20, "side": "bothSides" },
-      { "poseSlug": "goddess-pose", "holdSeconds": 30 },
-      { "poseSlug": "eagle-pose", "holdSeconds": 25, "side": "bothSides" },
-      { "poseSlug": "bridge-pose", "holdSeconds": 30 },
-      { "poseSlug": "boat-pose", "holdSeconds": 25 },
-      { "poseSlug": "corpse-pose", "holdSeconds": 90 }
-    ]
-  },
-  {
-    "slug": "yin-deep-stretch",
-    "name": "Yin Deep Stretch",
-    "styleRaw": "yin",
-    "description": "The long game: two-minute holds that let connective tissue actually let go.",
-    "steps": [
-      { "poseSlug": "dragon-pose", "holdSeconds": 150, "side": "bothSides" },
-      { "poseSlug": "half-splits", "holdSeconds": 90, "side": "bothSides" },
-      { "poseSlug": "butterfly-pose", "holdSeconds": 150 },
-      { "poseSlug": "seated-forward-fold", "holdSeconds": 120 },
-      { "poseSlug": "sphinx-pose", "holdSeconds": 120 },
-      { "poseSlug": "childs-pose", "holdSeconds": 120 },
-      { "poseSlug": "supine-twist", "holdSeconds": 90, "side": "bothSides" },
-      { "poseSlug": "corpse-pose", "holdSeconds": 180 }
-    ]
-  },
-  {
-    "slug": "desk-relief",
-    "name": "Desk Relief",
-    "styleRaw": "gentle",
-    "description": "Eight minutes for a stiff neck, tight chest, and rounded shoulders.",
-    "steps": [
-      { "poseSlug": "standing-side-bend", "holdSeconds": 20, "side": "bothSides" },
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 30 },
-      { "poseSlug": "cow-pose", "holdSeconds": 15 },
-      { "poseSlug": "cat-pose", "holdSeconds": 15 },
-      { "poseSlug": "thread-the-needle", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "puppy-pose", "holdSeconds": 45 },
-      { "poseSlug": "seated-twist", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "childs-pose", "holdSeconds": 60 }
-    ]
-  },
-  {
-    "slug": "hamstring-focus",
-    "name": "Hamstring Focus",
-    "styleRaw": "hatha",
-    "description": "Every angle on the hamstrings — folds, splits prep, and seated work.",
-    "steps": [
-      { "poseSlug": "standing-forward-fold", "holdSeconds": 40 },
-      { "poseSlug": "wide-legged-forward-fold", "holdSeconds": 45 },
-      { "poseSlug": "pyramid-pose", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "half-splits", "holdSeconds": 45, "side": "bothSides" },
-      { "poseSlug": "head-to-knee-pose", "holdSeconds": 45, "side": "bothSides" },
-      { "poseSlug": "seated-forward-fold", "holdSeconds": 60 },
-      { "poseSlug": "happy-baby", "holdSeconds": 45 },
-      { "poseSlug": "corpse-pose", "holdSeconds": 60 }
-    ]
-  },
-  {
-    "slug": "balance-flow",
-    "name": "Balance Flow",
-    "styleRaw": "hatha",
-    "description": "Single-leg standing work that trains ankles, hips, and focus.",
-    "steps": [
-      { "poseSlug": "mountain-pose", "holdSeconds": 20 },
-      { "poseSlug": "tree-pose", "holdSeconds": 40, "side": "bothSides" },
-      { "poseSlug": "eagle-pose", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "standing-figure-four", "holdSeconds": 30, "side": "bothSides" },
-      { "poseSlug": "dancer-pose", "holdSeconds": 25, "side": "bothSides" },
-      { "poseSlug": "half-moon-pose", "holdSeconds": 25, "side": "bothSides" },
-      { "poseSlug": "chair-pose", "holdSeconds": 25 },
-      { "poseSlug": "corpse-pose", "holdSeconds": 60 }
-    ]
-  }
+ {
+  "slug": "sun-flow",
+  "name": "Sun Flow",
+  "styleRaw": "vinyasa",
+  "description": "An energizing standing sequence: lunges, warrior shapes, and a gentle backbend to open the day.",
+  "steps": [
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "high-lunge",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "warrior-ii",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "extended-side-angle",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 40
+   }
+  ]
+ },
+ {
+  "slug": "morning-wake-up",
+  "name": "Morning Wake-Up",
+  "styleRaw": "hatha",
+  "description": "Ease the whole body awake with folds, a lunge, and a slow backbend before the day starts.",
+  "steps": [
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "low-lunge",
+    "holdSeconds": 35,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "upward-facing-dog",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "boat-pose",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "hero-pose",
+    "holdSeconds": 40
+   }
+  ]
+ },
+ {
+  "slug": "balance-and-focus",
+  "name": "Balance & Focus",
+  "styleRaw": "hatha",
+  "description": "Steady standing balances to build focus, stability, and single-leg strength.",
+  "steps": [
+   {
+    "poseSlug": "tree-pose",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "dancer-pose",
+    "holdSeconds": 25,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "warrior-ii",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "extended-side-angle",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 45
+   }
+  ]
+ },
+ {
+  "slug": "backbend-flow",
+  "name": "Backbend Flow",
+  "styleRaw": "vinyasa",
+  "description": "Progressively open the chest and front body through a ladder of backbends.",
+  "steps": [
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 25
+   },
+   {
+    "poseSlug": "upward-facing-dog",
+    "holdSeconds": 25
+   },
+   {
+    "poseSlug": "bow-pose",
+    "holdSeconds": 25
+   },
+   {
+    "poseSlug": "camel-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 45
+   }
+  ]
+ },
+ {
+  "slug": "hip-opener",
+  "name": "Hip Opener",
+  "styleRaw": "yin",
+  "description": "Long, quiet holds to release the hips and hamstrings after sitting or leg day.",
+  "steps": [
+   {
+    "poseSlug": "low-lunge",
+    "holdSeconds": 45,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "pigeon-pose",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "butterfly-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "hero-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 60
+   }
+  ]
+ },
+ {
+  "slug": "core-and-strength",
+  "name": "Core & Strength",
+  "styleRaw": "power",
+  "description": "A stronger flow linking core work with standing power poses.",
+  "steps": [
+   {
+    "poseSlug": "boat-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "high-lunge",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "warrior-ii",
+    "holdSeconds": 35,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "bow-pose",
+    "holdSeconds": 25
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 40
+   }
+  ]
+ },
+ {
+  "slug": "wind-down",
+  "name": "Wind-Down",
+  "styleRaw": "restorative",
+  "description": "Slow, grounding holds to unwind before rest.",
+  "steps": [
+   {
+    "poseSlug": "butterfly-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "pigeon-pose",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "hero-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 90
+   }
+  ]
+ },
+ {
+  "slug": "power-endurance",
+  "name": "Power Endurance",
+  "styleRaw": "power",
+  "description": "A full 30-plus minute power practice: standing strength, core work, and backbends, closed with deep hip release and rest.",
+  "steps": [
+   {
+    "poseSlug": "mountain-pose",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "standing-forward-fold",
+    "holdSeconds": 45
+   },
+   {
+    "poseSlug": "plank-pose",
+    "holdSeconds": 70
+   },
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "high-lunge",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "warrior-ii",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "extended-side-angle",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "plank-pose",
+    "holdSeconds": 90
+   },
+   {
+    "poseSlug": "upward-facing-dog",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "triangle-pose",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "wide-legged-forward-fold",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "tree-pose",
+    "holdSeconds": 45,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "boat-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "bridge-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "boat-pose",
+    "holdSeconds": 45
+   },
+   {
+    "poseSlug": "bow-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "camel-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "pigeon-pose",
+    "holdSeconds": 90,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "seated-forward-fold",
+    "holdSeconds": 90
+   },
+   {
+    "poseSlug": "savasana",
+    "holdSeconds": 180
+   }
+  ]
+ },
+ {
+  "slug": "deep-stretch-yin",
+  "name": "Deep Stretch",
+  "styleRaw": "yin",
+  "description": "Long, patient yin holds that sink into the hips, hamstrings, and spine \u2014 stay soft and let time do the work.",
+  "steps": [
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 90
+   },
+   {
+    "poseSlug": "thread-the-needle",
+    "holdSeconds": 75,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "butterfly-pose",
+    "holdSeconds": 120
+   },
+   {
+    "poseSlug": "seated-forward-fold",
+    "holdSeconds": 120
+   },
+   {
+    "poseSlug": "pigeon-pose",
+    "holdSeconds": 120,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "happy-baby-pose",
+    "holdSeconds": 90
+   },
+   {
+    "poseSlug": "supine-twist",
+    "holdSeconds": 90,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "legs-up-the-wall",
+    "holdSeconds": 150
+   },
+   {
+    "poseSlug": "savasana",
+    "holdSeconds": 120
+   }
+  ]
+ },
+ {
+  "slug": "gentle-morning-hatha",
+  "name": "Gentle Morning",
+  "styleRaw": "hatha",
+  "description": "A beginner-friendly wake-up: mobilize the spine, warm the legs, and finish calm and clear-headed.",
+  "steps": [
+   {
+    "poseSlug": "childs-pose",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "cat-cow",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "thread-the-needle",
+    "holdSeconds": 40,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "standing-forward-fold",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "mountain-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "tree-pose",
+    "holdSeconds": 30,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "low-lunge",
+    "holdSeconds": 40,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "supine-twist",
+    "holdSeconds": 45,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "savasana",
+    "holdSeconds": 90
+   }
+  ]
+ },
+ {
+  "slug": "runners-recovery",
+  "name": "Runner's Recovery",
+  "styleRaw": "restorative",
+  "description": "Restorative holds for tired legs: hamstrings, hip flexors, and glutes unwind before the legs drain up the wall.",
+  "steps": [
+   {
+    "poseSlug": "standing-forward-fold",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "low-lunge",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "pigeon-pose",
+    "holdSeconds": 90,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "seated-forward-fold",
+    "holdSeconds": 90
+   },
+   {
+    "poseSlug": "butterfly-pose",
+    "holdSeconds": 75
+   },
+   {
+    "poseSlug": "happy-baby-pose",
+    "holdSeconds": 60
+   },
+   {
+    "poseSlug": "supine-twist",
+    "holdSeconds": 60,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "legs-up-the-wall",
+    "holdSeconds": 150
+   },
+   {
+    "poseSlug": "savasana",
+    "holdSeconds": 120
+   }
+  ]
+ },
+ {
+  "slug": "twist-and-flow",
+  "name": "Twist & Flow",
+  "styleRaw": "vinyasa",
+  "description": "An intermediate vinyasa that builds heat through standing work, then wrings it out with seated and supine twists.",
+  "steps": [
+   {
+    "poseSlug": "cat-cow",
+    "holdSeconds": 45
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "plank-pose",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "cobra-pose",
+    "holdSeconds": 20
+   },
+   {
+    "poseSlug": "downward-facing-dog",
+    "holdSeconds": 30
+   },
+   {
+    "poseSlug": "high-lunge",
+    "holdSeconds": 40,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "warrior-ii",
+    "holdSeconds": 40,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "triangle-pose",
+    "holdSeconds": 40,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "wide-legged-forward-fold",
+    "holdSeconds": 45
+   },
+   {
+    "poseSlug": "seated-spinal-twist",
+    "holdSeconds": 45,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "bridge-pose",
+    "holdSeconds": 40
+   },
+   {
+    "poseSlug": "supine-twist",
+    "holdSeconds": 45,
+    "side": "bothSides"
+   },
+   {
+    "poseSlug": "savasana",
+    "holdSeconds": 90
+   }
+  ]
+ }
 ]

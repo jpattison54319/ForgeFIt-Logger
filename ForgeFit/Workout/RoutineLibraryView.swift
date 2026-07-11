@@ -125,7 +125,7 @@ struct RoutineLibraryView: View {
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
                         Spacer()
-                        Text("\(program.daysPerWeek)x/wk")
+                        Text("\(program.sessionsPerWeek)x/wk")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(theme.accent)
                     }
@@ -147,9 +147,17 @@ struct RoutineLibraryView: View {
                         }
                     }
 
+                    // The week strip answers "3x/week but 2 routines?" at a
+                    // glance — shown whenever days repeat within the week.
+                    if let letters = program.scheduleLetters, Set(program.routineIDs).count < letters.count {
+                        Text("A typical week: \(letters.joined(separator: " · "))")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+
                     HStack {
                         pill(program.level.capitalized, systemImage: "chart.bar")
-                        pill("\(dayNames.count) routine\(dayNames.count == 1 ? "" : "s")", systemImage: "list.bullet")
+                        pill("\(dayNames.count) day\(dayNames.count == 1 ? "" : "s")", systemImage: "list.bullet")
                         pill(program.goal.capitalized, systemImage: "target")
                     }
                 }
@@ -174,10 +182,18 @@ struct RoutineLibraryView: View {
                     }
 
                     Card {
-                        HStack {
-                            StatColumn(label: "Goal", value: program.goal.capitalized)
-                            StatColumn(label: "Level", value: program.level.capitalized)
-                            StatColumn(label: "Days", value: "\(program.daysPerWeek)x/wk")
+                        VStack(alignment: .leading, spacing: Space.md) {
+                            HStack {
+                                StatColumn(label: "Goal", value: program.goal.capitalized)
+                                StatColumn(label: "Level", value: program.level.capitalized)
+                                StatColumn(label: "Sessions", value: "\(program.sessionsPerWeek)x/wk")
+                            }
+                            if let letters = program.scheduleLetters, Set(program.routineIDs).count < letters.count {
+                                Text("A typical week: \(letters.joined(separator: " · ")) — the \(Set(program.routineIDs).count) day routines alternate.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
 
@@ -241,14 +257,10 @@ struct RoutineLibraryView: View {
                 HStack(spacing: 6) {
                     if let exercise {
                         NavigationLink(value: exercise.id) {
-                            HStack(spacing: 4) {
-                                Text(exercise.name)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .lineLimit(2)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                            .foregroundStyle(theme.textPrimary)
+                            // House rule: exercise names are white, only the
+                            // disclosure chevron is sage — via the shared label.
+                            ExerciseNameLabel(name: exercise.name, font: .system(size: 15, weight: .semibold))
+                                .lineLimit(2)
                         }
                         .buttonStyle(.plain)
                     } else {

@@ -37,6 +37,13 @@ private enum DropTarget: Equatable {
     case folder(UUID)
 }
 
+/// A folder the user asked to create but hasn't named yet — the model is only
+/// inserted when the name alert is confirmed, so cancelling leaves no
+/// "New Folder" junk behind.
+private struct FolderCreation {
+    let parentID: UUID?
+}
+
 private struct DropFeedback: Equatable {
     let target: DropTarget
     let accepts: Bool
@@ -63,8 +70,17 @@ struct WorkoutHomeView: View {
 
     @State private var collapsed: Set<UUID> = []
     @State private var newRoutine: RoutineModel?
+    /// Set only by `createRoutine` — tells the editor this routine is a
+    /// just-inserted placeholder, so backing out deletes it instead of
+    /// leaving "New Routine" junk in the library.
+    @State private var newlyCreatedRoutineID: UUID?
     @State private var renamingFolder: RoutineFolderModel?
+    @State private var pendingFolderCreation: FolderCreation?
     @State private var folderNameDraft = ""
+    /// Deletion is one tap inside an ellipsis menu — both dialogs guard
+    /// against a mis-tap silently removing something the user built.
+    @State private var routinePendingDelete: RoutineModel?
+    @State private var folderPendingDelete: RoutineFolderModel?
     @State private var sharePayload: ShareImagePayload?
     /// The item currently being dragged. SwiftUI's drop target callback only
     /// tells us whether something is hovering, so we keep the payload here to
@@ -90,7 +106,21 @@ struct WorkoutHomeView: View {
         routines.filter { $0.deletedAt == nil }.sorted { $0.position < $1.position }
     }
     private var folders: [RoutineFolderModel] {
-        allFolders.filter { $0.deletedAt == nil }.sorted { $0.position < $1.position }
+        // CloudKit can deliver a pre-split record after launch cleanup. Keep
+        // the hierarchy stable immediately while the reactive persistence
+        // cleanup removes the extra physical row in the background.
+        var byID: [UUID: RoutineFolderModel] = [:]
+        for folder in allFolders {
+            guard folder.deletedAt == nil else { continue }
+            if let incumbent = byID[folder.id], incumbent.updatedAt >= folder.updatedAt {
+                continue
+            }
+            byID[folder.id] = folder
+        }
+        return byID.values.sorted {
+            if $0.position != $1.position { return $0.position < $1.position }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
     }
     private var topLevelFolders: [RoutineFolderModel] {
         folders.filter { $0.parentID == nil }
@@ -188,13 +218,49 @@ struct WorkoutHomeView: View {
                 RoutineDetailView(routine: routine, exercises: exercises, setupNotes: setupNotes)
             }
             .navigationDestination(item: $newRoutine) { routine in
-                RoutineEditorView(routine: routine, exercises: exercises, setupNotes: setupNotes)
+                RoutineEditorView(
+                    routine: routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    isNew: routine.id == newlyCreatedRoutineID
+                )
             }
             .toolbar(.hidden, for: .navigationBar)
             .alert("Rename folder", isPresented: Binding(get: { renamingFolder != nil }, set: { if !$0 { renamingFolder = nil } })) {
                 TextField("Folder name", text: $folderNameDraft)
                 Button("Save") { commitRename() }
                 Button("Cancel", role: .cancel) { renamingFolder = nil }
+            }
+            .alert("New folder", isPresented: Binding(get: { pendingFolderCreation != nil }, set: { if !$0 { pendingFolderCreation = nil } })) {
+                TextField("Folder name", text: $folderNameDraft)
+                Button("Create") { commitCreateFolder() }
+                Button("Cancel", role: .cancel) { pendingFolderCreation = nil }
+            }
+            .confirmationDialog(
+                "Delete \"\(routinePendingDelete?.name ?? "routine")\"?",
+                isPresented: Binding(get: { routinePendingDelete != nil }, set: { if !$0 { routinePendingDelete = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Routine", role: .destructive) {
+                    if let routine = routinePendingDelete { delete(routine) }
+                    routinePendingDelete = nil
+                }
+                Button("Cancel", role: .cancel) { routinePendingDelete = nil }
+            } message: {
+                Text("The routine and its planned sets are removed. Logged workouts keep their history.")
+            }
+            .confirmationDialog(
+                "Delete \"\(folderPendingDelete?.name ?? "folder")\"?",
+                isPresented: Binding(get: { folderPendingDelete != nil }, set: { if !$0 { folderPendingDelete = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Folder", role: .destructive) {
+                    if let folder = folderPendingDelete { deleteFolder(folder) }
+                    folderPendingDelete = nil
+                }
+                Button("Cancel", role: .cancel) { folderPendingDelete = nil }
+            } message: {
+                Text("Routines and subfolders inside move up a level — nothing inside is deleted.")
             }
             .sheet(isPresented: $showExploreLibrary) {
                 let templates = RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
@@ -434,10 +500,14 @@ struct WorkoutHomeView: View {
                 }
             }
             Divider()
-            Button("Delete Folder", systemImage: "trash", role: .destructive) { deleteFolder(folder) }
+            Button("Delete Folder", systemImage: "trash", role: .destructive) { folderPendingDelete = folder }
         } label: {
-            Image(systemName: "ellipsis").foregroundStyle(theme.textSecondary).frame(width: 30, height: 30)
+            Image(systemName: "ellipsis")
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("Folder options for \(folder.name)")
     }
 
     /// Render a training-cycle folder to a single tall image and present the
@@ -587,7 +657,7 @@ struct WorkoutHomeView: View {
             exercises: exercises,
             onStart: { start(routine) },
             onEdit: { edit(routine) },
-            onDelete: { delete(routine) },
+            onDelete: { routinePendingDelete = routine },
             onDuplicate: { duplicate(routine) },
             moveDestinations: destinations.map { ($0.id, destinationLabel($0)) },
             showsMoveToRoot: routine.folderID != nil,
@@ -642,20 +712,30 @@ struct WorkoutHomeView: View {
     /// Push the routine editor from the card's ellipsis menu. Reuses the same
     /// editor destination as post-create so there's a single code path.
     private func edit(_ routine: RoutineModel) {
+        newlyCreatedRoutineID = nil
         newRoutine = routine
     }
 
+    /// Ask for a name first; the folder model is only inserted on confirm
+    /// (`commitCreateFolder`) so cancelling leaves nothing behind.
     private func createFolder(parentID: UUID? = nil) {
+        folderNameDraft = ""
+        pendingFolderCreation = FolderCreation(parentID: parentID)
+    }
+
+    private func commitCreateFolder() {
+        guard let request = pendingFolderCreation else { return }
+        let trimmed = folderNameDraft.trimmingCharacters(in: .whitespaces)
         let folder = RoutineFolderModel(
             userID: ForgeFitDemo.userID,
-            name: "New Folder",
+            name: trimmed.isEmpty ? "New Folder" : trimmed,
             position: folders.count,
-            parentID: parentID
+            parentID: request.parentID
         )
         modelContext.insert(folder)
         // A parent gaining its first subfolder holds only folders from then on
         // — its loose routines move into the new subfolder.
-        if let parentID, let parent = folders.first(where: { $0.id == parentID }) {
+        if let parentID = request.parentID, let parent = folders.first(where: { $0.id == parentID }) {
             let existingChildren = childFolders(of: parent).filter { $0.id != folder.id }
             if existingChildren.isEmpty {
                 for routine in routines(in: parent) {
@@ -667,7 +747,7 @@ struct WorkoutHomeView: View {
             collapsed.remove(parentID)
         }
         save()
-        startRename(folder)
+        pendingFolderCreation = nil
     }
 
     private func startRename(_ folder: RoutineFolderModel) {
@@ -701,6 +781,10 @@ struct WorkoutHomeView: View {
         save()
     }
 
+    /// Insert-then-edit: the editor's exercise picker saves eagerly, so it
+    /// needs a live inserted model. The editor knows it's new (see
+    /// `newlyCreatedRoutineID`) and deletes the placeholder if the user
+    /// backs out without saving.
     private func createRoutine(folderID: UUID?) {
         let routine = RoutineModel(
             userID: ForgeFitDemo.userID,
@@ -710,6 +794,7 @@ struct WorkoutHomeView: View {
         )
         modelContext.insert(routine)
         save()
+        newlyCreatedRoutineID = routine.id
         newRoutine = routine
     }
 
@@ -721,35 +806,8 @@ struct WorkoutHomeView: View {
     }
 
     private func duplicate(_ source: RoutineModel) {
-        let copy = RoutineModel(
-            userID: ForgeFitDemo.userID,
-            name: "\(source.name) Copy",
-            notes: source.notes,
-            folderID: source.folderID,
-            position: activeRoutines.count
-        )
-        copy.exercises = source.exercises
-            .sorted { $0.position < $1.position }
-            .map { sourceExercise in
-                let copiedSets = sourceExercise.sets
-                    .sorted { $0.position < $1.position }
-                    .map { s in
-                        RoutineSetModel(
-                            userID: ForgeFitDemo.userID, position: s.position, setType: s.setType,
-                            targetRepsLow: s.targetRepsLow, targetRepsHigh: s.targetRepsHigh,
-                            targetWeight: s.targetWeight, targetRPE: s.targetRPE,
-                            targetRIR: s.targetRIR, targetDurationSeconds: s.targetDurationSeconds
-                        )
-                    }
-                return RoutineExerciseModel(
-                    userID: ForgeFitDemo.userID, exerciseID: sourceExercise.exerciseID,
-                    position: sourceExercise.position, supersetGroup: sourceExercise.supersetGroup,
-                    progressionRuleID: sourceExercise.progressionRuleID, notes: sourceExercise.notes,
-                    sets: copiedSets
-                )
-            }
-        modelContext.insert(copy)
-        try? modelContext.save()
+        RoutineDuplicator.duplicate(source, position: activeRoutines.count, in: modelContext)
+        save()
     }
 
     private func save() {
@@ -928,6 +986,9 @@ private struct RoutineCard: View {
                         .tint(theme.accent)
                         .controlSize(.small)
                         .buttonBorderShape(.capsule)
+                        // An empty routine has nothing to start — starting it
+                        // would just open a blank freestyle session.
+                        .disabled(sortedRoutineExercises.isEmpty)
                         .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
                             Button("Edit Routine", systemImage: "pencil", action: onEdit)
@@ -953,13 +1014,15 @@ private struct RoutineCard: View {
                             Image(systemName: "ellipsis")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)
-                                .frame(width: 30, height: 30)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .accessibilityLabel("Routine options for \(routine.name)")
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
                     if sortedRoutineExercises.isEmpty {
-                        Text("No exercises yet")
+                        Text("No exercises yet — add some to start")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {

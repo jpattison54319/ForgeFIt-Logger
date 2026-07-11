@@ -13,45 +13,25 @@ struct ForgeFitApp: App {
             memoryCapacity: 64 * 1024 * 1024,
             diskCapacity: 512 * 1024 * 1024
         )
+        // BGTaskScheduler requires registration before the app finishes
+        // launching; the rest of ReadinessDelivery is wired in launchTasks.
+        ReadinessDelivery.shared.register()
     }
 
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema(ForgeDataSchema.models)
-        let modelConfiguration = ModelConfiguration(
-            schema: schema,
-            isStoredInMemoryOnly: false,
-            cloudKitDatabase: .automatic
-        )
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            // Store couldn't migrate to the current schema. Back the files up
-            // first — user data must never be silently destroyed — then reset
-            // and retry rather than crashing.
-            let storeURL = modelConfiguration.url
-            let dir = storeURL.deletingLastPathComponent()
-            let base = storeURL.lastPathComponent
-            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-            let backupDir = dir.appendingPathComponent("StoreBackup-\(stamp)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
-            for name in [base, base + "-shm", base + "-wal"] {
-                let source = dir.appendingPathComponent(name)
-                try? FileManager.default.copyItem(at: source, to: backupDir.appendingPathComponent(name))
-                try? FileManager.default.removeItem(at: source)
-            }
-            do {
-                return try ModelContainer(for: schema, configurations: [modelConfiguration])
-            } catch {
-                fatalError("Could not create ModelContainer: \(error)")
-            }
-        }
-    }()
+    // Split persistence (5.1.3(ii)): local-only training log + CloudKit
+    // plan store, with the one-time legacy migration. See PersistenceBootstrap.
+    var sharedModelContainer: ModelContainer = PersistenceBootstrap.makeContainer()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(themeManager)
+                // Dynamic Type is token-anchored (Theme.swift type ramp); the
+                // ceiling keeps dense fixed-frame surfaces — the set-entry
+                // grid, tab bar, 44 pt headers — usable at the largest sizes.
+                // AX1 is the largest size the layouts were audited at; raise
+                // only with a fresh layout pass.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
         .modelContainer(sharedModelContainer)
     }

@@ -1,10 +1,12 @@
+import CoreLocation
 import ForgeCore
 import ForgeData
 import SwiftData
 import SwiftUI
 
-/// Heart-rate zone helper. Without a per-second HR stream (HealthKit pending) we
-/// classify by average HR against an age-agnostic default max.
+/// Heart-rate zone helper. Classifies single readings (and, via
+/// `CardioMetrics.measuredZoneSecondsArray`, the per-10s series a completed
+/// session stores) against the user's configured zone model.
 enum HRZone {
     /// The user's configured zone model (personalized max HR + boundaries),
     /// loaded from the shared store. Defaults to the classic 190/60-90% model.
@@ -49,6 +51,8 @@ struct CardioExerciseCard: View {
     var onShowExerciseDetail: (ExerciseLibraryModel) -> Void = { _ in }
     let onReplace: () -> Void
     let onRemove: () -> Void
+    /// Completed workouts, for the "Last time" line — cardio's PREVIOUS column.
+    var history: [WorkoutModel] = []
 
     @State private var session: CardioSessionModel?
     @State private var showManual = false
@@ -72,7 +76,7 @@ struct CardioExerciseCard: View {
     /// session already holds. Treadmills / indoor machines stay manual-only.
     private func liveDistance(_ session: CardioSessionModel) -> Double? {
         guard providesGPSDistance else { return session.distanceMeters }
-        if let watch = WatchLink.shared.liveMetrics?.distanceMeters, watch > 0 { return watch }
+        if let watch = LiveMetricsHub.shared.liveMetrics?.distanceMeters, watch > 0 { return watch }
         if let gps = CardioRouteRecorder.shared.liveDistanceMeters(for: session.id), gps > 0 { return gps }
         return session.distanceMeters
     }
@@ -267,8 +271,44 @@ struct CardioExerciseCard: View {
         }
     }
 
+    /// The most recent completed run of this exercise — distance, time, and
+    /// avg HR to match or beat, mirroring the strength PREVIOUS column.
+    private var previousSessionText: String? {
+        let currentExerciseID = workoutExercise.exerciseID
+        let prior = history
+            .filter { $0.id != workout.id && $0.endedAt != nil && $0.deletedAt == nil }
+            .sorted { $0.startedAt > $1.startedAt }
+        for past in prior {
+            for we in past.exercises where we.exerciseID == currentExerciseID {
+                guard let pastSession = past.cardioSessions.first(where: { $0.workoutExerciseID == we.id && $0.endedAt != nil }) else { continue }
+                var parts: [String] = []
+                if let meters = pastSession.distanceMeters, meters > 0 { parts.append(Fmt.cardioDistance(meters, kind: kind)) }
+                if let seconds = pastSession.durationSeconds, seconds > 0 { parts.append(Fmt.durationShort(seconds)) }
+                if let hr = pastSession.avgHR { parts.append("\(hr) bpm avg") }
+                if !parts.isEmpty { return parts.joined(separator: " · ") }
+            }
+        }
+        return nil
+    }
+
+    private func previousRow(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(theme.textTertiary)
+            Text("Last time: \(text)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+        }
+        .accessibilityLabel("Previous session: \(text)")
+    }
+
     private func notStarted(_ session: CardioSessionModel) -> some View {
         VStack(spacing: Space.md) {
+            if let previousSessionText {
+                previousRow(previousSessionText)
+            }
             goalRow
             Button { start(session) } label: {
                 HStack(spacing: Space.sm) {
@@ -300,6 +340,9 @@ struct CardioExerciseCard: View {
 
     private func inProgress(_ session: CardioSessionModel) -> some View {
         VStack(spacing: Space.md) {
+            if let previousSessionText {
+                previousRow(previousSessionText)
+            }
             // Structured intervals: live step guidance drives the session.
             if let runner = IntervalRunnerHub.shared.runner(for: session.id) {
                 IntervalRunnerStrip(runner: runner)
@@ -337,7 +380,7 @@ struct CardioExerciseCard: View {
                                 ? CardioMetrics.paceString(distanceMeters: liveDist, durationSeconds: elapsed, kind: kind)
                                 : CardioMetrics.speedString(distanceMeters: liveDist, durationSeconds: elapsed)
                         )
-                        StatColumn(label: "HR", value: WatchLink.shared.liveMetrics?.heartRate.map(String.init) ?? "—", valueColor: theme.danger)
+                        StatColumn(label: "HR", value: LiveMetricsHub.shared.liveMetrics?.heartRate.map(String.init) ?? "—", valueColor: theme.danger)
                     }
                 }
             }
@@ -415,21 +458,46 @@ struct CardioExerciseCard: View {
     private func routeStateText(_ session: CardioSessionModel) -> some View {
         if providesGPSDistance {
             let hasRoute = session.routePoints.count >= 2
-            HStack(spacing: 6) {
-                Image(systemName: hasRoute ? "map.fill" : "location")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(hasRoute ? theme.success : theme.textTertiary)
-                Text(routeStatusCopy(hasRoute: hasRoute))
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: hasRoute ? "map.fill" : "location")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(hasRoute ? theme.success : theme.textTertiary)
+                    Text(routeStatusCopy(hasRoute: hasRoute))
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                // A previously-denied permission can't be re-requested from
+                // in-app — without this link route maps were a dead end the
+                // copy told users to fix but gave no way to.
+                if !hasRoute, locationDenied {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Text("Open Settings")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
 
+    private var locationDenied: Bool {
+        let status = CardioRouteRecorder.shared.authorizationStatus
+        return status == .denied || status == .restricted
+    }
+
     private func routeStatusCopy(hasRoute: Bool) -> String {
         if hasRoute { return "Route saved on this device." }
+        if locationDenied {
+            return "Location is off for ForgeFit — allow it in Settings to save route maps. Distance and heart rate still work without it."
+        }
         if !CardioRouteRecorder.shared.isAuthorized {
             return "Allow location to save route maps. Distance and heart rate still work without it."
         }
@@ -441,10 +509,7 @@ struct CardioExerciseCard: View {
     private func start(_ session: CardioSessionModel) {
         Task { await HealthService.shared.requestAuthorization() }
         if providesGPSDistance {
-            CardioRouteRecorder.shared.requestAuthorization()
-            if CardioRouteRecorder.shared.isAuthorized {
-                CardioRouteRecorder.shared.start(session: session)
-            }
+            CardioRouteRecorder.shared.start(session: session)
         }
         let now = Date()
         session.liveStartedAt = now
@@ -474,12 +539,13 @@ struct CardioExerciseCard: View {
         try? modelContext.save()
         importing = true
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
+        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         Task {
             let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: kind)
             await MainActor.run {
                 if let d = snap.durationSeconds { session.durationSeconds = d }
-                if let hr = snap.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR { session.maxHR = mx }
+                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
+                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
                 // Skip auto distance for treadmills / indoor machines (manual
                 // entry). For outdoor runs, keep the GPS route distance when we
@@ -490,9 +556,11 @@ struct CardioExerciseCard: View {
                 if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
                     session.distanceMeters = dist
                 }
+                // Provisional estimate — finalize() below replaces it with the
+                // measured distribution when the HR series has real coverage.
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
             }
-            // Capture the time-series and auto-detect intervals (free-form runs).
+            // Capture the time-series (measured zones) and auto-detect intervals (free-form runs).
             await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: modelContext)
             await MainActor.run {
                 importing = false
@@ -513,16 +581,11 @@ struct CardioExerciseCard: View {
                     Button {
                         onShowExerciseDetail(exercise)
                     } label: {
-                        HStack(spacing: 4) {
-                            Text(exercise.name).font(.system(size: 18, weight: .bold))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .bold))
-                        }
-                        .foregroundStyle(theme.secondaryAccent)
+                        ExerciseNameLabel(name: exercise.name, font: .system(size: 18, weight: .bold))
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text("Cardio").font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                    Text("Cardio").font(.system(size: 18, weight: .bold)).foregroundStyle(theme.textPrimary)
                 }
                 HStack(spacing: 6) {
                     Text(kind.title).font(.tag).foregroundStyle(theme.textSecondary)
@@ -573,7 +636,11 @@ struct CardioExerciseCard: View {
 
     private func recompute() {
         if let session {
-            session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
+            // Manual field edits must not fabricate a distribution over real
+            // data: keep the measured series-derived zones when they exist and
+            // only re-spread the estimate for estimate-only sessions.
+            session.hrZoneSeconds = CardioMetrics.measuredZoneSecondsArray(seriesJSON: session.sampleSeriesJSON)
+                ?? CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
         }
         workoutExercise.updatedAt = Date()
         try? modelContext.save()
@@ -685,9 +752,16 @@ struct HRZoneBar: View {
     /// configured max HR, not a single session's observed peak.
     var maxHR: Int? = nil
     let durationSeconds: Int?
+    var zoneSeconds: [Int]? = nil
+    var source: ZoneDataSource = .estimated
 
     private var distribution: [(zone: Int, seconds: Int)] {
-        CardioMetrics.estimatedZoneSeconds(avgHR: avgHR, durationSeconds: durationSeconds)
+        if let zoneSeconds, zoneSeconds.contains(where: { $0 > 0 }) {
+            return zoneSeconds.enumerated().compactMap { index, seconds in
+                seconds > 0 ? (index + 1, seconds) : nil
+            }
+        }
+        return CardioMetrics.estimatedZoneSeconds(avgHR: avgHR, durationSeconds: durationSeconds)
     }
 
     var body: some View {
@@ -699,7 +773,8 @@ struct HRZoneBar: View {
                 Text("\(avgHR) bpm avg · \(HRZone.label(zone))")
                     .font(.tag).foregroundStyle(theme.zoneColor(zone))
             }
-            if !distribution.isEmpty, let total = durationSeconds, total > 0 {
+            let total = distribution.reduce(0) { $0 + $1.seconds }
+            if !distribution.isEmpty, total > 0 {
                 GeometryReader { geo in
                     HStack(spacing: 2) {
                         ForEach(distribution, id: \.zone) { item in
@@ -710,17 +785,47 @@ struct HRZoneBar: View {
                 }
                 .frame(height: 10)
                 .clipShape(Capsule())
-                Text("Estimated from average HR").font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                HStack {
+                    ForEach(distribution, id: \.zone) { item in
+                        Text("Z\(item.zone) \(Fmt.durationShort(item.seconds))")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(theme.zoneColor(item.zone))
+                    }
+                    Spacer()
+                    Text(source.footnote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textTertiary)
+                }
             }
         }
     }
 }
 
-/// Measured time-in-zone bar (real seconds from the Apple Watch session, not
-/// an estimate from average HR).
+/// Where a time-in-zone distribution came from, so the bar never claims more
+/// than the data supports.
+enum ZoneDataSource {
+    /// Summed from real HR samples (Apple Watch session or the per-10s series).
+    case measured
+    /// Spread from a single average HR — an approximation, and labeled as one.
+    case estimated
+    /// An aggregate mixing measured and estimated sessions.
+    case mixed
+
+    var footnote: String {
+        switch self {
+        case .measured: "Measured"
+        case .estimated: "Estimated from average HR"
+        case .mixed: "Measured + estimated sessions"
+        }
+    }
+}
+
+/// Time-in-zone bar with an honest source label — "Measured" only when the
+/// distribution really was summed from HR samples.
 struct ZoneSecondsBar: View {
     @Environment(\.theme) private var theme
     let zoneSeconds: [Int]
+    var source: ZoneDataSource = .measured
 
     var body: some View {
         let total = zoneSeconds.reduce(0, +)
@@ -748,7 +853,7 @@ struct ZoneSecondsBar: View {
                         }
                     }
                     Spacer()
-                    Text("Measured").font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                    Text(source.footnote).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
                 }
             }
         }
@@ -881,10 +986,9 @@ struct CardioSummaryCard: View {
 
 // MARK: - Cardio zone distribution + adaptations (Insights tab)
 
-/// Evidence-based reference for what training in each HR zone develops. Grounded
-/// in the standard 5-zone %HRmax model and established endurance-training science
-/// (Seiler's intensity-distribution work, ACSM guidance) — not fabricated
-/// citations, just the widely-accepted physiology.
+/// Evidence-based reference for what training in each HR zone develops. The
+/// configured zone model may be %HRmax or %HRR/Karvonen; adaptations reflect
+/// established endurance-training physiology, not the specific percentage basis.
 struct CardioZoneInfo: Identifiable {
     let zone: Int
     let name: String
@@ -894,19 +998,19 @@ struct CardioZoneInfo: Identifiable {
     var id: Int { zone }
 
     static let all: [CardioZoneInfo] = [
-        .init(zone: 1, name: "Recovery", hrRange: "<60% HRmax",
+        .init(zone: 1, name: "Recovery", hrRange: "<60%",
               adaptation: "Active recovery & blood flow",
               detail: "Very easy effort that flushes fatigue between hard sessions and adds aerobic time with minimal stress."),
-        .init(zone: 2, name: "Endurance", hrRange: "60–70% HRmax",
+        .init(zone: 2, name: "Endurance", hrRange: "60–70%",
               adaptation: "Aerobic base — mitochondria & fat oxidation",
               detail: "The foundation of endurance: builds mitochondrial density and capillaries and trains your body to burn fat. Most easy training should live here."),
-        .init(zone: 3, name: "Tempo", hrRange: "70–80% HRmax",
+        .init(zone: 3, name: "Tempo", hrRange: "70–80%",
               adaptation: "Aerobic power",
               detail: "Sustained \u{201C}comfortably hard\u{201D} work that lifts aerobic output. Effective but fatiguing — use it deliberately, not by accident."),
-        .init(zone: 4, name: "Threshold", hrRange: "80–90% HRmax",
+        .init(zone: 4, name: "Threshold", hrRange: "80–90%",
               adaptation: "Lactate threshold",
               detail: "Raises the effort you can hold before lactate accumulates — the engine behind faster sustained paces."),
-        .init(zone: 5, name: "VO\u{2082} Max", hrRange: "90%+ HRmax",
+        .init(zone: 5, name: "VO\u{2082} Max", hrRange: "90%+",
               adaptation: "Max aerobic & anaerobic capacity",
               detail: "Short, hard intervals that push your VO\u{2082}max ceiling and top-end power. High stress — keep the doses small."),
     ]
@@ -918,6 +1022,9 @@ struct CardioZoneInsightsCard: View {
     @State private var showAdaptations = false
 
     private var total: Int { zoneSeconds.reduce(0, +) }
+    private var zoneBasis: String {
+        HRZone.config.usesHeartRateReserve ? "heart-rate reserve" : "max heart rate"
+    }
     private var dominantZone: Int? {
         guard total > 0 else { return nil }
         return (zoneSeconds.enumerated().max { $0.element < $1.element }?.offset).map { $0 + 1 }
@@ -977,7 +1084,7 @@ struct CardioZoneInsightsCard: View {
                     if showAdaptations {
                         VStack(alignment: .leading, spacing: Space.md) {
                             ForEach(CardioZoneInfo.all) { adaptationRow($0) }
-                            Text("Zones are % of max heart rate; adaptations reflect established endurance-training science (Seiler intensity model, ACSM guidance).")
+                            Text("Zones are % of \(zoneBasis); adaptations reflect established endurance-training science (Seiler intensity model, ACSM guidance).")
                                 .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

@@ -293,6 +293,11 @@ struct WatchSetListView: View {
         store.activeWorkout?.exercises.first { $0.id == exerciseID }
     }
 
+    /// The set the double-tap gesture targets.
+    private var firstUncompletedSetID: UUID? {
+        exercise?.sets.first { !$0.completed }?.id
+    }
+
     var body: some View {
         List {
             if let exercise {
@@ -319,6 +324,10 @@ struct WatchSetListView: View {
                             editingSet = set
                         }
                     )
+                    // Double-tap (watch hand gesture) completes the NEXT
+                    // uncompleted set — mid-set, hands on the bar, no screen
+                    // touch needed (T3-5).
+                    .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
                     .listRowBackground(
                         (set.completed ? WTheme.success.opacity(0.12) : WTheme.surface)
                             .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -381,6 +390,9 @@ struct WatchControlsPage: View {
         .confirmationDialog("Discard workout?", isPresented: $confirmDiscard) {
             Button("Discard", role: .destructive) { store.discardWorkout() }
             Button("Cancel", role: .cancel) {}
+        } message: {
+            // Same stakes-warning the phone shows — discard is irreversible.
+            Text("All logged sets from this session will be lost.")
         }
     }
 }

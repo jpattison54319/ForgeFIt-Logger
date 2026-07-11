@@ -1,3 +1,4 @@
+import ForgeCore
 import Foundation
 import ForgeData
 import SwiftData
@@ -15,12 +16,15 @@ enum AppRefresh {
         await HealthMetricsStore.shared.refreshNow()
 
         let workouts = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
-        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        let analytics = TrainingAnalytics(workouts: workouts, exercises: exercises)
+        let streak = WeeklyStreak.compute(
+            workoutDates: workouts.compactMap { $0.endedAt != nil && $0.deletedAt == nil ? $0.startedAt : nil },
+            goalPerWeek: UserDefaults.standard.object(forKey: "weeklyWorkoutGoal") as? Int ?? 3
+        )
         NotificationScheduler.shared.refreshStreakNudge(
-            streak: analytics.currentStreak(),
-            trainedToday: analytics.trainedToday()
+            streakWeeks: streak.weeks,
+            mustTrainToday: streak.mustTrainToday
         )
         WatchLink.shared.publishState()
+        ReadinessDelivery.shared.refreshMorningNotification()
     }
 }

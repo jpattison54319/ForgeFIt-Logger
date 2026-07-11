@@ -20,6 +20,9 @@ final class HealthMetricsStore {
     /// Body-mass history in kilograms.
     private(set) var bodyweightSeries: [(date: Date, value: Double)] = []
     var latestBodyweight: Double? { bodyweightSeries.last?.value }
+    /// Garmin sleep is flowing into Apple Health but HRV isn't (Garmin
+    /// Connect doesn't sync it) — the recovery screen explains the gap.
+    private(set) var hrvGapDetected = false
     private(set) var lastRefreshed: Date?
 
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -48,6 +51,7 @@ final class HealthMetricsStore {
         metrics = daily
         extraSignals = extras
         bodyweightSeries = bodyweight
+        hrvGapDetected = await HealthService.shared.detectGarminHRVGap()
         lastRefreshed = Date()
     }
 

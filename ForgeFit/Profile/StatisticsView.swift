@@ -295,13 +295,11 @@ struct StatisticsView: View {
                     NavigationLink(value: usage.id) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack {
-                                Text(usage.name)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(theme.textPrimary)
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(theme.textTertiary)
+                                ExerciseNameLabel(
+                                    name: usage.name,
+                                    font: .system(size: 14, weight: .semibold)
+                                )
+                                .lineLimit(1)
                                 Spacer()
                                 Text("\(Fmt.sets(usage.workingSets)) sets · \(Fmt.volume(usage.volume))")
                                     .font(.system(size: 12, weight: .medium))
@@ -631,7 +629,7 @@ struct StatisticsView: View {
         if zones.contains(where: { $0 > 0 }) {
             CollapsibleStatCard(title: "Intensity", key: "cardioZones") {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    ZoneSecondsBar(zoneSeconds: zones)
+                    ZoneSecondsBar(zoneSeconds: zones, source: .mixed)
                     Text("Zones 1–2 build the aerobic base; zones 4–5 are your hard interval work. Most endurance plans keep ~80% of time easy.")
                         .font(.system(size: 11))
                         .foregroundStyle(theme.textTertiary)
@@ -762,12 +760,13 @@ struct StatisticsView: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(index + 1 < months.count ? theme.textPrimary : theme.textTertiary)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 44, height: 44)   // HIG minimum touch target
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(index + 1 >= months.count)
+            .accessibilityLabel("Previous month")
 
             Spacer()
             Text(months[index].formatted(.dateTime.month(.wide).year()))
@@ -781,12 +780,13 @@ struct StatisticsView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(index > 0 ? theme.textPrimary : theme.textTertiary)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 44, height: 44)   // HIG minimum touch target
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(index <= 0)
+            .accessibilityLabel("Next month")
         }
     }
 
@@ -853,13 +853,11 @@ struct StatisticsView: View {
                     ForEach(report.topExercises) { usage in
                         NavigationLink(value: usage.id) {
                             HStack {
-                                Text(usage.name)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(theme.textPrimary)
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundStyle(theme.textTertiary)
+                                ExerciseNameLabel(
+                                    name: usage.name,
+                                    font: .system(size: 14, weight: .semibold)
+                                )
+                                .lineLimit(1)
                                 Spacer()
                                 Text("\(Fmt.sets(usage.workingSets)) sets · \(usage.sessions) session\(usage.sessions == 1 ? "" : "s")")
                                     .font(.system(size: 12, weight: .medium))
@@ -903,8 +901,11 @@ struct StatisticsView: View {
     // MARK: - Shared bits
 
     private var palette: [Color] {
-        [theme.accent, theme.secondaryAccent, theme.warmup,
-         theme.success, theme.danger, Color(hex: 0xFF9F0A)]
+        // Interleaved so adjacent slices never read as the same hue family —
+        // accent (sage), secondaryAccent (mint) and success (green) used to
+        // sit back-to-back and merged visually in the muscle pie.
+        [theme.accent, theme.warmup, theme.secondaryAccent,
+         theme.danger, theme.success, Color(hex: 0xFF9F0A)]
     }
 
     private func splitColor(_ name: String) -> Color {

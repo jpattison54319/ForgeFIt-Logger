@@ -19,6 +19,9 @@ struct YogaPoseSeed: Decodable {
     let slug: String
     let name: String
     let sanskrit: String
+    /// Sequencing role for the flow generator (warmup/standing/…/resting).
+    /// Optional so older bundles without it still decode.
+    let category: String?
     let primaryMuscles: [String]
     let secondaryMuscles: [String]
     let unilateral: Bool
@@ -36,8 +39,11 @@ struct YogaPoseSeed: Decodable {
 enum YogaPoseCatalog {
     /// Namespace prefixed onto slugs before hashing so pose IDs can never
     /// collide with the free-exercise-db catalog's slug-derived IDs.
-    private static let idNamespace = "yoga/"
-    private static let aliasIDNamespace = "yoga-alias/"
+    nonisolated private static let idNamespace = "yoga/"
+    nonisolated private static let aliasIDNamespace = "yoga-alias/"
+    nonisolated static let sessionExerciseSlug = "session"
+    nonisolated static let sessionMediaSlug = idNamespace + sessionExerciseSlug
+    nonisolated static let sessionExerciseID = ExerciseCatalog.deterministicID(for: sessionMediaSlug)
 
     private static var cached: [YogaPoseSeed]?
 
@@ -62,6 +68,11 @@ enum YogaPoseCatalog {
         return bySlug[slug]
     }
 
+    nonisolated static func isSessionExercise(_ exercise: ExerciseLibraryModel?) -> Bool {
+        guard let exercise else { return false }
+        return exercise.id == sessionExerciseID || exercise.mediaSlug == sessionMediaSlug
+    }
+
     /// Stable UUID for a pose slug — same scheme as the exercise catalog,
     /// under a `yoga/` namespace.
     static func id(forSlug slug: String) -> UUID {
@@ -70,9 +81,53 @@ enum YogaPoseCatalog {
 
     /// The catalog slug a library row was seeded from ("yoga/<slug>" is
     /// stored in `mediaSlug`); nil for custom poses.
-    static func slug(for exercise: ExerciseLibraryModel) -> String? {
+    nonisolated static func slug(for exercise: ExerciseLibraryModel) -> String? {
         guard let mediaSlug = exercise.mediaSlug, mediaSlug.hasPrefix(idNamespace) else { return nil }
         return String(mediaSlug.dropFirst(idNamespace.count))
+    }
+
+    @MainActor
+    static func sessionExercise(in context: ModelContext) -> ExerciseLibraryModel {
+        let existing = ((try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? [])
+            .first { isSessionExercise($0) }
+        let model = existing ?? ExerciseLibraryModel(id: sessionExerciseID, name: "Yoga Session")
+        if existing == nil {
+            context.insert(model)
+        }
+        upsertSessionFields(on: model)
+        return model
+    }
+
+    /// Slugs of poses that ship with a real illustration. The bundled catalog
+    /// only carries poses we can show properly, so this currently equals the
+    /// full pose list — but it's the single source of truth for "do we have
+    /// art for this pose," used to prune poses dropped from the catalog.
+    static var catalogSlugs: Set<String> { Set(load().map(\.slug)) }
+
+    /// Remove yoga poses that used to be seeded but are no longer in the
+    /// bundled catalog (e.g. poses without finished artwork that were trimmed
+    /// out). Only touches ForgeFit's own seeded rows — identified by the
+    /// `yoga/<slug>` media slug — and never user-created or user-modified
+    /// poses. CloudKit-safe: deletions sync like any other. Idempotent.
+    @MainActor
+    static func pruneUnavailablePoses(into context: ModelContext) {
+        let validIDs = Set(catalogSlugs.map { id(forSlug: $0) }).union([sessionExerciseID])
+        let rows = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+        let staleRows = rows.filter { row in
+            guard let media = row.mediaSlug, media.hasPrefix(idNamespace) else { return false }
+            return !validIDs.contains(row.id) && !row.userModified
+        }
+        guard !staleRows.isEmpty else { return }
+
+        let staleIDs = Set(staleRows.map(\.id))
+        let aliases = (try? context.fetch(FetchDescriptor<ExerciseAliasModel>())) ?? []
+        for alias in aliases where staleIDs.contains(alias.exerciseID) {
+            context.delete(alias)
+        }
+        for row in staleRows {
+            context.delete(row)
+        }
+        try? context.save()
     }
 
     /// Insert or update the pose library. Idempotent; respects `userModified`
@@ -94,6 +149,15 @@ enum YogaPoseCatalog {
         )
 
         var changed = 0
+        let session = existingByID[sessionExerciseID] ?? ExerciseLibraryModel(id: sessionExerciseID, name: "Yoga Session")
+        if existingByID[sessionExerciseID] == nil {
+            context.insert(session)
+            changed += 1
+        }
+        if upsertSessionFields(on: session) {
+            changed += 1
+        }
+
         for seed in seeds {
             let id = id(forSlug: seed.slug)
             let model = existingByID[id] ?? ExerciseLibraryModel(id: id, name: seed.name)
@@ -154,5 +218,41 @@ enum YogaPoseCatalog {
             }
         }
         if changed > 0 { try? context.save() }
+    }
+
+    @MainActor
+    @discardableResult
+    private static func upsertSessionFields(on model: ExerciseLibraryModel) -> Bool {
+        guard !model.userModified else { return false }
+        var changed = false
+        func set<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<ExerciseLibraryModel, Value>, _ value: Value) {
+            guard model[keyPath: keyPath] != value else { return }
+            model[keyPath: keyPath] = value
+            changed = true
+        }
+
+        set(\.ownerID, nil)
+        set(\.name, "Yoga Session")
+        set(\.modalityRaw, Modality.yoga.rawValue)
+        set(\.isCardio, false)
+        set(\.movementPattern, "yoga")
+        set(\.category, "yoga")
+        set(\.primaryMuscles, ["spine", "hips", "shoulders"])
+        set(\.secondaryMuscles, ["hamstrings", "quadriceps", "chest"])
+        set(\.equipment, "body only")
+        set(\.isUnilateral, false)
+        set(\.difficulty, "beginner")
+        set(\.defaultHoldSeconds, nil)
+        set(\.mediaSlug, sessionMediaSlug)
+        set(\.instructions, [
+            "Configure this session with poses or a curated flow.",
+            "Follow the guided player for visual pose reference, spoken cues, and timing."
+        ])
+        if model.defaultWeightMode != .bodyweight {
+            model.defaultWeightMode = .bodyweight
+            changed = true
+        }
+        if changed { model.updatedAt = Date() }
+        return changed
     }
 }

@@ -53,11 +53,16 @@ final class RestTimerController {
     private(set) var label: String = "Rest"
     /// True while the block micro-rest is running (styles the pill teal).
     private(set) var isMicro = false
-    /// The set that started the current micro-rest, so only its block shows
-    /// the inline countdown.
-    private(set) var microOwnerID: UUID?
+    /// The set that started the current countdown — a block's micro-rest or
+    /// an AMRAP time window — so only that set shows the inline countdown.
+    private(set) var ownerID: UUID?
+    /// The micro-rest's owner (nil for full rests / AMRAP windows).
+    var microOwnerID: UUID? { isMicro ? ownerID : nil }
 
     @ObservationIgnored private var completionTask: Task<Void, Never>?
+    @ObservationIgnored private var soundOnEnd = false
+    @ObservationIgnored private var endNotification: (title: String, body: String)?
+    @ObservationIgnored private var onComplete: ((Int) -> Void)?
 
     var isRunning: Bool {
         guard let endsAt else { return false }
@@ -69,15 +74,42 @@ final class RestTimerController {
         return max(0, Int(endsAt.timeIntervalSince(date).rounded(.up)))
     }
 
-    func start(seconds: Int, label: String, micro: Bool = false, ownerID: UUID? = nil) {
+    /// - Parameters:
+    ///   - soundOnEnd: play an audible cue (plus the haptic) at zero — used by
+    ///     AMRAP windows, where the lifter is mid-set and not looking down.
+    ///   - endNotification: lock-screen copy at zero; defaults to rest copy.
+    ///   - onComplete: called with the seconds actually run when the countdown
+    ///     hits zero, is skipped, or gets replaced by a new timer.
+    func start(
+        seconds: Int,
+        label: String,
+        micro: Bool = false,
+        ownerID: UUID? = nil,
+        soundOnEnd: Bool = false,
+        endNotification: (title: String, body: String)? = nil,
+        onComplete: ((Int) -> Void)? = nil
+    ) {
         guard seconds > 0 else { return }
+        fireCompletionCallback()
         totalSeconds = seconds
         endsAt = Date().addingTimeInterval(TimeInterval(seconds))
         self.label = label
         isMicro = micro
-        microOwnerID = micro ? ownerID : nil
+        self.ownerID = ownerID
+        self.soundOnEnd = soundOnEnd
+        self.endNotification = endNotification
+        self.onComplete = onComplete
         scheduleCompletionHaptic()
         scheduleLockScreenNotification()
+    }
+
+    /// Hand the seconds actually run to whoever started the countdown (AMRAP
+    /// writes them onto the set). Fired exactly once per started timer —
+    /// natural end, skip, or replacement, whichever comes first.
+    private func fireCompletionCallback() {
+        guard let onComplete else { return }
+        self.onComplete = nil
+        onComplete(max(0, totalSeconds - remaining()))
     }
 
     func adjust(by delta: Int) {
@@ -90,11 +122,14 @@ final class RestTimerController {
     }
 
     func skip() {
+        fireCompletionCallback()
         completionTask?.cancel()
         cancelLockScreenNotification()
         endsAt = nil
         isMicro = false
-        microOwnerID = nil
+        ownerID = nil
+        soundOnEnd = false
+        endNotification = nil
     }
 
     private func scheduleCompletionHaptic() {
@@ -103,12 +138,27 @@ final class RestTimerController {
         let interval = endsAt.timeIntervalSinceNow
         completionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(interval))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self else { return }
             #if canImport(UIKit)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             #endif
-            self?.endsAt = nil
-            self?.isMicro = false
+            // The forge-strike chime, but only when it lands on time: a
+            // suspended app resumes this task on return, and a chime firing
+            // minutes late (the notification already covered it) reads as a
+            // bug, not a cue.
+            if let endsAt = self.endsAt, Date().timeIntervalSince(endsAt) < 3 {
+                TimerChime.shared.play()
+            }
+            // Foreground completion: the in-app chime just covered it — the
+            // opt-in loud backstop (RestAlarm) must not also ping seconds
+            // later.
+            RestAlarm.cancel()
+            self.fireCompletionCallback()
+            self.endsAt = nil
+            self.isMicro = false
+            self.ownerID = nil
+            self.soundOnEnd = false
+            self.endNotification = nil
         }
     }
 
@@ -121,14 +171,24 @@ final class RestTimerController {
     /// skip it: 15s is too short to lock your phone over.
     private func scheduleLockScreenNotification() {
         guard let endsAt, !isMicro else { return }
+        let notification = endNotification
         Task { @MainActor in
-            NotificationScheduler.shared.scheduleRestEnd(at: endsAt)
+            NotificationScheduler.shared.scheduleRestEnd(
+                at: endsAt,
+                title: notification?.title ?? "Rest over",
+                body: notification?.body ?? "Time for your next set."
+            )
+            // Opt-in loud backstop: a couple of extra time-sensitive pings
+            // behind the notification above (no-ops unless enabled in
+            // Settings) — no alarm UI, just more noise.
+            RestAlarm.schedule(endsAt: endsAt, title: notification?.title ?? "Rest over")
         }
     }
 
     private func cancelLockScreenNotification() {
         Task { @MainActor in
             NotificationScheduler.shared.cancelRestEnd()
+            RestAlarm.cancel()
         }
     }
 }

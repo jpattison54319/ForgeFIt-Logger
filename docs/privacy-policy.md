@@ -1,9 +1,10 @@
 # ForgeFit Privacy Policy
 
-_Last updated: July 3, 2026_
+_Last updated: July 10, 2026_
 
 ForgeFit is built local-first: your training data belongs to you and lives on
-your device, with optional iCloud sync across your Apple devices.
+your device, with optional iCloud sync for your training plan and an optional
+iCloud Drive backup of your training log.
 
 ## What we collect
 
@@ -11,13 +12,25 @@ your device, with optional iCloud sync across your Apple devices.
 your workouts, routines, exercise notes, and settings in a local database on
 your iPhone. We run no analytics and have no backend.
 
-## iCloud sync
+## iCloud sync & backup
 
-If you are signed into iCloud, ForgeFit uses Apple's CloudKit to sync your data
-across your Apple devices automatically. Synced data is stored in your private
-CloudKit database — encrypted by Apple, accessible only to you, and never
-visible to us or any third party. CloudKit sync is tied to your iCloud account;
-if you sign out of iCloud, data remains local to each device.
+If you are signed into iCloud, ForgeFit syncs your **training plan** —
+routines, folders, your exercise library, notes, saved interval and yoga
+presets, and your XP progress — across your Apple devices using Apple's
+CloudKit, stored in your private CloudKit database, encrypted by Apple and
+accessible only to you.
+
+Your **workout history** is different: it stays in a local database on each
+device. To protect it against a lost or replaced phone, ForgeFit writes an
+optional backup file of your training log to your iCloud Drive, visible in the
+Files app under ForgeFit. This backup contains only what you logged — sets,
+reps, weights, durations, effort ratings, notes, cardio splits, and outdoor
+route maps.
+
+**It never includes heart rate, calories or active energy, step counts, sleep,
+readiness scores, body weight, daily check-ins, or any other Apple Health
+data.** In line with App Store guidelines, ForgeFit does not store personal
+health information in iCloud.
 
 ## Apple Health
 
@@ -33,8 +46,12 @@ its features:
 With your permission, ForgeFit also **writes** finished workouts back to Apple
 Health.
 
-Health data is processed entirely on your device, is never transmitted to us
-or any third party, and is protected by iOS's Health data security. You can
+Health data is processed entirely on your device. It is never transmitted to
+us or any third party, is excluded from iCloud sync and from iCloud Drive
+backups, and is protected by iOS's Health data security. When you restore a
+backup on a new device, ForgeFit re-reads these metrics from Apple Health on
+that device (Apple syncs your Health data between your devices when Health in
+iCloud is enabled — that is Apple's system, under your control). You can
 revoke access at any time in the Health app under Sharing → Apps.
 
 ## Apple Watch
@@ -45,11 +62,13 @@ watch and iPhone using Apple's encrypted device-to-device channel
 
 ## Data deletion
 
-Deleting the app deletes all local ForgeFit data on that device. If you use
-iCloud sync, your data also exists in your private CloudKit database — to remove
-it from iCloud, sign out of iCloud or delete the data from another synced
-device. Workouts written to Apple Health remain there under your control and can
-be deleted in the Health app.
+Deleting the app deletes all local ForgeFit data on that device. Your training
+plan in iCloud can be removed by deleting routines in the app (deletions sync)
+or via Settings → Erase All Data. Your training-log backup is an ordinary file
+you control: delete it in the Files app (iCloud Drive → ForgeFit → Backups),
+or use Settings → Erase All Data, which also removes the backup. Workouts
+written to Apple Health remain there under your control and can be deleted in
+the Health app.
 
 ## Changes
 

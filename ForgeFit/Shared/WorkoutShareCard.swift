@@ -251,48 +251,44 @@ struct WorkoutShareCard: View {
             ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                 let style = SetTypeStyle.of(set.setType)
                 let label = numberedLabel(for: set, index: index, sets: sets)
+                let isCompleted = HistoricalSetPresentation.isCompleted(set)
                 HStack(spacing: 8) {
                     Text(label).font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(set.setType == .working ? theme.textSecondary : style.color)
+                        .foregroundStyle(
+                            isCompleted
+                                ? (set.setType == .working ? theme.textSecondary : style.color)
+                                : theme.textTertiary
+                        )
                         .frame(width: 34, alignment: .leading)
-                    Text(setValue(set, unit: unit)).font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    Text(HistoricalSetPresentation.shareValue(set, unit: unit))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(isCompleted ? theme.textPrimary : theme.textTertiary)
                     if set.setType != .working {
-                        Text(style.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(style.color)
+                        Text(style.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isCompleted ? style.color : theme.textTertiary)
                     }
                     Spacer(minLength: 0)
-                    if let rpe = set.rpe {
+                    if isCompleted, let rpe = set.rpe {
                         Text("RPE \(rpe.formatted(.number.precision(.fractionLength(0...1))))")
                             .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
-                    } else if let rir = set.rir {
+                    } else if isCompleted, let rir = set.rir {
                         Text("\(rir) RIR")
                             .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
                     }
-                    if set.completedAt != nil {
+                    if isCompleted {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(theme.success)
+                    } else {
+                        Image(systemName: "circle.slash").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
                     }
                 }
+                .opacity(isCompleted ? 1 : 0.72)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func setValue(_ set: SetModel, unit: WeightUnit) -> String {
-        if !set.miniReps.isEmpty {
-            let activation = set.reps.map(String.init)
-            let minis = set.miniReps.map(String.init).joined(separator: "+")
-            let reps = [activation, minis].compactMap(\.self).joined(separator: "+")
-            guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
-            return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
-        }
-        if let seconds = set.durationSeconds, seconds > 0 {
-            return Fmt.durationShort(seconds)
-        }
-        let reps = set.reps.map { "\($0)" } ?? "—"
-        guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
-        return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
     }
 
     // MARK: - Cardio
@@ -328,7 +324,7 @@ struct WorkoutShareCard: View {
                             .stroke(theme.separator, lineWidth: 1)
                     )
             }
-            let zones = session.hrZoneSeconds
+            let zones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: session.sampleSeriesJSON) ?? session.hrZoneSeconds
             if zones.reduce(0, +) > 0 {
                 zoneBar(zones)
             }

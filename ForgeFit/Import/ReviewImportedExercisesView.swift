@@ -91,7 +91,7 @@ struct ReviewImportedExercisesView: View {
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left") { dismiss() }
+            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
             Spacer()
             VStack(spacing: 1) {
                 Text("Imported Exercises")

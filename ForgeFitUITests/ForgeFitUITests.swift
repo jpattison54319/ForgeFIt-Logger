@@ -10,12 +10,17 @@ import XCTest
 final class ForgeFitUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
         // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
 
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
+        // The simulator's device orientation persists across runs, and a sim
+        // left in landscape broke two picker tests for weeks: sheets + the
+        // keyboard squeezed the 402pt-tall landscape viewport until row taps
+        // resolved to degenerate coordinates (the failure video showed taps
+        // landing inside the keyboard). The app is portrait-locked on iPhone
+        // now, but pin the device too so tests never depend on leftover
+        // simulator state.
+        XCUIDevice.shared.orientation = .portrait
     }
 
     override func tearDownWithError() throws {
@@ -99,8 +104,9 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(completeCardio.waitForExistence(timeout: 3), "Expected Complete cardio button.")
         tapWhenReady(completeCardio)
 
+        // Finish opens the review summary directly (no intermediate
+        // "Finish this workout?" dialog).
         app.descendants(matching: .any)["finish-workout-button"].tap()
-        app.buttons["Review Summary"].tap()
         app.descendants(matching: .any)["save-workout-button"].tap()
 
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
@@ -207,6 +213,73 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor.")
         let inRoutine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'bench press'")).firstMatch
         XCTAssertTrue(inRoutine.waitForExistence(timeout: 3), "Expected the existing exercise in the routine.")
+    }
+
+    /// Yoga flow building: users can inspect a pose, go back to the picker,
+    /// keep selecting poses, and save the configured Yoga Session.
+    @MainActor
+    func testYogaPoseDetailCanReturnToPosePickerAndContinueAdding() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        newRoutine.tap()
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("Yoga Session")
+
+        let yogaSession = app.descendants(matching: .any)["exercise-row-Yoga Session"].firstMatch
+        XCTAssertTrue(yogaSession.waitForExistence(timeout: 5), "Expected the Yoga Session exercise row.")
+        tapWhenReady(yogaSession)
+        let commitSession = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commitSession.waitForExistence(timeout: 3))
+        tapWhenReady(commitSession)
+
+        let flowBuilder = app.descendants(matching: .any)["routine-yoga-flow-builder"].firstMatch
+        XCTAssertTrue(flowBuilder.waitForExistence(timeout: 5), "Expected the Yoga Session flow builder entry.")
+        tapWhenReady(flowBuilder)
+
+        let addPose = app.descendants(matching: .any)["add-pose-to-flow"].firstMatch
+        XCTAssertTrue(addPose.waitForExistence(timeout: 5), "Expected Add Pose in the yoga flow builder.")
+        tapWhenReady(addPose)
+
+        let poseSearch = app.searchFields.firstMatch
+        XCTAssertTrue(poseSearch.waitForExistence(timeout: 5), "Expected pose picker search.")
+        poseSearch.tap()
+        poseSearch.typeText("Pigeon Pose")
+
+        let info = app.descendants(matching: .any)["exercise-info-Pigeon Pose"].firstMatch
+        XCTAssertTrue(info.waitForExistence(timeout: 5), "Expected a pose details button.")
+        tapWhenReady(info)
+
+        let detailTitle = app.descendants(matching: .any)["exercise-detail-title-Pigeon Pose"].firstMatch
+        XCTAssertTrue(detailTitle.waitForExistence(timeout: 5), "Expected Pigeon Pose detail.")
+        let back = app.descendants(matching: .any)["exercise-detail-back"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Expected detail back button.")
+        tapWhenReady(back)
+
+        let poseRow = app.descendants(matching: .any)["exercise-row-Pigeon Pose"].firstMatch
+        XCTAssertTrue(poseRow.waitForExistence(timeout: 5), "Expected to return to the pose picker after closing detail.")
+        tapWhenReady(poseRow)
+        let commitPose = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commitPose.waitForExistence(timeout: 3), "Expected to continue selecting poses after detail.")
+        tapWhenReady(commitPose)
+
+        XCTAssertTrue(app.staticTexts["Pigeon Pose"].waitForExistence(timeout: 5), "Expected selected pose in the flow builder.")
+        app.buttons["Save"].firstMatch.tap()
+
+        XCTAssertTrue(flowBuilder.waitForExistence(timeout: 5), "Expected to return to the routine editor after saving the flow.")
+        let configured = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] '1 pose'")).firstMatch
+        XCTAssertTrue(configured.waitForExistence(timeout: 3), "Expected the Yoga Session row to show the saved pose flow.")
     }
 
     /// Routine editor: exercises can be reordered (mirrors the live logger's
@@ -381,6 +454,118 @@ final class ForgeFitUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertFalse(card.exists, "The Home card must disappear once the report is viewed.")
+    }
+
+    // MARK: - Coach's Corner (Phase 5)
+
+    /// Home's Coach's Corner entry point is a `CircleIconButton` with an
+    /// explicit `accessibilityLabel` (it renders icon-only, so VoiceOver
+    /// coverage depends on that label) — tapping it must present the Corner
+    /// sheet.
+    @MainActor
+    func testCoachButtonOpensCoachsCornerSheet() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let coachButton = app.buttons["Coach's Corner"].firstMatch
+        XCTAssertTrue(coachButton.waitForExistence(timeout: 5), "Expected the accessible Coach's Corner button on Home.")
+        tapWhenReady(coachButton)
+
+        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5), "Expected the Coach's Corner sheet to present.")
+    }
+
+    /// A fresh account (no coached program yet) must offer "Build my plan"
+    /// in the "This week" section rather than a dangling active-program card.
+    @MainActor
+    func testCoachCornerNoPlanStateShowsBuildMyPlan() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let coachButton = app.buttons["Coach's Corner"].firstMatch
+        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
+        tapWhenReady(coachButton)
+        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
+
+        let buildPlan = app.descendants(matching: .any)["coach-corner-build-plan"].firstMatch
+        scrollUntilHittable(buildPlan, in: app)
+        XCTAssertTrue(buildPlan.waitForExistence(timeout: 5), "Expected 'Build my plan' with no active coached program.")
+    }
+
+    /// Coach's Corner's top-level sections carry stable VoiceOver
+    /// identifiers on their headers, so an accessibility audit (or a future
+    /// test) can locate each section without relying on visible text.
+    @MainActor
+    func testCoachCornerSectionsHaveVoiceOverIdentifiers() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let coachButton = app.buttons["Coach's Corner"].firstMatch
+        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
+        tapWhenReady(coachButton)
+        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
+
+        let todaysCall = app.descendants(matching: .any)["coach-corner-section-todays-call"].firstMatch
+        XCTAssertTrue(todaysCall.waitForExistence(timeout: 5), "Expected the Today's call section identifier.")
+
+        let thisWeek = app.descendants(matching: .any)["coach-corner-section-this-week"].firstMatch
+        scrollUntilHittable(thisWeek, in: app)
+        XCTAssertTrue(thisWeek.waitForExistence(timeout: 5), "Expected the This week section identifier.")
+
+        let askCoach = app.descendants(matching: .any)["coach-corner-section-ask-coach"].firstMatch
+        scrollUntilHittable(askCoach, in: app)
+        XCTAssertTrue(askCoach.waitForExistence(timeout: 5), "Expected the Ask your coach section identifier.")
+    }
+
+    /// Ask your Coach is session-only: closing and reopening it must show
+    /// only the greeting again, never a prior turn's history.
+    @MainActor
+    func testAskCoachChatIsSessionOnly() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let coachButton = app.buttons["Coach's Corner"].firstMatch
+        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
+        tapWhenReady(coachButton)
+        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
+
+        let askCoach = app.descendants(matching: .any)["coach-corner-ask-coach"].firstMatch
+        scrollUntilHittable(askCoach, in: app)
+        tapWhenReady(askCoach)
+
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Ask me about your training'")).firstMatch
+        XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the chat's opening greeting.")
+
+        let suggestedPrompt = app.buttons["Why this readiness score?"].firstMatch
+        XCTAssertTrue(suggestedPrompt.waitForExistence(timeout: 5), "Expected a suggested-prompt chip.")
+        tapWhenReady(suggestedPrompt)
+
+        let sentQuestion = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Why this readiness score'")).firstMatch
+        XCTAssertTrue(sentQuestion.waitForExistence(timeout: 5), "Expected the sent question to appear in the transcript.")
+
+        tapWhenReady(app.buttons["Done"].firstMatch)
+        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5), "Expected to pop back to Coach's Corner, not close it.")
+
+        tapWhenReady(askCoach)
+        XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the greeting again after reopening.")
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Why this readiness score'")).firstMatch.exists,
+            "Chat history must not persist across a reopen — the chat is session-only."
+        )
+    }
+
+    /// "Review coach's version" only renders once the coach has a dose
+    /// adjustment to show (readiness reduce-volume/deload, or a weekly
+    /// review deload override) — there's no launch-argument seeding hook
+    /// today to force either state deterministically. Covered functionally
+    /// by `CoachAdjustmentsTests`/`CoachWeeklyReviewTests`; skip here rather
+    /// than invent a new seeding framework.
+    @MainActor
+    func testReviewCoachsVersionOpensReviewScreen() throws {
+        throw XCTSkip("No launch-argument seeding hook exists yet to force a coach dose adjustment or weekly deload override; covered at the unit level by CoachAdjustmentsTests/CoachWeeklyReviewTests.")
     }
 
     @MainActor

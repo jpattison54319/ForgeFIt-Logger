@@ -82,9 +82,12 @@ struct SecondaryButton: View {
 }
 
 /// Circular icon button used in nav headers, rendered as interactive
-/// Liquid Glass.
+/// Liquid Glass. `label` is REQUIRED: icon-only buttons are invisible to
+/// VoiceOver without one (the fallback reads the SF Symbol name — "chevron
+/// left" says nothing about what the button does).
 struct CircleIconButton: View {
     let systemImage: String
+    let label: String
     var tint: Color? = nil
     let action: () -> Void
 
@@ -99,6 +102,7 @@ struct CircleIconButton: View {
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
     }
 }
 
@@ -200,6 +204,30 @@ struct SegmentedPills<T: Hashable>: View {
                     )
                 }
             }
+        }
+    }
+}
+
+// MARK: - Exercise / pose name
+
+/// DESIGN RULE — exercise and yoga-pose names are content, not controls:
+/// the name always renders in primary (white) text, and ONLY the trailing
+/// disclosure chevron is sage (`theme.accent`), signalling "tap for details".
+/// Never tint the name itself with accent colors. This is just the visual —
+/// wrap it in a Button or NavigationLink at the call site.
+struct ExerciseNameLabel: View {
+    @Environment(\.theme) private var theme
+    let name: String
+    var font: Font = .bodyStrong
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(name)
+                .font(font)
+                .foregroundStyle(theme.textPrimary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(theme.accent)
         }
     }
 }

@@ -85,12 +85,18 @@ enum WorkoutFactory {
                             userID: ForgeFitDemo.userID,
                             position: target.position,
                             setType: target.setType,
-                            reps: target.targetRepsLow,
+                            // Block types never prefill reps: myo minis log
+                            // what the lifter achieves live, and cluster reps
+                            // mirror the logged segments. Plans ride the
+                            // planned* fields as ghost targets instead.
+                            reps: target.setType.isBlockType ? nil : target.targetRepsLow,
                             weight: target.targetWeight,
                             rpe: target.targetRPE,
                             rir: target.targetRIR,
                             durationSeconds: target.targetDurationSeconds,
-                            sourceRoutineSetID: target.id
+                            sourceRoutineSetID: target.id,
+                            plannedMiniSetCount: target.setType == .myoRep ? target.plannedMiniSetCount : nil,
+                            plannedMiniRepsJSON: target.setType == .cluster ? target.plannedMiniRepsJSON : nil
                         )
                     }
                 let workoutExercise = WorkoutExerciseModel(
@@ -106,12 +112,12 @@ enum WorkoutFactory {
                     sets: pendingSets
                 )
                 if let exercise, exercise.isYoga {
-                    // A pose with no authored sequence still gets a runnable
-                    // single-pose flow, so the guided player always works.
+                    // Legacy pose rows still synthesize a runnable hold. The
+                    // new Yoga Session row can stay empty until configured.
                     let plan = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
-                        ?? .singlePose(from: exercise)
+                        ?? (YogaPoseCatalog.isSessionExercise(exercise) ? nil : .singlePose(from: exercise))
                     if workoutExercise.yogaFlowJSON == nil {
-                        workoutExercise.yogaFlowJSON = plan.encodedJSON()
+                        workoutExercise.yogaFlowJSON = plan?.encodedJSON()
                     }
                     cardioSessions.append(CardioSessionModel(
                         userID: ForgeFitDemo.userID,
@@ -119,8 +125,8 @@ enum WorkoutFactory {
                         modality: CardioSessionModel.yogaModality,
                         startedAt: workout.startedAt,
                         sourceDevice: "iphone-yoga",
-                        durationSeconds: plan.totalSeconds > 0 ? plan.totalSeconds : nil,
-                        yogaStyleRaw: plan.styleRaw
+                        durationSeconds: plan.flatMap { $0.totalSeconds > 0 ? $0.totalSeconds : nil },
+                        yogaStyleRaw: plan?.styleRaw
                     ))
                 } else if let exercise, exercise.isCardio {
                     let target = routineExercise.sets.sorted { $0.position < $1.position }.first
@@ -138,13 +144,25 @@ enum WorkoutFactory {
             }
         workout.cardioSessions = cardioSessions
         context.insert(workout)
+        // Progression: advance pending targets from each exercise's last
+        // session and record the explained suggestions. Single choke point —
+        // Home, coach's version, quick starts, and watch starts all land here.
+        // A weekly review's accepted progression holds (Coach's Corner) ride
+        // along here too, so a held exercise starts held no matter which
+        // entry point started the workout — and Corner's progression preview
+        // reads the identical overrides, so preview always matches start.
+        let holds = CoachWeeklyReview.activeProgressionHolds(in: context)
+        ProgressionPlanner.apply(
+            to: workout, routine: routine, exercises: exercises, in: context,
+            heldExerciseIDs: holds.ids, holdReasons: holds.reasons
+        )
         try? context.save()
         return workout
     }
 
     /// Quick-start a guided yoga class from a flow (built-in or user-saved).
-    /// The workout exercise anchors on the flow's first pose so history and
-    /// analytics have a real library reference.
+    /// The workout exercise anchors on the Yoga Session row; poses live inside
+    /// the flow, not as nested workout exercises.
     @discardableResult
     static func startYoga(
         flow: YogaFlowPlan,
@@ -153,19 +171,17 @@ enum WorkoutFactory {
         in context: ModelContext
     ) -> WorkoutModel {
         let startedAt = Date()
-        let anchorID = flow.steps.first?.poseID
-        let anchor = exercises.first { $0.id == anchorID && $0.deletedAt == nil }
-        let workoutExercise = anchor.map {
-            WorkoutExerciseModel(
-                userID: ForgeFitDemo.userID,
-                exerciseID: $0.id,
-                position: 0,
-                yogaFlowJSON: flow.encodedJSON()
-            )
-        }
+        let anchor = exercises.first { YogaPoseCatalog.isSessionExercise($0) && $0.deletedAt == nil }
+            ?? YogaPoseCatalog.sessionExercise(in: context)
+        let workoutExercise = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: anchor.id,
+            position: 0,
+            yogaFlowJSON: flow.encodedJSON()
+        )
         let session = CardioSessionModel(
             userID: ForgeFitDemo.userID,
-            workoutExerciseID: workoutExercise?.id,
+            workoutExerciseID: workoutExercise.id,
             modality: CardioSessionModel.yogaModality,
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
@@ -178,7 +194,7 @@ enum WorkoutFactory {
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
             notes: "Yoga session",
-            exercises: workoutExercise.map { [$0] } ?? [],
+            exercises: [workoutExercise],
             cardioSessions: [session]
         )
         context.insert(workout)

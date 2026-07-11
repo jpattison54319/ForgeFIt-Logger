@@ -131,14 +131,13 @@ struct DailyReadinessTests {
         }
     }
 
-    /// The recommendation shown on the merged Today tile (RecoveryEngine's
-    /// `report().recommendation`) must name the same flags as the daily
-    /// score's own guidance — this used to only special-case HRV.
-    @Test func reportRecommendationNamesNonHRVFlagsToo() {
+    /// The detailed daily score continues to explain its own flags, while the
+    /// merged Today card delegates its action to the shared verdict policy.
+    @Test func reportUsesSharedVerdictInsteadOfASecondFlagDrivenCommand() {
         let report = engine(metrics(todaySleepingHR: 66)).report()
-        if report.recovery.daily.flags.contains("Sleeping HR elevated"), report.displayScore >= 0.55 {
-            #expect(report.recommendation.localizedCaseInsensitiveContains("sleeping heart rate"))
-        }
+        let expected = TodayVerdict.make(score: report.displayScore, checkinTags: [])
+        #expect(report.action == expected.action)
+        #expect(report.recommendation == expected.recommendation)
     }
 
     @Test func guidanceMentionsHRVWhenFlaggedButScoreStillTrainable() {
@@ -153,15 +152,12 @@ struct DailyReadinessTests {
     }
 
     @Test func reportActionAgreesWithDisplayScore() {
-        // The regression from the screenshots: caption said "HRV low" while the
-        // ring was green. Action + copy must key off the same acute flags.
+        // The regression from the screenshots: a green ring could show a
+        // different command based on an independent flag. The policy owns the
+        // action now, so all green scores use the same band.
         let report = engine(metrics(todayHRV: 71, todaySleepMinutes: 450)).report()
-        if report.recovery.daily.flags.contains("HRV low today"), report.displayScore >= 0.6 {
-            #expect(report.recommendation.contains("HRV"))
-        }
-        // Never recommend deload while displaying a green score.
-        if report.displayScore >= 0.65 {
-            #expect(report.action != .deloadRecover)
+        if report.displayScore >= 0.7 && report.displayScore < 0.85 {
+            #expect(report.action == .trainAsPlanned)
         }
     }
 

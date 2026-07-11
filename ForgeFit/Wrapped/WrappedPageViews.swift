@@ -128,7 +128,7 @@ struct WrappedPageView: View {
                     statRow("Longest session", "\(kind) · \(Fmt.durationShort(longest * 60))")
                 }
                 if cardio.zoneSeconds.reduce(0, +) > 0 {
-                    ZoneSecondsBar(zoneSeconds: cardio.zoneSeconds)
+                    ZoneSecondsBar(zoneSeconds: cardio.zoneSeconds, source: .mixed)
                 }
             }
 

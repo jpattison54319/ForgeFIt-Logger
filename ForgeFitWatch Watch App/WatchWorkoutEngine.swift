@@ -3,6 +3,7 @@ import HealthKit
 import Observation
 import ForgeCore
 import WatchKit
+import CoreLocation
 
 /// Live health-metric collection on the wrist: one HKWorkoutSession +
 /// HKLiveWorkoutBuilder per ForgeFit workout. Streams heart rate, energy, and
@@ -17,6 +18,9 @@ final class WatchWorkoutEngine: NSObject {
     private let healthStore = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
+    @ObservationIgnored private let locationManager = CLLocationManager()
+    @ObservationIgnored private var routeBuilder: HKWorkoutRouteBuilder?
+    @ObservationIgnored private var collectingRoute = false
 
     private(set) var isRunning = false
     private(set) var heartRate: Int?
@@ -44,6 +48,14 @@ final class WatchWorkoutEngine: NSObject {
     @ObservationIgnored private var lastSend = Date.distantPast
     @ObservationIgnored private var lastSentHR: Int?
 
+    private override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.activityType = .fitness
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 5
+    }
+
     // MARK: - Authorization
 
     private var readTypes: Set<HKObjectType> {
@@ -56,9 +68,10 @@ final class WatchWorkoutEngine: NSObject {
 
     private var shareTypes: Set<HKSampleType> {
         var t: Set<HKSampleType> = [HKObjectType.workoutType()]
-        if let activeEnergy = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
-            t.insert(activeEnergy)
+        for id: HKQuantityTypeIdentifier in [.activeEnergyBurned, .distanceWalkingRunning, .distanceCycling] {
+            if let type = HKQuantityType.quantityType(forIdentifier: id) { t.insert(type) }
         }
+        t.insert(HKSeriesType.workoutRoute())
         return t
     }
 
@@ -115,7 +128,8 @@ final class WatchWorkoutEngine: NSObject {
             attach(session: session, builder: session.associatedWorkoutBuilder(), configuration: config, startDate: startDate)
             resetMetrics()
             session.startActivity(with: startDate)
-            builder?.beginCollection(withStart: startDate) { _, _ in }
+            Task { try? await builder?.beginCollection(at: startDate) }
+            startRouteIfNeeded(for: config)
             isRunning = true
         } catch {
             // No session (e.g. permissions declined) — the workout still logs
@@ -150,13 +164,14 @@ final class WatchWorkoutEngine: NSObject {
             guard let session else { return }
             Task { @MainActor [weak self] in
                 guard let self, !self.isRunning else { return }
+                let builder = session.associatedWorkoutBuilder()
                 self.attach(
                     session: session,
-                    builder: session.associatedWorkoutBuilder(),
+                    builder: builder,
                     configuration: session.workoutConfiguration,
                     startDate: session.startDate ?? Date()
                 )
-                self.builder?.beginCollection(withStart: session.startDate ?? Date()) { _, _ in }
+                try? await builder.beginCollection(at: session.startDate ?? Date())
                 self.isRunning = true
             }
         }
@@ -172,7 +187,9 @@ final class WatchWorkoutEngine: NSObject {
         var saved = false
         do {
             try await builder.endCollection(at: Date())
-            saved = (try? await builder.finishWorkout()) != nil
+            if (try? await builder.finishWorkout()) != nil {
+                saved = true
+            }
         } catch {
             saved = false
         }
@@ -189,12 +206,16 @@ final class WatchWorkoutEngine: NSObject {
         builder.endCollection(withEnd: Date()) { _, _ in
             builder.discardWorkout()
         }
+        stopRouteCollection()
         clearSession()
     }
 
     private func clearSession() {
+        locationManager.stopUpdatingLocation()
         session = nil
         builder = nil
+        routeBuilder = nil
+        collectingRoute = false
         activeConfiguration = nil
         sessionStartDate = nil
         didAttemptFailureRestart = false
@@ -300,6 +321,33 @@ final class WatchWorkoutEngine: NSObject {
         lastSend = now
         lastSentHR = heartRate
         onMetrics?(currentMetrics())
+    }
+
+    private func startRouteIfNeeded(for configuration: HKWorkoutConfiguration) {
+        guard configuration.locationType == .outdoor,
+              let builder,
+              let route = builder.seriesBuilder(for: HKSeriesType.workoutRoute()) as? HKWorkoutRouteBuilder else { return }
+        routeBuilder = route
+        collectingRoute = true
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+    }
+
+    private func stopRouteCollection() {
+        locationManager.stopUpdatingLocation()
+        collectingRoute = false
+        routeBuilder = nil
+    }
+}
+
+extension WatchWorkoutEngine: CLLocationManagerDelegate {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        Task { @MainActor in
+            guard self.collectingRoute, let routeBuilder = self.routeBuilder else { return }
+            let usable = locations.filter { $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 100 }
+            guard !usable.isEmpty else { return }
+            try? await routeBuilder.insertRouteData(usable)
+        }
     }
 }
 

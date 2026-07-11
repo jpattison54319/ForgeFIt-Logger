@@ -44,6 +44,13 @@ enum NocturnalAggregator {
         return merged.map { SleepWindow(start: $0.start, end: $0.end, day: calendar.startOfDay(for: $0.end)) }
     }
 
+    /// Below this many overnight HR samples, a "sleeping HR" is really just
+    /// one or two spot readings — a single spurious sample (restless moment,
+    /// bad optical contact) would define the whole night. Sparse sources like
+    /// Garmin's smart recording synced through Apple Health still clear this
+    /// easily (a sample every 5–15 min is dozens per night).
+    static let minSleepingHRSamples = 3
+
     /// Per-night nocturnal HRV (mean, ms) and sleeping HR (mean, bpm), keyed by
     /// readiness day. Samples are attributed to the window that contains them;
     /// windows sharing a day are pooled.
@@ -73,7 +80,9 @@ enum NocturnalAggregator {
             let hrValues = hrByDay[day] ?? []
             out[day] = NightlyMetric(
                 hrv: hrvValues.isEmpty ? nil : hrvValues.reduce(0, +) / Double(hrvValues.count),
-                sleepingHR: hrValues.isEmpty ? nil : Int((Double(hrValues.reduce(0, +)) / Double(hrValues.count)).rounded()),
+                sleepingHR: hrValues.count >= minSleepingHRSamples
+                    ? Int((Double(hrValues.reduce(0, +)) / Double(hrValues.count)).rounded())
+                    : nil,
                 hrvSampleCount: hrvValues.count
             )
         }

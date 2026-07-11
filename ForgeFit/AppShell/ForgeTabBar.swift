@@ -3,9 +3,9 @@ import SwiftData
 import SwiftUI
 
 /// Floating iOS 26 Liquid Glass app bar: a single clear-glass capsule with a
-/// fluid "expanding pill" indicator. Unselected tabs are outline glyphs;
-/// the selected tab grows to reveal its label inside an accent pill that morphs
-/// between tabs.
+/// fluid pill indicator that morphs between tabs. All tabs display a filled
+/// SF Symbol above a single-word label; the selected tab's accent pill
+/// animates into place using matched geometry.
 struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
     @Binding var selection: AppTab
@@ -35,17 +35,13 @@ struct ForgeTabBar: View {
                 selection = tab
             }
         } label: {
-            HStack(spacing: 7) {
+            VStack(spacing: 3) {
                 Image(systemName: tab.systemImage)
-                    .symbolVariant(isSelected ? .fill : .none)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .symbolEffect(.bounce, value: isSelected)
-                if isSelected {
-                    Text(tab.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .fixedSize()
-                        .transition(.opacity.combined(with: .blurReplace))
-                }
+                Text(tab.title)
+                    .font(.caption.weight(.semibold))
+                    .fixedSize()
             }
             .overlay(alignment: .topTrailing) {
                 if badgeCount > 0 {
@@ -61,10 +57,8 @@ struct ForgeTabBar: View {
                 }
             }
             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
-            .padding(.vertical, 12)
-            .padding(.horizontal, isSelected ? 18 : 16)
-            // Guarantee a ≥44pt tap target (Apple's HIG minimum). Icon-only
-            // tabs are otherwise ~40pt tall and read smaller than the stock bar.
+            .padding(.vertical, 6)
+            .padding(.horizontal, Space.sm)
             .frame(minWidth: 44, minHeight: 44)
             .background {
                 if isSelected {

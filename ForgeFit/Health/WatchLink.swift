@@ -26,14 +26,6 @@ final class WatchLink: NSObject {
     var isWatchAppInstalled = false
     var isReachable = false
 
-    /// Rolling health metrics streamed from the watch during a session —
-    /// shown live in the logger and stamped onto the workout at finish.
-    private(set) var liveMetrics: WatchLiveMetrics?
-
-    func clearLiveMetrics() {
-        liveMetrics = nil
-    }
-
     /// Set by ContentView so watch-initiated starts/finishes can drive the UI.
     var onWorkoutStartedFromWatch: (() -> Void)?
     var onWorkoutFinishedFromWatch: (() -> Void)?
@@ -44,7 +36,8 @@ final class WatchLink: NSObject {
     // Readiness runs a full recovery report over the whole store — far too
     // heavy to recompute on every publish while sets are being logged.
     @ObservationIgnored private var readinessCacheKey = ""
-    @ObservationIgnored private var readinessCacheValue = 0
+    @ObservationIgnored private var readinessCacheValue: RecoveryEngine.Report?
+    @ObservationIgnored private var readinessCacheScore = 0
 
     func activate() {
         #if canImport(WatchConnectivity)
@@ -119,21 +112,31 @@ final class WatchLink: NSObject {
             predicate: #Predicate { $0.deletedAt == nil && $0.endedAt == nil },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )))?.first
-        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(
-            predicate: #Predicate { $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.name)]
-        ))) ?? []
+        // Library rows are needed only to describe the ACTIVE workout's
+        // exercises (a dozen rows at most). This publish path fires up to
+        // ~3×/s during logging (rest timer, interval steps, set edits) —
+        // fetching the whole ~900-row library each time was a main-thread
+        // hitch on every rest-timer start. Routine summaries need no library
+        // rows, and idle readiness fetches inside its own cache-miss branch.
+        var exerciseByID: [UUID: ExerciseLibraryModel] = [:]
+        if let active {
+            let ids = Array(Set(active.exercises.map(\.exerciseID)))
+            let scoped = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { ids.contains($0.id) && $0.deletedAt == nil }
+            ))) ?? []
+            exerciseByID = Dictionary(scoped.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        }
         let routines = (try? context.fetch(FetchDescriptor<RoutineModel>(
             predicate: #Predicate { $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.position)]
         ))) ?? []
-        let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
+        let idleReport = active == nil ? cachedReadinessReport(in: context) : nil
         let readiness: Int
         if let active {
-            readiness = active.readinessAtStart ?? readinessCacheValue
+            readiness = active.readinessAtStart ?? readinessCacheScore
         } else {
-            readiness = cachedReadiness(in: context, exercises: exercises)
+            readiness = idleReport.map { Int($0.displayScore * 100) } ?? 0
         }
 
         var snapshot: WatchWorkoutSnapshot?
@@ -177,12 +180,15 @@ final class WatchLink: NSObject {
                     let library = exerciseByID[we.exerciseID]
                     let isCardio = library?.isCardio == true
                     let isYoga = library?.isYoga == true
+                    let cardioKind = library?.resolvedCardioKind
                     let session = active.cardioSessions.first { $0.workoutExerciseID == we.id }
                     return WatchExerciseSnapshot(
                         id: we.id,
                         name: library?.name ?? "Exercise",
                         isCardio: isCardio || isYoga,
                         isYoga: isYoga ? true : nil,
+                        cardioKindRaw: cardioKind?.rawValue,
+                        supportsOutdoorRoute: library.map { CardioKind.providesGPSDistance(name: $0.name, equipment: $0.equipment) },
                         supersetGroup: we.supersetGroup,
                         cardioState: (isCardio || isYoga) ? cardioState(of: session) : nil,
                         sets: setSnapshots(for: we, exercise: library)
@@ -207,25 +213,39 @@ final class WatchLink: NSObject {
                 .sorted { $0.position < $1.position }
                 .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count) },
             readiness: readiness,
+            readinessAction: idleReport?.action.title,
+            readinessDetail: idleReport?.preWorkoutAdjustment,
             unitSuffix: Fmt.unit.suffix,
             distanceUnit: Fmt.distanceUnit,
             hrZoneConfig: HRZoneConfigStore.load()
         )
     }
 
-    private func cachedReadiness(in context: ModelContext, exercises: [ExerciseLibraryModel]) -> Int {
+    private func cachedReadinessReport(in context: ModelContext) -> RecoveryEngine.Report {
         let completed = (try? context.fetch(FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.deletedAt == nil && $0.endedAt != nil },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         ))) ?? []
-        let readinessKey = AnalyticsFingerprint.withHealth(completed)
-        if readinessKey == readinessCacheKey {
+        let checkinTags = ReadinessReportFactory.todayCheckinTags(in: context)
+        let readinessKey = "\(AnalyticsFingerprint.withHealth(completed))|\(checkinTags.joined(separator: ","))"
+        if readinessKey == readinessCacheKey, let readinessCacheValue {
             return readinessCacheValue
         }
-        let readiness = Int(RecoveryEngine(workouts: completed, exercises: exercises, healthMetrics: HealthMetricsStore.shared.metrics).report().displayScore * 100)
+        // Cache miss only (fingerprint change: new workout / fresh health
+        // data) — the full library fetch lives here so routine publishes and
+        // idle cache hits never pay for it.
+        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.deletedAt == nil }
+        ))) ?? []
+        let report = ReadinessReportFactory.report(
+            workouts: completed,
+            exercises: exercises,
+            in: context
+        )
         readinessCacheKey = readinessKey
-        readinessCacheValue = readiness
-        return readiness
+        readinessCacheValue = report
+        readinessCacheScore = Int(report.displayScore * 100)
+        return report
     }
 
     private func cardioState(of session: CardioSessionModel?) -> WatchExerciseSnapshot.CardioState {
@@ -316,15 +336,19 @@ final class WatchLink: NSObject {
             guard let session = active?.cardioSessions.first(where: { $0.workoutExerciseID == workoutExerciseID }) else { return }
             session.liveStartedAt = Date()
             session.updatedAt = Date()
+            var library: ExerciseLibraryModel?
+            if let exerciseID = active?.exercises.first(where: { $0.id == workoutExerciseID })?.exerciseID {
+                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
+            }
+            if library.map({ CardioKind.providesGPSDistance(name: $0.name, equipment: $0.equipment) }) == true {
+                CardioRouteRecorder.shared.start(session: session)
+            }
             try? context.save()
             // A yoga session started from the wrist also starts the guided
             // flow on the phone (execution authority), so cues + pose
             // mirroring work exactly as a phone-started class.
             if session.isYogaSession,
                let we = active?.exercises.first(where: { $0.id == workoutExerciseID }) {
-                var library: ExerciseLibraryModel?
-                let exerciseID = we.exerciseID
-                library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
                 if let plan = YogaFlowPlan.resolved(for: we, exercise: library), plan.hasSteps {
                     YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
                 }
@@ -358,14 +382,18 @@ final class WatchLink: NSObject {
             // Look up the exercise to tell an outdoor run from a treadmill —
             // the stored modality alone can't (both resolve to `.run`).
             let providesGPSDistance = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
+            if providesGPSDistance {
+                CardioRouteRecorder.shared.stop(session: session, in: context)
+            }
             let hadManualIntervalPlan = workoutExercise
                 .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
             try? context.save()
             publishState()
+            let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
             Task { @MainActor in
                 let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: kind)
-                if let hr = snap.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR { session.maxHR = mx }
+                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
+                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
                 // Keep the GPS route distance when a route was recorded (the
                 // splits are summed from it); only take HealthKit's distance
@@ -379,17 +407,16 @@ final class WatchLink: NSObject {
             }
 
         case .liveMetrics(let metrics):
-            liveMetrics = metrics
+            LiveMetricsHub.shared.updateFromWatch(metrics)
 
         case .finishWorkout(let metrics, let savedToHealth):
             guard let active else { return }
             WorkoutFinisher.finish(
                 active,
                 in: context,
-                watchMetrics: metrics ?? liveMetrics,
+                liveMetrics: metrics ?? LiveMetricsHub.shared.liveMetrics,
                 watchSavedToHealth: savedToHealth
             )
-            liveMetrics = nil
             onWorkoutFinishedFromWatch?()
 
         case .discardWorkout:
@@ -404,8 +431,12 @@ final class WatchLink: NSObject {
 
     private func beginSession(for workout: WorkoutModel, workouts: [WorkoutModel], in context: ModelContext) {
         let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        workout.readinessAtStart = Int(RecoveryEngine(workouts: workouts, exercises: exercises, healthMetrics: HealthMetricsStore.shared.metrics).report().displayScore * 100)
-        liveMetrics = nil
+        workout.readinessAtStart = Int(ReadinessReportFactory.report(
+            workouts: workouts,
+            exercises: exercises,
+            in: context
+        ).displayScore * 100)
+        LiveMetricsHub.shared.clearLiveMetrics()
         try? context.save()
         onWorkoutStartedFromWatch?()
         publishState()
@@ -474,6 +505,10 @@ extension WatchLink: WCSessionDelegate {
         Task { @MainActor in
             refresh()
             publishState()
+            // Pick up whatever HR the watch last published while we were
+            // inactive/not-yet-launched — the always-latest fallback channel
+            // (see WatchStore.send) means this is never a stale replay.
+            self.applyReceivedLiveMetrics(session.receivedApplicationContext)
         }
     }
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
@@ -496,6 +531,20 @@ extension WatchLink: WCSessionDelegate {
         guard let data = userInfo[WatchWire.commandKey] as? Data,
               let command = WatchWire.decode(WatchCommand.self, from: data) else { return }
         Task { @MainActor in self.handle(command) }
+    }
+    /// The watch's always-latest HR fallback (see `WatchWire.liveMetricsKey`):
+    /// delivered via application context so a reading from while the watch
+    /// display was off still reaches us the moment the phone reconnects,
+    /// instead of waiting for the next `sendMessage` after wrist-raise.
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Task { @MainActor in self.applyReceivedLiveMetrics(applicationContext) }
+    }
+    @MainActor
+    private func applyReceivedLiveMetrics(_ payload: [String: Any]) {
+        guard let data = payload[WatchWire.liveMetricsKey] as? Data,
+              let command = WatchWire.decode(WatchCommand.self, from: data),
+              case .liveMetrics(let metrics) = command else { return }
+        LiveMetricsHub.shared.updateFromWatch(metrics)
     }
 }
 #endif

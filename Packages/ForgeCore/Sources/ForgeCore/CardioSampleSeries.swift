@@ -90,6 +90,34 @@ public struct CardioSampleSeries: Codable, Equatable, Sendable {
         windows.compactMap { w in bestPaceSecPerKm(windowSeconds: w).map { (w, $0) } }
     }
 
+    // MARK: - Time in zones
+
+    /// Measured seconds per heart-rate zone (index 0 = Z1) summed from the HR
+    /// samples, each bucket contributing `step` seconds to the zone returned by
+    /// `classify` (clamped to 1...zoneCount). Returns nil when the series has
+    /// too little heart-rate coverage to be honest — fewer than `minSamples` HR
+    /// points, or HR present for under `minCoverage` of the session span — so
+    /// callers fall back to an estimate and label it as such.
+    public func hrZoneSeconds(
+        zoneCount: Int = 5,
+        step: Int = 10,
+        minSamples: Int = 6,
+        minCoverage: Double = 0.5,
+        classify: (Int) -> Int
+    ) -> [Int]? {
+        let hrValues = samples.compactMap(\.hr)
+        guard hrValues.count >= minSamples, zoneCount > 0, step > 0 else { return nil }
+        // Buckets stride 0...duration inclusive, so the span is duration + step.
+        let span = Double(durationSeconds + step)
+        guard span > 0, Double(hrValues.count * step) / span >= minCoverage else { return nil }
+        var zones = [Int](repeating: 0, count: zoneCount)
+        for bpm in hrValues {
+            let zone = min(max(classify(bpm), 1), zoneCount)
+            zones[zone - 1] += step
+        }
+        return zones
+    }
+
     // MARK: - Interval detection
 
     public struct DetectedSegment: Equatable, Sendable {

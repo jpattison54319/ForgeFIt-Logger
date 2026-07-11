@@ -14,6 +14,8 @@ struct WorkoutLiveActivity: Widget {
             LockScreenWorkoutView(context: context)
                 .activityBackgroundTint(WActivityTheme.background)
                 .activitySystemActionForegroundColor(WActivityTheme.accent)
+                // Tap from the lock screen drops straight into the logger.
+                .widgetURL(URL(string: "forgefit://workout"))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -248,12 +250,17 @@ private struct LockScreenWorkoutView: View {
     }
 }
 
-/// Sage palette for the activity surfaces (extension has no app theme).
+/// Sage palette for EVERY widget surface — the Live Activity and the
+/// launcher/lock-screen widgets (the extension has no app theme). Keep in
+/// sync with `AppTheme.sage`; nothing here may fall back to `.purple` /
+/// `.green` system colors (the launcher widget shipped the pre-sage purple
+/// brand for months because it didn't share this palette).
 enum WActivityTheme {
     static let background = Color(red: 14 / 255, green: 17 / 255, blue: 22 / 255)    // 0x0E1116 slate obsidian
     static let accent = Color(red: 85 / 255, green: 179 / 255, blue: 116 / 255)     // 0x55B374
     static let gold = Color(red: 245 / 255, green: 185 / 255, blue: 58 / 255)       // 0xF5B93A
     static let danger = Color(red: 255 / 255, green: 90 / 255, blue: 100 / 255)
+    static let recoveryHigh = Color(red: 53 / 255, green: 208 / 255, blue: 122 / 255) // 0x35D07A
 
     static func icon(for mode: WorkoutActivityAttributes.WorkoutActivityMode) -> String {
         switch mode {

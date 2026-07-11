@@ -159,7 +159,9 @@ enum CardioMetrics {
     }
 
     /// Estimated time-in-zone distribution centered on the average-HR zone.
-    /// Clearly an estimate until a per-second HR stream is available via HealthKit.
+    /// This is the FALLBACK for sessions without a usable HR series (manual
+    /// logs, sparse phone-only HR) — prefer `measuredZoneSecondsArray` and
+    /// label anything that came from here as an estimate.
     static func estimatedZoneSeconds(avgHR: Int?, durationSeconds: Int?) -> [(zone: Int, seconds: Int)] {
         guard let avgHR, let durationSeconds, durationSeconds > 0 else { return [] }
         let center = HRZone.zone(forAvgHR: avgHR)
@@ -179,6 +181,19 @@ enum CardioMetrics {
             zones[item.zone - 1] = item.seconds
         }
         return zones
+    }
+
+    /// Real time-in-zone summed from a session's stored per-10s HR series,
+    /// classified against the user's configured zone model. nil when the series
+    /// is missing or too sparse to be honest — fall back to the estimate and
+    /// say so in the UI.
+    static func measuredZoneSecondsArray(series: CardioSampleSeries) -> [Int]? {
+        let config = HRZone.config
+        return series.hrZoneSeconds { config.zone(for: $0) }
+    }
+
+    static func measuredZoneSecondsArray(seriesJSON: String?) -> [Int]? {
+        CardioSampleSeries.decode(from: seriesJSON).flatMap(measuredZoneSecondsArray(series:))
     }
 }
 

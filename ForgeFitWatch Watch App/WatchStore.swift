@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import WatchConnectivity
 import WatchKit
+import WidgetKit
 import ForgeCore
 
 /// The watch side of live sync: receives the phone's `WatchAppContext`
@@ -46,7 +47,7 @@ final class WatchStore: NSObject {
 
     func ensureWorkoutSessionRunning() {
         guard let workout = activeWorkout, !engine.isRunning else { return }
-        engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
+        engine.start(configuration: workoutConfiguration(for: workout), startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
     }
 
     // MARK: - Commands (watch → phone)
@@ -55,13 +56,25 @@ final class WatchStore: NSObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               let data = WatchWire.encode(command) else { return }
         let payload = [WatchWire.commandKey: data]
-        // Live metrics are ephemeral — a heart-rate reading queued while the
-        // phone is unreachable arrives minutes stale and shows up as a bogus
-        // "current" HR, masking the actual gap. Drop those; everything else
-        // (set toggles, finish, etc.) gets guaranteed delivery via the queue.
+        // Live metrics: `isReachable` tracks whether the watch screen is on,
+        // not whether the workout session is still streaming (HKLiveWorkoutBuilder
+        // keeps delivering HR the whole time the display is off). Gating the
+        // only send path on `isReachable`, as this used to, silently dropped
+        // every reading for the entire "wrist down" stretch of a workout — the
+        // phone only caught up once the wrist was raised and reachability
+        // flipped back, which is exactly the lag the user is seeing.
+        //
+        // `sendMessage` stays as the low-latency fast path while both sides
+        // are awake. `updateApplicationContext` runs unconditionally as the
+        // always-on fallback: it coalesces to a single latest value (no queue
+        // to replay), so it can't reintroduce the stale-reading problem
+        // `transferUserInfo` would — the phone just converges on the freshest
+        // HR the instant reachability (or app launch) lets it through.
         if case .liveMetrics = command {
-            guard WCSession.default.isReachable else { return }
-            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            if WCSession.default.isReachable {
+                WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            }
+            try? WCSession.default.updateApplicationContext([WatchWire.liveMetricsKey: data])
             return
         }
         if WCSession.default.isReachable {
@@ -216,7 +229,7 @@ final class WatchStore: NSObject {
         // phone) ends it.
         if let workout = newContext.workout {
             if !engine.isRunning {
-                engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
+                engine.start(configuration: workoutConfiguration(for: workout), startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
             }
         } else if engine.isRunning {
             if let old = previous?.workout {
@@ -227,6 +240,40 @@ final class WatchStore: NSObject {
 
         scheduleRestHaptic(endsAt: newContext.workout?.restEndsAt)
         scheduleIntervalHaptic(endsAt: newContext.workout?.intervalStepEndsAt)
+        publishComplicationSnapshot(newContext)
+    }
+
+    /// Mirror the phone's state into the watch's shared app-group container so
+    /// the watch-face complication (a separate widget-extension process) can
+    /// read it, then nudge WidgetKit to refresh. Writes to the SAME
+    /// `ForgeFitWidgetSnapshotStore` the iOS widget uses — on watchOS the
+    /// suite name resolves to the watch's own group container, so the watch
+    /// widget extension must join the `group.org.xpetsllc.ForgeFit` app group
+    /// too. A no-op reload before the complication target exists is harmless.
+    private func publishComplicationSnapshot(_ context: WatchAppContext) {
+        let snapshot: ForgeFitWidgetSnapshot
+        if let workout = context.workout {
+            snapshot = ForgeFitWidgetSnapshot(
+                mode: .activeWorkout,
+                workoutTitle: workout.title,
+                workoutStartedAt: workout.startedAt,
+                currentExerciseName: workout.exercises.first(where: { ex in
+                    ex.sets.contains { !$0.completed }
+                })?.name,
+                completedSets: workout.completedSets,
+                totalSets: workout.totalSets,
+                restEndsAt: workout.restEndsAt
+            )
+        } else {
+            snapshot = ForgeFitWidgetSnapshot(
+                mode: .idle,
+                readinessScore: context.readiness,
+                readinessAction: context.readinessAction,
+                readinessDetail: context.readinessDetail
+            )
+        }
+        ForgeFitWidgetSnapshotStore.save(snapshot)
+        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitWatchComplication")
     }
 
     /// Buzz the wrist when the phone's rest timer hits zero.
@@ -268,6 +315,38 @@ final class WatchStore: NSObject {
             clearWorkoutLocally()
         default:
             break // watch → phone commands
+        }
+    }
+
+    private func workoutConfiguration(for workout: WatchWorkoutSnapshot) -> HKWorkoutConfiguration? {
+        if workout.isYogaWorkout == true {
+            let config = HKWorkoutConfiguration()
+            config.activityType = .yoga
+            config.locationType = .indoor
+            return config
+        }
+        let activeCardio = workout.exercises.first { $0.isCardio && $0.cardioState == .running }
+        let pureCardio = !workout.exercises.isEmpty && workout.exercises.allSatisfy(\.isCardio)
+        guard let exercise = activeCardio ?? (pureCardio ? workout.exercises.first : nil),
+              let raw = exercise.cardioKindRaw else { return nil }
+        let config = HKWorkoutConfiguration()
+        config.activityType = hkActivityType(for: raw)
+        config.locationType = exercise.supportsOutdoorRoute == true ? .outdoor : .indoor
+        return config
+    }
+
+    private func hkActivityType(for raw: String) -> HKWorkoutActivityType {
+        switch raw {
+        case "run", "trailRun": return .running
+        case "walk": return .walking
+        case "cycle": return .cycling
+        case "row": return .rowing
+        case "elliptical": return .elliptical
+        case "stair": return .stairClimbing
+        case "jumpRope": return .jumpRope
+        case "skate": return .skatingSports
+        case "swim": return .swimming
+        default: return .other
         }
     }
 }

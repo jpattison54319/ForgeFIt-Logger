@@ -120,6 +120,13 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     private(set) var recordingSessionID: UUID?
     @ObservationIgnored private var locations: [CLLocation] = []
     @ObservationIgnored private var lastLiveLocation: CLLocation?
+    @ObservationIgnored private var pendingStartSessionID: UUID?
+    // T4-4 live split announcements: boundary bookkeeping over the live
+    // distance total. `announcedSplits` is how many km/mi lines were spoken;
+    // dates anchor split + total durations.
+    @ObservationIgnored private var announcedSplits = 0
+    @ObservationIgnored private var splitAnchorDate: Date?
+    @ObservationIgnored private var recordingStartDate: Date?
 
     var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
     var isAuthorized: Bool {
@@ -139,12 +146,26 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     }
 
     func start(session: CardioSessionModel) {
-        requestAuthorization()
+        if authorizationStatus == .notDetermined {
+            pendingStartSessionID = session.id
+            requestAuthorization()
+            return
+        }
         guard isAuthorized else { return }
-        recordingSessionID = session.id
+        beginRecording(sessionID: session.id)
+    }
+
+    private func beginRecording(sessionID: UUID) {
+        pendingStartSessionID = nil
+        recordingSessionID = sessionID
         locations = []
         lastLiveLocation = nil
         liveDistanceMeters = 0
+        announcedSplits = 0
+        splitAnchorDate = nil
+        recordingStartDate = nil
+        manager.allowsBackgroundLocationUpdates = true
+        manager.pausesLocationUpdatesAutomatically = false
         manager.startUpdatingLocation()
     }
 
@@ -155,9 +176,13 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     func stop(session: CardioSessionModel, in context: ModelContext) {
         manager.stopUpdatingLocation()
+        PaceAnnouncer.shared.stop()
         defer {
             recordingSessionID = nil
+            pendingStartSessionID = nil
             locations = []
+            liveDistanceMeters = 0
+            manager.allowsBackgroundLocationUpdates = false
         }
         guard recordingSessionID == session.id, !locations.isEmpty else { return }
         CardioRouteMath.replaceRoute(for: session, locations: locations, in: context)
@@ -180,7 +205,40 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
                     if segment >= 1 { self.liveDistanceMeters += segment }
                 }
                 self.lastLiveLocation = location
+                if self.recordingStartDate == nil {
+                    self.recordingStartDate = location.timestamp
+                    self.splitAnchorDate = location.timestamp
+                }
+                self.announceSplitIfCrossed(at: location.timestamp)
             }
+        }
+    }
+
+    /// Speaks each completed km/mi as the live total crosses the boundary
+    /// (locale decides the unit, same as the split table). One fix can cross
+    /// at most one boundary at running speeds; the `while` guards a GPS gap
+    /// crossing two — later boundaries speak once, with the gap's time on
+    /// the first.
+    private func announceSplitIfCrossed(at timestamp: Date) {
+        let unit = CardioRouteMath.defaultSplitDistanceMeters
+        while liveDistanceMeters >= Double(announcedSplits + 1) * unit {
+            announcedSplits += 1
+            let splitSeconds = splitAnchorDate.map { max(1, Int(timestamp.timeIntervalSince($0))) } ?? 0
+            let totalSeconds = recordingStartDate.map { max(1, Int(timestamp.timeIntervalSince($0))) }
+            splitAnchorDate = timestamp
+            PaceAnnouncer.shared.announceSplit(
+                unitLabel: Locale.current.measurementSystem == .us ? "mile" : "kilometer",
+                index: announcedSplits,
+                splitSeconds: splitSeconds,
+                totalSeconds: totalSeconds
+            )
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in
+            guard self.isAuthorized, let sessionID = self.pendingStartSessionID else { return }
+            self.beginRecording(sessionID: sessionID)
         }
     }
 

@@ -75,6 +75,12 @@ enum AICoach {
             progress, and nutrition around training. If asked something off-topic, warmly decline in a
             sentence and steer back to their training.
 
+            Boundaries: you EXPLAIN the deterministic readiness score, progression targets, and coach dose
+            adjustments the app has already computed — you never invent, create, or modify a training program
+            or its numbers yourself. If asked to change the plan, adjust today's dose, or build a new program,
+            tell them warmly that's done in Coach's Corner — the review screen for today's session, or "Build
+            my plan" / "Coach this plan" for a program — not here.
+
             Safety: you're a coach, not a doctor — no medical diagnosis. For pain, injury, illness, chest
             pain, fainting, or severe symptoms, tell them to stop or ease off and see a qualified professional.
 
@@ -277,13 +283,28 @@ struct AICoachChatView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     let context: AICoachContext
+    /// The coach's structured dose adjustment for today (nil = train as
+    /// written) plus the hook that starts the suggested session with it
+    /// applied — turns the chat's advice into a one-tap action instead of
+    /// leaving the coach read-only.
+    let coachPlan: CoachAdjustments.Plan?
+    let suggestedRoutineName: String?
+    let onApplyPlan: ((CoachAdjustments.Plan) -> Void)?
 
     @State private var messages: [CoachChatMessage]
     @State private var question = ""
     @State private var isAnswering = false
 
-    init(context: AICoachContext) {
+    init(
+        context: AICoachContext,
+        coachPlan: CoachAdjustments.Plan? = nil,
+        suggestedRoutineName: String? = nil,
+        onApplyPlan: ((CoachAdjustments.Plan) -> Void)? = nil
+    ) {
         self.context = context
+        self.coachPlan = coachPlan
+        self.suggestedRoutineName = suggestedRoutineName
+        self.onApplyPlan = onApplyPlan
         _messages = State(initialValue: [
             CoachChatMessage(
                 role: .coach,
@@ -299,6 +320,9 @@ struct AICoachChatView: View {
                     ScrollView(showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: Space.md) {
                             contextSummary
+                            if let plan = coachPlan, let onApplyPlan {
+                                coachActionCard(plan, apply: onApplyPlan)
+                            }
                             ForEach(messages) { message in
                                 CoachBubble(message: message)
                                     .id(message.id)
@@ -326,13 +350,16 @@ struct AICoachChatView: View {
                     }
                 }
 
-                coachInput
-                    .padding(.horizontal, Space.lg)
-                    .padding(.vertical, Space.md)
-                    .background(.regularMaterial)
+                VStack(spacing: Space.sm) {
+                    suggestedPrompts
+                    coachInput
+                }
+                .padding(.horizontal, Space.lg)
+                .padding(.vertical, Space.md)
+                .background(.regularMaterial)
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("Coach")
+            .navigationTitle("Ask your Coach")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -370,6 +397,65 @@ struct AICoachChatView: View {
         }
     }
 
+    /// One-tap advice→action: start today's suggested session with the
+    /// coach's dose applied (same modification path as Home's "coach's
+    /// version" button — the saved routine is never touched).
+    private func coachActionCard(_ plan: CoachAdjustments.Plan, apply: @escaping (CoachAdjustments.Plan) -> Void) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                HStack(spacing: 6) {
+                    Image(systemName: plan.action.systemImage)
+                        .foregroundStyle(theme.accent)
+                    Text("Today's call: \(plan.action.title)")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                }
+                Text(plan.summary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary)
+                PrimaryButton(
+                    title: suggestedRoutineName.map { "Start \($0) — coach dose" } ?? "Start coach's session",
+                    systemImage: "play.fill"
+                ) {
+                    dismiss()
+                    apply(plan)
+                }
+            }
+        }
+    }
+
+    /// A few one-tap starting points so a blank chat isn't an intimidating
+    /// empty text field — each sends immediately, as if typed and submitted.
+    private static let suggestedPromptOptions = [
+        "Why this readiness score?",
+        "What changed in my coach's version?",
+        "How is my week going?",
+        "Why these weight targets?",
+    ]
+
+    private var suggestedPrompts: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Space.sm) {
+                ForEach(Self.suggestedPromptOptions, id: \.self) { prompt in
+                    Button {
+                        send(prompt)
+                    } label: {
+                        Text(prompt)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .padding(.horizontal, Space.md)
+                            .padding(.vertical, 8)
+                            .background(theme.surfaceElevated)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isAnswering)
+                }
+            }
+        }
+        .accessibilityLabel("Suggested questions")
+    }
+
     private var coachInput: some View {
         HStack(alignment: .bottom, spacing: Space.sm) {
             TextField("Ask about training, recovery, progress...", text: $question, axis: .vertical)
@@ -382,11 +468,11 @@ struct AICoachChatView: View {
                 .background(theme.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
 
-            Button(action: send) {
+            Button { send() } label: {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 44, height: 44)   // HIG minimum touch target
                     .background(canSend ? theme.accent : theme.surfaceHighlight)
                     .clipShape(Circle())
             }
@@ -400,8 +486,10 @@ struct AICoachChatView: View {
         !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isAnswering
     }
 
-    private func send() {
-        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// `preset` is a suggested-prompt chip's text sent as-is; nil reads the
+    /// text field (the normal typed-and-submitted path).
+    private func send(_ preset: String? = nil) {
+        let trimmed = (preset ?? question).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isAnswering else { return }
         question = ""
         messages.append(CoachChatMessage(role: .user, text: trimmed))

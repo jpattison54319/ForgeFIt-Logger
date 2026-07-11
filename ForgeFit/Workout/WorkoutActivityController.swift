@@ -137,7 +137,7 @@ final class WorkoutActivityController {
                 cardioMetric: poseName ?? Fmt.durationShort(duration),
                 cardioDetail: detail.isEmpty ? Fmt.durationShort(duration) : detail,
                 restEndsAt: nil,
-                heartRate: WatchLink.shared.liveMetrics?.heartRate ?? yogaSession.avgHR,
+                heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate ?? yogaSession.avgHR,
                 poseEndsAt: (runner?.isPaused == false) ? runner?.stepEndsAt : nil
             )
         }
@@ -158,7 +158,7 @@ final class WorkoutActivityController {
                 cardioMetric: Fmt.durationShort(duration),
                 cardioDetail: session.liveStartedAt == nil ? "Ready to begin" : Fmt.durationShort(duration),
                 restEndsAt: nil,
-                heartRate: WatchLink.shared.liveMetrics?.heartRate ?? session.avgHR
+                heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate ?? session.avgHR
             )
         }
 
@@ -171,7 +171,7 @@ final class WorkoutActivityController {
                 .flatMap { we in exercises.first { $0.id == we.exerciseID } }
             let providesGPS = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
             let liveDist: Double? = providesGPS
-                ? (WatchLink.shared.liveMetrics?.distanceMeters
+                ? (LiveMetricsHub.shared.liveMetrics?.distanceMeters
                     ?? CardioRouteRecorder.shared.liveDistanceMeters(for: session.id)
                     ?? session.distanceMeters)
                 : session.distanceMeters
@@ -184,7 +184,7 @@ final class WorkoutActivityController {
             let primaryMetric = intervalStep ?? paceMetric
             let detail = [
                 Fmt.distance(liveDist),
-                session.avgHR.map { "\($0) bpm" } ?? WatchLink.shared.liveMetrics?.heartRate.map { "\($0) bpm" }
+                session.avgHR.map { "\($0) bpm" } ?? LiveMetricsHub.shared.liveMetrics?.heartRate.map { "\($0) bpm" }
             ]
                 .compactMap { $0 }
                 .filter { $0 != "—" }
@@ -200,7 +200,7 @@ final class WorkoutActivityController {
                 cardioMetric: primaryMetric,
                 cardioDetail: detail.isEmpty ? Fmt.durationShort(duration) : detail,
                 restEndsAt: nil,
-                heartRate: WatchLink.shared.liveMetrics?.heartRate ?? session.avgHR
+                heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate ?? session.avgHR
             )
         }
 
@@ -211,7 +211,7 @@ final class WorkoutActivityController {
             completedSets: allSets.filter { $0.completedAt != nil }.count,
             totalSets: allSets.count,
             restEndsAt: resting ? timer.endsAt : nil,
-            heartRate: WatchLink.shared.liveMetrics?.heartRate
+            heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate
         )
     }
     #else

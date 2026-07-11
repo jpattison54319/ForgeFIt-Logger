@@ -4,83 +4,229 @@
     "name": "Full Body Foundation",
     "goal": "general fitness",
     "level": "beginner",
+    "focus": "strength",
     "daysPerWeek": 3,
     "weeks": 6,
-    "equipment": ["barbell", "dumbbell", "cable", "body only"],
-    "tags": ["full body", "beginner", "strength"],
-    "description": "Two alternating whole-body days, three sessions a week (A/B/A, then B/A/B). Every session hits squat, push, pull, and hinge patterns — the fastest way to build a base.",
-    "routineIDs": ["beginner-full-body-a", "beginner-full-body-b"]
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable",
+      "body only"
+    ],
+    "tags": [
+      "full body",
+      "beginner",
+      "strength"
+    ],
+    "description": "Two alternating whole-body days, three sessions a week (A/B/A one week, B/A/B the next). Every session hits squat, push, pull, and hinge patterns at beginner-friendly volume.",
+    "routineIDs": [
+      "beginner-full-body-a",
+      "beginner-full-body-b"
+    ],
+    "schedule": [
+      "beginner-full-body-a",
+      "beginner-full-body-b",
+      "beginner-full-body-a"
+    ]
   },
   {
     "id": "upper-lower-split",
     "name": "Upper / Lower Split",
     "goal": "muscle gain",
     "level": "intermediate",
+    "focus": "strength",
     "daysPerWeek": 4,
     "weeks": 6,
-    "equipment": ["barbell", "dumbbell", "cable", "machine"],
-    "tags": ["upper lower", "hypertrophy", "strength"],
-    "description": "Four days a week: two upper and two lower sessions with complementary A/B emphases — horizontal vs vertical pressing up top, squat-led vs hip-led below.",
-    "routineIDs": ["upper-body-a", "lower-body-a", "upper-body-b", "lower-body-b"]
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable",
+      "machine"
+    ],
+    "tags": [
+      "upper lower",
+      "hypertrophy",
+      "strength"
+    ],
+    "description": "Four days a week: two upper and two lower sessions with complementary A/B emphases \u2014 horizontal vs vertical pressing up top, squat-led vs hip-led below.",
+    "routineIDs": [
+      "upper-body-a",
+      "lower-body-a",
+      "upper-body-b",
+      "lower-body-b"
+    ],
+    "schedule": [
+      "upper-body-a",
+      "lower-body-a",
+      "upper-body-b",
+      "lower-body-b"
+    ]
   },
   {
     "id": "push-pull-legs",
     "name": "Push Pull Legs",
     "goal": "muscle gain",
     "level": "intermediate",
-    "daysPerWeek": 6,
+    "focus": "strength",
+    "daysPerWeek": 3,
     "weeks": 6,
-    "equipment": ["barbell", "dumbbell", "cable", "machine"],
-    "tags": ["ppl", "hypertrophy"],
-    "description": "The classic three-day rotation — push, pull, legs. Run it once through for 3 days a week or twice for 6.",
-    "routineIDs": ["push-day", "pull-day", "legs-day"]
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable",
+      "machine"
+    ],
+    "tags": [
+      "ppl",
+      "hypertrophy"
+    ],
+    "description": "The classic push / pull / legs rotation. Run it once through for 3 sessions a week, or twice (P\u00b7P\u00b7L\u00b7P\u00b7P\u00b7L) for 6 \u2014 same three day routines either way.",
+    "routineIDs": [
+      "push-day",
+      "pull-day",
+      "legs-day"
+    ],
+    "schedule": [
+      "push-day",
+      "pull-day",
+      "legs-day"
+    ]
   },
   {
     "id": "dumbbell-home-builder",
     "name": "Dumbbell Home Builder",
     "goal": "muscle gain",
     "level": "beginner",
+    "focus": "strength",
     "daysPerWeek": 3,
     "weeks": 6,
-    "equipment": ["dumbbell"],
-    "tags": ["dumbbell only", "full body", "home gym"],
-    "description": "Two alternating full-body dumbbell days for home or apartment gyms — nothing but a pair of dumbbells required.",
-    "routineIDs": ["dumbbell-only-full-body", "dumbbell-only-full-body-b"]
+    "equipment": [
+      "dumbbell"
+    ],
+    "tags": [
+      "dumbbell only",
+      "full body",
+      "home gym"
+    ],
+    "description": "Two alternating full-body dumbbell days (A/B/A one week, B/A/B the next) for home or apartment gyms \u2014 nothing but a pair of dumbbells, with pushing, pulling, squatting, and hinging every week.",
+    "routineIDs": [
+      "dumbbell-only-full-body",
+      "dumbbell-only-full-body-b"
+    ],
+    "schedule": [
+      "dumbbell-only-full-body",
+      "dumbbell-only-full-body-b",
+      "dumbbell-only-full-body"
+    ]
   },
   {
     "id": "machine-fundamentals",
     "name": "Machine Fundamentals",
     "goal": "muscle gain",
     "level": "beginner",
+    "focus": "strength",
     "daysPerWeek": 3,
     "weeks": 6,
-    "equipment": ["machine", "cable"],
-    "tags": ["machine", "beginner", "joint friendly"],
-    "description": "A joint-friendly upper/lower pair built on machines and cables — ideal for learning movement patterns with guided resistance.",
-    "routineIDs": ["machine-upper", "machine-lower"]
+    "equipment": [
+      "machine",
+      "cable"
+    ],
+    "tags": [
+      "machine",
+      "beginner",
+      "joint friendly"
+    ],
+    "description": "A joint-friendly upper/lower pair built on machines and cables, alternated three times a week (U/L/U, then L/U/L) \u2014 ideal for learning movement patterns with guided resistance.",
+    "routineIDs": [
+      "machine-upper",
+      "machine-lower"
+    ],
+    "schedule": [
+      "machine-upper",
+      "machine-lower",
+      "machine-upper"
+    ]
   },
   {
     "id": "hybrid-engine",
     "name": "Hybrid Engine",
     "goal": "hybrid fitness",
     "level": "intermediate",
+    "focus": "mixed",
     "daysPerWeek": 4,
     "weeks": 6,
-    "equipment": ["barbell", "machine", "outdoor"],
-    "tags": ["hybrid", "zone 2", "strength", "cardio"],
+    "equipment": [
+      "barbell",
+      "machine",
+      "outdoor"
+    ],
+    "tags": [
+      "hybrid",
+      "zone 2",
+      "strength",
+      "cardio"
+    ],
     "description": "Strength plus aerobic base: two lift-then-zone-2 sessions and two easy run/walk days a week keep you strong without losing your engine.",
-    "routineIDs": ["strength-zone-2-hybrid", "run-walk-base"]
+    "routineIDs": [
+      "strength-zone-2-hybrid",
+      "run-walk-base"
+    ],
+    "schedule": [
+      "strength-zone-2-hybrid",
+      "run-walk-base",
+      "strength-zone-2-hybrid",
+      "run-walk-base"
+    ]
   },
   {
     "id": "bodyweight-travel-kit",
     "name": "Bodyweight Travel Kit",
     "goal": "maintenance",
     "level": "beginner",
+    "focus": "strength",
     "daysPerWeek": 3,
     "weeks": 4,
-    "equipment": ["body only"],
-    "tags": ["travel", "bodyweight"],
-    "description": "One superset-driven bodyweight session you can run anywhere, three times a week — enough stimulus to hold muscle on the road.",
-    "routineIDs": ["bodyweight-travel"]
+    "equipment": [
+      "body only"
+    ],
+    "tags": [
+      "travel",
+      "bodyweight"
+    ],
+    "description": "One superset-driven bodyweight session you can run anywhere, three times a week \u2014 enough stimulus to hold muscle on the road.",
+    "routineIDs": [
+      "bodyweight-travel"
+    ],
+    "schedule": [
+      "bodyweight-travel",
+      "bodyweight-travel",
+      "bodyweight-travel"
+    ]
+  },
+  {
+    "id": "cardio-base",
+    "name": "Cardio Base",
+    "goal": "cardio base",
+    "level": "beginner",
+    "focus": "cardio",
+    "daysPerWeek": 3,
+    "weeks": 6,
+    "equipment": [
+      "outdoor"
+    ],
+    "tags": [
+      "cardio",
+      "run walk",
+      "base building"
+    ],
+    "description": "Three easy run/walk sessions a week to build an aerobic base \u2014 the same low-pressure day repeated so newer runners (or anyone returning from a break) can build up mileage without burning out.",
+    "routineIDs": [
+      "run-walk-base"
+    ],
+    "schedule": [
+      "run-walk-base",
+      "run-walk-base",
+      "run-walk-base"
+    ]
   }
 ]

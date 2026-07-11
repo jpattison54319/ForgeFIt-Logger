@@ -215,13 +215,14 @@ final class IntervalRunner {
 
 import SwiftUI
 
+// Theme-injected (see RecoveryDetailView's tint note): hardcoding
+// `AppTheme.sage` drew dark-tuned hues on light-mode cards.
 extension IntervalPlan.Step.Kind {
-    var tint: Color {
-        let t = AppTheme.sage
+    func tint(in theme: AppTheme) -> Color {
         switch self {
-        case .warmup, .cooldown: return t.warmup
-        case .work: return t.secondaryAccent
-        case .recover: return t.accent
+        case .warmup, .cooldown: return theme.warmup
+        case .work: return theme.secondaryAccent
+        case .recover: return theme.accent
         }
     }
 }
@@ -241,7 +242,7 @@ struct IntervalRunnerStrip: View {
                         HStack(spacing: 6) {
                             Text(step.label.uppercased())
                                 .font(.system(size: 12, weight: .heavy))
-                                .foregroundStyle(step.kind.tint)
+                                .foregroundStyle(step.kind.tint(in: theme))
                             if let zone = step.hrZone {
                                 Text("Z\(zone)")
                                     .font(.system(size: 10, weight: .heavy))
@@ -270,7 +271,7 @@ struct IntervalRunnerStrip: View {
                     Text(timerInterval: Date.now...max(Date.now, runner.stepEndsAt), countsDown: true)
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(step.kind.tint)
+                        .foregroundStyle(step.kind.tint(in: theme))
                     Button {
                         runner.skip()
                     } label: {
@@ -289,8 +290,8 @@ struct IntervalRunnerStrip: View {
                     ForEach(Array(runner.plan.steps.enumerated()), id: \.element.id) { index, planStep in
                         Capsule()
                             .fill(index < runner.currentIndex
-                                  ? planStep.kind.tint
-                                  : (index == runner.currentIndex ? planStep.kind.tint.opacity(0.9) : theme.surfaceElevated))
+                                  ? planStep.kind.tint(in: theme)
+                                  : (index == runner.currentIndex ? planStep.kind.tint(in: theme).opacity(0.9) : theme.surfaceElevated))
                             .frame(height: index == runner.currentIndex ? 7 : 5)
                     }
                 }
@@ -303,7 +304,7 @@ struct IntervalRunnerStrip: View {
             }
         }
         .padding(Space.sm)
-        .background((runner.currentStep?.kind.tint ?? theme.success).opacity(0.08))
+        .background((runner.currentStep?.kind.tint(in: theme) ?? theme.success).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
     }
 }

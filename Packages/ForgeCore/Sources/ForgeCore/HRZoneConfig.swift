@@ -1,9 +1,11 @@
 import Foundation
 
 /// The user's heart-rate zone model: a max HR plus the fractional upper bounds
-/// of zones 1–4 (zone 5 runs to max). Lives in ForgeCore so the phone (zone
-/// bars, interval alerts), the watch (live time-in-zone + zone guard), and the
-/// widgets all classify HR against the same personalized boundaries.
+/// of zones 1-4 (zone 5 runs to max). When a resting HR is available, the
+/// fractions are Karvonen/%HRR values; otherwise they fall back to %HRmax.
+/// Lives in ForgeCore so the phone (zone bars, interval alerts), the watch
+/// (live time-in-zone + zone guard), and the widgets all classify HR against
+/// the same personalized boundaries.
 ///
 /// Defaults mirror the classic 60/70/80/90% model and a max HR of 190, matching
 /// the values ForgeFit used before zones were configurable.
@@ -32,19 +34,40 @@ public struct HRZoneConfig: Codable, Sendable, Equatable {
 
     /// The zone (1...5) a given heart rate falls in.
     public func zone(for hr: Int) -> Int {
-        let pct = Double(hr) / Double(max(1, maxHR))
-        for (index, bound) in zoneUpperBounds.enumerated() where pct < bound {
+        let fraction = fraction(forBPM: hr)
+        for (index, bound) in zoneUpperBounds.enumerated() where fraction < bound {
             return index + 1
         }
         return 5
     }
 
+    public var usesHeartRateReserve: Bool { restingHR != nil }
+
+    /// Converts a fractional zone boundary to BPM using the active basis:
+    /// Karvonen/%HRR when resting HR exists, else %HRmax.
+    public func bpm(forFraction fraction: Double) -> Int {
+        let clamped = max(0, min(1, fraction))
+        if let restingHR {
+            let reserve = max(1, maxHR - restingHR)
+            return Int((Double(restingHR) + clamped * Double(reserve)).rounded())
+        }
+        return Int((clamped * Double(max(1, maxHR))).rounded())
+    }
+
+    /// Converts BPM back to the active zone-boundary fraction.
+    public func fraction(forBPM bpm: Int) -> Double {
+        if let restingHR {
+            return Double(bpm - restingHR) / Double(max(1, maxHR - restingHR))
+        }
+        return Double(bpm) / Double(max(1, maxHR))
+    }
+
     /// Inclusive lower bpm bound of a zone (zone 1 starts at 0).
     public func lowerBPM(forZone zone: Int) -> Int {
-        guard zone > 1 else { return 0 }
+        guard zone > 1 else { return restingHR ?? 0 }
         let index = zone - 2 // zone 2 -> bounds[0]
         guard zoneUpperBounds.indices.contains(index) else { return 0 }
-        return Int((zoneUpperBounds[index] * Double(maxHR)).rounded())
+        return bpm(forFraction: zoneUpperBounds[index])
     }
 
     /// Upper bpm bound of a zone (zone 5 runs to max HR).
@@ -52,7 +75,7 @@ public struct HRZoneConfig: Codable, Sendable, Equatable {
         guard zone < 5 else { return maxHR }
         let index = zone - 1 // zone 1 -> bounds[0]
         guard zoneUpperBounds.indices.contains(index) else { return maxHR }
-        return Int((zoneUpperBounds[index] * Double(maxHR)).rounded())
+        return bpm(forFraction: zoneUpperBounds[index])
     }
 
     /// The bpm range for a zone, e.g. 114...133 for Z2 at max 190.

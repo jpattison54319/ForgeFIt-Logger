@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Theme
 
@@ -202,16 +205,37 @@ enum Space {
 
 // MARK: - Typography
 
+/// The type ramp is anchored to system text styles so every token scales
+/// with the user's Text Size setting (Dynamic Type). Each anchor's DEFAULT
+/// size equals the token's original fixed point size, so nothing shifts at
+/// the standard (Large) setting. The app root clamps growth at
+/// `.accessibility1` (see ForgeFitApp) so dense fixed-frame surfaces stay
+/// usable — raise the ceiling only after auditing those layouts.
 extension Font {
-    static let screenTitle = Font.system(size: 34, weight: .bold, design: .default)
-    static let sectionTitle = Font.system(size: 22, weight: .bold)
-    static let cardTitle = Font.system(size: 20, weight: .semibold)
-    static let metricValue = Font.system(size: 30, weight: .bold)
-    static let statValue = Font.system(size: 22, weight: .semibold)
-    static let bodyStrong = Font.system(size: 16, weight: .semibold)
-    static let rowValue = Font.system(size: 17, weight: .semibold)
-    static let label = Font.system(size: 13, weight: .medium)
-    static let tag = Font.system(size: 12, weight: .semibold)
+    static let screenTitle = Font.system(.largeTitle, design: .default, weight: .bold)   // 34
+    static let sectionTitle = Font.system(.title2, weight: .bold)                        // 22
+    static let cardTitle = Font.system(.title3, weight: .semibold)                       // 20
+    static let statValue = Font.system(.title2, weight: .semibold)                       // 22
+    static let bodyStrong = Font.system(.callout, weight: .semibold)                     // 16
+    static let rowValue = Font.system(.body, weight: .semibold)                          // 17
+    static let label = Font.system(.footnote, weight: .medium)                           // 13
+    static let tag = Font.system(.caption, weight: .semibold)                            // 12
+
+    /// 30 pt sits between `.title` (28) and `.largeTitle` (34), so it scales
+    /// through UIFontMetrics against `.title1` instead of a style anchor. The
+    /// growth cap mirrors the app-wide `.accessibility1` clamp — UIFontMetrics
+    /// reads UIKit's content size directly and would otherwise ignore it.
+    @MainActor
+    static var metricValue: Font {
+        #if os(iOS)
+        let capped = min(UIApplication.shared.preferredContentSizeCategory, .accessibilityMedium)
+        let size = UIFontMetrics(forTextStyle: .title1)
+            .scaledValue(for: 30, compatibleWith: UITraitCollection(preferredContentSizeCategory: capped))
+        return Font.system(size: size, weight: .bold)
+        #else
+        return Font.system(size: 30, weight: .bold)
+        #endif
+    }
 }
 
 // MARK: - Color hex helper

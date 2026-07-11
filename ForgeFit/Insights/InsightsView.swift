@@ -160,7 +160,7 @@ private struct InsightsInfoSheet: View {
             HStack {
                 Text(topic.title).font(.cardTitle).foregroundStyle(theme.textPrimary)
                 Spacer()
-                CircleIconButton(systemImage: "xmark") { dismiss() }
+                CircleIconButton(systemImage: "xmark", label: "Close") { dismiss() }
             }
             Text(topic.body)
                 .font(.system(size: 15))
@@ -201,7 +201,11 @@ private struct RecordRow: View {
                 Spacer()
                 Text(Fmt.loadUnit(record.best1RM, unit: exercise?.effectiveWeightUnit ?? Fmt.unit))
                     .font(.statValue).foregroundStyle(theme.textPrimary)
-                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
+                // Exercise detail disclosure: white names stay content color;
+                // only the chevron signals tappable (design rule).
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.accent)
             }
         }
     }
@@ -219,11 +223,11 @@ private struct RecordsListView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
                     Spacer()
                     Text("Records").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Color.clear.frame(width: 38, height: 38)
+                    Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
                 }
                 .padding(.top, Space.sm)
 
@@ -313,19 +317,22 @@ struct ExerciseDetailView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+                        .accessibilityLabel("Back to exercise picker")
+                        .accessibilityIdentifier("exercise-detail-back")
                     Spacer()
                     Text("Exercise").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     if exercise != nil {
-                        CircleIconButton(systemImage: "square.and.pencil") { showingEdit = true }
+                        CircleIconButton(systemImage: "square.and.pencil", label: "Edit exercise") { showingEdit = true }
                     } else {
-                        Color.clear.frame(width: 38, height: 38)
+                        Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
                     }
                 }
                 .padding(.top, Space.sm)
 
                 Text(name).font(.screenTitle).foregroundStyle(theme.textPrimary)
+                    .accessibilityIdentifier("exercise-detail-title-\(name)")
 
                 if let exercise {
                     ExerciseInfoCard(exercise: exercise)

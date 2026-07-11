@@ -43,7 +43,7 @@ struct WatchHomeView: View {
                         .scaleEffect(0.82)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Readiness").font(.system(size: 14, weight: .semibold))
-                            Text(readiness >= 70 ? "Ready to train" : readiness >= 40 ? "Take it steady" : "Go easy today")
+                            Text(context?.readinessAction ?? (readiness >= 70 ? "Ready to train" : readiness >= 40 ? "Take it steady" : "Go easy today"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }

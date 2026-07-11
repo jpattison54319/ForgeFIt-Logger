@@ -21,7 +21,10 @@ struct YogaPoseCatalogTests {
 
     @Test func catalogLoadsAndIsInternallyConsistent() {
         let poses = YogaPoseCatalog.load()
-        #expect(poses.count >= 40)
+        // The catalog ships only fully-illustrated poses; every one must have
+        // a bundled `yoga_pose_<slug>` image asset (checked in-app), so the
+        // count tracks the illustrated set rather than a large target.
+        #expect(poses.count >= 12)
 
         var slugs = Set<String>()
         for pose in poses {
@@ -38,6 +41,43 @@ struct YogaPoseCatalogTests {
             for muscle in pose.primaryMuscles + pose.secondaryMuscles {
                 #expect(ExerciseCatalog.muscleGroups.contains(muscle), "\(pose.slug): unknown region \(muscle)")
             }
+        }
+    }
+
+    /// The guided player must show every catalog pose graphically — the
+    /// line-art figure catalog can never fall behind the pose catalog.
+    @Test func everyPoseHasALineArtFigure() {
+        let poses = YogaPoseCatalog.load()
+        let figures = YogaPoseFigureCatalog.load()
+        #expect(!figures.isEmpty)
+
+        for pose in poses {
+            guard let figure = figures[pose.slug] else {
+                Issue.record("\(pose.slug): no line-art figure — add it to yoga_pose_figures.json")
+                continue
+            }
+            // A head and at least a torso + two limbs; all geometry inside
+            // the 100×100 authoring space.
+            #expect(figure.head.count == 3, "\(pose.slug): head must be [cx, cy, r]")
+            #expect(figure.lines.count >= 3, "\(pose.slug): too few limb lines to depict a body")
+            for line in figure.lines {
+                #expect(line.count >= 2, "\(pose.slug): degenerate polyline")
+                for point in line {
+                    #expect(point.count == 2, "\(pose.slug): point must be [x, y]")
+                    for value in point {
+                        #expect(value >= 0 && value <= YogaPoseFigure.space, "\(pose.slug): point out of bounds")
+                    }
+                }
+            }
+            if let ground = figure.ground {
+                #expect(ground.count == 3, "\(pose.slug): ground must be [x1, x2, y]")
+            }
+        }
+
+        // No orphans: a figure for a slug that left the catalog is stale.
+        let poseSlugs = Set(poses.map(\.slug))
+        for slug in figures.keys {
+            #expect(poseSlugs.contains(slug), "figure \(slug) has no catalog pose")
         }
     }
 
@@ -64,8 +104,12 @@ struct YogaPoseCatalogTests {
         let poses = YogaPoseCatalog.load()
         let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let aliases = try context.fetch(FetchDescriptor<ExerciseAliasModel>())
-        #expect(rows.count == poses.count)
+        #expect(rows.count == poses.count + 1)
         #expect(aliases.count == poses.count)
+
+        let session = try #require(rows.first { YogaPoseCatalog.isSessionExercise($0) })
+        #expect(session.name == "Yoga Session")
+        #expect(session.defaultHoldSeconds == nil)
 
         for row in rows {
             #expect(row.modality == .yoga)
@@ -73,8 +117,10 @@ struct YogaPoseCatalogTests {
             #expect(!row.isCardio)
             #expect(row.category == "yoga")
             #expect(row.defaultWeightMode == .bodyweight)
-            #expect(row.defaultHoldSeconds != nil)
-            #expect(YogaPoseCatalog.slug(for: row) != nil)
+            if !YogaPoseCatalog.isSessionExercise(row) {
+                #expect(row.defaultHoldSeconds != nil)
+                #expect(YogaPoseCatalog.slug(for: row) != nil)
+            }
         }
         _ = container
     }
@@ -130,6 +176,80 @@ struct YogaPoseCatalogTests {
         let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let childs = rows.filter { $0.name.localizedCaseInsensitiveContains("child") }
         #expect(childs.count == 2)
+        _ = container
+    }
+
+    /// Every built-in flow must reference only poses that exist in the trimmed
+    /// catalog — otherwise the player would silently drop steps.
+    @Test func builtInFlowsReferenceOnlyCatalogPoses() {
+        let catalog = YogaPoseCatalog.catalogSlugs
+        let flows = YogaFlowCatalog.load()
+        #expect(!flows.isEmpty)
+        for flow in flows {
+            #expect(!flow.steps.isEmpty, "\(flow.slug) has no steps")
+            for step in flow.steps {
+                #expect(catalog.contains(step.poseSlug),
+                        "\(flow.slug): pose \(step.poseSlug) is not in the catalog")
+            }
+            // Resolving the plan must keep every step (none dropped).
+            let plan = YogaFlowCatalog.plan(for: flow)
+            #expect(plan.steps.count == flow.steps.count, "\(flow.slug): a step failed to resolve")
+        }
+    }
+
+    /// Poses seeded from an older, larger catalog are pruned on launch, while
+    /// current poses, the session anchor, user-created poses, and
+    /// user-modified rows all survive.
+    @Test func pruneRemovesDeprecatedPosesOnly() throws {
+        let (container, context) = try makeContainer()
+        YogaPoseCatalog.seed(into: context)
+
+        // A pose from a previous catalog version (no longer bundled).
+        let deprecatedID = YogaPoseCatalog.id(forSlug: "mountain-pose")
+        let deprecated = ExerciseLibraryModel(id: deprecatedID, name: "Mountain Pose")
+        deprecated.mediaSlug = "yoga/mountain-pose"
+        deprecated.modalityRaw = Modality.yoga.rawValue
+        context.insert(deprecated)
+        context.insert(ExerciseAliasModel(
+            id: ExerciseCatalog.deterministicID(for: "yoga-alias/mountain-pose"),
+            exerciseID: deprecatedID,
+            alias: "Tadasana"
+        ))
+
+        // A user-modified deprecated pose — must be preserved.
+        let keptCustomID = YogaPoseCatalog.id(forSlug: "goddess-pose")
+        let keptCustom = ExerciseLibraryModel(id: keptCustomID, name: "My Goddess")
+        keptCustom.mediaSlug = "yoga/goddess-pose"
+        keptCustom.userModified = true
+        context.insert(keptCustom)
+
+        // A user-created pose (no catalog media slug) — must be preserved.
+        let userPose = ExerciseLibraryModel(id: UUID(), name: "My Own Pose")
+        userPose.modalityRaw = Modality.yoga.rawValue
+        context.insert(userPose)
+        try context.save()
+
+        YogaPoseCatalog.pruneUnavailablePoses(into: context)
+
+        let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let ids = Set(rows.map(\.id))
+        #expect(!ids.contains(deprecatedID), "deprecated pose should be pruned")
+        #expect(ids.contains(keptCustomID), "user-modified pose should survive")
+        #expect(ids.contains(userPose.id), "user-created pose should survive")
+        #expect(rows.contains { YogaPoseCatalog.isSessionExercise($0) }, "session anchor should survive")
+        // Every remaining catalog pose is still present.
+        for slug in YogaPoseCatalog.catalogSlugs {
+            #expect(ids.contains(YogaPoseCatalog.id(forSlug: slug)))
+        }
+        // The orphaned alias for the pruned pose is gone.
+        let aliases = try context.fetch(FetchDescriptor<ExerciseAliasModel>())
+        #expect(!aliases.contains { $0.exerciseID == deprecatedID })
+
+        // Idempotent: a second prune changes nothing.
+        let before = rows.count
+        YogaPoseCatalog.pruneUnavailablePoses(into: context)
+        let after = try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).count
+        #expect(after == before)
         _ = container
     }
 }

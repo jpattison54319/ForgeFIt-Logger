@@ -51,12 +51,38 @@ struct ProfileView: View {
         XPService.progress(forTotalXP: progressRows.first { $0.userID == ForgeFitDemo.userID }?.totalXP ?? 0)
     }
 
+    @State private var trophiesMemo = Memo<String, [Trophy]>()
+
+    private var trophies: [Trophy] {
+        trophiesMemo(profileKey) {
+            let completed = analytics.completed
+            let sets = completed.reduce(0) { total, workout in
+                total + workout.exercises.reduce(0) { $0 + $1.sets.filter { $0.completedAt != nil }.count }
+            }
+            let distance = completed.reduce(0.0) { total, workout in
+                total + workout.cardioSessions.reduce(0.0) { $0 + ($1.distanceMeters ?? 0) }
+            }
+            let streak = WeeklyStreak.compute(
+                workoutDates: completed.map(\.startedAt),
+                goalPerWeek: UserDefaults.standard.object(forKey: "weeklyWorkoutGoal") as? Int ?? 3
+            )
+            return TrophyCatalog.trophies(.init(
+                completedWorkouts: completed.count,
+                totalSets: sets,
+                totalDistanceMeters: distance,
+                lifetimeHours: Double(profileStats.lifetimeHours),
+                longestStreakWeeks: streak.longestWeeks,
+                recordCount: analytics.records().count
+            ))
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScreenScaffold("Profile", trailing: {
                 HStack(spacing: Space.sm) {
-                    CircleIconButton(systemImage: "square.and.pencil") { showProfileEditor = true }
-                    CircleIconButton(systemImage: "gearshape") { showSettings = true }
+                    CircleIconButton(systemImage: "square.and.pencil", label: "Edit profile") { showProfileEditor = true }
+                    CircleIconButton(systemImage: "gearshape", label: "Settings") { showSettings = true }
                 }
             }) {
                 identityCard
@@ -67,6 +93,9 @@ struct ProfileView: View {
 
                 SectionHeader("Dashboard")
                 dashboardGrid
+
+                SectionHeader("Trophy case")
+                TrophyCaseCard(trophies: trophies)
 
                 SectionHeader("Workouts")
                 if completed.isEmpty {
@@ -384,11 +413,11 @@ struct ExercisesListView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
                 Spacer()
                 Text("Exercises").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
-                CircleIconButton(systemImage: "plus") { showCreate = true }
+                CircleIconButton(systemImage: "plus", label: "Create exercise") { showCreate = true }
             }
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
@@ -454,7 +483,9 @@ struct ExercisesListView: View {
                                         .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
                                 }
                                 Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(theme.accent)
                             }
                             .padding(Space.md)
                             .background(theme.surface)
@@ -489,6 +520,9 @@ struct MeasuresView: View {
     @State private var showLogWeight = false
     @State private var weightDraft = ""
     @State private var savingWeight = false
+    /// Health write failed (usually write access off) — shown inline so the
+    /// save isn't a silent no-op; the draft is kept so nothing retyped.
+    @State private var weightSaveError: String?
     @State private var bodyweightRange: TimeChartRange = .oneYear
 
     var body: some View {
@@ -571,10 +605,22 @@ struct MeasuresView: View {
                 Text("ForgeFit writes this weigh-in to Apple Health so your other health apps can use the same source of truth.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textSecondary)
+                if let weightSaveError {
+                    HStack(alignment: .top, spacing: Space.sm) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.danger)
+                        Text(weightSaveError)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Spacer()
             }
             .padding(Space.lg)
             .background(theme.background)
+            .onChange(of: weightDraft) { weightSaveError = nil }
             .navigationTitle("Log Weight")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -593,6 +639,7 @@ struct MeasuresView: View {
     private func saveWeight() {
         guard let kilograms = Fmt.loadKilograms(from: weightDraft) else { return }
         savingWeight = true
+        weightSaveError = nil
         Task {
             let saved = await HealthService.shared.logBodyMass(kilograms: kilograms)
             await MainActor.run {
@@ -600,6 +647,10 @@ struct MeasuresView: View {
                 if saved {
                     showLogWeight = false
                     health.refresh(force: true)
+                } else {
+                    // Say why nothing happened instead of silently flipping
+                    // the button back — write access is the usual culprit.
+                    weightSaveError = "Couldn't save to Apple Health. Allow write access in Health → Sharing → Apps → ForgeFit, then try again."
                 }
             }
         }
@@ -662,11 +713,11 @@ struct DashboardScaffold<Content: View>: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.lg) {
                 HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
                     Spacer()
                     Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Color.clear.frame(width: 38, height: 38)
+                    Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
                 }
                 .padding(.top, Space.sm)
                 content

@@ -5,6 +5,15 @@ import WidgetKit
 struct ForgeFitLauncherEntry: TimelineEntry {
     let date: Date
     let snapshot: ForgeFitWidgetSnapshot?
+
+    /// Smart Stack ranking: an active workout is THE moment this widget
+    /// matters — bid maximum relevance so it surfaces mid-session; idle
+    /// readiness bids modestly.
+    var relevance: TimelineEntryRelevance? {
+        snapshot?.mode == .activeWorkout
+            ? TimelineEntryRelevance(score: 100)
+            : TimelineEntryRelevance(score: 10)
+    }
 }
 
 struct ForgeFitLauncherProvider: TimelineProvider {
@@ -43,6 +52,15 @@ private struct ForgeFitLauncherView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
+        content
+            // Tap lands where the state points: mid-workout → the logger,
+            // otherwise → Home's readiness (routed by ContentView's
+            // handleDeepLink).
+            .widgetURL(URL(string: snapshot?.mode == .activeWorkout ? "forgefit://workout" : "forgefit://readiness"))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch family {
         case .systemSmall:
             smallWidget
@@ -55,13 +73,13 @@ private struct ForgeFitLauncherView: View {
                 AccessoryWidgetBackground()
                 Image(systemName: "dumbbell.fill")
                     .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(WActivityTheme.accent)
             }
         case .accessoryRectangular:
             HStack(spacing: 8) {
                 Image(systemName: "dumbbell.fill")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(WActivityTheme.accent)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("ForgeFit")
                         .font(.headline)
@@ -252,7 +270,7 @@ private struct ForgeFitLauncherView: View {
             Circle().stroke(.white.opacity(0.18), lineWidth: 5)
             Circle()
                 .trim(from: 0, to: CGFloat(max(0, min(score, 100))) / 100)
-                .stroke(.green, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .stroke(WActivityTheme.recoveryHigh, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(score)")
                 .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
@@ -268,7 +286,7 @@ private struct ForgeFitLauncherView: View {
             Circle().stroke(.white.opacity(0.18), lineWidth: 5)
             Circle()
                 .trim(from: 0, to: CGFloat(completed) / CGFloat(total))
-                .stroke(.purple, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .stroke(WActivityTheme.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(completed)")
                 .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
@@ -304,7 +322,7 @@ private struct ForgeFitLauncherView: View {
     private func launcherIcon(size: CGFloat) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .fill(.purple.gradient)
+                .fill(WActivityTheme.accent.gradient)
             Image(systemName: "dumbbell.fill")
                 .font(.system(size: size * 0.46, weight: .bold))
                 .foregroundStyle(.white)

@@ -6,11 +6,16 @@ import Testing
 
 @MainActor
 struct RoutineProgramImportTests {
-    private static func makeContext() throws -> ModelContext {
+    /// Returns the container WITH its context: returning only
+    /// `container.mainContext` let the container deinit mid-test, which
+    /// resets the context and destroys every model — a SwiftData fatal that
+    /// crashed the whole test host (and collaterally failed unrelated
+    /// suites). Callers must keep `container` alive for the test body.
+    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
         let schema = Schema(ForgeDataSchema.models)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: [configuration])
-        return container.mainContext
+        return (container, container.mainContext)
     }
 
     private static let upperDay = RoutineTemplate(
@@ -30,11 +35,11 @@ struct RoutineProgramImportTests {
     private static let program = RoutineProgramTemplate(
         id: "upper-lower", name: "Upper / Lower Split", goal: "muscle gain", level: "intermediate",
         daysPerWeek: 4, weeks: 6, equipment: ["barbell"], tags: [],
-        description: "Program", routineIDs: ["upper-a", "lower-a"]
+        description: "Program", focus: "strength", routineIDs: ["upper-a", "lower-a"], schedule: nil
     )
 
     @Test func importProgramCreatesFolderWithRoutinesInside() throws {
-        let context = try Self.makeContext()
+        let (container, context) = try Self.makeContainer()
 
         let folder = RoutineTemplateCatalog.importProgram(Self.program, templates: [Self.upperDay, Self.lowerDay], in: context)
 
@@ -47,10 +52,11 @@ struct RoutineProgramImportTests {
             .sorted { $0.position < $1.position }
         #expect(routines.map(\.name) == ["Upper Body A", "Lower Body A"])
         #expect(routines.allSatisfy { !$0.exercises.isEmpty })
+        _ = container
     }
 
     @Test func importProgramTwiceKeepsFolderAndRoutineNamesUnique() throws {
-        let context = try Self.makeContext()
+        let (container, context) = try Self.makeContainer()
         let templates = [Self.upperDay, Self.lowerDay]
 
         let first = RoutineTemplateCatalog.importProgram(Self.program, templates: templates, in: context)
@@ -62,20 +68,22 @@ struct RoutineProgramImportTests {
 
         let routineNames = try context.fetch(FetchDescriptor<RoutineModel>()).map(\.name)
         #expect(Set(routineNames).count == routineNames.count)
+        _ = container
     }
 
     @Test func importProgramWithNoResolvableDaysReturnsNil() throws {
-        let context = try Self.makeContext()
+        let (container, context) = try Self.makeContainer()
         let orphan = RoutineProgramTemplate(
             id: "ghost", name: "Ghost", goal: "strength", level: "beginner",
             daysPerWeek: 3, weeks: 4, equipment: [], tags: [],
-            description: "", routineIDs: ["missing-day"]
+            description: "", focus: "strength", routineIDs: ["missing-day"], schedule: nil
         )
 
         let folder = RoutineTemplateCatalog.importProgram(orphan, templates: [Self.upperDay], in: context)
 
         #expect(folder == nil)
         #expect(try context.fetch(FetchDescriptor<RoutineFolderModel>()).isEmpty)
+        _ = container
     }
 
     @Test func validProgramsRequiresEveryDayToResolve() {
@@ -86,7 +94,7 @@ struct RoutineProgramImportTests {
         let broken = RoutineProgramTemplate(
             id: "broken", name: "Broken", goal: "muscle gain", level: "beginner",
             daysPerWeek: 3, weeks: 4, equipment: [], tags: [],
-            description: "", routineIDs: ["upper-a", "missing-day"]
+            description: "", focus: "strength", routineIDs: ["upper-a", "missing-day"], schedule: nil
         )
 
         let valid = RoutineTemplateCatalog.validPrograms(

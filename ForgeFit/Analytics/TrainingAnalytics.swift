@@ -53,6 +53,8 @@ struct TrainingAnalytics {
         var sets: Double
         var reps: Int
         var durationSeconds: Int
+        var hasStrength: Bool
+        var hasCardio: Bool
         var isCardio: Bool
         var avgHR: Int?
     }
@@ -61,20 +63,31 @@ struct TrainingAnalytics {
         let working = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
         let volume = working.reduce(0) { $0 + ($1.totalVolume ?? 0) }
         let reps = working.reduce(0) { $0 + ($1.reps ?? 0) }
-        let duration: Int
+        let elapsedDuration: Int
         if let ended = workout.endedAt {
-            duration = max(0, Int(ended.timeIntervalSince(workout.startedAt)))
+            elapsedDuration = max(0, Int(ended.timeIntervalSince(workout.startedAt)))
         } else {
-            duration = 0
+            elapsedDuration = 0
         }
         let cardio = workout.cardioSessions.first
+        // `durationSeconds` is the whole workout's wall-clock duration. A
+        // cardio block inside a mixed workout is only one part of that window.
+        // Imported legacy cardio may lack a useful workout end time, so its
+        // block durations remain a fallback rather than overriding elapsed.
+        let duration = elapsedDuration > 0
+            ? elapsedDuration
+            : workout.cardioSessions.compactMap(\.durationSeconds).reduce(0, +)
+        let hasCardio = cardio != nil
+        let hasStrength = !working.isEmpty
         return Summary(
             date: workout.startedAt,
             volume: volume,
             sets: working.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) },
             reps: reps,
-            durationSeconds: cardio?.durationSeconds ?? duration,
-            isCardio: cardio != nil,
+            durationSeconds: duration,
+            hasStrength: hasStrength,
+            hasCardio: hasCardio,
+            isCardio: hasCardio && !hasStrength,
             avgHR: cardio?.avgHR
         )
     }

@@ -87,6 +87,40 @@ struct RoutineSnapshotTests {
         #expect(r.exercises[0].sets[0].targetWeight == 100)
         #expect(r.exercises[0].sets[0].targetRepsLow == 8)
     }
+
+    /// The flow builder saves eagerly, so `yogaFlowJSON` MUST live in the
+    /// snapshot: leaving it out made flow-only edits skip the discard prompt
+    /// entirely AND made "Discard Changes" keep the edited flow.
+    @Test func flowOnlyEditsAreDetectedAndRestored() throws {
+        let context = ModelContext(try inMemoryContainer())
+        let r = routine(in: context)
+        let original = #"{"poses":[{"name":"Balasana","holdSeconds":30}]}"#
+        r.exercises[0].yogaFlowJSON = original
+        try context.save()
+        let snapshot = RoutineSnapshot(of: r)
+
+        // A flow-only edit must make the snapshots unequal (discard prompt).
+        r.exercises[0].yogaFlowJSON = #"{"poses":[{"name":"Savasana","holdSeconds":120}]}"#
+        try context.save()
+        #expect(snapshot != RoutineSnapshot(of: r))
+
+        // And restoring must put the original flow back.
+        snapshot.restore(onto: r, in: context)
+        #expect(r.exercises[0].yogaFlowJSON == original)
+        #expect(RoutineSnapshot(of: r) == snapshot)
+    }
+
+    @Test func restoreClearsFlowAddedSinceSnapshot() throws {
+        let context = ModelContext(try inMemoryContainer())
+        let r = routine(in: context)
+        let snapshot = RoutineSnapshot(of: r)   // captured with no flow
+
+        r.exercises[0].yogaFlowJSON = #"{"poses":[{"name":"Balasana","holdSeconds":30}]}"#
+        try context.save()
+
+        snapshot.restore(onto: r, in: context)
+        #expect(r.exercises[0].yogaFlowJSON == nil)
+    }
 }
 
 /// Assisted / added bodyweight modes: the weight column routes into the field

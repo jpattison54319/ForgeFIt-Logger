@@ -39,11 +39,46 @@ struct RoutineProgramTemplate: Identifiable, Codable, Hashable {
     let equipment: [String]
     let tags: [String]
     let description: String
+    /// `ProgramFocus` (ForgeCore) raw value — the training discipline this
+    /// program is built around. Bundled JSON always sets a real value, so
+    /// this decodes as a plain non-optional string rather than round-tripping
+    /// through the enum (RoutineTemplateCatalog stays enum-agnostic; callers
+    /// that need `ProgramFocus` map the raw value themselves).
+    let focus: String
     /// `RoutineTemplate.id`s of the day routines, in program order.
     let routineIDs: [String]
+    /// One week's sessions as `RoutineTemplate.id`s, in order — the honest
+    /// answer to "3x/week but only 2 routines?" (A/B/A alternation and
+    /// friends). Optional so older JSON still decodes.
+    let schedule: [String]?
 
     func routines(from templates: [RoutineTemplate]) -> [RoutineTemplate] {
         routineIDs.compactMap { id in templates.first { $0.id == id } }
+    }
+
+    var sessionsPerWeek: Int { schedule?.count ?? daysPerWeek }
+
+    /// Week strip letters ("A · B · A") — days lettered in program order.
+    var scheduleLetters: [String]? {
+        guard let schedule else { return nil }
+        let alphabet = ["A", "B", "C", "D", "E", "F", "G"]
+        var letterByID: [String: String] = [:]
+        for id in routineIDs where letterByID[id] == nil {
+            letterByID[id] = alphabet[min(letterByID.count, alphabet.count - 1)]
+        }
+        return schedule.map { letterByID[$0] ?? "?" }
+    }
+
+    /// "2 alternating days · 3 sessions/week" — day count and weekly sessions
+    /// stated separately so they can never read as a contradiction.
+    var structureSummary: String {
+        let days = routineIDs.count
+        let sessions = sessionsPerWeek
+        if days == sessions {
+            return "\(days) day\(days == 1 ? "" : "s") · \(sessions)x/week"
+        }
+        let noun = days < sessions ? "alternating day" : "day"
+        return "\(days) \(noun)\(days == 1 ? "" : "s") · \(sessions) sessions/week"
     }
 }
 

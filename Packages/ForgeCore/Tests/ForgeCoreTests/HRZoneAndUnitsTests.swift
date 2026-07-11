@@ -47,6 +47,18 @@ struct HRZoneConfigTests {
         #expect(config.rangeBPM(forZone: 5) == 171...190)
     }
 
+    @Test func restingHRUsesHeartRateReserve() {
+        let config = HRZoneConfig(maxHR: 190, restingHR: 60)
+        #expect(config.zone(for: 137) == 1)
+        #expect(config.zone(for: 138) == 2)   // 60 + 0.60 * 130
+        #expect(config.zone(for: 151) == 3)   // exactly 70% HRR
+        #expect(config.rangeBPM(forZone: 1) == 60...138)
+        #expect(config.rangeBPM(forZone: 2) == 138...151)
+        #expect(config.rangeBPM(forZone: 5) == 177...190)
+        #expect(config.bpm(forFraction: 0.70) == 151)
+        #expect(abs(config.fraction(forBPM: 151) - 0.70) < 0.001)
+    }
+
     @Test func customMaxHRScalesZones() {
         let config = HRZoneConfig(maxHR: 200)
         #expect(config.rangeBPM(forZone: 2) == 120...140)   // 0.60*200 ... 0.70*200
