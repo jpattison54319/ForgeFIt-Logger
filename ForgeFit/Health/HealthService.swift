@@ -377,11 +377,13 @@ final class HealthService {
 
     // MARK: - Writing (save workout to Health)
 
-    func saveWorkout(from start: Date, to end: Date, isCardio: Bool, modality: CardioKind?, energyKcal: Double?, distanceMeters: Double?) async {
+    func saveWorkout(from start: Date, to end: Date, isCardio: Bool, isYoga: Bool = false, modality: CardioKind?, energyKcal: Double?, distanceMeters: Double?) async {
         #if canImport(HealthKit)
         guard isConnected, end > start else { return }
         let config = HKWorkoutConfiguration()
-        config.activityType = isCardio ? (modality?.hkActivityType ?? .other) : .traditionalStrengthTraining
+        // Yoga wins over the cardio flag: yoga sessions ride the cardio
+        // session model, and Apple Health renders `.yoga` natively.
+        config.activityType = isYoga ? .yoga : (isCardio ? (modality?.hkActivityType ?? .other) : .traditionalStrengthTraining)
         let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
         do {
             try await builder.beginCollection(at: start)

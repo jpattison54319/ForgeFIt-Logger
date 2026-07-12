@@ -18,6 +18,14 @@ struct HomeView: View {
     @State private var draggedQuickStartAction: HomeQuickStartAction?
     @State private var showQuickStartAdd = false
     @State private var editingRoutine: RoutineModel?
+    @State private var presentedWrappedReport: WrappedReportModel?
+
+    /// New (unopened) Wrapped reports — drives the "Report Available" card,
+    /// which disappears the moment the story is opened (viewedAt set).
+    @Query(
+        filter: #Predicate<WrappedReportModel> { $0.viewedAt == nil && $0.deletedAt == nil },
+        sort: \WrappedReportModel.generatedAt, order: .reverse
+    ) private var unviewedWrappedReports: [WrappedReportModel]
 
     let workouts: [WorkoutModel]
     let routines: [RoutineModel]
@@ -119,6 +127,11 @@ struct HomeView: View {
                     weekCard
                         .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
 
+                    if let newReport = unviewedWrappedReports.first {
+                        wrappedAvailableCard(newReport)
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
                     SectionHeader("Jump back in")
                     if let suggestion {
                         suggestionCard(suggestion.routine, reason: suggestion.reason)
@@ -162,6 +175,9 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             // Pull down to re-query Apple Health and recompute readiness.
             .refreshable { await AppRefresh.run(in: modelContext) }
+            .fullScreenCover(item: $presentedWrappedReport) { report in
+                WrappedStoryView(report: report)
+            }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showCoach) {
                 AICoachChatView(
@@ -193,14 +209,19 @@ struct HomeView: View {
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
             }
             .sheet(isPresented: $showExploreLibrary) {
+                let templates = RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
                 RoutineLibraryView(
-                    templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
+                    programs: RoutineTemplateCatalog.validPrograms(
+                        from: RoutineTemplateCatalog.loadPrograms(),
+                        templates: templates,
+                        exercises: exercises
+                    ),
+                    templates: templates,
                     exercises: exercises,
-                    onImport: { template in
-                        // Only a mesocycle (leaf folder) can directly hold a
-                        // routine — an active macrocycle alone has nowhere
-                        // concrete to import into.
-                        RoutineTemplateCatalog.importTemplate(template, folderID: UUID(uuidString: activeMesoFolderRaw), existingRoutines: routines, in: modelContext)
+                    onImport: { program in
+                        // A program is a whole mesocycle: it always lands as its
+                        // own new top-level folder with the day routines inside.
+                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
@@ -225,7 +246,7 @@ struct HomeView: View {
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Ready when you are").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Connect Health or add a starter routine to build your baseline.")
+                        Text("Connect Health or add a training program to build your baseline.")
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                 }
@@ -234,13 +255,51 @@ struct HomeView: View {
                         .font(.bodyStrong)
                         .buttonStyle(.glassProminent)
                         .tint(theme.accent)
-                    Button("Explore starters") { showExploreLibrary = true }
+                    Button("Explore programs") { showExploreLibrary = true }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                 }
                 .buttonBorderShape(.capsule)
             }
         }
+    }
+
+    /// "Your June Wrapped is ready" — shown until the story is opened, then
+    /// gone for good (the report lives on in Profile).
+    private func wrappedAvailableCard(_ report: WrappedReportModel) -> some View {
+        Button {
+            presentedWrappedReport = report
+        } label: {
+            Card {
+                HStack(spacing: Space.md) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.accentSoft)
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(report.isMonthly ? "Monthly" : "Yearly") Report Available")
+                            .font(.tag)
+                            .foregroundStyle(theme.accent)
+                        Text("Your \(WrappedReportService.title(for: report)) is ready.")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        Text("View Report")
+                            .font(.label)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityIdentifier("wrapped-report-available")
     }
 
     private var weekCard: some View {
@@ -252,7 +311,7 @@ struct HomeView: View {
                     StatColumn(label: "Workouts", value: "\(week.workoutCount)")
                     StatColumn(label: "Time", value: Fmt.durationShort(week.durationSeconds))
                     StatColumn(label: "Volume", value: Fmt.volume(week.volume))
-                    StatColumn(label: "Sets", value: "\(week.sets)")
+                    StatColumn(label: "Sets", value: Fmt.sets(week.sets))
                 }
             }
         }
@@ -289,7 +348,7 @@ struct HomeView: View {
                         Image(systemName: targetReport.action.systemImage)
                             .font(.system(size: 11, weight: .bold))
                         Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.tag)
                             .lineLimit(2)
                     }
                     .foregroundStyle(targetReport.action.tint)
@@ -415,7 +474,7 @@ struct HomeView: View {
                             Image(systemName: "plus")
                                 .font(.system(size: 19, weight: .bold))
                             Text("Add")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                         }
                         .foregroundStyle(theme.textSecondary)
                         .frame(width: 104, height: 76)
@@ -448,6 +507,7 @@ struct HomeView: View {
             switch action.kind {
             case .cardio: true
             case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil }
+            case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
             }
         }
     }
@@ -494,6 +554,14 @@ struct HomeView: View {
             case .routine(let id):
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil }) else { return }
                 _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+            case .yoga(let slug):
+                guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }
+                _ = WorkoutFactory.startYoga(
+                    flow: YogaFlowCatalog.plan(for: seed),
+                    named: seed.name,
+                    exercises: exercises,
+                    in: modelContext
+                )
             }
             appState.showingLogger = true
         }
@@ -503,6 +571,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): modality.title
         case .routine(let id): routines.first { $0.id == id }?.name ?? "Routine"
+        case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug)?.name ?? "Yoga"
         }
     }
 
@@ -510,6 +579,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): modality.systemImage
         case .routine: "list.bullet.clipboard"
+        case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug)?.style.systemImage ?? "figure.yoga"
         }
     }
 
@@ -517,6 +587,7 @@ struct HomeView: View {
         switch action.kind {
         case .cardio(let modality): "start-cardio-\(modality.rawValue)"
         case .routine(let id): "start-home-routine-\(id.uuidString)"
+        case .yoga(let slug): "start-yoga-\(slug)"
         }
     }
 
@@ -535,6 +606,8 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
     enum Kind: Hashable {
         case cardio(CardioModality)
         case routine(UUID)
+        /// A built-in guided yoga class, keyed by its catalog flow slug.
+        case yoga(String)
     }
 
     var kind: Kind
@@ -543,6 +616,7 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         switch kind {
         case .cardio(let modality): "cardio:\(modality.rawValue)"
         case .routine(let id): "routine:\(id.uuidString)"
+        case .yoga(let slug): "yoga:\(slug)"
         }
     }
 
@@ -554,6 +628,10 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
 
     static func routine(_ id: UUID) -> HomeQuickStartAction {
         HomeQuickStartAction(kind: .routine(id))
+    }
+
+    static func yoga(_ slug: String) -> HomeQuickStartAction {
+        HomeQuickStartAction(kind: .yoga(slug))
     }
 
     init(kind: Kind) {
@@ -569,6 +647,8 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         } else if let idRaw = raw.removingPrefix("routine:"),
                   let id = UUID(uuidString: idRaw) {
             kind = .routine(id)
+        } else if let slug = raw.removingPrefix("yoga:") {
+            kind = .yoga(slug)
         } else {
             kind = .cardio(.run)
         }
@@ -631,7 +711,17 @@ private struct QuickStartTile: View {
                 GlassTile(tint: theme.secondaryAccent.opacity(0.12), verticalPadding: Space.md, horizontalPadding: Space.sm) {
                     VStack(spacing: 6) {
                         Image(systemName: systemImage).font(.system(size: 18, weight: .semibold))
-                        Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        // Two-word titles ("Treadmill Walk") wrap to a second
+                        // line instead of spilling past the fixed-width tile.
+                        // `reservesSpace` keeps every tile the same height so the
+                        // row stays aligned whether the label is one line or two;
+                        // `minimumScaleFactor` is a last-resort guard for an
+                        // unbreakable long word.
+                        Text(title)
+                            .font(.tag)
+                            .lineLimit(2, reservesSpace: true)
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.8)
                     }
                     .foregroundStyle(theme.textPrimary)
                     .frame(maxWidth: .infinity)
@@ -720,6 +810,21 @@ private struct QuickStartAddSheet: View {
                         presetRow(.walk)
                     }
 
+                    SectionHeader("Guided Yoga")
+                    VStack(spacing: Space.sm) {
+                        ForEach(YogaFlowCatalog.load(), id: \.slug) { seed in
+                            let plan = YogaFlowCatalog.plan(for: seed)
+                            addRow(
+                                title: seed.name,
+                                subtitle: "\(seed.style.title) · \(Fmt.durationShort(plan.totalSeconds)) · \(plan.steps.count) poses",
+                                systemImage: seed.style.systemImage,
+                                isAdded: configuredIDs.contains(HomeQuickStartAction.yoga(seed.slug).id)
+                            ) {
+                                onAdd(.yoga(seed.slug))
+                            }
+                        }
+                    }
+
                     SectionHeader("Your Routines")
                     VStack(spacing: Space.sm) {
                         if routines.isEmpty {
@@ -759,7 +864,6 @@ private struct QuickStartAddSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func presetRow(_ modality: CardioModality) -> some View {
@@ -884,7 +988,7 @@ struct WorkoutFeedRow: View {
                         StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
                     } else {
                         StatColumn(label: "Volume", value: Fmt.volume(s.volume))
-                        StatColumn(label: "Sets", value: "\(s.sets)")
+                        StatColumn(label: "Sets", value: Fmt.sets(s.sets))
                     }
                 }
             }

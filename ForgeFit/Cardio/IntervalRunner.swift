@@ -1,3 +1,4 @@
+import AudioToolbox
 import ForgeCore
 import ForgeData
 import Foundation
@@ -22,6 +23,9 @@ final class IntervalRunnerHub {
 
     func start(planJSON: String?, session: CardioSessionModel, context: ModelContext) {
         runner?.stop()
+        // One timed runner at a time: intervals and a guided yoga class can't
+        // both own the clock, cues, and watch mirroring.
+        YogaFlowRunnerHub.shared.stop()
         guard let runner = IntervalRunner(planJSON: planJSON, session: session, context: context) else { return }
         self.runner = runner
         runner.start()
@@ -74,6 +78,18 @@ final class IntervalRunner {
         currentIndex + 1 < plan.steps.count ? plan.steps[currentIndex + 1] : nil
     }
 
+    /// "Round 3 of 10" while inside the work/recover blocks; nil during
+    /// warm-up (before any work) or plans with no work steps.
+    var roundInfo: (round: Int, total: Int)? {
+        plan.roundInfo(at: min(currentIndex, plan.steps.count - 1))
+    }
+
+    /// The zone the athlete should hold right now: the step's own target,
+    /// else the plan-wide lock.
+    var currentZoneTarget: Int? {
+        (currentStep?.hrZone) ?? plan.hrZoneTarget
+    }
+
     func start() {
         beginStep(at: 0)
     }
@@ -98,6 +114,10 @@ final class IntervalRunner {
         currentIndex = index
         stepStartedAt = Date()
         stepEndsAt = stepStartedAt.addingTimeInterval(TimeInterval(plan.steps[index].seconds))
+        applyZoneGuard(for: plan.steps[index])
+        // The watch mirrors step state from the phone snapshot — push every
+        // transition so its countdown and haptics stay anchored.
+        WatchLink.shared.publishState()
 
         let interval = stepEndsAt.timeIntervalSinceNow
         advanceTask = Task { @MainActor [weak self] in
@@ -117,10 +137,35 @@ final class IntervalRunner {
             advanceTask?.cancel()
             currentIndex = plan.steps.count
             isFinished = true
+            // Back to the plan-wide lock (or off) once the steps are done.
+            if let zone = plan.hrZoneTarget {
+                HRZoneGuard.shared.activate(targetZone: zone, speak: zoneVoiceEnabled)
+            } else {
+                HRZoneGuard.shared.deactivate()
+            }
             #if canImport(UIKit)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             #endif
+            playSoundCue()
+            WatchLink.shared.publishState()
         }
+    }
+
+    /// Follow the step's HR target: activate/retune the zone guard when this
+    /// step (or the plan) has one, silence it when neither does.
+    private func applyZoneGuard(for step: IntervalPlan.Step) {
+        let guardian = HRZoneGuard.shared
+        if let zone = step.hrZone ?? plan.hrZoneTarget {
+            if !guardian.isActive || guardian.targetZone != zone {
+                guardian.activate(targetZone: zone, speak: zoneVoiceEnabled)
+            }
+        } else if guardian.isActive {
+            guardian.deactivate()
+        }
+    }
+
+    private var zoneVoiceEnabled: Bool {
+        UserDefaults.standard.object(forKey: "zoneVoiceCues") as? Bool ?? true
     }
 
     /// Persist the completed step as a split on the session.
@@ -145,15 +190,24 @@ final class IntervalRunner {
         try? context.save()
     }
 
-    /// Haptic + time-sensitive notification when a step changes, so the cue
-    /// lands even with the phone locked / pocketed.
+    /// Haptic + sound + time-sensitive notification when a step changes, so
+    /// the cue lands even with the phone locked / pocketed.
     private func cue() {
         #if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         #endif
+        playSoundCue()
         if let upcoming = nextStep {
             NotificationScheduler.shared.scheduleIntervalCue(stepLabel: upcoming.label)
         }
+    }
+
+    /// Short audible ping on interval transitions (defaults on; toggleable via
+    /// the "intervalSoundCues" setting). Distinct from the zone guard's voice.
+    private func playSoundCue() {
+        let enabled = UserDefaults.standard.object(forKey: "intervalSoundCues") as? Bool ?? true
+        guard enabled else { return }
+        AudioServicesPlaySystemSound(1057)   // short "tink" timer tick
     }
 }
 
@@ -184,9 +238,24 @@ struct IntervalRunnerStrip: View {
             if let step = runner.currentStep {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(step.label.uppercased())
-                            .font(.system(size: 12, weight: .heavy))
-                            .foregroundStyle(step.kind.tint)
+                        HStack(spacing: 6) {
+                            Text(step.label.uppercased())
+                                .font(.system(size: 12, weight: .heavy))
+                                .foregroundStyle(step.kind.tint)
+                            if let zone = step.hrZone {
+                                Text("Z\(zone)")
+                                    .font(.system(size: 10, weight: .heavy))
+                                    .foregroundStyle(theme.zoneColor(zone))
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(theme.zoneColor(zone).opacity(0.15))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        if let info = runner.roundInfo {
+                            Text("Round \(info.round) of \(info.total)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                        }
                         if let next = runner.nextStep {
                             Text("Next: \(next.label)")
                                 .font(.system(size: 12, weight: .medium))
@@ -208,7 +277,7 @@ struct IntervalRunnerStrip: View {
                         Image(systemName: "forward.end.fill")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
                             .background(theme.surfaceElevated)
                             .clipShape(Circle())
                     }

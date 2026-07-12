@@ -53,7 +53,8 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var systemColorScheme
+    @EnvironmentObject private var themeManager: ThemeManager
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
@@ -62,8 +63,8 @@ struct ContentView: View {
 
     @State private var appState = AppState()
     @State private var restTimer = RestTimerController.shared
-    @State private var watchLink = WatchLink.shared
     @State private var intervalHub = IntervalRunnerHub.shared
+    @State private var yogaHub = YogaFlowRunnerHub.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
     @State private var cleanedOnboardingSlate = false
@@ -82,6 +83,16 @@ struct ContentView: View {
 
     private var activeWorkout: WorkoutModel? {
         activeWorkouts.first
+    }
+
+    /// The single source of truth for the app's appearance: combines the
+    /// user's chosen mode with the device's live system scheme so `.system`
+    /// mode tracks appearance changes without a restart.
+    private var resolvedColorScheme: ColorScheme {
+        themeManager.mode.resolvedColorScheme(system: systemColorScheme)
+    }
+    private var activeTheme: AppTheme {
+        .active(for: themeManager.mode, system: systemColorScheme)
     }
 
     /// Count of live completed workouts — changes when one is finished OR
@@ -107,8 +118,9 @@ struct ContentView: View {
             }
         }
             .environment(appState)
-            .preferredColorScheme(.dark)
-            .tint(theme.accent)
+            .environment(\.theme, activeTheme)
+            .preferredColorScheme(resolvedColorScheme)
+            .tint(activeTheme.accent)
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
                 ActiveWorkoutLoggerView(
@@ -121,7 +133,16 @@ struct ContentView: View {
             }
             }
             .fullScreenCover(isPresented: $showOnboarding) {
+                // `showOnboarding` can already be `true` on the very first
+                // render (computed synchronously at launch, unlike other
+                // presentations that flip true reactively later) — a
+                // fullScreenCover presented that early doesn't reliably pick
+                // up the environment set higher in this same modifier chain,
+                // so the theme is pinned explicitly here rather than relied
+                // on to cascade.
                 OnboardingView(isPresented: $showOnboarding)
+                    .environment(\.theme, activeTheme)
+                    .preferredColorScheme(resolvedColorScheme)
             }
             .confirmationDialog(
                 "You have a workout in progress",
@@ -163,7 +184,20 @@ struct ContentView: View {
                 WatchLink.shared.publishState()
                 WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
             }
-            .onChange(of: watchLink.liveMetrics?.heartRate) { _, heartRate in handleLiveHeartRateChange(heartRate) }
+            // Yoga pose transitions (and pause/resume) do the same.
+            .onChange(of: yogaHub.runner?.stepEndsAt) {
+                WatchLink.shared.publishState()
+                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+            }
+            .onChange(of: yogaHub.runner?.isPaused) {
+                WatchLink.shared.publishState()
+                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+            }
+            // HR observation lives in a zero-sized child view: reading
+            // watchLink.liveMetrics here would register the Observation
+            // dependency on ContentView itself and re-render the whole app
+            // shell on every heart-rate tick (~1/s during workouts).
+            .background(LiveHeartRateObserver(onChange: handleLiveHeartRateChange))
             .onChange(of: activeWorkout?.id) { oldID, newID in
                 handleActiveWorkoutChange(oldID: oldID, newID: newID)
             }
@@ -284,6 +318,9 @@ struct ContentView: View {
             }
             NotificationScheduler.shared.refreshStatus()
             refreshStreakNudge()
+            // Covers "the app was already running when the month rolled
+            // over" — launch alone would miss it.
+            generateWrappedIfDue()
             updateWidgetSnapshot()
         } else if phase == .background {
             // Leave the widget with the freshest snapshot we have — otherwise it
@@ -300,6 +337,18 @@ struct ContentView: View {
             streak: analytics.currentStreak(),
             trainedToday: analytics.trainedToday()
         )
+    }
+
+    /// Wrapped generation is launch/foreground-driven (idempotent, keyed by
+    /// period — cheap when nothing is due). A newly created report gets the
+    /// one-shot "ready" notification; the Home card appears either way.
+    private func generateWrappedIfDue() {
+        let created = WrappedReportService.generateIfDue(in: modelContext)
+        if let newest = created.first {
+            NotificationScheduler.shared.scheduleWrappedReady(
+                reportTitle: WrappedReportService.title(for: newest)
+            )
+        }
     }
 
     private func handleActiveWorkoutChange(oldID: UUID?, newID: UUID?) {
@@ -385,6 +434,12 @@ struct ContentView: View {
         WatchLink.shared.onWorkoutFinishedFromWatch = { appState.showingLogger = false }
         await seedLaunchData()
         await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
+            WrappedDemoSeed.run(in: modelContext)
+        }
+        #endif
+        generateWrappedIfDue()
         if let raw = UserDefaults.standard.string(forKey: "initialTab"),
            let tab = AppTab(rawValue: raw) {
             appState.selectedTab = tab
@@ -515,6 +570,11 @@ struct ContentView: View {
             }
             try ExerciseSeedRepository.seedGlobalLibrary(in: modelContext)
             ExerciseCatalog.seed(into: modelContext)
+            YogaPoseCatalog.seed(into: modelContext)
+            // CloudKit can't enforce unique constraints, so re-seed/sync races
+            // can leave several rows sharing one id. Collapse them to a single
+            // deterministic survivor now that all seeding for this launch is done.
+            try ExerciseLibraryDeduplicator.removeDuplicates(in: modelContext)
             if shouldSeedStarterContent {
                 try seedStarterSetupNote()
                 try seedStarterRoutine()
@@ -571,6 +631,7 @@ struct ContentView: View {
         cleanedOnboardingSlate = false
         lastHealthWorkoutImportAt = nil
         showOnboarding = true
+        themeManager.mode = .dark
         updateWidgetSnapshot()
     }
 
@@ -629,6 +690,22 @@ struct ContentView: View {
     }
 }
 
+/// Watches the live heart-rate stream in a zero-sized view so the Observation
+/// dependency registers HERE, not on whatever view embeds it — the embedder
+/// stays out of the per-second re-render path while still getting callbacks.
+private struct LiveHeartRateObserver: View {
+    var watchLink = WatchLink.shared
+    let onChange: (Int?) -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: watchLink.liveMetrics?.heartRate) { _, heartRate in
+                onChange(heartRate)
+            }
+    }
+}
+
 private struct BootSplashView: View {
     @Environment(\.theme) private var theme
 
@@ -653,7 +730,7 @@ private struct BootSplashView: View {
 
                 VStack(spacing: Space.sm) {
                     Text("ForgeFit")
-                        .font(.system(size: 34, weight: .bold))
+                        .font(.screenTitle)
                         .foregroundStyle(theme.textPrimary)
 
                     Text("Loading your training")
@@ -674,5 +751,6 @@ private struct BootSplashView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(ThemeManager())
         .modelContainer(for: ForgeDataSchema.models, inMemory: true)
 }

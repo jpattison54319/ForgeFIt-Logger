@@ -20,7 +20,10 @@ public enum ForgeDataSchema {
             WorkoutXPEventModel.self,
             CardioSessionModel.self,
             CardioRoutePointModel.self,
-            CardioSplitModel.self
+            CardioSplitModel.self,
+            WrappedReportModel.self,
+            IntervalPresetModel.self,
+            YogaFlowModel.self
         ]
     }
 }
@@ -76,6 +79,18 @@ public final class ExerciseLibraryModel {
     public var preferredWeightUnitRaw: String?
     public var difficulty: String?
     public var isCardio: Bool = false
+    /// Explicit cardio modality (CardioKind raw value) chosen at creation.
+    /// Nil = infer from name/equipment, which stays correct for the built-in
+    /// library and legacy custom exercises. Additive-optional for CloudKit.
+    public var cardioKindRaw: String?
+    /// Explicit `Modality` raw value. Nil = legacy row: fall back to `isCardio`
+    /// (see `modality`). New rows write both so old and new code agree.
+    /// Additive-optional for CloudKit.
+    public var modalityRaw: String?
+    /// Default hold duration for yoga poses (seconds), used by the flow
+    /// builder when a pose is added to a sequence. Nil for non-yoga rows.
+    /// Additive-optional for CloudKit.
+    public var defaultHoldSeconds: Int?
     public var mappedGlobalID: UUID?
     public var instructions: [String] = []
     public var mechanic: String?
@@ -116,6 +131,9 @@ public final class ExerciseLibraryModel {
         preferredWeightUnitRaw: String? = nil,
         difficulty: String? = nil,
         isCardio: Bool = false,
+        cardioKindRaw: String? = nil,
+        modalityRaw: String? = nil,
+        defaultHoldSeconds: Int? = nil,
         mappedGlobalID: UUID? = nil,
         instructions: [String] = [],
         mechanic: String? = nil,
@@ -144,6 +162,9 @@ public final class ExerciseLibraryModel {
         self.preferredWeightUnitRaw = preferredWeightUnitRaw
         self.difficulty = difficulty
         self.isCardio = isCardio
+        self.cardioKindRaw = cardioKindRaw
+        self.modalityRaw = modalityRaw
+        self.defaultHoldSeconds = defaultHoldSeconds
         self.mappedGlobalID = mappedGlobalID
         self.instructions = instructions
         self.mechanic = mechanic
@@ -165,6 +186,20 @@ public final class ExerciseLibraryModel {
         get { WeightMode(rawValue: defaultWeightModeRaw) ?? .external }
         set { defaultWeightModeRaw = newValue.rawValue }
     }
+
+    /// Resolved discipline. Legacy rows (nil `modalityRaw`) fall back to the
+    /// `isCardio` flag, so the whole pre-yoga library resolves correctly
+    /// without any migration. Setting keeps `isCardio` in sync so old code
+    /// paths (and old app versions reading synced rows) stay honest.
+    public var modality: Modality {
+        get { modalityRaw.flatMap(Modality.init(rawValue:)) ?? (isCardio ? .cardio : .strength) }
+        set {
+            modalityRaw = newValue.rawValue
+            isCardio = newValue == .cardio
+        }
+    }
+
+    public var isYoga: Bool { modality == .yoga }
 
     public var classificationSource: ClassificationSource? {
         get { classificationSourceRaw.flatMap(ClassificationSource.init(rawValue:)) }
@@ -315,6 +350,9 @@ public final class RoutineExerciseModel {
     /// Structured cardio interval template (JSON-encoded `IntervalPlan`),
     /// nil for strength or steady-state cardio. Additive-optional.
     public var intervalPlanJSON: String?
+    /// Guided yoga sequence (JSON-encoded `YogaFlowPlan`), nil for non-yoga
+    /// exercises. Additive-optional.
+    public var yogaFlowJSON: String?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var routine: RoutineModel?
@@ -334,6 +372,7 @@ public final class RoutineExerciseModel {
         progressionRuleID: UUID? = nil,
         notes: String? = nil,
         intervalPlanJSON: String? = nil,
+        yogaFlowJSON: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         sets: [RoutineSetModel] = []
@@ -346,6 +385,7 @@ public final class RoutineExerciseModel {
         self.progressionRuleID = progressionRuleID
         self.notes = notes
         self.intervalPlanJSON = intervalPlanJSON
+        self.yogaFlowJSON = yogaFlowJSON
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.sets = sets
@@ -635,6 +675,9 @@ public final class WorkoutExerciseModel {
     /// Structured cardio interval template (JSON-encoded `IntervalPlan`),
     /// copied from the routine at start. Additive-optional.
     public var intervalPlanJSON: String?
+    /// Guided yoga sequence (JSON-encoded `YogaFlowPlan`), copied from the
+    /// routine at start. Additive-optional.
+    public var yogaFlowJSON: String?
     /// The `RoutineExerciseModel.id` this exercise was seeded from when the
     /// workout was started from a routine. Nil for ad-hoc exercises added
     /// mid-session or workouts not started from a routine. Used by
@@ -661,6 +704,7 @@ public final class WorkoutExerciseModel {
         restSeconds: Int? = nil,
         microRestSeconds: Int? = nil,
         intervalPlanJSON: String? = nil,
+        yogaFlowJSON: String? = nil,
         sourceRoutineExerciseID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -676,6 +720,7 @@ public final class WorkoutExerciseModel {
         self.restSeconds = restSeconds
         self.microRestSeconds = microRestSeconds
         self.intervalPlanJSON = intervalPlanJSON
+        self.yogaFlowJSON = yogaFlowJSON
         self.sourceRoutineExerciseID = sourceRoutineExerciseID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -715,6 +760,14 @@ public final class SetModel {
     /// Myo-reps / rest-pause: the mini-sets after the activation set (`reps` =
     /// activation reps). Cluster: every segment (`reps` mirrors the sum).
     public var miniRepsJSON: String?
+    /// Second-side data for structured sets on unilateral exercises: the
+    /// lifter runs the whole block (activation + minis) on one limb, then
+    /// repeats it on the other. Side 1 lives in the existing `reps` /
+    /// `miniRepsJSON`; these hold side 2. Both nil on bilateral work — and
+    /// when they're nil, volume math is exactly the pre-existing single-entry
+    /// behavior (nothing changes for old data).
+    public var side2Reps: Int?
+    public var side2MiniRepsJSON: String?
     public var effectiveLoad: Double?
     public var totalVolume: Double?
     public var estimated1RM: Double?
@@ -844,7 +897,10 @@ public final class SetModel {
             implementWeight: implementWeight,
             limbCount: limbCount,
             isEccentric: isEccentric,
-            isPaused: isPaused
+            isPaused: isPaused,
+            miniSetCount: miniReps.count,
+            side2Logged: hasSide2Data,
+            side2MiniSetCount: side2MiniReps.count
         )
     }
 
@@ -864,11 +920,50 @@ public final class SetModel {
         }
     }
 
+    /// Decoded view of `side2MiniRepsJSON`. Setting recomputes derived metrics.
+    public var side2MiniReps: [Int] {
+        get {
+            guard let side2MiniRepsJSON, let data = side2MiniRepsJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([Int].self, from: data)) ?? []
+        }
+        set {
+            if newValue.isEmpty {
+                side2MiniRepsJSON = nil
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                side2MiniRepsJSON = String(data: data, encoding: .utf8)
+            }
+            recomputeDerivedMetrics()
+        }
+    }
+
+    /// True when this set carries explicit per-side data (unilateral block
+    /// flow) — side 2's reps and minis are logged separately instead of being
+    /// inferred by doubling side 1.
+    public var hasSide2Data: Bool {
+        side2Reps != nil || side2MiniRepsJSON != nil
+    }
+
     public func recomputeDerivedMetrics() {
         let entry = domainEntry
         effectiveLoad = VolumeMath.effectiveLoad(entry)
         totalVolume = VolumeMath.tonnage(entry)
         estimated1RM = VolumeMath.estimated1RM(entry)
+        if hasSide2Data {
+            // Per-side logging: each side's reps are real, counted once. The
+            // single-entry unilateral convention (`tonnage` multiplying one
+            // entered value by limbCount because the user only logs one limb)
+            // would double-count side 1, so back that multiplier out and add
+            // side 2 explicitly at the same load.
+            if isUnilateral, limbCount > 1, let volume = totalVolume {
+                totalVolume = volume / Double(limbCount)
+            }
+            if let load = effectiveLoad {
+                let side2Total = (side2Reps ?? 0) + side2MiniReps.reduce(0, +)
+                if side2Total > 0 {
+                    totalVolume = (totalVolume ?? 0) + load * Double(side2Total)
+                }
+            }
+        }
         // Myo-rep / rest-pause mini-sets are extra reps at the same load on top
         // of the activation set. (Cluster segments already sum into `reps`.)
         if setType == .myoRep || setType == .restPause {
@@ -922,6 +1017,15 @@ public final class CardioSessionModel {
     /// True once ForgeFit has auto-detected and applied interval segments to this
     /// session, so we can offer a revert and not re-detect on reopen.
     public var intervalsAutoApplied: Bool = false
+    /// Yoga sessions ride this model (modality == "yoga") to reuse the live
+    /// state machine, HealthKit auto-fill, and watch plumbing. These fields
+    /// are nil on real cardio sessions. Additive-optional for CloudKit.
+    public var yogaStyleRaw: String?
+    /// Per-region seconds-under-stretch snapshot (JSON `[String: Int]`),
+    /// computed once at finish so analytics never re-derive from splits.
+    public var flexibilityExposureJSON: String?
+    /// Number of pose holds completed in a guided class.
+    public var posesCompleted: Int?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -969,6 +1073,9 @@ public final class CardioSessionModel {
         tss: Double? = nil,
         sampleSeriesJSON: String? = nil,
         intervalsAutoApplied: Bool = false,
+        yogaStyleRaw: String? = nil,
+        flexibilityExposureJSON: String? = nil,
+        posesCompleted: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -1004,12 +1111,27 @@ public final class CardioSessionModel {
         self.tss = tss
         self.sampleSeriesJSON = sampleSeriesJSON
         self.intervalsAutoApplied = intervalsAutoApplied
+        self.yogaStyleRaw = yogaStyleRaw
+        self.flexibilityExposureJSON = flexibilityExposureJSON
+        self.posesCompleted = posesCompleted
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
         self.routePoints = routePoints
         self.splits = splits
     }
+
+    /// Yoga rides the cardio session model; every cardio-specific analytics
+    /// or UI path must exclude sessions where this is true.
+    public var isYogaSession: Bool { modality == Self.yogaModality }
+
+    public var yogaStyle: YogaStyle? {
+        get { yogaStyleRaw.flatMap(YogaStyle.init(rawValue:)) }
+        set { yogaStyleRaw = newValue?.rawValue }
+    }
+
+    /// The `modality` string marking a yoga session (vs a `CardioKind` raw).
+    public static let yogaModality = "yoga"
 }
 
 @Model
@@ -1101,4 +1223,156 @@ public final class CardioSplitModel {
         self.endedAt = endedAt
         self.createdAt = createdAt
     }
+}
+
+/// A generated Wrapped report (monthly or yearly training story). The report
+/// is a SNAPSHOT: every stat and page it shows is computed once at generation
+/// time and frozen into `payloadJSON`, because the analytics inputs it's
+/// derived from drift (daily health metrics only reach ~60 days back, and
+/// workouts/exercises can be edited later). Old reports must render exactly
+/// as generated, never recompute.
+///
+/// Uniqueness is (reportTypeRaw, year, month), enforced by the generation
+/// service via query-before-insert — CloudKit-backed SwiftData can't express
+/// unique constraints.
+@Model
+public final class WrappedReportModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// "monthly" or "yearly".
+    public var reportTypeRaw: String = "monthly"
+    public var year: Int = 0
+    /// 1–12 for monthly reports; 0 for yearly.
+    public var month: Int = 0
+    public var generatedAt: Date = Date()
+    public var updatedAt: Date = Date()
+    /// When the user first OPENED the report (any page) — drives the Home
+    /// card's disappearance. Nil = unviewed.
+    public var viewedAt: Date?
+    /// Payload schema version, so future decoders can migrate or hide pages
+    /// they no longer understand.
+    public var reportVersion: Int = 1
+    /// JSON-encoded `WrappedPayload` — the frozen page/stat snapshot.
+    public var payloadJSON: String = "{}"
+    public var sourceRangeStart: Date = Date()
+    public var sourceRangeEnd: Date = Date()
+    public var createdAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        reportTypeRaw: String,
+        year: Int,
+        month: Int = 0,
+        generatedAt: Date = Date(),
+        updatedAt: Date = Date(),
+        viewedAt: Date? = nil,
+        reportVersion: Int = 1,
+        payloadJSON: String = "{}",
+        sourceRangeStart: Date = Date(),
+        sourceRangeEnd: Date = Date(),
+        createdAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.reportTypeRaw = reportTypeRaw
+        self.year = year
+        self.month = month
+        self.generatedAt = generatedAt
+        self.updatedAt = updatedAt
+        self.viewedAt = viewedAt
+        self.reportVersion = reportVersion
+        self.payloadJSON = payloadJSON
+        self.sourceRangeStart = sourceRangeStart
+        self.sourceRangeEnd = sourceRangeEnd
+        self.createdAt = createdAt
+        self.deletedAt = deletedAt
+    }
+
+    public var isViewed: Bool { viewedAt != nil }
+    public var isMonthly: Bool { reportTypeRaw == "monthly" }
+}
+
+/// A user-saved cardio interval template, named for one-tap reuse in the plan
+/// builder alongside the built-in presets. The structure is frozen into
+/// `planJSON` (a JSON-encoded `IntervalPlan`, the same shape stored on
+/// `RoutineExerciseModel.intervalPlanJSON`); loading a preset decodes it back
+/// into the editor's steppers, which stay editable after. Soft-deleted via
+/// `deletedAt` so the management list can remove one without a hard delete.
+@Model
+public final class IntervalPresetModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// JSON-encoded `IntervalPlan` — the frozen structure this preset restores.
+    public var planJSON: String = "{}"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String,
+        planJSON: String = "{}",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.planJSON = planJSON
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+}
+
+/// A user-saved yoga flow (guided pose sequence), named for reuse from the
+/// flow browser and the routine editor. The sequence is frozen into
+/// `planJSON` (a JSON-encoded `YogaFlowPlan`, the same shape stored on
+/// `RoutineExerciseModel.yogaFlowJSON`); attaching a flow value-copies the
+/// JSON, so later edits to the saved flow don't rewrite old routines.
+/// Built-in flows are catalog-only (bundled JSON) and never stored here.
+/// Soft-deleted via `deletedAt`, matching `IntervalPresetModel`.
+@Model
+public final class YogaFlowModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// `YogaStyle` raw value; denormalized from the plan for cheap filtering.
+    public var styleRaw: String = ""
+    /// JSON-encoded `YogaFlowPlan` — the frozen sequence this flow restores.
+    public var planJSON: String = "{}"
+    public var position: Int = 0
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String,
+        styleRaw: String = "",
+        planJSON: String = "{}",
+        position: Int = 0,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.styleRaw = styleRaw
+        self.planJSON = planJSON
+        self.position = position
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    public var plan: YogaFlowPlan? { YogaFlowPlan.decode(from: planJSON) }
 }

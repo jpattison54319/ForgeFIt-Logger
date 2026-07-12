@@ -52,7 +52,6 @@ struct ForgeFitApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(themeManager)
-                .environment(\.theme, themeManager.current)
         }
         .modelContainer(sharedModelContainer)
     }

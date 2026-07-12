@@ -175,6 +175,8 @@ public enum GlobalExerciseLibrary {
     public static let treadmillRunID = UUID(uuidString: "00000000-0000-7000-8000-000000000207")!
     public static let indoorCycleID = UUID(uuidString: "00000000-0000-7000-8000-000000000208")!
     public static let rowErgID = UUID(uuidString: "00000000-0000-7000-8000-000000000209")!
+    public static let outdoorRunID = UUID(uuidString: "00000000-0000-7000-8000-000000000210")!
+    public static let treadmillWalkID = UUID(uuidString: "00000000-0000-7000-8000-000000000211")!
 
     public static let rdlAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000301")!
     public static let bayesianCurlAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000302")!
@@ -187,6 +189,8 @@ public enum GlobalExerciseLibrary {
     public static let treadmillAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000309")!
     public static let bikeAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000310")!
     public static let rowerAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000311")!
+    public static let outdoorRunAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000312")!
+    public static let treadmillWalkAliasID = UUID(uuidString: "00000000-0000-7000-8000-000000000313")!
 
     public static let snapshot = ExerciseLibrarySnapshot(
         exercises: [
@@ -262,6 +266,22 @@ public enum GlobalExerciseLibrary {
                 primaryMuscles: ["cardiovascular", "lats", "quadriceps"],
                 secondaryMuscles: ["hamstrings", "biceps", "upper back"],
                 equipment: "rower"
+            ),
+            ExerciseInfo(
+                id: outdoorRunID,
+                name: "Outdoor Run",
+                movementPattern: "cardio",
+                primaryMuscles: ["cardiovascular", "quadriceps", "glutes"],
+                secondaryMuscles: ["hamstrings", "calves"],
+                equipment: nil
+            ),
+            ExerciseInfo(
+                id: treadmillWalkID,
+                name: "Treadmill Walk",
+                movementPattern: "cardio",
+                primaryMuscles: ["cardiovascular", "quadriceps", "glutes"],
+                secondaryMuscles: ["hamstrings", "calves"],
+                equipment: "treadmill"
             )
         ],
         aliases: [
@@ -275,7 +295,9 @@ public enum GlobalExerciseLibrary {
             ExerciseAlias(id: machinePressAliasID, exerciseID: machineChestPressID, alias: "Machine press"),
             ExerciseAlias(id: treadmillAliasID, exerciseID: treadmillRunID, alias: "Run"),
             ExerciseAlias(id: bikeAliasID, exerciseID: indoorCycleID, alias: "Bike"),
-            ExerciseAlias(id: rowerAliasID, exerciseID: rowErgID, alias: "Rower")
+            ExerciseAlias(id: rowerAliasID, exerciseID: rowErgID, alias: "Rower"),
+            ExerciseAlias(id: outdoorRunAliasID, exerciseID: outdoorRunID, alias: "Jog"),
+            ExerciseAlias(id: treadmillWalkAliasID, exerciseID: treadmillWalkID, alias: "Walk")
         ]
     )
 }

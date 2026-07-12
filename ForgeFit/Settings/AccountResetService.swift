@@ -34,6 +34,9 @@ enum AccountResetService {
         try deleteAll(WorkoutImportBatchModel.self, in: context)
         try deleteAll(WorkoutXPEventModel.self, in: context)
         try deleteAll(UserProgressModel.self, in: context)
+        try deleteAll(WrappedReportModel.self, in: context)
+        try deleteAll(IntervalPresetModel.self, in: context)
+        try deleteAll(YogaFlowModel.self, in: context)
         try deleteAll(RoutineSetModel.self, in: context)
         try deleteAll(RoutineExerciseModel.self, in: context)
         try deleteAll(RoutineModel.self, in: context)
@@ -54,6 +57,7 @@ enum AccountResetService {
         WorkoutActivityController.shared.end()
         RestTimerController.shared.skip()
         IntervalRunnerHub.shared.stop()
+        YogaFlowRunnerHub.shared.stop()
         WatchLink.shared.clearLiveMetrics()
         WatchLink.shared.sendCommand(.discardWorkout)
         WatchLink.shared.publishState()
@@ -67,7 +71,8 @@ enum AccountResetService {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [
             NotificationScheduler.NotificationID.restTimer,
             NotificationScheduler.NotificationID.streakNudge,
-            NotificationScheduler.NotificationID.intervalCue
+            NotificationScheduler.NotificationID.intervalCue,
+            NotificationScheduler.NotificationID.wrappedReady
         ] + NotificationScheduler.NotificationID.allReminderIDs)
     }
 
@@ -80,6 +85,7 @@ enum AccountResetService {
             "openSettings",
             "activeMacroFolderID",
             "activeMesoFolderID",
+            ThemeManager.modeDefaultsKey,
             "profileDisplayName",
             "liveSyncEnabled",
             "healthWriteEnabled",

@@ -7,6 +7,9 @@ import Foundation
 ///   - A working set contributes **0.5 set** to each *secondary* (supporting)
 ///     muscle.
 ///   - Warm-up sets contribute nothing.
+///   - Both are scaled by `VolumeMath.effectiveSetCount` — a myo-rep block
+///     with 4 mini-sets is 3 sets of dose for its muscles, a drop row is
+///     half a set (see the convention doc on `effectiveSetCount`).
 ///
 /// This is distinct from tonnage (weight × reps). It powers weekly "volume by
 /// muscle group" landmarks (e.g. 10–20 sets/week per muscle). Even a custom
@@ -24,15 +27,18 @@ public enum MuscleVolume {
         for set: SetEntry,
         exercise: ExerciseInfo
     ) -> [String: Double] {
-        guard set.setType.countsAsWorkingVolume else { return [:] }
+        let setCount = VolumeMath.effectiveSetCount(set)
+        guard setCount > 0 else { return [:] }
 
+        // Keys are canonicalized so legacy variants ("front_delts") and
+        // taxonomy names ("front delts") land in one bucket.
         var result: [String: Double] = [:]
         for muscle in exercise.secondaryMuscles {
-            result[muscle] = secondaryWeight
+            result[MuscleTaxonomy.canonical(muscle)] = secondaryWeight * setCount
         }
         // Primary applied second so it overrides any secondary listing.
         for muscle in exercise.primaryMuscles {
-            result[muscle] = primaryWeight
+            result[MuscleTaxonomy.canonical(muscle)] = primaryWeight * setCount
         }
         return result
     }

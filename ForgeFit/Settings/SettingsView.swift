@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var themeManager: ThemeManager
 
     @AppStorage("liveSyncEnabled") private var liveSyncEnabled = true
     @AppStorage("healthWriteEnabled") private var healthWriteEnabled = true
@@ -28,6 +29,7 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Space.xl) {
+                    appearanceCard
                     healthCard
                     historyImportCard
                     watchCard
@@ -50,7 +52,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $showHistoryImporter) {
             WorkoutHistoryImportView()
         }
@@ -75,7 +76,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: Space.md) {
                     HStack(spacing: Space.md) {
                         Image(systemName: "heart.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.cardTitle)
                             .foregroundStyle(.white)
                             .frame(width: 44, height: 44)
                             .background(LinearGradient(colors: [theme.danger, Color(hex: 0xFF2D55)], startPoint: .top, endPoint: .bottom))
@@ -182,7 +183,7 @@ struct SettingsView: View {
 
     private func statusRow(_ icon: String, _ title: String, _ value: String, good: Bool) -> some View {
         HStack(spacing: Space.md) {
-            Image(systemName: icon).font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.textSecondary).frame(width: 24)
+            Image(systemName: icon).font(.bodyStrong).foregroundStyle(theme.textSecondary).frame(width: 24)
             Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(theme.textPrimary)
             Spacer()
             Text(value).font(.system(size: 14, weight: .semibold)).foregroundStyle(good ? theme.success : theme.textTertiary)
@@ -200,7 +201,7 @@ struct SettingsView: View {
                 Card {
                     HStack(spacing: Space.md) {
                         Image(systemName: "heart.text.square.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.cardTitle)
                             .foregroundStyle(theme.danger)
                             .frame(width: 44, height: 44)
                             .background(theme.surfaceElevated)
@@ -221,6 +222,27 @@ struct SettingsView: View {
     }
 
     // MARK: - Units
+
+    // MARK: - Appearance
+
+    private var appearanceCard: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionHeader("Appearance")
+            Card {
+                HStack {
+                    Text("Theme").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("Appearance", selection: $themeManager.mode) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+            }
+        }
+    }
 
     private var unitsCard: some View {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -444,7 +466,6 @@ private struct ResetDataSheet: View {
             .background(theme.background)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled(isResetting)
     }
 

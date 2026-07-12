@@ -51,4 +51,45 @@ public enum VolumeMath {
         guard load > 0 else { return nil }
         return load * (1.0 + Double(reps) / 30.0)
     }
+
+    /// How many "sets" a logged set is worth for dose tracking, in units of
+    /// the straight-set-near-failure the weekly-volume dose-response
+    /// literature counts. A documented, versioned convention — changing any
+    /// weight is a deliberate decision requiring a golden-vector update:
+    ///
+    /// - Warm-up: 0 (not working volume).
+    /// - Working / back-off / AMRAP: 1 — the literature's unit.
+    /// - Drop: 0.5 per drop row. Drop-set training produces hypertrophy
+    ///   comparable to traditional sets in roughly half the time (Sødal et
+    ///   al. 2023 systematic review) — parent(1) + 0.5 per drop, not a full
+    ///   set per drop.
+    /// - Myo-rep / rest-pause: 1 for the activation + 0.5 per mini-set. Each
+    ///   mini re-enters near-failure territory after seconds of rest (its
+    ///   reps are all "effective reps"), but at 2–5 reps it carries roughly
+    ///   half a straight set's stimulating volume. A 6+3+3+2+2 block ⇒ 3.0
+    ///   sets, matching the method's empirical "≈3 sets in less time"
+    ///   positioning (Prestes et al. 2019, rest-pause vs traditional).
+    /// - Cluster: 1 regardless of segments — intra-set rest there preserves
+    ///   bar speed within ONE set (Tufano et al. 2017); it doesn't add
+    ///   near-failure episodes.
+    /// - Unilateral per-side logging doubles the structure (each side is its
+    ///   own activation + minis / its own cluster).
+    public static func effectiveSetCount(_ s: SetEntry) -> Double {
+        switch s.setType {
+        case .warmup:
+            return 0
+        case .drop:
+            return 0.5
+        case .myoRep, .restPause:
+            var count = 1.0 + 0.5 * Double(s.miniSetCount)
+            if s.side2Logged {
+                count += 1.0 + 0.5 * Double(s.side2MiniSetCount)
+            }
+            return count
+        case .cluster:
+            return s.side2Logged ? 2 : 1
+        case .working, .backoff, .amrap:
+            return 1
+        }
+    }
 }

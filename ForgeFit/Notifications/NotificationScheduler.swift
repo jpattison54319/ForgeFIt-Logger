@@ -22,6 +22,7 @@ final class NotificationScheduler: NSObject {
         static let restTimer = "forgefit.rest-timer"
         static let streakNudge = "forgefit.streak-nudge"
         static let intervalCue = "forgefit.interval-cue"
+        static let wrappedReady = "forgefit.wrapped-ready"
         static func reminder(weekday: Int) -> String { "forgefit.reminder.\(weekday)" }
         static let allReminderIDs = (1...7).map { reminder(weekday: $0) }
     }
@@ -174,6 +175,28 @@ final class NotificationScheduler: NSObject {
     }
 
     // MARK: - Streak-protection nudge
+
+    /// One-shot "your Wrapped is ready" alert, fired right after a new
+    /// report is generated (generation is launch/foreground-driven, so the
+    /// notification lands the first time the app runs on/after the 1st).
+    /// Silent when notifications aren't authorized — the Home card is the
+    /// non-pushy affordance.
+    func scheduleWrappedReady(reportTitle: String) {
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .authorized else { return }
+            center.removePendingNotificationRequests(withIdentifiers: [NotificationID.wrappedReady])
+            let content = UNMutableNotificationContent()
+            content.title = "Your \(reportTitle) is ready"
+            content.body = "See what you built last month and what to focus on next."
+            content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            try? await center.add(UNNotificationRequest(
+                identifier: NotificationID.wrappedReady, content: content, trigger: trigger
+            ))
+        }
+    }
 
     /// One-shot evening alert, scheduled only while an active streak (≥ 2
     /// days) would break today. Recomputed on foreground; cancelled the

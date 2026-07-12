@@ -74,6 +74,41 @@ struct DailyReadinessTests {
         }
     }
 
+    /// The 1am bug: a new calendar day has started, the user hasn't slept,
+    /// but Apple has already published an early daytime resting-HR estimate
+    /// (awake ~69 vs a sleeping baseline of 55). That awake value must never
+    /// be judged against the SLEEPING baseline — it read as a false
+    /// "Sleeping HR elevated" every night the user was up past midnight.
+    @Test func awakeRestingHRIsNotJudgedAgainstSleepingBaseline() {
+        let m = metrics(todayHRV: nil, todaySleepingHR: nil, todaySleepMinutes: nil).map { metric in
+            var copy = metric
+            // History has a normal daytime resting HR alongside sleeping HR;
+            // today (still awake at 1am) has ONLY the daytime estimate.
+            copy.restingHR = cal.startOfDay(for: copy.date) == cal.startOfDay(for: now) ? 69 : 67
+            return copy
+        }
+        let daily = engine(m).recoverySnapshot().daily
+        #expect(!daily.flags.contains("Sleeping HR elevated"))
+        // 69 vs a 67 bpm daytime baseline is within normal range — no HR
+        // flag at all, and the part is labeled resting (not sleeping) HR.
+        #expect(!daily.flags.contains("Resting HR elevated"))
+        let hrPart = daily.parts.first { $0.name == "Resting HR" || $0.name == "Sleeping HR" }
+        #expect(hrPart?.name == "Resting HR")
+    }
+
+    /// A genuinely elevated daytime resting HR (vs the daytime baseline)
+    /// still flags — as resting HR, never as sleeping HR.
+    @Test func daytimeRestingHRElevationFlagsHonestly() {
+        let m = metrics(todayHRV: nil, todaySleepingHR: nil, todaySleepMinutes: nil).map { metric in
+            var copy = metric
+            copy.restingHR = cal.startOfDay(for: copy.date) == cal.startOfDay(for: now) ? 80 : 65
+            return copy
+        }
+        let daily = engine(m).recoverySnapshot().daily
+        #expect(daily.flags.contains("Resting HR elevated"))
+        #expect(!daily.flags.contains("Sleeping HR elevated"))
+    }
+
     @Test func guidanceNamesShortSleepWhenScoreStillTrainable() {
         // HRV and sleeping HR stay normal; only sleep comes up short.
         let snapshot = engine(metrics(todaySleepMinutes: 380)).recoverySnapshot()

@@ -220,15 +220,49 @@ struct RecoveryEngine {
     }
 
     /// Cardio load prefers stored TSS-like values, falling back to session RPE.
+    /// Yoga is style-classified: restorative practice contributes **zero**
+    /// training strain (it's recovery, and hard-coding a readiness bonus isn't
+    /// supported by the evidence either — see the flexibility pillar notes);
+    /// active practice counts like light cardio via measured HR, else a
+    /// style-based effort estimate.
     private func cardioLoad(_ workout: WorkoutModel) -> Double {
         let cardio = workout.cardioSessions
         guard !cardio.isEmpty else { return 0 }
         return cardio.reduce(0) { total, session in
+            if session.isYogaSession {
+                return total + yogaLoad(session)
+            }
             if let tss = session.tss { return total + tss }
             let minutes = Double(session.durationSeconds ?? 0) / 60
             let effort = Double(session.effort ?? 7)
             return total + max(1, minutes) * effort
         }
+    }
+
+    private func yogaLoad(_ session: CardioSessionModel) -> Double {
+        let style = session.resolvedYogaStyle
+        guard !style.isRestorative else { return 0 }
+        let minutes = Double(session.durationSeconds ?? 0) / 60
+        let effort: Double
+        if let avgHR = session.avgHR {
+            // Measured intensity wins: same zone→effort mapping as imported
+            // Health workouts.
+            effort = switch HRZone.zone(forAvgHR: avgHR) {
+            case 1: 3.0
+            case 2: 4.0
+            case 3: 6.0
+            case 4: 8.0
+            default: 9.0
+            }
+        } else {
+            // MET-shaped defaults: power ~5, vinyasa ~4, hatha ~3.
+            effort = switch style {
+            case .power: 5.0
+            case .vinyasa: 4.0
+            default: 3.0
+            }
+        }
+        return max(0, minutes) * effort
     }
 
     /// Apple Health workouts can arrive without ForgeFit set details. Count
@@ -246,6 +280,12 @@ struct RecoveryEngine {
         let cardio = cardioLoad(workout)
         let imported = importedHealthFallbackLoad(workout)
         if strength > 0 || cardio > 0 || imported > 0 { return strength + cardio + imported }
+        // A restorative-only session is deliberately zero strain — don't let
+        // the RPE fallback re-inflate what the yoga classifier zeroed out.
+        if !workout.cardioSessions.isEmpty,
+           workout.cardioSessions.allSatisfy({ $0.isYogaSession && $0.resolvedYogaStyle.isRestorative }) {
+            return 0
+        }
         return sessionRPELoad(workout)
     }
 

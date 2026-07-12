@@ -9,7 +9,7 @@ import SwiftUI
 struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
     @Binding var selection: AppTab
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true })
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
     @Namespace private var pill
 
@@ -133,7 +133,7 @@ struct MiniWorkoutBar: View {
                         Image(systemName: "chevron.up")
                             .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(theme.textPrimary)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
@@ -163,7 +163,7 @@ struct MiniWorkoutBar: View {
                         Image(systemName: "trash")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(theme.danger)
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)

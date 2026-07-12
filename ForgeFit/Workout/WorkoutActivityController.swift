@@ -93,17 +93,76 @@ final class WorkoutActivityController {
         let sorted = workout.exercises.sorted { $0.position < $1.position }
         let allSets = sorted.flatMap(\.sets)
         let hasStrengthSets = allSets.contains { $0.completedAt != nil || $0.reps != nil || $0.weight != nil }
-        let pureCardio = !workout.cardioSessions.isEmpty && !hasStrengthSets
+        let pureCardio = workout.cardioSessions.contains { !$0.isYogaSession } && !hasStrengthSets
+        let pureYoga = !workout.cardioSessions.isEmpty
+            && workout.cardioSessions.allSatisfy(\.isYogaSession)
+            && !hasStrengthSets
         // "Current" exercise = first one with work left.
         let current = sorted.first { we in
             we.sets.contains { $0.completedAt == nil } || we.sets.isEmpty
         } ?? sorted.last
         let currentName = current.flatMap { we in exercises.first { $0.id == we.exerciseID }?.name }
+        // "Next" = the first exercise after the current one that still has
+        // work left; nil on the final exercise (the UI labels that state).
+        let next = current.flatMap { cur in
+            sorted
+                .drop { $0.id != cur.id }
+                .dropFirst()
+                .first { we in we.sets.contains { $0.completedAt == nil } || we.sets.isEmpty }
+        }
+        let nextName = next.flatMap { we in exercises.first { $0.id == we.exerciseID }?.name }
 
         let timer = RestTimerController.shared
         let resting = timer.isRunning && !timer.isMicro
 
-        if pureCardio, let session = workout.cardioSessions.first {
+        // Guided yoga headline: the current pose with a native countdown.
+        // Any yoga session in the workout takes the lock screen while it's
+        // live — a mixed lift+yoga session is *doing yoga right now*.
+        if let yogaSession = workout.cardioSessions.first(where: { $0.isYogaSession && $0.endedAt == nil && $0.liveStartedAt != nil }) {
+            let runner = YogaFlowRunnerHub.shared.runner(for: yogaSession.id)
+            let style = yogaSession.resolvedYogaStyle
+            let poseName = runner?.currentStep?.displayName
+            let position = runner.map { "Pose \(min($0.currentIndex + 1, $0.steps.count)) of \($0.steps.count)" }
+            let nextName = runner?.nextStep.map { "Next: \($0.displayName)" }
+            let detail = [position, nextName].compactMap { $0 }.joined(separator: " · ")
+            let duration = max(0, Int(Date().timeIntervalSince(yogaSession.liveStartedAt ?? yogaSession.startedAt)))
+
+            return WorkoutActivityAttributes.ContentState(
+                startedAt: workout.startedAt,
+                exerciseName: poseName ?? currentName,
+                completedSets: 0,
+                totalSets: 0,
+                mode: .yoga,
+                cardioTitle: "\(style.title) Yoga",
+                cardioMetric: poseName ?? Fmt.durationShort(duration),
+                cardioDetail: detail.isEmpty ? Fmt.durationShort(duration) : detail,
+                restEndsAt: nil,
+                heartRate: WatchLink.shared.liveMetrics?.heartRate ?? yogaSession.avgHR,
+                poseEndsAt: (runner?.isPaused == false) ? runner?.stepEndsAt : nil
+            )
+        }
+
+        // Pure yoga workout not currently mid-pose (about to start, between
+        // segments, or done): a calm session card instead of cardio's "Other".
+        if pureYoga, let session = workout.cardioSessions.first {
+            let style = session.resolvedYogaStyle
+            let duration = session.durationSeconds
+                ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? workout.startedAt)))
+            return WorkoutActivityAttributes.ContentState(
+                startedAt: workout.startedAt,
+                exerciseName: currentName,
+                completedSets: 0,
+                totalSets: 0,
+                mode: .yoga,
+                cardioTitle: "\(style.title) Yoga",
+                cardioMetric: Fmt.durationShort(duration),
+                cardioDetail: session.liveStartedAt == nil ? "Ready to begin" : Fmt.durationShort(duration),
+                restEndsAt: nil,
+                heartRate: WatchLink.shared.liveMetrics?.heartRate ?? session.avgHR
+            )
+        }
+
+        if pureCardio, let session = workout.cardioSessions.first(where: { !$0.isYogaSession }) {
             let kind = CardioKind.from(modality: session.modality)
             let duration = session.durationSeconds ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
             // Prefer live distance (watch stream / phone GPS) so the lock screen
@@ -148,6 +207,7 @@ final class WorkoutActivityController {
         return WorkoutActivityAttributes.ContentState(
             startedAt: workout.startedAt,
             exerciseName: currentName,
+            nextExerciseName: nextName,
             completedSets: allSets.filter { $0.completedAt != nil }.count,
             totalSets: allSets.count,
             restEndsAt: resting ? timer.endsAt : nil,

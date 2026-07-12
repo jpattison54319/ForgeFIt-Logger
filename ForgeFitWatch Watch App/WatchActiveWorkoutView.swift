@@ -40,7 +40,11 @@ struct WatchMetricsPage: View {
                 // whichever number the athlete needs right now.
                 if let stepName = workout.intervalStepName,
                    let stepEndsAt = workout.intervalStepEndsAt, stepEndsAt > context.date {
-                    intervalHeadline(name: stepName, endsAt: stepEndsAt, now: context.date)
+                    intervalHeadline(
+                        name: stepName, endsAt: stepEndsAt, now: context.date,
+                        kind: workout.intervalStepKind,
+                        round: workout.intervalRound,
+                        next: workout.intervalNextName)
                 } else if let restEndsAt = workout.restEndsAt, restEndsAt > context.date {
                     restHeadline(endsAt: restEndsAt, now: context.date)
                 } else {
@@ -85,18 +89,44 @@ struct WatchMetricsPage: View {
         .navigationTitle("")
     }
 
-    private func intervalHeadline(name: String, endsAt: Date, now: Date) -> some View {
+    private func intervalHeadline(
+        name: String, endsAt: Date, now: Date,
+        kind: String? = nil, round: String? = nil, next: String? = nil
+    ) -> some View {
         let remaining = max(0, Int(endsAt.timeIntervalSince(now).rounded(.up)))
+        // Work runs hot (teal), recovery cools down (sage), book-ends gold —
+        // the wrist reads the state from color alone.
+        let tint: Color = switch kind {
+        case "work": WTheme.teal
+        case "recover": WTheme.accent
+        case "warmup", "cooldown": WTheme.gold
+        case "pose": WTheme.accent   // yoga hold — calm sage, not work-teal
+        default: WTheme.teal
+        }
         return VStack(alignment: .leading, spacing: 0) {
-            Text(name.uppercased())
-                .font(.system(size: 12, weight: .heavy))
-                .foregroundStyle(WTheme.teal)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(name.uppercased())
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                if let round {
+                    Text("· \(round)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Text(WFmt.rest(remaining))
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(WTheme.teal)
+                .foregroundStyle(tint)
                 .contentTransition(.numericText(countsDown: true))
+            if let next {
+                Text("Next: \(next)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 

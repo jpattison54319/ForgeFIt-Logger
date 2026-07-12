@@ -20,7 +20,7 @@ final class MuscleVolumeTests: XCTestCase {
         let v = MuscleVolume.fractionalSets(for: set, exercise: benchPress)
         XCTAssertEqual(v["chest"] ?? 0, 1.0, accuracy: tol)
         XCTAssertEqual(v["triceps"] ?? 0, 0.5, accuracy: tol)
-        XCTAssertEqual(v["front_delts"] ?? 0, 0.5, accuracy: tol)
+        XCTAssertEqual(v["front delts"] ?? 0, 0.5, accuracy: tol)
     }
 
     // Warm-up sets contribute no muscle volume.
@@ -41,6 +41,25 @@ final class MuscleVolumeTests: XCTestCase {
         XCTAssertEqual(v["triceps"] ?? 0, 0.5, accuracy: tol)
     }
 
+    // Structured sets scale muscle volume by their effective set count: a
+    // myo-rep block with 4 minis is 3 sets of chest dose, a drop row is half.
+    func testStructuredSetsScaleMuscleVolume() {
+        let myo = SetEntry(setType: .myoRep, reps: 6, weight: 60, miniSetCount: 4)
+        let vMyo = MuscleVolume.fractionalSets(for: myo, exercise: benchPress)
+        XCTAssertEqual(vMyo["chest"] ?? 0, 3.0, accuracy: tol)
+        XCTAssertEqual(vMyo["triceps"] ?? 0, 1.5, accuracy: tol)
+
+        let drop = SetEntry(setType: .drop, reps: 8, weight: 45)
+        let vDrop = MuscleVolume.fractionalSets(for: drop, exercise: benchPress)
+        XCTAssertEqual(vDrop["chest"] ?? 0, 0.5, accuracy: tol)
+        XCTAssertEqual(vDrop["triceps"] ?? 0, 0.25, accuracy: tol)
+
+        // Cluster stays 1 set no matter how many segments.
+        let cluster = SetEntry(setType: .cluster, reps: 10, weight: 100, miniSetCount: 5)
+        let vCluster = MuscleVolume.fractionalSets(for: cluster, exercise: benchPress)
+        XCTAssertEqual(vCluster["chest"] ?? 0, 1.0, accuracy: tol)
+    }
+
     // Weekly aggregation across working sets, mixing exercises and a warm-up.
     func testWeeklyAggregation() {
         let incline = ExerciseInfo(
@@ -58,6 +77,6 @@ final class MuscleVolumeTests: XCTestCase {
         let totals = MuscleVolume.weeklyVolume(entries)
         XCTAssertEqual(totals["chest"] ?? 0, 3.0, accuracy: tol)
         XCTAssertEqual(totals["triceps"] ?? 0, 1.5, accuracy: tol)
-        XCTAssertEqual(totals["front_delts"] ?? 0, 1.5, accuracy: tol)
+        XCTAssertEqual(totals["front delts"] ?? 0, 1.5, accuracy: tol)
     }
 }

@@ -17,7 +17,7 @@ struct ProfileView: View {
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true }, sort: \ExerciseLibraryModel.name)
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
 
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
@@ -79,7 +79,7 @@ struct ProfileView: View {
                         .buttonStyle(.plain)
                     }
                     if completed.count > 10 {
-                        NavigationLink(value: ProfileRoute.calendar) {
+                        NavigationLink(value: ProfileRoute.history) {
                             Card(padding: Space.md) {
                                 HStack {
                                     Text("See all workouts").font(.bodyStrong).foregroundStyle(theme.accent)
@@ -98,7 +98,9 @@ struct ProfileView: View {
                 case .exercises: ExercisesListView(workouts: workouts, exercises: exercises)
                 case .importedExerciseReview: ReviewImportedExercisesView(workouts: workouts)
                 case .measures: MeasuresView()
-                case .calendar: CalendarView(workouts: workouts, exercises: exercises)
+                case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryListView(workouts: workouts, exercises: exercises)
+                case .wrapped: WrappedListView()
                 case .workout(let id):
                     if let w = workouts.first(where: { $0.id == id }) {
                         WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
@@ -201,7 +203,7 @@ struct ProfileView: View {
             Card(fill: theme.danger.opacity(0.12)) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.cardTitle)
                         .foregroundStyle(theme.danger)
                         .frame(width: 42, height: 42)
                         .background(theme.danger.opacity(0.14))
@@ -235,7 +237,8 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.statistics) { DashboardTileLabel("Statistics", "chart.line.uptrend.xyaxis") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.exercises) { DashboardTileLabel("Exercises", "dumbbell") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
-            NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("History", "clock.arrow.circlepath") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
         }
     }
 
@@ -268,7 +271,7 @@ private struct XPProgressBar: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Capsule())
             Text("\(progress.xpIntoLevel) / \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(theme.textSecondary)
         }
         .accessibilityElement(children: .combine)
@@ -310,13 +313,12 @@ private struct ProfileEditSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
         .onAppear { draftName = displayName }
     }
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped
     case workout(UUID)
 }
 
@@ -384,7 +386,7 @@ struct ExercisesListView: View {
             HStack {
                 CircleIconButton(systemImage: "chevron.left") { dismiss() }
                 Spacer()
-                Text("Exercises").font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                Text("Exercises").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
                 CircleIconButton(systemImage: "plus") { showCreate = true }
             }
@@ -509,7 +511,7 @@ struct MeasuresView: View {
                                     Text(Fmt.load(latest.value))
                                         .font(.system(size: 34, weight: .bold, design: .rounded))
                                         .foregroundStyle(theme.textPrimary)
-                                    Text(Fmt.unit.suffix).font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                                    Text(Fmt.unit.suffix).font(.bodyStrong).foregroundStyle(theme.textSecondary)
                                 }
                             }
                             Spacer()
@@ -586,7 +588,6 @@ struct MeasuresView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func saveWeight() {
@@ -605,7 +606,9 @@ struct MeasuresView: View {
     }
 }
 
-struct CalendarView: View {
+/// The classic month-grouped history list — still the "See all workouts"
+/// destination at the end of the Profile feed.
+struct WorkoutHistoryListView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
@@ -661,7 +664,7 @@ struct DashboardScaffold<Content: View>: View {
                 HStack {
                     CircleIconButton(systemImage: "chevron.left") { dismiss() }
                     Spacer()
-                    Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Color.clear.frame(width: 38, height: 38)
                 }

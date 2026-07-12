@@ -68,7 +68,7 @@ extension TrainingAnalytics {
 
     private static let splitCategories: [(name: String, muscles: Set<String>)] = [
         ("Push", ["chest", "shoulders", "triceps"]),
-        ("Pull", ["lats", "middle back", "traps", "biceps", "forearms", "neck"]),
+        ("Pull", ["back", "lats", "middle back", "upper back", "traps", "biceps", "forearms", "neck"]),
         ("Legs", ["quadriceps", "hamstrings", "glutes", "calves", "abductors", "adductors"]),
         ("Core", ["abdominals", "lower back"]),
     ]
@@ -78,7 +78,13 @@ extension TrainingAnalytics {
         guard !distribution.isEmpty else { return [] }
         var totals: [String: Double] = [:]
         for share in distribution {
-            let category = Self.splitCategories.first { $0.muscles.contains(share.muscle.lowercased()) }?.name ?? "Other"
+            // Exact match first (keeps "lower back" in Core), then the
+            // taxonomy parent so sub-muscles route with their group
+            // ("upper chest" → chest → Push, "rear delts" → shoulders → Push).
+            let muscle = MuscleTaxonomy.canonical(share.muscle)
+            let category = Self.splitCategories.first { $0.muscles.contains(muscle) }?.name
+                ?? Self.splitCategories.first { $0.muscles.contains(MuscleTaxonomy.parent(of: muscle)) }?.name
+                ?? "Other"
             totals[category, default: 0] += share.sets
         }
         let grand = totals.values.reduce(0, +)
@@ -94,14 +100,14 @@ extension TrainingAnalytics {
     struct ExerciseUsage: Identifiable {
         let id: UUID              // exercise id — navigable
         let name: String
-        let workingSets: Int
+        let workingSets: Double
         let volume: Double        // kg tonnage
         let sessions: Int
     }
 
     func topExercises(in range: TimeChartRange, limit: Int = 5) -> [ExerciseUsage] {
         let byID = exerciseByIDPublic
-        var sets: [UUID: Int] = [:]
+        var sets: [UUID: Double] = [:]
         var volume: [UUID: Double] = [:]
         var sessions: [UUID: Set<UUID>] = [:]
         for workout in completed(in: range) {
@@ -109,7 +115,7 @@ extension TrainingAnalytics {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
-                sets[we.exerciseID, default: 0] += done.count
+                sets[we.exerciseID, default: 0] += done.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
                 volume[we.exerciseID, default: 0] += done.reduce(0) { $0 + ($1.totalVolume ?? 0) }
                 sessions[we.exerciseID, default: []].insert(workout.id)
             }
@@ -237,7 +243,9 @@ extension TrainingAnalytics {
 
     func cardioSessions(in range: TimeChartRange) -> [RangedCardioSession] {
         completed(in: range).flatMap { workout in
-            workout.cardioSessions.map { RangedCardioSession(workout: workout, session: $0) }
+            workout.cardioSessions
+                .filter { !$0.isYogaSession }   // yoga has its own pillar
+                .map { RangedCardioSession(workout: workout, session: $0) }
         }
     }
 
@@ -416,6 +424,7 @@ extension TrainingAnalytics {
         return completed
             .filter { $0.startedAt >= priorStart && $0.startedAt < start }
             .flatMap { $0.cardioSessions }
+            .filter { !$0.isYogaSession }
     }
 
     struct CardioBests {
@@ -452,7 +461,7 @@ extension TrainingAnalytics {
         var workouts: Int
         var durationSeconds: Int
         var volume: Double            // kg
-        var workingSets: Int
+        var workingSets: Double
         var reps: Int
         var cardioMinutes: Double
         var distanceMeters: Double
@@ -505,7 +514,7 @@ extension TrainingAnalytics {
         return completed.filter { interval.contains($0.startedAt) }
     }
 
-    private func monthTotals(for monthStart: Date) -> (workouts: Int, durationSeconds: Int, volume: Double, sets: Int, reps: Int, cardioMinutes: Double, distanceMeters: Double) {
+    private func monthTotals(for monthStart: Date) -> (workouts: Int, durationSeconds: Int, volume: Double, sets: Double, reps: Int, cardioMinutes: Double, distanceMeters: Double) {
         let month = workouts(inMonth: monthStart)
         let summaries = month.map(summary(for:))
         let cardioMinutes = month.flatMap(\.cardioSessions).reduce(0.0) { $0 + Double($1.durationSeconds ?? 0) / 60 }
@@ -542,7 +551,7 @@ extension TrainingAnalytics {
 
     private func topExercises(inMonth monthStart: Date, limit: Int) -> [ExerciseUsage] {
         let byID = exerciseByIDPublic
-        var sets: [UUID: Int] = [:]
+        var sets: [UUID: Double] = [:]
         var volume: [UUID: Double] = [:]
         var sessions: [UUID: Set<UUID>] = [:]
         for workout in workouts(inMonth: monthStart) {
@@ -550,7 +559,7 @@ extension TrainingAnalytics {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
-                sets[we.exerciseID, default: 0] += done.count
+                sets[we.exerciseID, default: 0] += done.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
                 volume[we.exerciseID, default: 0] += done.reduce(0) { $0 + ($1.totalVolume ?? 0) }
                 sessions[we.exerciseID, default: []].insert(workout.id)
             }
@@ -585,5 +594,65 @@ extension TrainingAnalytics {
     /// private to the main file).
     private var exerciseByIDPublic: [UUID: ExerciseLibraryModel] {
         Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+}
+
+// MARK: - Yoga (Profile → Statistics)
+
+extension TrainingAnalytics {
+
+    /// Yoga sessions in range (the complement of `cardioSessions(in:)`).
+    func yogaSessions(in range: TimeChartRange) -> [RangedCardioSession] {
+        completed(in: range).flatMap { workout in
+            workout.cardioSessions
+                .filter(\.isYogaSession)
+                .map { RangedCardioSession(workout: workout, session: $0) }
+        }
+    }
+
+    struct YogaStyleShare: Identifiable {
+        var id: String { style.rawValue }
+        let style: YogaStyle
+        let sessions: Int
+        let minutes: Double
+    }
+
+    /// Session count + minutes per style, most-practiced first.
+    func yogaStyleBreakdown(in range: TimeChartRange) -> [YogaStyleShare] {
+        var sessions: [YogaStyle: Int] = [:]
+        var minutes: [YogaStyle: Double] = [:]
+        for item in yogaSessions(in: range) {
+            let style = item.session.resolvedYogaStyle
+            sessions[style, default: 0] += 1
+            minutes[style, default: 0] += Double(item.session.durationSeconds ?? 0) / 60
+        }
+        return sessions.keys
+            .map { style in
+                YogaStyleShare(style: style, sessions: sessions[style] ?? 0, minutes: minutes[style] ?? 0)
+            }
+            .sorted { $0.minutes > $1.minutes }
+    }
+
+    struct YogaOverview {
+        var sessions: Int
+        var minutes: Int
+        var poses: Int
+        var topRegions: [FlexibilityAnalytics.RegionWeek]
+    }
+
+    func yogaOverview(in range: TimeChartRange) -> YogaOverview {
+        let items = yogaSessions(in: range)
+        let start = calendar.date(byAdding: .weekOfYear, value: -range.weekCount, to: now) ?? .distantPast
+        let regions = FlexibilityAnalytics.regionSeconds(
+            workouts: completed,
+            exercises: exercises,
+            range: (range == .all ? Date.distantPast : start)...now
+        )
+        return YogaOverview(
+            sessions: items.count,
+            minutes: items.reduce(0) { $0 + (($1.session.durationSeconds ?? 0) / 60) },
+            poses: items.reduce(0) { $0 + ($1.session.posesCompleted ?? 0) },
+            topRegions: Array(regions.prefix(6))
+        )
     }
 }

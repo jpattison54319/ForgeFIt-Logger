@@ -62,8 +62,10 @@ struct ActiveWorkoutLoggerView: View {
     /// record award. Computed once; history doesn't change mid-session.
     @State private var recordBaselines: [UUID: ExerciseRecordBaseline] = [:]
     @State private var widgetSnapshotTask: Task<Void, Never>?
+    @State private var liveSurfacePublishTask: Task<Void, Never>?
     @State private var previousSetsByExerciseID: [UUID: [SetModel]] = [:]
     @State private var liveStats = WorkoutLiveStats()
+    @State private var inputRouter = SetInputRouter()
     @AppStorage("showRPEInLogger") private var showRPEInLogger = false
 
     private var sortedExercises: [WorkoutExerciseModel] {
@@ -98,10 +100,43 @@ struct ActiveWorkoutLoggerView: View {
                     statsBar
                         .padding(.horizontal, Space.lg)
                         .padding(.bottom, Space.sm)
+                    // The rest countdown gets its own full-width strip below
+                    // the stats instead of cramming into the top bar.
+                    if !isHistoricalEdit {
+                        RestTimerBar()
+                            .padding(.horizontal, Space.lg)
+                            .padding(.bottom, Space.sm)
+                    }
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: RestTimerController.shared.isRunning)
+        }
+        .environment(inputRouter)
+        // One keyboard toolbar for every set input in the logger, driven by
+        // whichever field registered itself with the router on focus. A
+        // single root-level toolbar can't hit the per-field UIKit
+        // toolbar-reuse bug that used to blank the accessory buttons.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if let actions = inputRouter.active {
+                    Button {
+                        actions.onDismiss()
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                    .accessibilityLabel("Dismiss keyboard")
+                    Spacer()
+                    if let onNext = actions.onNext {
+                        Button("Next", action: onNext)
+                            .font(.bodyStrong)
+                            .tint(theme.accent)
+                    }
+                    Button(actions.completeTitle, action: actions.onComplete)
+                        .font(.bodyStrong)
+                        .tint(theme.accent)
                 }
             }
         }
-        .preferredColorScheme(.dark)
         // Reference caches walk the full workout history — built after the
         // first frame so the cover presents instantly. Rows show "—" for the
         // previous column for a frame or two, then fill in.
@@ -138,7 +173,6 @@ struct ActiveWorkoutLoggerView: View {
                     exercises: exercises
                 )
             }
-            .preferredColorScheme(.dark)
         }
     }
 
@@ -149,7 +183,21 @@ struct ActiveWorkoutLoggerView: View {
             LazyVStack(alignment: .leading, spacing: Space.lg) {
                 ForEach(sortedExercises, id: \.id) { we in
                     let ex = exercises.first { $0.id == we.exerciseID }
-                    if ex?.isCardio == true {
+                    if ex?.isYoga == true {
+                        YogaExerciseCard(
+                            workout: workout,
+                            workoutExercise: we,
+                            exercise: ex,
+                            allowsLiveControls: !isHistoricalEdit,
+                            availableSupersetGroups: supersetGroups,
+                            onAssignSuperset: { assignSuperset($0, to: we) },
+                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
+                            onUngroupSuperset: { ungroupSuperset($0) },
+                            onShowExerciseDetail: { exercise in detailExercise = exercise },
+                            onReplace: { replaceTarget = we },
+                            onRemove: { removeExercise(we) }
+                        )
+                    } else if ex?.isCardio == true {
                         CardioExerciseCard(
                             workout: workout,
                             workoutExercise: we,
@@ -193,6 +241,10 @@ struct ActiveWorkoutLoggerView: View {
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
             .padding(.bottom, 40)
+            // Tapping any non-interactive spot (card chrome, labels, empty
+            // space) drops the keyboard — controls layered above win their
+            // own taps first, so buttons/fields are unaffected.
+            .onTapGesture { hideKeyboard() }
         }
         .scrollDismissesKeyboard(.interactively)
     }
@@ -250,10 +302,6 @@ struct ActiveWorkoutLoggerView: View {
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
                     Spacer()
-                    if !isHistoricalEdit {
-                        LiveHeartRatePill(heartRate: WatchLink.shared.liveMetrics?.heartRate)
-                        RestTimerPill()
-                    }
                     if !isHistoricalEdit && !RestTimerController.shared.isRunning {
                         // Start a rest manually at any point.
                         RestDurationMenu(
@@ -265,7 +313,7 @@ struct ActiveWorkoutLoggerView: View {
                             }
                         ) {
                             Image(systemName: "timer")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.bodyStrong)
                                 .foregroundStyle(theme.textPrimary)
                                 .frame(width: 40, height: 40)
                         }
@@ -301,6 +349,14 @@ struct ActiveWorkoutLoggerView: View {
         }
     }
 
+    /// A session that is all yoga gets a calm, session-shaped header —
+    /// duration, poses, heart rate — instead of volume/sets.
+    private var isPureYoga: Bool {
+        !workout.exercises.isEmpty && workout.exercises.allSatisfy { we in
+            exercises.first { $0.id == we.exerciseID }?.isYoga == true
+        }
+    }
+
     @ViewBuilder
     private var statsBar: some View {
         if isHistoricalEdit {
@@ -319,7 +375,17 @@ struct ActiveWorkoutLoggerView: View {
 
     private func statsContent(elapsed: Int) -> some View {
         HStack {
-            if isPureCardio {
+            if isPureYoga {
+                let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
+                let poses = workout.cardioSessions.compactMap { $0.posesCompleted }.reduce(0, +)
+                let hrs = workout.cardioSessions.compactMap { $0.avgHR }
+                StatColumn(label: "Duration", value: Fmt.durationShort(loggedTime > 0 ? loggedTime : elapsed), valueColor: theme.accent)
+                StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—")
+                StatColumn(label: "Avg HR", value: hrs.isEmpty ? "—" : "\(hrs.reduce(0,+) / hrs.count)")
+                if !isHistoricalEdit {
+                    LiveHeartRateStat()
+                }
+            } else if isPureCardio {
                 let totalDist = workout.cardioSessions.compactMap { $0.distanceMeters }.reduce(0, +)
                 let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
                 let hrs = workout.cardioSessions.compactMap { $0.avgHR }
@@ -332,9 +398,9 @@ struct ActiveWorkoutLoggerView: View {
                 // Finish button and tappable fields actually stand out.
                 StatColumn(label: "Duration", value: Fmt.elapsed(elapsed))
                 StatColumn(label: "Volume", value: Fmt.volume(liveStats.volume))
-                StatColumn(label: "Sets", value: "\(liveStats.completedSets)")
-                if !isHistoricalEdit, let hr = WatchLink.shared.liveMetrics?.heartRate {
-                    StatColumn(label: "HR", value: "\(hr)", valueColor: theme.danger)
+                StatColumn(label: "Sets", value: Fmt.sets(liveStats.completedSets))
+                if !isHistoricalEdit {
+                    LiveHeartRateStat()
                 }
             }
         }
@@ -349,7 +415,21 @@ struct ActiveWorkoutLoggerView: View {
 
     private struct WorkoutLiveStats {
         var volume: Double = 0
-        var completedSets: Int = 0
+        /// Effective sets (`VolumeMath.effectiveSetCount`) — fractional.
+        var completedSets: Double = 0
+    }
+
+    /// Reads `WatchLink` inside its OWN body so the Observation dependency
+    /// registers here — a heart-rate tick (~every second while streaming)
+    /// re-renders this one column instead of the entire logger.
+    private struct LiveHeartRateStat: View {
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            if let hr = WatchLink.shared.liveMetrics?.heartRate {
+                StatColumn(label: "HR", value: "\(hr)", valueColor: theme.danger)
+            }
+        }
     }
 
     private struct ReferenceCaches {
@@ -457,7 +537,7 @@ struct ActiveWorkoutLoggerView: View {
         let completed = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
         return WorkoutLiveStats(
             volume: completed.reduce(0) { $0 + ($1.totalVolume ?? 0) },
-            completedSets: completed.count
+            completedSets: completed.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
         )
     }
 
@@ -668,9 +748,24 @@ struct ActiveWorkoutLoggerView: View {
     }
 
     private func publishWorkoutChange() {
+        // Local UI reacts immediately; the external surfaces don't need to.
         refreshLiveStats()
-        WatchLink.shared.publishState()
-        WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
+        // Watch snapshots and Live Activity content are both rebuilt by
+        // walking the full workout — running them synchronously on every
+        // keystroke-level change puts avoidable work on the interaction
+        // path. Coalesce bursts into one publish shortly after the last
+        // change (same pattern as the widget snapshot below, shorter window
+        // since the wrist should feel close to live).
+        liveSurfacePublishTask?.cancel()
+        liveSurfacePublishTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            WatchLink.shared.publishState()
+            // A finish inside the debounce window must not re-request the
+            // Live Activity that ContentView just ended.
+            guard workout.endedAt == nil, workout.deletedAt == nil else { return }
+            WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
+        }
         scheduleWidgetSnapshot()
     }
 
@@ -748,6 +843,9 @@ private struct PostWorkoutSummaryView: View {
     private var completedSets: [SetModel] {
         workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
     }
+    private var effectiveSetTotal: Double {
+        completedSets.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
+    }
     private var duration: Int {
         max(0, Int(Date().timeIntervalSince(workout.startedAt)))
     }
@@ -776,7 +874,10 @@ private struct PostWorkoutSummaryView: View {
         return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
     }
     private var totalReps: Int {
-        completedSets.reduce(0) { $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +) }
+        completedSets.reduce(0) {
+            $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +)
+                + ($1.side2Reps ?? 0) + $1.side2MiniReps.reduce(0, +)
+        }
     }
     private var bestLift: Double? {
         completedSets.compactMap(\.effectiveLoad).filter { $0 > 0 }.max()
@@ -837,7 +938,7 @@ private struct PostWorkoutSummaryView: View {
                                 } else {
                                     StatColumn(label: "Volume", value: Fmt.volume(volume))
                                 }
-                                StatColumn(label: "Sets", value: "\(completedSets.count)")
+                                StatColumn(label: "Sets", value: Fmt.sets(effectiveSetTotal))
                             }
                             if !completedSets.isEmpty {
                                 HStack {
@@ -874,7 +975,6 @@ private struct PostWorkoutSummaryView: View {
             .background(theme.background)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled()
         .confirmationDialog(
             routineUpdatePromptTitle,
@@ -915,7 +1015,7 @@ private struct PostWorkoutSummaryView: View {
                     .background(theme.surfaceElevated)
                     .clipShape(Capsule())
                 Text("\(projectedXPProgress.xpIntoLevel) / \(projectedXPProgress.xpNeededForNextLevel) XP to Level \(projectedXPProgress.level + 1)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.tag)
                     .foregroundStyle(theme.textSecondary)
             }
         }
@@ -1018,30 +1118,6 @@ private struct PostWorkoutSummaryView: View {
     }
 }
 
-private struct LiveHeartRatePill: View {
-    @Environment(\.theme) private var theme
-    let heartRate: Int?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "heart.fill")
-                .font(.system(size: 11, weight: .bold))
-            Text(heartRate.map { "\($0)" } ?? "—")
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .monospacedDigit()
-            Text("BPM")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(theme.textTertiary)
-        }
-        .foregroundStyle(heartRate == nil ? theme.textSecondary : theme.danger)
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background((heartRate == nil ? theme.surfaceElevated : theme.danger.opacity(0.12)))
-        .clipShape(Capsule())
-        .accessibilityLabel(heartRate.map { "Live heart rate \($0) beats per minute" } ?? "Live heart rate unavailable")
-    }
-}
-
 // MARK: - Exercise card
 
 private enum SetInputField: Hashable {
@@ -1127,6 +1203,10 @@ private struct ExerciseLogCard: View {
     /// Set being plate-calculated (barbell-loaded exercises only).
     @State private var plateSet: SetModel?
     @State private var editedSuggestionSetIDs = Set<UUID>()
+    /// Per-set fields the user explicitly typed into (suggestion-backed rows
+    /// only). Lives here, not in SetRow @State, so LazyVStack row recycling
+    /// can't forget which fields hold real entries vs placeholder suggestions.
+    @State private var editedSuggestionFields: [UUID: Set<SetInputField>] = [:]
     /// The one set row whose swipe-to-delete tray is currently open (only one
     /// at a time, Mail-style).
     @State private var openSwipeSetID: UUID?
@@ -1207,6 +1287,7 @@ private struct ExerciseLogCard: View {
                             previous: blockTemplate(for: set, index: index, in: sets),
                             showWeight: weightHeader != nil,
                             displayUnit: displayUnit,
+                            isUnilateral: exercise?.isUnilateral == true,
                             onChange: recompute,
                             onSetType: { set.setType = $0; recompute() },
                             onDelete: { deleteSet(set) }
@@ -1231,7 +1312,13 @@ private struct ExerciseLogCard: View {
                                 suggestedWeight: suggestedWeight(for: set, index: index),
                                 suggestedReps: suggestedReps(for: set, index: index),
                                 suggestedDurationSeconds: suggestedDurationSeconds(for: set, index: index),
-                                onSuggestionEdited: { editedSuggestionSetIDs.insert(set.id) },
+                                suggestedRPE: suggestedRPE(for: set, index: index),
+                                editedFields: editedSuggestionFields[set.id] ?? [],
+                                onSuggestionFieldEdited: { field, isEdited in
+                                    var fields = editedSuggestionFields[set.id] ?? []
+                                    if isEdited { fields.insert(field) } else { fields.remove(field) }
+                                    editedSuggestionFields[set.id] = fields
+                                },
 	                                onMaterializeSuggestion: { materializeSuggestion(for: set, index: index) },
 	                            onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
 	                            onMatchPrevious: { matchPrevious(set, from: previousSet(index: index)) },
@@ -1247,7 +1334,7 @@ private struct ExerciseLogCard: View {
 	                                    addDropSet(below: set, index: index)
 	                                } label: {
 	                                    Label("Drop set", systemImage: "arrow.down.right")
-	                                        .font(.system(size: 12, weight: .semibold))
+	                                        .font(.tag)
 	                                        .padding(.vertical, 10)
 	                                        .padding(.horizontal, 4)
 	                                        .contentShape(Rectangle())
@@ -1320,39 +1407,44 @@ private struct ExerciseLogCard: View {
 		        SupersetChip(group: group)
 		    }
 	            Spacer()
-	            Button(action: onReorder) {
-	                Image(systemName: "line.3.horizontal")
-	                    .font(.system(size: 16, weight: .semibold))
-	                    .foregroundStyle(theme.textTertiary)
-	                    .frame(width: 34, height: 34)
-	            }
-	            .buttonStyle(.plain)
-	            .accessibilityLabel("Reorder exercises")
-	            Menu {
-                if let exercise {
-                    Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
+	            // Explicit gap (rather than relying on the outer HStack's
+	            // ambient spacing) so both controls can sit at the HIG's
+	            // 44x44 minimum without their hit areas overlapping.
+	            HStack(spacing: Space.sm) {
+	                Button(action: onReorder) {
+	                    Image(systemName: "line.3.horizontal")
+	                        .font(.bodyStrong)
+	                        .foregroundStyle(theme.textTertiary)
+	                        .frame(width: 44, height: 44)
+	                }
+	                .buttonStyle(.plain)
+	                .accessibilityLabel("Reorder exercises")
+	                Menu {
+                    if let exercise {
+                        Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
+                        Divider()
+                    }
+                    if workoutExercise.notes == nil {
+                        Button("Add Note", systemImage: "note.text") { workoutExercise.notes = ""; try? modelContext.save() }
+                    }
+                    Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
+                    SupersetMenuItems(
+                        currentGroup: workoutExercise.supersetGroup,
+                        availableGroups: availableSupersetGroups,
+                        onAssign: onAssignSuperset,
+                        onCreate: onCreateSuperset,
+                        onUngroup: onUngroupSuperset
+                    )
+                    Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
+                    Button("Reorder Exercises", systemImage: "arrow.up.arrow.down", action: onReorder)
                     Divider()
+                    Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 44, height: 44)
                 }
-                if workoutExercise.notes == nil {
-                    Button("Add Note", systemImage: "note.text") { workoutExercise.notes = ""; try? modelContext.save() }
-                }
-                Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
-                SupersetMenuItems(
-                    currentGroup: workoutExercise.supersetGroup,
-                    availableGroups: availableSupersetGroups,
-                    onAssign: onAssignSuperset,
-                    onCreate: onCreateSuperset,
-                    onUngroup: onUngroupSuperset
-                )
-                Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
-                Button("Reorder Exercises", systemImage: "arrow.up.arrow.down", action: onReorder)
-                Divider()
-                Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 34, height: 34)
             }
         }
     }
@@ -1383,7 +1475,7 @@ private struct ExerciseLogCard: View {
         // Rows carry 6pt horizontal padding (their done-state background);
         // mirror it here so every column lines up with its header.
         .padding(.horizontal, 6)
-        .font(.system(size: 12, weight: .semibold))
+        .font(.tag)
         .foregroundStyle(theme.textTertiary)
     }
 
@@ -1421,16 +1513,27 @@ private struct ExerciseLogCard: View {
         previousSet(index: index)?.durationSeconds ?? set.durationSeconds
     }
 
+    private func suggestedRPE(for set: SetModel, index: Int) -> Double? {
+        previousSet(index: index)?.rpe ?? set.rpe
+    }
+
+    /// Runs at completion: commits exactly what the row's placeholders were
+    /// displaying (typed fields win; untouched fields take the suggestion —
+    /// see SetSuggestionPolicy). Marking the set edited afterwards is what
+    /// makes uncompleting preserve the committed values as real entries
+    /// instead of reverting them to placeholders.
     private func materializeSuggestion(for set: SetModel, index: Int) {
-        guard usesSuggestedValues(for: set) else { return }
+        let edited = editedSuggestionFields[set.id] ?? []
+        var policyFields = Set<SetSuggestionPolicy.Field>()
+        if edited.contains(.weight) { policyFields.insert(.weight) }
+        if edited.contains(.primary) { policyFields.insert(.primary) }
+        SetSuggestionPolicy.materialize(
+            set: set,
+            previous: previousSet(index: index),
+            suggestionBacked: usesSuggestedValues(for: set),
+            editedFields: policyFields
+        )
         editedSuggestionSetIDs.insert(set.id)
-        if let previous = previousSet(index: index) {
-            set.weight = previous.weight ?? set.weight
-            set.reps = previous.reps ?? set.reps
-            set.durationSeconds = previous.durationSeconds ?? set.durationSeconds
-            set.rpe = previous.rpe ?? set.rpe
-            set.rir = previous.rir ?? set.rir
-        }
     }
 
 	    private func previousText(index: Int) -> String {
@@ -1457,6 +1560,9 @@ private struct ExerciseLogCard: View {
         set.rpe = previous.rpe
         set.rir = previous.rir
         set.recomputeDerivedMetrics()
+        // An explicit "copy my previous set" is a manual materialization —
+        // the values are real entries now, not placeholder suggestions.
+        editedSuggestionSetIDs.insert(set.id)
         recompute()
     }
 
@@ -1648,7 +1754,13 @@ private struct SwipeToDeleteRow<Content: View>: View {
             content
                 .background(widthReader)
                 .offset(x: offset)
-                .gesture(swipe)
+                // Simultaneous, not exclusive: an exclusive DragGesture claims
+                // the touch stream even for the vertical drags its onChanged
+                // ignores, which starved ScrollView's pan whenever a scroll
+                // began on a set row or one of its text fields. The
+                // horizontal-dominant guard below still keeps casual scrolls
+                // from opening the tray.
+                .simultaneousGesture(swipe)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onChange(of: isOpen) { _, open in
@@ -1728,6 +1840,7 @@ extension SetModel {
 
 private struct SetRow: View {
     @Environment(\.theme) private var theme
+    @Environment(SetInputRouter.self) private var inputRouter: SetInputRouter?
     @Bindable var set: SetModel
     @State private var weightDraft = ""
     @State private var primaryDraft = ""
@@ -1753,7 +1866,12 @@ private struct SetRow: View {
     var suggestedWeight: Double?
     var suggestedReps: Int?
     var suggestedDurationSeconds: Int?
-    var onSuggestionEdited: () -> Void = {}
+    var suggestedRPE: Double?
+    /// Fields the user explicitly typed into (suggestion-backed rows only) —
+    /// those display their real stored values; untouched fields stay empty so
+    /// the grayed placeholder suggestion shows through.
+    var editedFields: Set<SetInputField> = []
+    var onSuggestionFieldEdited: (SetInputField, Bool) -> Void = { _, _ in }
     var onMaterializeSuggestion: () -> Void = {}
     var onCompleted: () -> Void = {}
     var onMatchPrevious: () -> Void = {}
@@ -1782,7 +1900,9 @@ private struct SetRow: View {
         suggestedWeight: Double? = nil,
         suggestedReps: Int? = nil,
         suggestedDurationSeconds: Int? = nil,
-        onSuggestionEdited: @escaping () -> Void = {},
+        suggestedRPE: Double? = nil,
+        editedFields: Set<SetInputField> = [],
+        onSuggestionFieldEdited: @escaping (SetInputField, Bool) -> Void = { _, _ in },
         onMaterializeSuggestion: @escaping () -> Void = {},
         onCompleted: @escaping () -> Void = {},
         onMatchPrevious: @escaping () -> Void = {},
@@ -1809,7 +1929,9 @@ private struct SetRow: View {
         self.suggestedWeight = suggestedWeight
         self.suggestedReps = suggestedReps
         self.suggestedDurationSeconds = suggestedDurationSeconds
-        self.onSuggestionEdited = onSuggestionEdited
+        self.suggestedRPE = suggestedRPE
+        self.editedFields = editedFields
+        self.onSuggestionFieldEdited = onSuggestionFieldEdited
         self.onMaterializeSuggestion = onMaterializeSuggestion
         self.onCompleted = onCompleted
         self.onMatchPrevious = onMatchPrevious
@@ -1862,9 +1984,11 @@ private struct SetRow: View {
         .onChange(of: currentField) { oldField, newField in
             if let oldField {
                 commitDraft(for: oldField)
+                inputRouter?.unregister(token: accessoryToken(for: oldField))
             }
             if let newField {
                 seedDraft(for: newField)
+                registerAccessory(for: newField)
             }
         }
         .onChange(of: weightText) { _, _ in
@@ -1878,7 +2002,25 @@ private struct SetRow: View {
         }
         .onDisappear {
             commitFocusedDraft()
+            if let currentField {
+                inputRouter?.unregister(token: accessoryToken(for: currentField))
+            }
         }
+    }
+
+    private func accessoryToken(for field: SetInputField) -> String {
+        "\(set.id.uuidString)-\(field)"
+    }
+
+    /// Hand this field's actions to the logger's shared keyboard toolbar.
+    private func registerAccessory(for field: SetInputField) {
+        let nextAction: (() -> Void)? = nextInputField(after: field).map { next in { focus(next) } }
+        inputRouter?.register(
+            token: accessoryToken(for: field),
+            onNext: nextAction,
+            onComplete: completeFromKeyboard,
+            onDismiss: clearFocus
+        )
     }
 
     /// A quiet one-line record callout under the set — gold, no popup.
@@ -1901,7 +2043,7 @@ private struct SetRow: View {
     }
 
     private func rpeOptionIsSelected(_ option: RPEQuickPick) -> Bool {
-        guard let rpe = set.rpe else { return false }
+        guard let rpe = effectiveRPE else { return false }
         return option == .warmup ? rpe < 6 : abs(rpe - option.rpeValue) < 0.0001
     }
 
@@ -1911,7 +2053,7 @@ private struct SetRow: View {
                 toggleCompletion()
             } label: {
                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.sectionTitle)
                     .foregroundStyle(isDone ? theme.success : theme.textTertiary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -2004,22 +2146,19 @@ private struct SetRow: View {
         showWeight ? .weight : .primary
     }
 
+    /// On suggestion-backed rows, an untouched field renders EMPTY: the
+    /// suggested previous value shows through as the grayed placeholder
+    /// instead of masquerading as an entered value. The moment the user
+    /// commits a value into a field, that field renders its real text.
     private var weightText: String {
-        if usesSuggestedValues, let suggestedWeight {
-            return Fmt.load(suggestedWeight, unit: displayUnit)
-        }
+        if usesSuggestedValues && !editedFields.contains(.weight) { return "" }
         return set.modeWeight.map { Fmt.load($0, unit: displayUnit) } ?? ""
     }
 
     private var primaryText: String {
+        if usesSuggestedValues && !editedFields.contains(.primary) { return "" }
         if isCardio {
-            if usesSuggestedValues, let suggestedDurationSeconds {
-                return String(suggestedDurationSeconds / 60)
-            }
             return set.durationSeconds.map { String($0 / 60) } ?? ""
-        }
-        if usesSuggestedValues, let suggestedReps {
-            return String(suggestedReps)
         }
         return set.reps.map(String.init) ?? ""
     }
@@ -2087,6 +2226,9 @@ private struct SetRow: View {
     }
 
     private func setRPE(_ value: Double) {
+        // Writes only the RPE — the completion-time policy's
+        // `set.rpe ?? previous.rpe` precedence means a pick is never
+        // overwritten, and the other fields stay in placeholder state.
         set.rpe = value
         rpeDraft = formattedRPE(value)
         onChange()
@@ -2106,9 +2248,8 @@ private struct SetRow: View {
     }
 
     private func seedDraft(for field: SetInputField) {
-        if usesSuggestedValues {
-            onMaterializeSuggestion()
-        }
+        // Suggestion-backed fields stay logically empty on focus — the user
+        // types straight over the placeholder, no erasing.
         syncDraft(field, force: true)
         editedDraftFields.remove(field)
     }
@@ -2132,9 +2273,6 @@ private struct SetRow: View {
     }
 
     private func editDraft(_ field: SetInputField, value: String) {
-        if usesSuggestedValues {
-            onMaterializeSuggestion()
-        }
         switch field {
         case .weight:
             weightDraft = value
@@ -2167,11 +2305,10 @@ private struct SetRow: View {
 
     private func commitWeightDraft() {
         let next = Fmt.loadKilograms(from: weightDraft, unit: displayUnit)
-        if usesSuggestedValues {
-            onSuggestionEdited()
-        }
+        // Clearing a field back to empty returns it to suggestion state —
+        // display and commit-on-complete stay consistent either way.
+        if usesSuggestedValues { onSuggestionFieldEdited(.weight, next != nil) }
         guard !sameLoad(set.modeWeight, next) else { return }
-        onSuggestionEdited()
         set.setModeWeight(next)
         onChange()
     }
@@ -2179,19 +2316,13 @@ private struct SetRow: View {
     private func commitPrimaryDraft() {
         if isCardio {
             let next = parsedInt(primaryDraft).map { $0 * 60 }
-            if usesSuggestedValues {
-                onSuggestionEdited()
-            }
+            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
             guard set.durationSeconds != next else { return }
-            onSuggestionEdited()
             set.durationSeconds = next
         } else {
             let next = parsedInt(primaryDraft)
-            if usesSuggestedValues {
-                onSuggestionEdited()
-            }
+            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
             guard set.reps != next else { return }
-            onSuggestionEdited()
             set.reps = next
         }
         onChange()
@@ -2233,8 +2364,17 @@ private struct SetRow: View {
         nextInputField(after: field) == nil ? .done : .next
     }
 
+    /// What the RPE chip reflects: the logged value, else the previous
+    /// session's suggestion — the same rule the weight/reps fields already
+    /// follow, so a suggested row reads fully prefilled instead of showing
+    /// "—" until a tap materializes it.
+    private var effectiveRPE: Double? {
+        if let rpe = set.rpe { return rpe }
+        return usesSuggestedValues ? suggestedRPE : nil
+    }
+
     private var rpeDisplay: String {
-        guard let rpe = set.rpe else { return "—" }
+        guard let rpe = effectiveRPE else { return "—" }
         if rpe < 6 { return "W" }
         return formattedRPE(rpe)
     }
@@ -2265,12 +2405,11 @@ private struct SetRow: View {
         keyboardType: UIKeyboardType = .decimalPad
     ) -> some View {
         let label = accessibilityLabel(for: field)
-        let nextAction: (() -> Void)? = nextInputField(after: field).map { next in { focus(next) } }
 
         return ZStack {
             if text.wrappedValue.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.bodyStrong)
                     .foregroundStyle(theme.textTertiary)
                     .allowsHitTesting(false)
             }
@@ -2280,7 +2419,7 @@ private struct SetRow: View {
                 .submitLabel(submitLabel(for: field))
                 .focused(focusedInput, equals: SetInputFocus(setID: set.id, field: field))
                 .multilineTextAlignment(.center)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.bodyStrong)
                 .foregroundStyle(theme.textPrimary)
                 .textFieldStyle(.plain)
                 .accessibilityLabel(label)
@@ -2291,17 +2430,6 @@ private struct SetRow: View {
                         completeFromKeyboard()
                     }
                 }
-#if canImport(UIKit)
-                .background {
-                    KeyboardAccessoryInstaller(
-                        isActive: currentField == field,
-                        onNext: nextAction,
-                        onComplete: completeFromKeyboard,
-                        onDismiss: clearFocus
-                    )
-                    .frame(width: 0, height: 0)
-                }
-#endif
         }
         .frame(width: width, height: 44)
         .background(theme.surfaceElevated)
@@ -2318,14 +2446,14 @@ private struct SetRow: View {
                     Label(rpeOptionLabel(option), systemImage: rpeOptionIsSelected(option) ? "checkmark" : "")
                 }
             }
-            if set.rpe != nil {
+            if effectiveRPE != nil {
                 Divider()
                 Button("Clear RPE", role: .destructive, action: clearRPE)
             }
         } label: {
             Text(rpeDisplay)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(set.rpe == nil ? theme.textTertiary : theme.textPrimary)
+                .font(.bodyStrong)
+                .foregroundStyle(effectiveRPE == nil ? theme.textTertiary : theme.textPrimary)
                 .frame(width: width, height: 44)
                 .background(theme.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2357,115 +2485,3 @@ private struct SetRow: View {
 
 }
 
-#if canImport(UIKit)
-private struct KeyboardAccessoryInstaller: UIViewRepresentable {
-    let isActive: Bool
-    let onNext: (() -> Void)?
-    let onComplete: () -> Void
-    let onDismiss: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeUIView(context: Context) -> InstallerView {
-        let view = InstallerView()
-        view.coordinator = context.coordinator
-        return view
-    }
-
-    func updateUIView(_ view: InstallerView, context: Context) {
-        context.coordinator.parent = self
-        view.installAccessoryIfNeeded()
-    }
-
-    final class InstallerView: UIView {
-        weak var coordinator: Coordinator?
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            installAccessoryIfNeeded()
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            installAccessoryIfNeeded()
-        }
-
-        func installAccessoryIfNeeded() {
-            coordinator?.install(from: self)
-        }
-    }
-
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        var parent: KeyboardAccessoryInstaller
-        private weak var attachedField: UITextField?
-
-        init(_ parent: KeyboardAccessoryInstaller) {
-            self.parent = parent
-        }
-
-        func install(from host: UIView) {
-            guard parent.isActive, let textField = host.window?.firstResponderTextField else { return }
-            if attachedField !== textField || textField.inputAccessoryView == nil {
-                textField.inputAccessoryView = makeToolbar()
-                textField.reloadInputViews()
-                attachedField = textField
-            }
-        }
-
-        private func makeToolbar() -> UIToolbar {
-            let toolbar = UIToolbar()
-            toolbar.sizeToFit()
-
-            let dismiss = UIBarButtonItem(
-                image: UIImage(systemName: "keyboard.chevron.compact.down"),
-                style: .plain,
-                target: self,
-                action: #selector(dismissKeyboard)
-            )
-            dismiss.accessibilityLabel = "Dismiss keyboard"
-
-            var items = [dismiss]
-            items.append(UIBarButtonItem(systemItem: .flexibleSpace))
-            let sage = UIColor(red: 85 / 255, green: 179 / 255, blue: 116 / 255, alpha: 1) // 0x55B374 Active Sage
-            if parent.onNext != nil {
-                let next = UIBarButtonItem(title: "Next", style: .prominent, target: self, action: #selector(next))
-                next.tintColor = sage
-                items.append(next)
-            }
-            let complete = UIBarButtonItem(title: "Complete", style: .prominent, target: self, action: #selector(complete))
-            complete.tintColor = sage
-            items.append(complete)
-            toolbar.items = items
-            return toolbar
-        }
-
-        @objc private func dismissKeyboard() {
-            parent.onDismiss()
-        }
-
-        @objc private func next() {
-            parent.onNext?()
-        }
-
-        @objc private func complete() {
-            parent.onComplete()
-        }
-    }
-}
-
-private extension UIView {
-    var firstResponderTextField: UITextField? {
-        if let textField = self as? UITextField, textField.isFirstResponder {
-            return textField
-        }
-        for subview in subviews {
-            if let textField = subview.firstResponderTextField {
-                return textField
-            }
-        }
-        return nil
-    }
-}
-#endif

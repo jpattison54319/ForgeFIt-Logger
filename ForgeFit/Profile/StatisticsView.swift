@@ -71,6 +71,7 @@ struct StatisticsView: View {
     private enum StatsTab: String, CaseIterable {
         case strength = "Strength"
         case cardio = "Cardio"
+        case yoga = "Yoga"
         case monthly = "Monthly"
     }
 
@@ -95,6 +96,7 @@ struct StatisticsView: View {
             switch tab {
             case .strength: strengthSections
             case .cardio: cardioSections
+            case .yoga: yogaSections
             case .monthly: monthlySections
             }
         }
@@ -110,7 +112,7 @@ struct StatisticsView: View {
         let summaries = completed.map(analytics.summary(for:))
         let totalSeconds = summaries.reduce(0) { $0 + $1.durationSeconds }
         let totalVolume = summaries.reduce(0.0) { $0 + $1.volume }
-        let totalSets = summaries.reduce(0) { $0 + $1.sets }
+        let totalSets = summaries.reduce(0.0) { $0 + $1.sets }
         return Card {
             VStack(spacing: Space.lg) {
                 HStack {
@@ -119,7 +121,7 @@ struct StatisticsView: View {
                 }
                 HStack {
                     StatColumn(label: "Total volume", value: Fmt.volume(totalVolume))
-                    StatColumn(label: "Total sets", value: "\(totalSets)")
+                    StatColumn(label: "Total sets", value: Fmt.sets(totalSets))
                 }
             }
         }
@@ -207,7 +209,7 @@ struct StatisticsView: View {
                     .chartBackground { _ in
                         VStack(spacing: 0) {
                             Text("\(Int(totalSets.rounded()))")
-                                .font(.system(size: 22, weight: .bold))
+                                .font(.sectionTitle)
                                 .foregroundStyle(theme.textPrimary)
                             Text("sets")
                                 .font(.system(size: 11, weight: .medium))
@@ -220,7 +222,7 @@ struct StatisticsView: View {
                             HStack(spacing: 7) {
                                 Circle().fill(slice.color).frame(width: 8, height: 8)
                                 Text(slice.label)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.tag)
                                     .foregroundStyle(theme.textPrimary)
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
@@ -260,7 +262,7 @@ struct StatisticsView: View {
                         HStack(spacing: 5) {
                             Circle().fill(splitColor(share.name)).frame(width: 8, height: 8)
                             Text("\(share.name) \(Int((share.fraction * 100).rounded()))%")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textSecondary)
                         }
                     }
@@ -301,7 +303,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(theme.textTertiary)
                                 Spacer()
-                                Text("\(usage.workingSets) sets · \(Fmt.volume(usage.volume))")
+                                Text("\(Fmt.sets(usage.workingSets)) sets · \(Fmt.volume(usage.volume))")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(theme.textSecondary)
                             }
@@ -337,7 +339,7 @@ struct StatisticsView: View {
                                 .foregroundStyle(theme.textTertiary)
                             Spacer()
                             Text("\(bucket.sets) sets · \(Int((bucket.fraction * 100).rounded()))%")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.tag)
                                 .foregroundStyle(theme.textSecondary)
                         }
                         GeometryReader { geo in
@@ -459,6 +461,88 @@ struct StatisticsView: View {
             criticalPaceCard
             paceCard
             cardioBestsCard
+        }
+    }
+
+    // MARK: - Yoga tab
+
+    @ViewBuilder
+    private var yogaSections: some View {
+        let overview = analytics.yogaOverview(in: range)
+        let styles = analytics.yogaStyleBreakdown(in: range)
+
+        HStack {
+            SectionHeader("Yoga")
+            Spacer()
+            TimeChartRangePicker(selection: $range)
+        }
+
+        if overview.sessions == 0 && overview.topRegions.isEmpty {
+            EmptyStateCard(
+                title: "No yoga in range",
+                message: "Start a guided class from Home or add poses to a routine — your practice stats will appear here.",
+                systemImage: "figure.yoga"
+            )
+        } else {
+            yogaTotalsCard(overview)
+            if !styles.isEmpty { yogaStylesCard(styles) }
+            if !overview.topRegions.isEmpty { yogaRegionsCard(overview.topRegions) }
+        }
+    }
+
+    private func yogaTotalsCard(_ overview: TrainingAnalytics.YogaOverview) -> some View {
+        Card {
+            HStack {
+                StatColumn(label: "Sessions", value: "\(overview.sessions)")
+                StatColumn(label: "Minutes", value: "\(overview.minutes)")
+                StatColumn(label: "Poses", value: overview.poses > 0 ? "\(overview.poses)" : "—")
+            }
+        }
+    }
+
+    private func yogaStylesCard(_ styles: [TrainingAnalytics.YogaStyleShare]) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("By style").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                ForEach(styles) { share in
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: share.style.systemImage)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(share.style.isRestorative ? theme.warmup : theme.accent)
+                            .frame(width: 22)
+                        Text(share.style.title)
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        if share.style.isRestorative {
+                            Tag(text: "Recovery", color: theme.warmup, background: theme.warmup.opacity(0.14))
+                        }
+                        Spacer()
+                        Text("\(share.sessions)× · \(Int(share.minutes))min")
+                            .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func yogaRegionsCard(_ regions: [FlexibilityAnalytics.RegionWeek]) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("Stretch time by region").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                ForEach(regions) { region in
+                    HStack {
+                        Text(MuscleTaxonomy.displayName(region.region))
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        Text(Fmt.durationShort(region.seconds))
+                            .font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(theme.accent)
+                    }
+                }
+                Text("Primary regions count in full, secondary at half — the same convention as muscle volume.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -716,7 +800,7 @@ struct StatisticsView: View {
                     monthStat("Volume", Fmt.volume(report.volume), delta: report.volumeDelta, formatter: { Fmt.volume(abs($0)) })
                 }
                 HStack {
-                    StatColumn(label: "Sets", value: "\(report.workingSets)")
+                    StatColumn(label: "Sets", value: Fmt.sets(report.workingSets))
                     StatColumn(label: "Reps", value: "\(report.reps)")
                     StatColumn(label: "Cardio", value: report.cardioMinutes > 0 ? Fmt.durationShort(Int(report.cardioMinutes * 60)) : "—")
                 }
@@ -777,7 +861,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(theme.textTertiary)
                                 Spacer()
-                                Text("\(usage.workingSets) sets · \(usage.sessions) session\(usage.sessions == 1 ? "" : "s")")
+                                Text("\(Fmt.sets(usage.workingSets)) sets · \(usage.sessions) session\(usage.sessions == 1 ? "" : "s")")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(theme.textSecondary)
                             }

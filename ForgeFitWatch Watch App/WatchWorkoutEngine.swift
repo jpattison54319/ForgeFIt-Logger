@@ -74,15 +74,27 @@ final class WatchWorkoutEngine: NSObject {
 
     // MARK: - Session lifecycle
 
-    func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date()) {
+    func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date(), isYoga: Bool = false) {
         guard !isRunning, !isStarting, HKHealthStore.isHealthDataAvailable() else { return }
         isStarting = true
+        didAttemptFailureRestart = false
         // Authorization is requested lazily, right when the first session
         // starts — the prompt appears in context instead of at app launch.
         Task {
             let authorized = await requestAuthorization()
             if authorized {
-                beginSession(configuration: configuration, startDate: startDate)
+                // Yoga sessions record as .yoga so the Fitness app shows the
+                // right rings and title (unless the phone handed a config).
+                let resolved: HKWorkoutConfiguration?
+                if configuration == nil, isYoga {
+                    let c = HKWorkoutConfiguration()
+                    c.activityType = .yoga
+                    c.locationType = .indoor
+                    resolved = c
+                } else {
+                    resolved = configuration
+                }
+                beginSession(configuration: resolved, startDate: startDate)
             }
             isStarting = false
         }
@@ -100,18 +112,53 @@ final class WatchWorkoutEngine: NSObject {
         }()
         do {
             let session = try HKWorkoutSession(healthStore: healthStore, configuration: config)
-            let builder = session.associatedWorkoutBuilder()
-            builder.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore, workoutConfiguration: config)
-            builder.delegate = self
-            self.session = session
-            self.builder = builder
+            attach(session: session, builder: session.associatedWorkoutBuilder(), configuration: config, startDate: startDate)
             resetMetrics()
             session.startActivity(with: startDate)
-            builder.beginCollection(withStart: startDate) { _, _ in }
+            builder?.beginCollection(withStart: startDate) { _, _ in }
             isRunning = true
         } catch {
             // No session (e.g. permissions declined) — the workout still logs
             // normally, just without live metrics.
+        }
+    }
+
+    /// Shared wiring for both fresh sessions and recovered ones: delegates on
+    /// both objects, data source, and the config kept for a restart after a
+    /// mid-workout failure.
+    private func attach(session: HKWorkoutSession, builder: HKLiveWorkoutBuilder, configuration: HKWorkoutConfiguration, startDate: Date) {
+        session.delegate = self
+        builder.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore, workoutConfiguration: configuration)
+        builder.delegate = self
+        self.session = session
+        self.builder = builder
+        activeConfiguration = configuration
+        sessionStartDate = startDate
+    }
+
+    @ObservationIgnored private var activeConfiguration: HKWorkoutConfiguration?
+    @ObservationIgnored private var sessionStartDate: Date?
+    @ObservationIgnored private var didAttemptFailureRestart = false
+
+    /// Reattach to a workout session that outlived the app process — watchOS
+    /// relaunches us (workout-processing background mode) after a crash or
+    /// jetsam, and without this the session would keep running headless with
+    /// no metrics reaching the UI or the phone.
+    func recoverSessionIfNeeded() {
+        guard !isRunning, !isStarting, HKHealthStore.isHealthDataAvailable() else { return }
+        healthStore.recoverActiveWorkoutSession { [weak self] session, _ in
+            guard let session else { return }
+            Task { @MainActor [weak self] in
+                guard let self, !self.isRunning else { return }
+                self.attach(
+                    session: session,
+                    builder: session.associatedWorkoutBuilder(),
+                    configuration: session.workoutConfiguration,
+                    startDate: session.startDate ?? Date()
+                )
+                self.builder?.beginCollection(withStart: session.startDate ?? Date()) { _, _ in }
+                self.isRunning = true
+            }
         }
     }
 
@@ -129,8 +176,7 @@ final class WatchWorkoutEngine: NSObject {
         } catch {
             saved = false
         }
-        self.session = nil
-        self.builder = nil
+        clearSession()
         return (metrics, saved)
     }
 
@@ -143,8 +189,15 @@ final class WatchWorkoutEngine: NSObject {
         builder.endCollection(withEnd: Date()) { _, _ in
             builder.discardWorkout()
         }
-        self.session = nil
-        self.builder = nil
+        clearSession()
+    }
+
+    private func clearSession() {
+        session = nil
+        builder = nil
+        activeConfiguration = nil
+        sessionStartDate = nil
+        didAttemptFailureRestart = false
     }
 
     func currentMetrics() -> WatchLiveMetrics {
@@ -261,4 +314,68 @@ extension WatchWorkoutEngine: HKLiveWorkoutBuilderDelegate {
     }
 
     nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
+}
+
+// MARK: - Session state (keep-alive & recovery)
+
+/// Metric collection lives or dies with the HKWorkoutSession, so state changes
+/// the system makes on its own (pausing, stopping, failing) must be observed
+/// and undone — otherwise heart rate silently stops streaming while the UI
+/// still says the workout is live.
+extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
+    nonisolated func workoutSession(
+        _ workoutSession: HKWorkoutSession,
+        didChangeTo toState: HKWorkoutSessionState,
+        from fromState: HKWorkoutSessionState,
+        date: Date
+    ) {
+        Task { @MainActor in
+            self.handleSessionState(toState)
+        }
+    }
+
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
+        Task { @MainActor in
+            self.handleSessionFailure()
+        }
+    }
+
+    private func handleSessionState(_ state: HKWorkoutSessionState) {
+        switch state {
+        case .paused:
+            // ForgeFit has no user-facing pause — a pause here came from the
+            // system (or water lock), and leaving it paused means no metrics.
+            if isRunning { session?.resume() }
+        case .ended, .stopped:
+            // The session ended out from under us (not via finish/cancel,
+            // which flip isRunning first). Reflect reality so the next
+            // snapshot from the phone can restart collection.
+            if isRunning {
+                isRunning = false
+                clearSession()
+            }
+        default:
+            break
+        }
+    }
+
+    private func handleSessionFailure() {
+        guard isRunning else { return }
+        isRunning = false
+        let config = activeConfiguration
+        let startDate = sessionStartDate
+        let shouldRestart = !didAttemptFailureRestart
+        didAttemptFailureRestart = true
+        builder?.endCollection(withEnd: Date()) { [builder] _, _ in
+            builder?.discardWorkout()
+        }
+        session = nil
+        builder = nil
+        // One restart attempt with the original configuration and start date,
+        // so a transient sensor/session failure doesn't cost the rest of the
+        // workout's metrics. A second failure stays down (avoids a crash loop).
+        if shouldRestart, let config {
+            beginSession(configuration: config, startDate: startDate ?? Date())
+        }
+    }
 }

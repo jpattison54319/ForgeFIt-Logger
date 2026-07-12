@@ -3,11 +3,35 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
+extension ExerciseLibraryModel {
+    /// Every exercise added by a workout-history import that the user hasn't yet
+    /// confirmed or edited — plus any legacy low-confidence guess. Confirming or
+    /// editing an exercise sets `userModified`, which drops it from this set.
+    /// Callers still filter out non-owned / soft-deleted rows.
+    static var pendingImportReviewPredicate: Predicate<ExerciseLibraryModel> {
+        #Predicate<ExerciseLibraryModel> { exercise in
+            exercise.needsReview == true
+                || (exercise.importBatchID != nil && exercise.userModified == false)
+        }
+    }
+
+    /// Least-confident guesses first, then name. `needsReview` is flagged exactly
+    /// when confidence fell below the review threshold, so ascending confidence
+    /// naturally floats the items most in need of attention to the top. (Bool
+    /// keypaths aren't `Comparable`, so we can't sort on `needsReview` directly.)
+    static var pendingImportReviewSort: [SortDescriptor<ExerciseLibraryModel>] {
+        [
+            SortDescriptor(\.classificationConfidence),
+            SortDescriptor(\.name),
+        ]
+    }
+}
+
 struct ReviewImportedExercisesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
-    @Query(filter: #Predicate<ExerciseLibraryModel> { $0.needsReview == true }, sort: \ExerciseLibraryModel.name)
+    @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var queriedReviewItems: [ExerciseLibraryModel]
 
     let workouts: [WorkoutModel]
@@ -71,11 +95,11 @@ struct ReviewImportedExercisesView: View {
             Spacer()
             VStack(spacing: 1) {
                 Text("Imported Exercises")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.rowValue)
                     .foregroundStyle(theme.textPrimary)
                 if !reviewItems.isEmpty {
                     Text("\(reviewItems.count) to review")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.tag)
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -91,7 +115,7 @@ struct ReviewImportedExercisesView: View {
             Spacer()
             EmptyStateCard(
                 title: "All imported exercises reviewed",
-                message: "New low-confidence imports will appear here.",
+                message: "Exercises added from a workout-history import show up here to confirm or edit.",
                 systemImage: "checkmark.seal"
             )
             .padding(.horizontal, Space.lg)
@@ -188,7 +212,7 @@ private struct ReviewImportedExerciseRow: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .top, spacing: Space.md) {
                     Image(systemName: exercise.isCardio ? "heart.fill" : "dumbbell.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.rowValue)
                         .foregroundStyle(exercise.isCardio ? theme.danger : theme.accent)
                         .frame(width: 40, height: 40)
                         .background((exercise.isCardio ? theme.danger : theme.accent).opacity(0.14))
@@ -258,7 +282,7 @@ private struct ReviewImportedExerciseRow: View {
     private func muscleSection(_ title: String, muscles: [String]) -> some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.tag)
                 .foregroundStyle(theme.textTertiary)
             if muscles.isEmpty {
                 Tag(text: "No guess", color: theme.danger, background: theme.danger.opacity(0.14))

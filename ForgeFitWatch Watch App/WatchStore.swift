@@ -25,6 +25,8 @@ final class WatchStore: NSObject {
 
     private let engine = WatchWorkoutEngine.shared
     @ObservationIgnored private var restHapticTask: Task<Void, Never>?
+    @ObservationIgnored private var intervalHapticTask: Task<Void, Never>?
+    @ObservationIgnored private var lastIntervalStepEndsAt: Date?
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -34,13 +36,17 @@ final class WatchStore: NSObject {
         engine.onMetrics = { [weak self] metrics in
             self?.send(.liveMetrics(metrics))
         }
+        // If watchOS relaunched us mid-workout (crash/jetsam), the workout
+        // session may still be running headless — reattach before the phone's
+        // next snapshot arrives so metric collection resumes immediately.
+        engine.recoverSessionIfNeeded()
     }
 
     var activeWorkout: WatchWorkoutSnapshot? { context?.workout }
 
     func ensureWorkoutSessionRunning() {
         guard let workout = activeWorkout, !engine.isRunning else { return }
-        engine.start(startDate: workout.startedAt)
+        engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
     }
 
     // MARK: - Commands (watch → phone)
@@ -49,6 +55,15 @@ final class WatchStore: NSObject {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               let data = WatchWire.encode(command) else { return }
         let payload = [WatchWire.commandKey: data]
+        // Live metrics are ephemeral — a heart-rate reading queued while the
+        // phone is unreachable arrives minutes stale and shows up as a bogus
+        // "current" HR, masking the actual gap. Drop those; everything else
+        // (set toggles, finish, etc.) gets guaranteed delivery via the queue.
+        if case .liveMetrics = command {
+            guard WCSession.default.isReachable else { return }
+            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            return
+        }
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: { _ in
                 WCSession.default.transferUserInfo(payload)
@@ -201,7 +216,7 @@ final class WatchStore: NSObject {
         // phone) ends it.
         if let workout = newContext.workout {
             if !engine.isRunning {
-                engine.start(startDate: workout.startedAt)
+                engine.start(startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
             }
         } else if engine.isRunning {
             if let old = previous?.workout {
@@ -211,6 +226,7 @@ final class WatchStore: NSObject {
         }
 
         scheduleRestHaptic(endsAt: newContext.workout?.restEndsAt)
+        scheduleIntervalHaptic(endsAt: newContext.workout?.intervalStepEndsAt)
     }
 
     /// Buzz the wrist when the phone's rest timer hits zero.
@@ -221,6 +237,22 @@ final class WatchStore: NSObject {
             try? await Task.sleep(for: .seconds(endsAt.timeIntervalSinceNow))
             guard !Task.isCancelled else { return }
             WKInterfaceDevice.current().play(.notification)
+        }
+    }
+
+    /// Buzz the wrist at each interval-step transition. The phone drives the
+    /// steps and pushes a fresh snapshot per transition; scheduling against
+    /// the step's own end time means the haptic still lands on time even if
+    /// that push lags a pocketed phone.
+    private func scheduleIntervalHaptic(endsAt: Date?) {
+        guard endsAt != lastIntervalStepEndsAt else { return }
+        lastIntervalStepEndsAt = endsAt
+        intervalHapticTask?.cancel()
+        guard let endsAt, endsAt > Date() else { return }
+        intervalHapticTask = Task {
+            try? await Task.sleep(for: .seconds(endsAt.timeIntervalSinceNow))
+            guard !Task.isCancelled else { return }
+            WKInterfaceDevice.current().play(.retry)
         }
     }
 
@@ -260,7 +292,13 @@ extension WatchStore: WCSessionDelegate {
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        Task { @MainActor in self.isReachable = session.isReachable }
+        Task { @MainActor in
+            self.isReachable = session.isReachable
+            // Any reconnection is a chance to notice "phone says a workout is
+            // live but our engine is idle" (e.g. the engine died while we
+            // were unreachable) and restart collection.
+            if session.isReachable { self.ensureWorkoutSessionRunning() }
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

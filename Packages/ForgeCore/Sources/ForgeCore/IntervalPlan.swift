@@ -18,12 +18,17 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
         public var seconds: Int
         /// Display label, e.g. "Work 3/6"; derived at expansion time.
         public var label: String
+        /// Optional per-step HR target zone (1...5): the zone guard follows
+        /// step transitions (work in Z4, recover in Z2). Optional so plans
+        /// encoded before this existed still decode.
+        public var hrZone: Int?
 
-        public init(id: UUID = UUID(), kind: Kind, seconds: Int, label: String) {
+        public init(id: UUID = UUID(), kind: Kind, seconds: Int, label: String, hrZone: Int? = nil) {
             self.id = id
             self.kind = kind
             self.seconds = seconds
             self.label = label
+            self.hrZone = hrZone
         }
     }
 
@@ -56,7 +61,9 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
         workSeconds: Int,
         recoverSeconds: Int,
         cooldownSeconds: Int,
-        hrZoneTarget: Int? = nil
+        hrZoneTarget: Int? = nil,
+        workZone: Int? = nil,
+        recoverZone: Int? = nil
     ) -> IntervalPlan {
         var steps: [Step] = []
         if warmupSeconds > 0 {
@@ -64,10 +71,10 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
         }
         if repeats > 0, workSeconds > 0 {
             for round in 1...repeats {
-                steps.append(Step(kind: .work, seconds: workSeconds, label: "Work \(round)/\(repeats)"))
+                steps.append(Step(kind: .work, seconds: workSeconds, label: "Work \(round)/\(repeats)", hrZone: workZone))
                 // No trailing recover after the last work rep — cooldown covers it.
                 if recoverSeconds > 0, round < repeats {
-                    steps.append(Step(kind: .recover, seconds: recoverSeconds, label: "Recover \(round)/\(repeats - 1)"))
+                    steps.append(Step(kind: .recover, seconds: recoverSeconds, label: "Recover \(round)/\(repeats - 1)", hrZone: recoverZone))
                 }
             }
         }
@@ -75,6 +82,38 @@ public struct IntervalPlan: Codable, Equatable, Sendable {
             steps.append(Step(kind: .cooldown, seconds: cooldownSeconds, label: "Cool-down"))
         }
         return IntervalPlan(steps: steps, hrZoneTarget: hrZoneTarget)
+    }
+
+    /// "6 × 1min / 1min 30s · 32min" — the compact shape used on goal rows
+    /// and preset lists.
+    public var structureSummary: String {
+        let works = steps.filter { $0.kind == .work }
+        guard let work = works.first else {
+            if let zone = hrZoneTarget { return "Zone \(zone) lock" }
+            return "Open"
+        }
+        let recover = steps.first { $0.kind == .recover }
+        var text = "\(works.count) × \(Self.shortDuration(work.seconds))"
+        if let recover { text += " / \(Self.shortDuration(recover.seconds))" }
+        text += " · \(Self.shortDuration(totalSeconds)) total"
+        return text
+    }
+
+    /// The 1-based round of a step index among the plan's work blocks, e.g.
+    /// (round: 3, total: 6) while running "Work 3/6" or the recover after it.
+    public func roundInfo(at index: Int) -> (round: Int, total: Int)? {
+        let total = steps.filter { $0.kind == .work }.count
+        guard total > 0, index < steps.count else { return nil }
+        let round = steps.prefix(index + 1).filter { $0.kind == .work }.count
+        guard round > 0 else { return nil }
+        return (round, total)
+    }
+
+    private static func shortDuration(_ seconds: Int) -> String {
+        let m = seconds / 60, s = seconds % 60
+        if m > 0 && s > 0 { return "\(m)min \(s)s" }
+        if m > 0 { return "\(m)min" }
+        return "\(s)s"
     }
 
     // MARK: - JSON persistence

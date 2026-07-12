@@ -197,20 +197,19 @@ struct WorkoutHomeView: View {
                 Button("Cancel", role: .cancel) { renamingFolder = nil }
             }
             .sheet(isPresented: $showExploreLibrary) {
+                let templates = RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
                 RoutineLibraryView(
-                    templates: RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises),
+                    programs: RoutineTemplateCatalog.validPrograms(
+                        from: RoutineTemplateCatalog.loadPrograms(),
+                        templates: templates,
+                        exercises: exercises
+                    ),
+                    templates: templates,
                     exercises: exercises,
-                    onImport: { template in
-                        // Only a mesocycle (leaf folder) can directly hold a
-                        // routine — a macrocycle-only active state has
-                        // nowhere concrete to import into, so it lands
-                        // ungrouped instead.
-                        _ = RoutineTemplateCatalog.importTemplate(
-                            template,
-                            folderID: UUID(uuidString: activeMesoFolderRaw),
-                            existingRoutines: activeRoutines,
-                            in: modelContext
-                        )
+                    onImport: { program in
+                        // A program is a whole mesocycle: it always lands as its
+                        // own new top-level folder with the day routines inside.
+                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
@@ -866,7 +865,6 @@ private struct RoutineOrderEditorView: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func row(icon: String, title: String) -> some View {

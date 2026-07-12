@@ -74,15 +74,21 @@ struct SetBlockView: View {
     let previous: SetModel?
     let showWeight: Bool
     let displayUnit: WeightUnit
+    /// Unilateral exercises run the whole block once per limb: the flow
+    /// renders twice ("Side 1" → "Side 2"), same weight and micro-rests,
+    /// and only the single complete checkbox finishes the set.
+    var isUnilateral: Bool = false
     let onChange: () -> Void
     let onSetType: (SetType) -> Void
     let onDelete: () -> Void
 
     @Environment(\.theme) private var theme
+    @Environment(SetInputRouter.self) private var inputRouter: SetInputRouter?
 
     /// Inline pill entry: `newEntryIndex` = typing a new mini-set, >= 0 =
-    /// retyping an existing one.
+    /// retyping an existing one. `editingSide` scopes it for per-side flows.
     @State private var editingIndex: Int?
+    @State private var editingSide = 1
     @State private var entryText = ""
     @FocusState private var entryFocused: Bool
 
@@ -102,16 +108,34 @@ struct SetBlockView: View {
         isCluster ? !set.miniReps.isEmpty : set.reps != nil
     }
 
+    /// Same gate for the second side of a unilateral block.
+    private var side2Started: Bool {
+        isCluster ? !set.side2MiniReps.isEmpty : set.side2Reps != nil
+    }
+
     private var totalReps: Int {
-        (isCluster ? 0 : (set.reps ?? 0)) + set.miniReps.reduce(0, +)
+        (isCluster ? 0 : (set.reps ?? 0) + (set.side2Reps ?? 0))
+            + set.miniReps.reduce(0, +)
+            + set.side2MiniReps.reduce(0, +)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             headerRow
-            if !isCluster { activationRow }
+            if isUnilateral { sideLabel(1) }
+            if !isCluster { activationRow(side: 1) }
             if blockStarted || isCluster {
-                miniSetStrip
+                miniSetStrip(side: 1)
+            }
+            // Side 2 unlocks once side 1 is underway, so the flow reads
+            // top-to-bottom the way it's actually performed. Completing side
+            // 1 never completes the set — only the header checkbox does.
+            if isUnilateral && blockStarted {
+                sideLabel(2)
+                if !isCluster { activationRow(side: 2) }
+                if side2Started || isCluster {
+                    miniSetStrip(side: 2)
+                }
             }
             MicroRestBar(tint: style.color, ownerID: set.id)
             if let ghost = matchPreviousGhost {
@@ -125,6 +149,32 @@ struct SetBlockView: View {
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .strokeBorder((isDone ? theme.success : style.color).opacity(0.25), lineWidth: 1)
         )
+    }
+
+    private func sideLabel(_ side: Int) -> some View {
+        Text("Side \(side)")
+            .font(.system(size: 11, weight: .heavy))
+            .foregroundStyle(style.color.opacity(0.85))
+            .textCase(.uppercase)
+            .padding(.top, side == 2 ? 2 : 0)
+    }
+
+    // MARK: - Per-side data plumbing
+
+    private func sideReps(_ side: Int) -> Int? {
+        side == 2 ? set.side2Reps : set.reps
+    }
+
+    private func setSideReps(_ side: Int, _ value: Int?) {
+        if side == 2 { set.side2Reps = value } else { set.reps = value }
+    }
+
+    private func sideMinis(_ side: Int) -> [Int] {
+        side == 2 ? set.side2MiniReps : set.miniReps
+    }
+
+    private func setSideMinis(_ side: Int, _ value: [Int]) {
+        if side == 2 { set.side2MiniReps = value } else { set.miniReps = value }
     }
 
     // MARK: - Header
@@ -191,6 +241,10 @@ struct SetBlockView: View {
     }
 
     private var repSummary: String {
+        if isUnilateral, blockStarted {
+            // Both sides at a glance; scale-down handles the width.
+            return "\(totalReps) reps · both sides"
+        }
         let minis = set.miniReps.map(String.init).joined(separator: "+")
         if isCluster {
             return "\(totalReps) reps · \(minis)"
@@ -205,7 +259,9 @@ struct SetBlockView: View {
             if isDone {
                 set.completedAt = nil
             } else {
-                if isCluster { set.reps = totalReps }
+                // Side 1's segment sum only — side 2 is added to volume by
+                // recomputeDerivedMetrics from its own fields.
+                if isCluster { set.reps = set.miniReps.reduce(0, +) }
                 set.completedAt = Date()
                 HealthMetricsStore.shared.fillBodyweight(set)
                 timer.skip()
@@ -228,13 +284,14 @@ struct SetBlockView: View {
 
     // MARK: - Activation set (myo-reps / rest-pause)
 
-    private var activationRow: some View {
+    private func activationRow(side: Int) -> some View {
         HStack(spacing: Space.sm) {
             Text("Activation")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if showWeight {
+            // Weight is the implement's — shared across sides, entered once.
+            if showWeight && side == 1 {
                 blockField(
                     text: Binding(
                         get: { set.weight.map { Fmt.load($0, unit: displayUnit) } ?? "" },
@@ -245,34 +302,42 @@ struct SetBlockView: View {
             }
             blockField(
                 text: Binding(
-                    get: { set.reps.map(String.init) ?? "" },
-                    set: { set.reps = Int($0); onChange() }
+                    get: { sideReps(side).map(String.init) ?? "" },
+                    set: { setSideReps(side, Int($0)); onChange() }
                 ),
-                placeholder: previous?.reps.map(String.init) ?? "reps"
+                placeholder: activationPlaceholder(side: side)
             )
             // Log the activation → the first micro-rest starts immediately.
             Button {
-                guard set.reps != nil else { return }
-                timer.start(seconds: microRest, label: "Mini-set 1", micro: true, ownerID: set.id)
+                guard sideReps(side) != nil else { return }
+                timer.start(seconds: microRest, label: miniRestLabel(side: side, count: 1), micro: true, ownerID: set.id)
                 onChange()
             } label: {
                 Image(systemName: "arrow.down.to.line")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(set.reps == nil ? theme.textTertiary : style.color)
+                    .foregroundStyle(sideReps(side) == nil ? theme.textTertiary : style.color)
                     .frame(width: 34, height: 30)
-                    .background(style.color.opacity(set.reps == nil ? 0.08 : 0.18))
+                    .background(style.color.opacity(sideReps(side) == nil ? 0.08 : 0.18))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(PressableButtonStyle())
-            .disabled(set.reps == nil)
+            .disabled(sideReps(side) == nil)
         }
+    }
+
+    /// Side 2 suggests matching side 1's activation; side 1 suggests history.
+    private func activationPlaceholder(side: Int) -> String {
+        if side == 2 {
+            return set.reps.map(String.init) ?? "reps"
+        }
+        return previous?.reps.map(String.init) ?? "reps"
     }
 
     // MARK: - Mini-set pill strip
 
-    private var miniSetStrip: some View {
+    private func miniSetStrip(side: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            if isCluster && showWeight {
+            if isCluster && showWeight && side == 1 {
                 HStack(spacing: Space.sm) {
                     Text("Weight")
                         .font(.system(size: 13, weight: .semibold))
@@ -289,17 +354,17 @@ struct SetBlockView: View {
             }
             // Pills wrap onto new rows instead of running off screen.
             WrapLayout(spacing: 7) {
-                ForEach(Array(set.miniReps.enumerated()), id: \.offset) { index, reps in
-                    if editingIndex == index {
-                        entryPill
+                ForEach(Array(sideMinis(side).enumerated()), id: \.offset) { index, reps in
+                    if editingIndex == index && editingSide == side {
+                        entryPill(side: side)
                     } else {
-                        miniPill(index: index, reps: reps)
+                        miniPill(side: side, index: index, reps: reps)
                     }
                 }
-                if editingIndex == Self.newEntryIndex {
-                    entryPill
+                if editingIndex == Self.newEntryIndex && editingSide == side {
+                    entryPill(side: side)
                 } else {
-                    addMiniPill
+                    addMiniPill(side: side)
                 }
             }
             .padding(.vertical, 2)
@@ -308,16 +373,16 @@ struct SetBlockView: View {
 
     /// A confirmed mini-set. Tap-and-hold to adjust when you fell short or
     /// pushed past the target — or retype it entirely.
-    private func miniPill(index: Int, reps: Int) -> some View {
+    private func miniPill(side: Int, index: Int, reps: Int) -> some View {
         Menu {
-            Button("+1 rep", systemImage: "plus") { adjustMini(index, by: 1) }
-            Button("−1 rep", systemImage: "minus") { adjustMini(index, by: -1) }
-            Button("Enter manually", systemImage: "keyboard") { beginEntry(editing: index) }
+            Button("+1 rep", systemImage: "plus") { adjustMini(side: side, index: index, by: 1) }
+            Button("−1 rep", systemImage: "minus") { adjustMini(side: side, index: index, by: -1) }
+            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: index) }
             Divider()
             Button("Remove", systemImage: "trash", role: .destructive) {
-                var minis = set.miniReps
+                var minis = sideMinis(side)
                 minis.remove(at: index)
-                set.miniReps = minis
+                setSideMinis(side, minis)
                 syncClusterReps()
                 onChange()
             }
@@ -336,13 +401,13 @@ struct SetBlockView: View {
     /// The "next mini-set" pill. First mini-set: opens keyboard entry so the
     /// user logs what they actually got (no forced target). After that, one
     /// tap repeats the last mini — long-press to type a different number.
-    private var addMiniPill: some View {
+    private func addMiniPill(side: Int) -> some View {
         Menu {
-            Button("Enter manually", systemImage: "keyboard") { beginEntry(editing: Self.newEntryIndex) }
+            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus").font(.system(size: 12, weight: .bold))
-                if let target = nextMiniTarget {
+                if let target = nextMiniTarget(side: side) {
                     Text("\(target)").font(.system(size: 14, weight: .bold, design: .rounded))
                 } else {
                     Text("reps").font(.system(size: 13, weight: .semibold))
@@ -358,18 +423,18 @@ struct SetBlockView: View {
                 )
             )
         } primaryAction: {
-            if let target = nextMiniTarget {
-                appendMini(target)
+            if let target = nextMiniTarget(side: side) {
+                appendMini(side: side, target)
             } else {
-                beginEntry(editing: Self.newEntryIndex)
+                beginEntry(side: side, editing: Self.newEntryIndex)
             }
         }
         .disabled(isDone)
     }
 
     /// Inline numeric field standing in for the pill being entered/edited.
-    private var entryPill: some View {
-        TextField(nextMiniTarget.map(String.init) ?? "reps", text: $entryText)
+    private func entryPill(side: Int) -> some View {
+        TextField(nextMiniTarget(side: side).map(String.init) ?? "reps", text: $entryText)
             .font(.system(size: 14, weight: .bold, design: .rounded))
             .keyboardType(.numberPad)
             .multilineTextAlignment(.center)
@@ -380,22 +445,40 @@ struct SetBlockView: View {
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(style.color, lineWidth: 1.5))
             .onChange(of: entryFocused) { _, focused in
-                if !focused { commitEntry() }
+                // The keyboard's Log/dismiss both just end focus — the commit
+                // itself always rides the focus loss, so every exit path
+                // (accessory, tap-away, scroll) lands the typed reps.
+                if focused {
+                    inputRouter?.register(
+                        token: entryAccessoryToken,
+                        completeTitle: "Log",
+                        onComplete: { entryFocused = false },
+                        onDismiss: { entryFocused = false }
+                    )
+                } else {
+                    commitEntry()
+                    inputRouter?.unregister(token: entryAccessoryToken)
+                }
             }
-
     }
 
-    /// nil = no target to repeat yet — the first mini must be typed.
-    private var nextMiniTarget: Int? {
-        if let last = set.miniReps.last { return last }
+    private var entryAccessoryToken: String { "\(set.id.uuidString)-mini" }
+
+    /// nil = no target to repeat yet — the first mini must be typed. Side 2
+    /// falls back to side 1's pattern before history: same limb pair, same
+    /// plan.
+    private func nextMiniTarget(side: Int) -> Int? {
+        if let last = sideMinis(side).last { return last }
+        if side == 2, let mirror = set.miniReps.first { return mirror }
         return previous?.miniReps.first
     }
 
     private static let newEntryIndex = -1
 
-    private func beginEntry(editing index: Int) {
+    private func beginEntry(side: Int, editing index: Int) {
+        editingSide = side
         editingIndex = index
-        entryText = index >= 0 ? String(set.miniReps[index]) : ""
+        entryText = index >= 0 ? String(sideMinis(side)[index]) : ""
         entryFocused = true
     }
 
@@ -404,38 +487,46 @@ struct SetBlockView: View {
         guard let editingIndex else { return }
         guard let value = Int(entryText), value > 0 else { return }
         if editingIndex == Self.newEntryIndex {
-            appendMini(value)
-        } else if editingIndex < set.miniReps.count {
-            var minis = set.miniReps
+            appendMini(side: editingSide, value)
+        } else if editingIndex < sideMinis(editingSide).count {
+            var minis = sideMinis(editingSide)
             minis[editingIndex] = value
-            set.miniReps = minis
+            setSideMinis(editingSide, minis)
             syncClusterReps()
             onChange()
         }
     }
 
-    private func appendMini(_ value: Int) {
-        var minis = set.miniReps
+    private func appendMini(side: Int, _ value: Int) {
+        var minis = sideMinis(side)
         minis.append(value)
-        set.miniReps = minis
+        setSideMinis(side, minis)
         if !isDone {
-            timer.start(seconds: microRest, label: "Mini-set \(minis.count + 1)", micro: true, ownerID: set.id)
+            timer.start(seconds: microRest, label: miniRestLabel(side: side, count: minis.count + 1), micro: true, ownerID: set.id)
         }
         syncClusterReps()
         onChange()
     }
 
+    private func miniRestLabel(side: Int, count: Int) -> String {
+        isUnilateral ? "S\(side) mini-set \(count)" : "Mini-set \(count)"
+    }
+
+    /// Cluster `reps` mirrors SIDE 1's segment sum only — side 2's segments
+    /// live in `side2MiniReps` and are added to volume by
+    /// `recomputeDerivedMetrics`, so folding them into `reps` here would
+    /// count them twice.
     private func syncClusterReps() {
         if isCluster {
-            set.reps = totalReps
+            set.reps = set.miniReps.reduce(0, +)
             set.recomputeDerivedMetrics()
         }
     }
 
-    private func adjustMini(_ index: Int, by delta: Int) {
-        var minis = set.miniReps
+    private func adjustMini(side: Int, index: Int, by delta: Int) {
+        var minis = sideMinis(side)
         minis[index] = max(1, minis[index] + delta)
-        set.miniReps = minis
+        setSideMinis(side, minis)
         syncClusterReps()
         onChange()
     }
@@ -466,7 +557,7 @@ struct SetBlockView: View {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 11, weight: .semibold))
                 Text("Match previous · \(ghost)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.tag)
                     .lineLimit(1)
             }
             .foregroundStyle(theme.textTertiary)

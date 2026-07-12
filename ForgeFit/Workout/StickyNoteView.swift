@@ -24,7 +24,7 @@ struct StickyNoteView: View {
                         .font(.system(size: 14, weight: .bold))
                         .rotationEffect(.degrees(workoutExercise.notePinned ? 0 : 30))
                         .foregroundStyle(workoutExercise.notePinned ? theme.danger : theme.stickyInk.opacity(0.6))
-                        .frame(width: 30, height: 30)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
                         .background(.black.opacity(0.06))
                         .clipShape(Circle())
                 }
@@ -41,7 +41,7 @@ struct StickyNoteView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(theme.stickyInk.opacity(0.6))
-                        .frame(width: 26, height: 26)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove note")

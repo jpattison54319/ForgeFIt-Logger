@@ -26,6 +26,27 @@ struct RoutineTemplateExercise: Codable, Hashable {
     let supersetGroup: Int?
 }
 
+/// A multi-routine training program (mesocycle): a named folder of day
+/// routines imported together — e.g. Upper/Lower is one program holding four
+/// routines, not one routine called "Upper Lower Upper".
+struct RoutineProgramTemplate: Identifiable, Codable, Hashable {
+    let id: String
+    let name: String
+    let goal: String
+    let level: String
+    let daysPerWeek: Int
+    let weeks: Int
+    let equipment: [String]
+    let tags: [String]
+    let description: String
+    /// `RoutineTemplate.id`s of the day routines, in program order.
+    let routineIDs: [String]
+
+    func routines(from templates: [RoutineTemplate]) -> [RoutineTemplate] {
+        routineIDs.compactMap { id in templates.first { $0.id == id } }
+    }
+}
+
 enum RoutineTemplateCatalog {
     static func load() -> [RoutineTemplate] {
         guard let url = Bundle.main.url(forResource: "routine_templates", withExtension: "json"),
@@ -34,6 +55,27 @@ enum RoutineTemplateCatalog {
             return []
         }
         return templates
+    }
+
+    static func loadPrograms() -> [RoutineProgramTemplate] {
+        guard let url = Bundle.main.url(forResource: "routine_programs", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let programs = try? JSONDecoder().decode([RoutineProgramTemplate].self, from: data) else {
+            return []
+        }
+        return programs
+    }
+
+    /// Programs whose every day routine exists and resolves all its exercises.
+    static func validPrograms(
+        from programs: [RoutineProgramTemplate],
+        templates: [RoutineTemplate],
+        exercises: [ExerciseLibraryModel]
+    ) -> [RoutineProgramTemplate] {
+        let valid = Set(validTemplates(from: templates, exercises: exercises).map(\.id))
+        return programs.filter { program in
+            !program.routineIDs.isEmpty && program.routineIDs.allSatisfy { valid.contains($0) }
+        }
     }
 
     static func validTemplates(from templates: [RoutineTemplate], exercises: [ExerciseLibraryModel]) -> [RoutineTemplate] {
@@ -84,6 +126,45 @@ enum RoutineTemplateCatalog {
         context.insert(routine)
         try? context.save()
         return routine
+    }
+
+    /// Imports a full program: creates a mesocycle folder named after the
+    /// program and adds every day routine to it, in program order. Returns the
+    /// created folder (with its routines saved) or nil when no day resolved.
+    @discardableResult
+    static func importProgram(
+        _ program: RoutineProgramTemplate,
+        templates: [RoutineTemplate],
+        in context: ModelContext
+    ) -> RoutineFolderModel? {
+        let days = program.routines(from: templates)
+        guard !days.isEmpty else { return nil }
+
+        let allFolders = (try? context.fetch(FetchDescriptor<RoutineFolderModel>())) ?? []
+        let activeFolders = allFolders.filter { $0.deletedAt == nil }
+        let topLevel = activeFolders.filter { $0.parentID == nil }
+        let folder = RoutineFolderModel(
+            userID: ForgeFitDemo.userID,
+            name: uniqueFolderName(program.name, existingFolders: activeFolders),
+            position: (topLevel.map(\.position).max() ?? -1) + 1
+        )
+        context.insert(folder)
+
+        var existingRoutines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
+        for day in days {
+            let routine = importTemplate(day, folderID: folder.id, existingRoutines: existingRoutines, in: context)
+            existingRoutines.append(routine)
+        }
+        try? context.save()
+        return folder
+    }
+
+    private static func uniqueFolderName(_ base: String, existingFolders: [RoutineFolderModel]) -> String {
+        let names = Set(existingFolders.map(\.name))
+        guard names.contains(base) else { return base }
+        var index = 2
+        while names.contains("\(base) \(index)") { index += 1 }
+        return "\(base) \(index)"
     }
 
     private static func uniqueName(_ base: String, existingRoutines: [RoutineModel]) -> String {

@@ -63,6 +63,12 @@ struct ReminderSettingsCard: View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 Text("Training days").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                // Seven equal-weight day buttons across one row: there's no
+                // width budget on smaller phones to grow these to the full
+                // 44x44 HIG target without wrapping the row. `.contentShape`
+                // adds a couple points of hit area on each side instead — the
+                // most that fits the 8pt gaps here without adjacent buttons'
+                // tap regions touching.
                 HStack(spacing: 8) {
                     ForEach(1...7, id: \.self) { weekday in
                         let on = weekdays.contains(weekday)
@@ -77,6 +83,7 @@ struct ReminderSettingsCard: View {
                                 .background(Circle().fill(on ? theme.accent : theme.surfaceElevated))
                         }
                         .buttonStyle(.plain)
+                        .contentShape(Rectangle().inset(by: -2))
                     }
                 }
                 if !weekdays.isEmpty {

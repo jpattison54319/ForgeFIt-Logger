@@ -11,7 +11,28 @@ enum XPService {
         var strength: Int
         var cardioDuration: Int
         var cardioDistance: Int
+        var yogaDuration: Int
         var eligible: Bool
+
+        init(
+            amount: Int,
+            base: Int,
+            duration: Int,
+            strength: Int,
+            cardioDuration: Int,
+            cardioDistance: Int,
+            yogaDuration: Int = 0,
+            eligible: Bool
+        ) {
+            self.amount = amount
+            self.base = base
+            self.duration = duration
+            self.strength = strength
+            self.cardioDuration = cardioDuration
+            self.cardioDistance = cardioDistance
+            self.yogaDuration = yogaDuration
+            self.eligible = eligible
+        }
 
         var components: [String: Int] {
             [
@@ -19,7 +40,8 @@ enum XPService {
                 "duration": duration,
                 "strength": strength,
                 "cardioDuration": cardioDuration,
-                "cardioDistance": cardioDistance
+                "cardioDistance": cardioDistance,
+                "yogaDuration": yogaDuration
             ]
         }
     }
@@ -49,13 +71,26 @@ enum XPService {
             .flatMap(\.sets)
             .filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
             .count
-        let cardioSeconds = workout.cardioSessions.reduce(0) { total, session in
-            total + effectiveCardioSeconds(session, now: now)
-        }
+        // Yoga rides the cardio session model but earns its own component,
+        // so a yin hold never inflates "cardio" XP.
+        let cardioSeconds = workout.cardioSessions
+            .filter { !$0.isYogaSession }
+            .reduce(0) { total, session in total + effectiveCardioSeconds(session, now: now) }
+        let yogaSeconds = workout.cardioSessions
+            .filter(\.isYogaSession)
+            .reduce(0) { total, session in total + effectiveCardioSeconds(session, now: now) }
+        // Active practices earn at the cardio rate; restorative styles at
+        // half — an honest signal, not gamified savasana.
+        let weightedYogaMinutes = workout.cardioSessions
+            .filter(\.isYogaSession)
+            .reduce(0.0) { total, session in
+                let minutes = Double(effectiveCardioSeconds(session, now: now)) / 60
+                return total + minutes * (session.resolvedYogaStyle.isRestorative ? 0.6 : 1.2)
+            }
         let distanceMeters = workout.cardioSessions.compactMap(\.distanceMeters).reduce(0, +)
         let workoutSeconds = effectiveWorkoutSeconds(workout, now: now)
         let hasEnded = workout.endedAt != nil || !requireEnded
-        let eligible = hasEnded && (completedWorkingSets > 0 || cardioSeconds >= 300)
+        let eligible = hasEnded && (completedWorkingSets > 0 || cardioSeconds >= 300 || yogaSeconds >= 300)
 
         guard eligible else {
             return Award(amount: 0, base: 0, duration: 0, strength: 0, cardioDuration: 0, cardioDistance: 0, eligible: false)
@@ -66,7 +101,8 @@ enum XPService {
         let strength = min(120, completedWorkingSets * 6)
         let cardioDuration = min(100, Int((Double(cardioSeconds) / 60 * 1.2).rounded()))
         let cardioDistance = min(60, Int((distanceMeters / 1000 * 4).rounded()))
-        let total = min(perWorkoutCap, base + duration + strength + cardioDuration + cardioDistance)
+        let yogaDuration = min(100, Int(weightedYogaMinutes.rounded()))
+        let total = min(perWorkoutCap, base + duration + strength + cardioDuration + cardioDistance + yogaDuration)
 
         return Award(
             amount: total,
@@ -75,6 +111,7 @@ enum XPService {
             strength: strength,
             cardioDuration: cardioDuration,
             cardioDistance: cardioDistance,
+            yogaDuration: yogaDuration,
             eligible: true
         )
     }

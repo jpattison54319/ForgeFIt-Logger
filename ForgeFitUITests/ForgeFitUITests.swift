@@ -286,6 +286,103 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertEqual(menusAfterReplace.count, 2, "Replacing should swap the exercise, not add or remove one.")
     }
 
+    /// Regression: the keyboard accessory's Complete button used to stop
+    /// rendering after the accessory's own dismiss chevron was used (the old
+    /// UIKit toolbar was reused blank on refocus). Drives the reported flow —
+    /// focus a set input, dismiss via the accessory, refocus — and asserts
+    /// the accessory comes back intact every time.
+    @MainActor
+    func testKeyboardAccessorySurvivesDismissAndRefocus() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let weightField = app.textFields["Weight"].firstMatch
+        XCTAssertTrue(weightField.waitForExistence(timeout: 10), "Expected the live logger with a weight field.")
+        tapWhenReady(weightField)
+
+        let complete = app.buttons["Complete"].firstMatch
+        XCTAssertTrue(complete.waitForExistence(timeout: 5), "Expected the Complete accessory above the keyboard.")
+
+        let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3), "Expected the dismiss chevron in the accessory.")
+        dismissKeyboard.tap()
+
+        // The dismissed keyboard takes its accessory with it.
+        let deadline = Date().addingTimeInterval(3)
+        while complete.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+
+        // Refocus: the accessory must render again — this is where the old
+        // UIKit-toolbar approach came back blank.
+        tapWhenReady(weightField)
+        XCTAssertTrue(complete.waitForExistence(timeout: 5), "Accessory should render again after dismiss + refocus.")
+        XCTAssertTrue(app.buttons["Next"].firstMatch.exists, "Weight field should offer Next to advance to reps.")
+    }
+
+    /// The rest countdown bar's controls must respond — the old header pill
+    /// recreated its buttons inside a half-second TimelineView, which dropped
+    /// in-flight taps (reported as "skip / +/− don't work"). Completing a set
+    /// auto-starts rest; skipping it must actually clear the bar.
+    @MainActor
+    func testRestTimerBarAppearsAndSkipWorks() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let completeSet = app.buttons["complete-set-1"].firstMatch
+        XCTAssertTrue(completeSet.waitForExistence(timeout: 10), "Expected the live logger with a completable set.")
+        tapWhenReady(completeSet)
+
+        let skip = app.buttons["skip-rest-timer"].firstMatch
+        XCTAssertTrue(skip.waitForExistence(timeout: 5), "Completing a set should start rest and show the countdown bar.")
+        tapWhenReady(skip)
+
+        let deadline = Date().addingTimeInterval(3)
+        while skip.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(skip.exists, "Skip should stop the rest timer and remove the bar.")
+    }
+
+    /// Wrapped acceptance: the Home "Report Available" card shows for a
+    /// fresh report, opening it presents the story, and after closing, the
+    /// card is gone (viewed) — while the report stays reachable in Profile.
+    @MainActor
+    func testWrappedCardOpensStoryThenDisappearsFromHome() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-wrapped-demo", "-weightUnitRaw", "kg", "-didOnboard", "YES"]
+        app.launch()
+
+        let card = app.descendants(matching: .any)["wrapped-report-available"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "Expected the Monthly Report Available card on Home.")
+        // The card renders below the week card without scrolling. Coordinate
+        // tap because XCUITest never resolves this Card-labeled Button as
+        // hittable (and scrolling to chase hittability lands taps on the
+        // wrong card).
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        // Story is up: page through a few pages via the right tap zone.
+        let close = app.buttons["Close report"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "Expected the Wrapped story to present.")
+        let shareButton = app.buttons["Share this page"].firstMatch
+        XCTAssertTrue(shareButton.exists, "Every page should carry a share button.")
+        for _ in 0..<3 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.6)).tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        tapWhenReady(close)
+
+        // Opening counted as viewed: the Home card is gone.
+        let deadline = Date().addingTimeInterval(4)
+        while card.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(card.exists, "The Home card must disappear once the report is viewed.")
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

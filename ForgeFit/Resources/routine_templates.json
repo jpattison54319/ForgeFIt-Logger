@@ -36,15 +36,15 @@
     ]
   },
   {
-    "id": "upper-lower-upper",
-    "name": "Upper Lower Upper",
+    "id": "upper-body-a",
+    "name": "Upper Body A",
     "goal": "muscle gain",
     "level": "intermediate",
-    "daysPerWeek": 3,
+    "daysPerWeek": 4,
     "estimatedMinutes": 55,
     "equipment": ["barbell", "dumbbell", "cable"],
-    "tags": ["upper lower", "hypertrophy"],
-    "description": "Three days per week with two upper-body exposures and one lower-body anchor.",
+    "tags": ["upper lower", "upper body", "hypertrophy"],
+    "description": "Horizontal-biased upper day: heavy pressing and rowing with vertical pull and shoulder volume.",
     "exercises": [
       { "slug": "Barbell_Bench_Press_-_Medium_Grip", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
       { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 },
@@ -54,21 +54,58 @@
     ]
   },
   {
-    "id": "upper-lower-lower",
-    "name": "Lower Strength Base",
+    "id": "lower-body-a",
+    "name": "Lower Body A",
     "goal": "strength",
     "level": "intermediate",
-    "daysPerWeek": 3,
+    "daysPerWeek": 4,
     "estimatedMinutes": 55,
     "equipment": ["barbell", "machine"],
-    "tags": ["lower body", "strength"],
-    "description": "A focused lower-body template with squat, hinge, and accessory work.",
+    "tags": ["upper lower", "lower body", "strength"],
+    "description": "Squat-led lower day with a hinge and quad/calf accessory work.",
     "exercises": [
       { "slug": "Barbell_Squat", "sets": 4, "repsLow": 4, "repsHigh": 6, "rpe": 8 },
       { "slug": "Romanian_Deadlift", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 8 },
       { "slug": "Leg_Press", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
       { "slug": "Leg_Extensions", "sets": 2, "repsLow": 12, "repsHigh": 15, "rpe": 8 },
       { "slug": "Seated_Calf_Raise", "sets": 3, "repsLow": 10, "repsHigh": 15, "rpe": 8 }
+    ]
+  },
+  {
+    "id": "upper-body-b",
+    "name": "Upper Body B",
+    "goal": "muscle gain",
+    "level": "intermediate",
+    "daysPerWeek": 4,
+    "estimatedMinutes": 55,
+    "equipment": ["barbell", "dumbbell", "cable"],
+    "tags": ["upper lower", "upper body", "hypertrophy"],
+    "description": "Vertical-biased upper day: overhead pressing and pull-ups with rowing, rear-delt, and arm volume.",
+    "exercises": [
+      { "slug": "Barbell_Shoulder_Press", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
+      { "slug": "Pullups", "sets": 3, "repsLow": 6, "repsHigh": 10, "rpe": 8 },
+      { "slug": "Dumbbell_Bench_Press", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
+      { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
+      { "slug": "Face_Pull", "sets": 2, "repsLow": 12, "repsHigh": 15, "rpe": 8 },
+      { "slug": "Barbell_Curl", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 8 }
+    ]
+  },
+  {
+    "id": "lower-body-b",
+    "name": "Lower Body B",
+    "goal": "muscle gain",
+    "level": "intermediate",
+    "daysPerWeek": 4,
+    "estimatedMinutes": 55,
+    "equipment": ["barbell", "dumbbell", "machine"],
+    "tags": ["upper lower", "lower body", "hypertrophy"],
+    "description": "Hip-dominant lower day: front squat, hip thrust, lunges, and hamstring/calf accessories.",
+    "exercises": [
+      { "slug": "Front_Barbell_Squat", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 8 },
+      { "slug": "Barbell_Hip_Thrust", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
+      { "slug": "Dumbbell_Lunges", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
+      { "slug": "Seated_Leg_Curl", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
+      { "slug": "Standing_Calf_Raises", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 8 }
     ]
   },
   {
@@ -144,6 +181,24 @@
     ]
   },
   {
+    "id": "dumbbell-only-full-body-b",
+    "name": "Dumbbell Only Full Body B",
+    "goal": "muscle gain",
+    "level": "beginner",
+    "daysPerWeek": 3,
+    "estimatedMinutes": 40,
+    "equipment": ["dumbbell"],
+    "tags": ["dumbbell only", "full body"],
+    "description": "A second dumbbell day with step ups, a hinge, chest flyes, and direct arm work.",
+    "exercises": [
+      { "slug": "Dumbbell_Step_Ups", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
+      { "slug": "Stiff-Legged_Dumbbell_Deadlift", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
+      { "slug": "Dumbbell_Flyes", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
+      { "slug": "Hammer_Curls", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
+      { "slug": "Standing_Dumbbell_Triceps_Extension", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 }
+    ]
+  },
+  {
     "id": "bodyweight-travel",
     "name": "Bodyweight Travel",
     "goal": "maintenance",
@@ -207,6 +262,23 @@
       { "slug": "Leverage_Shoulder_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
       { "slug": "Triceps_Pushdown", "sets": 2, "repsLow": 10, "repsHigh": 15, "rpe": 7 },
       { "slug": "Barbell_Curl", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 }
+    ]
+  },
+  {
+    "id": "machine-lower",
+    "name": "Machine Lower",
+    "goal": "muscle gain",
+    "level": "beginner",
+    "daysPerWeek": 2,
+    "estimatedMinutes": 40,
+    "equipment": ["machine"],
+    "tags": ["machine", "lower body"],
+    "description": "A joint-friendly lower-body routine built entirely on machines.",
+    "exercises": [
+      { "slug": "Leg_Press", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
+      { "slug": "Lying_Leg_Curls", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
+      { "slug": "Leg_Extensions", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 7 },
+      { "slug": "Seated_Calf_Raise", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 7 }
     ]
   }
 ]

@@ -181,3 +181,13 @@ enum CardioMetrics {
         return zones
     }
 }
+
+extension ExerciseLibraryModel {
+    /// The cardio modality for this exercise: an explicit choice made at
+    /// creation wins; otherwise infer from name/equipment (the built-in
+    /// library and legacy custom exercises).
+    var resolvedCardioKind: CardioKind {
+        cardioKindRaw.flatMap(CardioKind.init(rawValue:))
+            ?? CardioKind.infer(name: name, equipment: equipment)
+    }
+}

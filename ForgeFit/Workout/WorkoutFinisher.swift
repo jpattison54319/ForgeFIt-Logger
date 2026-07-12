@@ -22,22 +22,51 @@ enum WorkoutFinisher {
         watchMetrics: WatchLiveMetrics? = nil,
         watchSavedToHealth: Bool = false
     ) {
-        let now = Date()
+        let now = Date.now
+        let workoutExercisesByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // 1. Auto-complete running cardio segments and pull their metrics.
-        for session in workout.cardioSessions where session.liveStartedAt != nil && session.endedAt == nil {
-            let start = session.liveStartedAt ?? session.startedAt
-            session.endedAt = now
-            session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
-            let kind = CardioKind.from(modality: session.modality)
-            Task { @MainActor in
-                let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: kind)
-                if let hr = snap.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                if let dist = snap.distanceMeters { session.distanceMeters = dist }
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                try? context.save()
+        // 1. Auto-complete running cardio/yoga segments and finalize manual
+        // yoga logs. Cardio keeps the old "only if live" behavior; yoga also
+        // supports pre-start manual duration/style entry.
+        for session in workout.cardioSessions where session.endedAt == nil {
+            if session.isYogaSession {
+                let workoutExercise = session.workoutExerciseID.flatMap { workoutExercisesByID[$0] }
+                let exercise = exercise(for: workoutExercise, in: context)
+                let wasLive = session.liveStartedAt != nil
+                let start = session.liveStartedAt ?? session.startedAt
+                YogaSessionCompletion.complete(
+                    session: session,
+                    workoutExercise: workoutExercise,
+                    exercise: exercise,
+                    context: context,
+                    endedAt: now,
+                    useClockDuration: wasLive
+                )
+                guard wasLive else { continue }
+                Task { @MainActor in
+                    let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: .other)
+                    if let hr = snap.avgHR { session.avgHR = hr }
+                    if let mx = snap.maxHR { session.maxHR = mx }
+                    if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
+                    // Distance is meaningless on the mat — a same-window walk
+                    // sample must not become "yoga distance".
+                    session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
+                    try? context.save()
+                }
+            } else if session.liveStartedAt != nil {
+                let start = session.liveStartedAt ?? session.startedAt
+                session.endedAt = now
+                session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
+                let kind = CardioKind.from(modality: session.modality)
+                Task { @MainActor in
+                    let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: kind)
+                    if let hr = snap.avgHR { session.avgHR = hr }
+                    if let mx = snap.maxHR { session.maxHR = mx }
+                    if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
+                    if let dist = snap.distanceMeters { session.distanceMeters = dist }
+                    session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
+                    try? context.save()
+                }
             }
         }
 
@@ -70,13 +99,17 @@ enum WorkoutFinisher {
             let energy = workout.activeEnergyKcal
                 ?? workout.cardioSessions.compactMap { $0.activeEnergyKcal }.reduce(0, +).nonZero
             let distance = workout.cardioSessions.compactMap { $0.distanceMeters }.reduce(0, +).nonZero
-            let cardioKind = workout.cardioSessions.first.map { CardioKind.from(modality: $0.modality) }
-            let pureCardio = !workout.exercises.isEmpty
+            // The activity type comes from the first *real* cardio session;
+            // a session-only workout that is all yoga writes as `.yoga`.
+            let cardioKind = workout.cardioSessions.first { !$0.isYogaSession }
+                .map { CardioKind.from(modality: $0.modality) }
+            let pureSessions = !workout.exercises.isEmpty
                 && workout.exercises.allSatisfy { we in workout.cardioSessions.contains { $0.workoutExerciseID == we.id } }
+            let pureYoga = pureSessions && workout.cardioSessions.allSatisfy(\.isYogaSession)
             Task {
                 await HealthService.shared.saveWorkout(
                     from: start, to: now,
-                    isCardio: pureCardio, modality: cardioKind,
+                    isCardio: pureSessions && !pureYoga, isYoga: pureYoga, modality: cardioKind,
                     energyKcal: energy, distanceMeters: distance
                 )
             }
@@ -112,10 +145,19 @@ enum WorkoutFinisher {
     }
 
     @MainActor
+    private static func exercise(for workoutExercise: WorkoutExerciseModel?, in context: ModelContext) -> ExerciseLibraryModel? {
+        guard let exerciseID = workoutExercise?.exerciseID else { return nil }
+        return (try? context.fetch(
+            FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })
+        ))?.first
+    }
+
+    @MainActor
     private static func endLiveSurfaces() {
         WorkoutActivityController.shared.end()
         RestTimerController.shared.skip()
         IntervalRunnerHub.shared.stop()
+        YogaFlowRunnerHub.shared.stop()
         WatchLink.shared.clearLiveMetrics()
         ForgeFitWidgetSnapshotStore.save(ForgeFitWidgetSnapshot(mode: .idle))
         #if canImport(WidgetKit)

@@ -11,15 +11,22 @@ struct OnboardingView: View {
     @Environment(\.theme) private var theme
     @Binding var isPresented: Bool
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
-    @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
     @AppStorage("weightUnitRaw") private var weightUnitRaw = WeightUnit.lb.rawValue
     @State private var unit: WeightUnit = .lb
     @State private var connecting = false
-    @State private var selectedTemplateID: String?
+    @State private var selectedProgramID: String?
     @State private var showHistoryImporter = false
 
-    private var starterTemplates: [RoutineTemplate] {
-        Array(RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises).prefix(3))
+    private var validTemplates: [RoutineTemplate] {
+        RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
+    }
+
+    private var starterPrograms: [RoutineProgramTemplate] {
+        Array(RoutineTemplateCatalog.validPrograms(
+            from: RoutineTemplateCatalog.loadPrograms(),
+            templates: validTemplates,
+            exercises: exercises
+        ).prefix(3))
     }
 
     var body: some View {
@@ -54,13 +61,18 @@ struct OnboardingView: View {
                         .frame(width: 130)
                     }
 
-                    if !starterTemplates.isEmpty {
+                    if !starterPrograms.isEmpty {
                         VStack(alignment: .leading, spacing: Space.md) {
-                            Text("Pick a starter routine")
-                                .font(.bodyStrong)
-                                .foregroundStyle(theme.textPrimary)
-                            ForEach(starterTemplates) { template in
-                                starterTemplateButton(template)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Start with a training program")
+                                    .font(.bodyStrong)
+                                    .foregroundStyle(theme.textPrimary)
+                                Text("Optional — adds a folder of routines you can explore or change anytime.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            ForEach(starterPrograms) { program in
+                                starterProgramButton(program)
                             }
                         }
                     }
@@ -105,13 +117,7 @@ struct OnboardingView: View {
                 .padding(.vertical, Space.xxl)
             }
         }
-        .preferredColorScheme(.dark)
         .interactiveDismissDisabled()
-        .onAppear {
-            if selectedTemplateID == nil {
-                selectedTemplateID = starterTemplates.first?.id
-            }
-        }
         .sheet(isPresented: $showHistoryImporter) {
             WorkoutHistoryImportView()
         }
@@ -130,23 +136,27 @@ struct OnboardingView: View {
         }
     }
 
-    private func starterTemplateButton(_ template: RoutineTemplate) -> some View {
-        Button {
-            selectedTemplateID = template.id
+    private func starterProgramButton(_ program: RoutineProgramTemplate) -> some View {
+        let isSelected = selectedProgramID == program.id
+        let routineCount = program.routines(from: validTemplates).count
+        return Button {
+            // Tap toggles: picking a program is entirely optional, so a second
+            // tap deselects instead of locking the user into a choice.
+            selectedProgramID = isSelected ? nil : program.id
         } label: {
             HStack(spacing: Space.md) {
-                Image(systemName: selectedTemplateID == template.id ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(selectedTemplateID == template.id ? theme.success : theme.textTertiary)
+                    .foregroundStyle(isSelected ? theme.success : theme.textTertiary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(template.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Text("\(template.level.capitalized) · \(template.daysPerWeek)x/week · \(template.estimatedMinutes)m")
+                    Text(program.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Text("\(program.level.capitalized) · \(program.daysPerWeek)x/week · \(routineCount) routine\(routineCount == 1 ? "" : "s")")
                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
             }
             .padding(Space.md)
-            .background(selectedTemplateID == template.id ? theme.accent.opacity(0.14) : theme.surface)
+            .background(isSelected ? theme.accent.opacity(0.14) : theme.surface)
             .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         }
         .buttonStyle(PressableButtonStyle())
@@ -165,9 +175,9 @@ struct OnboardingView: View {
     private func finish() {
         Fmt.unit = unit
         weightUnitRaw = unit.rawValue
-        if let selectedTemplateID,
-           let template = starterTemplates.first(where: { $0.id == selectedTemplateID }) {
-            RoutineTemplateCatalog.importTemplate(template, folderID: nil, existingRoutines: routines, in: modelContext)
+        if let selectedProgramID,
+           let program = starterPrograms.first(where: { $0.id == selectedProgramID }) {
+            RoutineTemplateCatalog.importProgram(program, templates: validTemplates, in: modelContext)
         }
         UserDefaults.standard.set(true, forKey: "didOnboard")
         isPresented = false
