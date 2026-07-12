@@ -60,6 +60,13 @@ If you use the ForgeFit watch app, workout data syncs directly between your
 watch and iPhone using Apple's encrypted device-to-device channel
 (WatchConnectivity). It does not pass through any server.
 
+## Data export
+
+Settings → Export data creates JSON or CSV files of your workouts and routines
+on demand, including the health metrics ForgeFit has stored with them. You
+choose the format and where the files go — they are handed directly to you
+through the iOS share sheet and are never transmitted to us or anyone else.
+
 ## Data deletion
 
 Deleting the app deletes all local ForgeFit data on that device. Your training

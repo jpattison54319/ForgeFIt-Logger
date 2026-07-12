@@ -126,8 +126,10 @@ actor BackupExporter {
 
     // MARK: - Snapshot (MainActor — models are main-bound)
 
+    // Internal (not private): the user-facing data export reuses this same
+    // snapshot so backup and export can never disagree about the training log.
     @MainActor
-    private static func snapshotFile(container: ModelContainer) throws -> ForgeFitBackupFile {
+    static func snapshotFile(container: ModelContainer) throws -> ForgeFitBackupFile {
         let context = container.mainContext
         let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
         let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())

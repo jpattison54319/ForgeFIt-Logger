@@ -32,6 +32,9 @@ struct PrivacyPolicyView: View {
                 section("Bluetooth heart-rate monitors",
                         "If you pair a Bluetooth heart-rate monitor, its readings are used live during your workout and stored with the session on your device, like any other workout metric. The pairing is remembered only on that device.")
 
+                section("Data export",
+                        "Settings → Export data creates JSON or CSV files of your workouts and routines on demand, including the health metrics ForgeFit has stored with them. You choose the format and where the files go — they are handed directly to you through the iOS share sheet and are never transmitted to us or anyone else.")
+
                 section("Data deletion",
                         "Deleting the app deletes all local ForgeFit data on that device. Your training plan in iCloud can be removed by deleting routines in the app (deletions sync) or via Settings → Erase All Data. Your training-log backup is an ordinary file you control: delete it in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Erase All Data, which also removes the backup. Workouts written to Apple Health remain there under your control and can be deleted in the Health app.")
 

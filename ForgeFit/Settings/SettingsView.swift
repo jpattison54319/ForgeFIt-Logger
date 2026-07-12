@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var connecting = false
     @State private var showHRMPairing = false
     @State private var showHistoryImporter = false
+    @State private var showExportSheet = false
     @State private var showResetSheet = false
 
     var body: some View {
@@ -34,7 +35,7 @@ struct SettingsView: View {
                 SettingsTrainingSection()
                 SettingsUnitsSection()
                 SettingsEquipmentSection()
-                SettingsDataSection(showResetSheet: $showResetSheet)
+                SettingsDataSection(showExportSheet: $showExportSheet, showResetSheet: $showResetSheet)
                 SettingsAboutSection()
             }
             .listStyle(.insetGrouped)
@@ -66,6 +67,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showHRMPairing) {
             HRMPairingSheet()
+        }
+        .sheet(isPresented: $showExportSheet) {
+            ExportDataSheet()
         }
         .sheet(isPresented: $showResetSheet) {
             ResetDataSheet {
