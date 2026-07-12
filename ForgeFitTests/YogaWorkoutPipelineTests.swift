@@ -218,10 +218,24 @@ struct YogaWorkoutPipelineTests {
         let pose = makePose(name: "Sphinx", hold: 60, unilateral: false)
         context.insert(pose)
 
+        // A completed lift gives the workout real substance, so finish()
+        // completes it rather than discarding it as empty. That's the case
+        // that exercises the skip logic below: a mixed session (lifts + a yoga
+        // cool-down) where the yoga block was never practiced must land in
+        // history with the block left untouched — not auto-logged at its
+        // planned length with phantom flexibility credit.
+        let completedLift = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            position: 0,
+            sets: [SetModel(userID: ForgeFitDemo.userID, position: 0, reps: 8, weight: 100, completedAt: .now)]
+        )
+
         let plan = YogaFlowPlan.singlePose(from: pose)
         let workoutExercise = WorkoutExerciseModel(
             userID: ForgeFitDemo.userID,
             exerciseID: pose.id,
+            position: 1,
             yogaFlowJSON: plan.encodedJSON()
         )
         // Factory-shaped session: plan duration as target, never started,
@@ -236,9 +250,9 @@ struct YogaWorkoutPipelineTests {
         )
         let workout = WorkoutModel(
             userID: ForgeFitDemo.userID,
-            title: "Skipped Yoga",
+            title: "Lift, then skipped yoga",
             startedAt: Date.now.addingTimeInterval(-600),
-            exercises: [workoutExercise],
+            exercises: [completedLift, workoutExercise],
             cardioSessions: [session]
         )
         context.insert(workout)
@@ -246,7 +260,9 @@ struct YogaWorkoutPipelineTests {
 
         WorkoutFinisher.finish(workout, in: context)
 
+        // The lift's substance completes the workout — it isn't discarded.
         #expect(workout.endedAt != nil)
+        #expect(workout.deletedAt == nil)
         // The un-practiced block stays incomplete: no exposure, no pose count.
         #expect(session.endedAt == nil)
         #expect(session.flexibilityExposureJSON == nil)
