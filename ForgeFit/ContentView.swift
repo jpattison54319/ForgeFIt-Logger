@@ -64,6 +64,7 @@ struct ContentView: View {
     @Query(sort: \DailyCheckinModel.updatedAt, order: .reverse) private var checkins: [DailyCheckinModel]
 
     @State private var appState = AppState()
+    @State private var social = SocialService.make()
     @State private var restTimer = RestTimerController.shared
     @State private var intervalHub = IntervalRunnerHub.shared
     @State private var yogaHub = YogaFlowRunnerHub.shared
@@ -145,9 +146,11 @@ struct ContentView: View {
             }
         }
             .environment(appState)
+            .environment(social)
             .environment(\.theme, activeTheme)
             .preferredColorScheme(resolvedColorScheme)
             .tint(activeTheme.accent)
+            .task { await social.bootstrap() }
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
                 ActiveWorkoutLoggerView(
@@ -155,8 +158,10 @@ struct ContentView: View {
                     exercises: exercises,
                     setupNotes: setupNotes,
                     history: workouts,
-                    onMinimize: { appState.showingLogger = false }
+                    onMinimize: { appState.showingLogger = false },
+                    onFinished: { publishFinishedWorkout($0) }
                 )
+                .environment(social)
             }
             }
             .fullScreenCover(isPresented: $showOnboarding) {
@@ -444,6 +449,11 @@ struct ContentView: View {
             }
         case "insights":
             appState.selectedTab = .insights
+        case "u":   // forgefit://u/<handle> — visit a friend's profile
+            if let handle = SocialLinks.handle(from: url) {
+                social.pendingFollowHandle = handle
+                appState.selectedTab = .profile
+            }
         case "start":
             let routineID = url.pathComponents.dropFirst().first.flatMap(UUID.init)
             if let routineID,
@@ -458,6 +468,18 @@ struct ContentView: View {
         default:   // "readiness" and anything unrecognized
             appState.selectedTab = .home
         }
+    }
+
+    /// Projects a just-finished workout to its health-safe shared form and
+    /// publishes it (no-op unless the user opted into social). Skips workouts
+    /// with no strength exercises (v1 shares strength content only).
+    private func publishFinishedWorkout(_ workout: WorkoutModel) {
+        guard social.isOptedIn else { return }
+        let names = Dictionary(exercises.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let dto = SocialWorkoutMapper.shared(from: workout, exerciseNames: names)
+        guard !dto.exercises.isEmpty else { return }
+        let summary = dto.summary
+        Task { await social.publish(dto, summary: summary) }
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {

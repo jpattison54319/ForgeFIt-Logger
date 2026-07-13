@@ -113,6 +113,14 @@ struct ProfileView: View {
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
                 case .history: WorkoutHistoryListView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
+                case .community:
+                    SocialHubView(makeSnapshot: {
+                        SocialProfileComposer.snapshot(
+                            workouts: workouts,
+                            exercises: exercises,
+                            totalXP: progressRows.first { $0.userID == ForgeFitDemo.userID }?.totalXP ?? 0
+                        )
+                    })
                 case .workout(let id):
                     if let w = workouts.first(where: { $0.id == id }) {
                         WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
@@ -295,12 +303,17 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dashboard-community")
         }
     }
 
 }
 
-private struct LevelBadge: View {
+/// Shared with the social profile screens so a friend's level renders
+/// identically to your own.
+struct LevelBadge: View {
     @Environment(\.theme) private var theme
     let level: Int
 
@@ -316,7 +329,9 @@ private struct LevelBadge: View {
     }
 }
 
-private struct XPProgressBar: View {
+/// Shared with the social profile screens (a friend's XP bar renders from
+/// their published `totalXP`).
+struct XPProgressBar: View {
     @Environment(\.theme) private var theme
     let progress: XPService.Progress
 
@@ -401,7 +416,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, community
     case workout(UUID)
 }
 

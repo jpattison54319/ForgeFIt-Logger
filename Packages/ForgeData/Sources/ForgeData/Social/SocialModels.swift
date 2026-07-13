@@ -117,7 +117,7 @@ public struct SocialWorkoutRef: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// A rankable metric, grouped by training category.
-public enum SocialLeaderboardMetric: String, Codable, Sendable, CaseIterable {
+public enum SocialLeaderboardMetric: String, Codable, Sendable, CaseIterable, Hashable {
     case totalVolume       // strength
     case bestE1RM          // strength
     case cardioDistance    // cardio
@@ -137,7 +137,7 @@ public enum SocialLeaderboardMetric: String, Codable, Sendable, CaseIterable {
     }
 }
 
-public enum LeaderboardScope: Sendable { case friends, global }
+public enum LeaderboardScope: Sendable, Hashable { case friends, global }
 
 public struct SocialLeaderboardEntry: Sendable, Equatable, Identifiable {
     public var profile: SocialProfile

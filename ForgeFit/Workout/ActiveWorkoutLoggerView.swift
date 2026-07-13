@@ -52,6 +52,9 @@ struct ActiveWorkoutLoggerView: View {
     var history: [WorkoutModel] = []
     var mode: WorkoutLoggerMode = .active
     var onMinimize: (() -> Void)? = nil
+    /// Called with the just-finished workout after a successful finish, so the
+    /// host can publish it to social (if the user has opted in).
+    var onFinished: ((WorkoutModel) -> Void)? = nil
 
     @State private var reordering = false
     @State private var showAddPicker = false
@@ -1116,6 +1119,7 @@ struct ActiveWorkoutLoggerView: View {
         ) {
             return failure
         }
+        onFinished?(workout)
         dismiss()
         return nil
     }
