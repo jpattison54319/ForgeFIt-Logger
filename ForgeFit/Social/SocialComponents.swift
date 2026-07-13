@@ -118,17 +118,32 @@ struct SocialWorkoutRow: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.sm) {
-                    Image(systemName: "dumbbell.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accent)
+                    Image(systemName: kindIcon).font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accent)
                     Text(ref.title ?? "Workout").font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
                     Spacer()
                     Text(ref.startedAt.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 }
                 HStack(spacing: Space.lg) {
                     rowStat("Time", Fmt.durationShort(ref.summary.durationSeconds))
-                    rowStat("Volume", Fmt.volume(ref.summary.volumeKg))
-                    rowStat("Sets", "\(ref.summary.workingSets)")
+                    switch ref.summary.kind {
+                    case "cardio":
+                        if ref.summary.distanceMeters > 0 { rowStat("Distance", Fmt.distance(ref.summary.distanceMeters)) }
+                    case "yoga":
+                        rowStat("Style", "Yoga")
+                    default:
+                        rowStat("Volume", Fmt.volume(ref.summary.volumeKg))
+                        rowStat("Sets", "\(ref.summary.workingSets)")
+                    }
                 }
             }
+        }
+    }
+
+    private var kindIcon: String {
+        switch ref.summary.kind {
+        case "cardio": "figure.run"
+        case "yoga": "figure.mind.and.body"
+        default: "dumbbell.fill"
         }
     }
 

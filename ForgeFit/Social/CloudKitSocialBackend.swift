@@ -93,6 +93,8 @@ public actor CloudKitSocialBackend: SocialBackend {
         record["reps"] = Int64(summary.reps)
         record["durationSeconds"] = Int64(summary.durationSeconds)
         record["exerciseCount"] = Int64(summary.exerciseCount)
+        record["distanceMeters"] = summary.distanceMeters
+        record["kind"] = summary.kind
         record["payload"] = try SocialWorkoutMapper.encode(dto)
         _ = try await database.save(record)
     }
@@ -245,7 +247,9 @@ public actor CloudKitSocialBackend: SocialBackend {
             workingSets: Int(record["workingSets"] as? Int64 ?? 0),
             reps: Int(record["reps"] as? Int64 ?? 0),
             durationSeconds: Int(record["durationSeconds"] as? Int64 ?? 0),
-            exerciseCount: Int(record["exerciseCount"] as? Int64 ?? 0)
+            exerciseCount: Int(record["exerciseCount"] as? Int64 ?? 0),
+            distanceMeters: record["distanceMeters"] as? Double ?? 0,
+            kind: record["kind"] as? String ?? "strength"
         )
         return SocialWorkoutRef(id: id, owner: SocialUserID(ownerID), title: record["title"] as? String, startedAt: startedAt, publishedAt: publishedAt, summary: summary)
     }

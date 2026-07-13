@@ -6,6 +6,7 @@ import SwiftUI
 /// public profile.
 struct SocialProfileScreen: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
     let userID: SocialUserID
     var preloaded: SocialProfile?
@@ -19,7 +20,7 @@ struct SocialProfileScreen: View {
     private var isSelf: Bool { social.myUserID == userID }
 
     var body: some View {
-        ScreenScaffold(profile?.displayName ?? "Profile", trailing: { EmptyView() }) {
+        DashboardScaffold(title: profile?.displayName ?? "Profile", dismiss: dismiss) {
             if let profile {
                 SocialProfileHeaderView(profile: profile)
                 if !isSelf { followButton }
@@ -41,7 +42,6 @@ struct SocialProfileScreen: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, Space.xl)
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
         .task(id: userID) { await load() }
     }
 

@@ -7,19 +7,23 @@ import Foundation
 /// `BackupWorkout` uses, but stricter because this leaves the user's own
 /// devices. The type has no properties for:
 ///   • health data — heart rate, energy, HR zones, readiness, HealthKit
-///     linkage, or per-set `bodyweightKg`;
-///   • location — cardio sessions (GPS routes + HR streams) are omitted whole;
+///     linkage, per-set `bodyweightKg`, or (on cardio) TSS / step / floor /
+///     HR-sample-stream / flexibility-exposure fields;
+///   • location — cardio `routePoints` (GPS) are dropped entirely;
 ///   • provenance/internal — import source/fingerprint, XP, soft-delete,
 ///     routine linkage, device, timestamps;
 ///   • free text — workout/exercise `notes` (UGC deferred to moderation).
-/// A code path cannot leak into a friend's device what the type cannot express.
+/// Cardio and yoga sessions ARE shared, but only their training fields
+/// (modality, duration, distance, pace, power, cadence, effort, yoga style,
+/// poses, and non-GPS splits). A code path cannot leak into a friend's device
+/// what the type cannot express.
 ///
 /// Derived per-set aggregates (`effectiveLoad`, `totalVolume`, `estimated1RM`)
 /// ARE carried: they are computed numbers that let a viewer show volume and
 /// e1RM WITHOUT ever receiving the sharer's body weight (the input they were
 /// derived from). `weightKg` is training load, not a scale reading.
 public struct SharedWorkoutDTO: Codable, Sendable, Equatable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var id: UUID
@@ -27,6 +31,7 @@ public struct SharedWorkoutDTO: Codable, Sendable, Equatable {
     public var startedAt: Date
     public var endedAt: Date?
     public var exercises: [SharedExerciseDTO]
+    public var cardioSessions: [SharedCardioSessionDTO]
 
     public init(
         schemaVersion: Int = SharedWorkoutDTO.currentSchemaVersion,
@@ -34,7 +39,8 @@ public struct SharedWorkoutDTO: Codable, Sendable, Equatable {
         title: String?,
         startedAt: Date,
         endedAt: Date?,
-        exercises: [SharedExerciseDTO]
+        exercises: [SharedExerciseDTO],
+        cardioSessions: [SharedCardioSessionDTO] = []
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -42,6 +48,83 @@ public struct SharedWorkoutDTO: Codable, Sendable, Equatable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.exercises = exercises
+        self.cardioSessions = cardioSessions
+    }
+}
+
+/// A cardio or yoga session, health- and location-stripped. Mirrors the
+/// training fields of `BackupCardioSession` MINUS `routePoints` (GPS) and the
+/// device/internal fields — and, like the backup, has no property at all for
+/// heart rate, energy, HR zones, TSS, steps, floors, or HR sample streams.
+public struct SharedCardioSessionDTO: Codable, Sendable, Equatable {
+    public var id: UUID
+    public var modality: String
+    public var startedAt: Date
+    public var endedAt: Date?
+    public var durationSeconds: Int?
+    public var distanceMeters: Double?
+    /// Subjective 1–10 effort the user picked — a rating, not a biometric.
+    public var effort: Int?
+    public var avgPaceSecondsPerKm: Double?
+    public var split500mSeconds: Double?
+    public var strokeRate: Int?
+    public var avgPowerWatts: Double?
+    public var avgCadence: Int?
+    public var resistanceLevel: Int?
+    public var inclinePercent: Double?
+    public var elevationGainMeters: Double?
+    public var yogaStyleRaw: String?
+    public var posesCompleted: Int?
+    public var splits: [SharedCardioSplitDTO]
+
+    public init(
+        id: UUID, modality: String, startedAt: Date, endedAt: Date?, durationSeconds: Int?,
+        distanceMeters: Double?, effort: Int?, avgPaceSecondsPerKm: Double?, split500mSeconds: Double?,
+        strokeRate: Int?, avgPowerWatts: Double?, avgCadence: Int?, resistanceLevel: Int?,
+        inclinePercent: Double?, elevationGainMeters: Double?, yogaStyleRaw: String?,
+        posesCompleted: Int?, splits: [SharedCardioSplitDTO]
+    ) {
+        self.id = id
+        self.modality = modality
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.durationSeconds = durationSeconds
+        self.distanceMeters = distanceMeters
+        self.effort = effort
+        self.avgPaceSecondsPerKm = avgPaceSecondsPerKm
+        self.split500mSeconds = split500mSeconds
+        self.strokeRate = strokeRate
+        self.avgPowerWatts = avgPowerWatts
+        self.avgCadence = avgCadence
+        self.resistanceLevel = resistanceLevel
+        self.inclinePercent = inclinePercent
+        self.elevationGainMeters = elevationGainMeters
+        self.yogaStyleRaw = yogaStyleRaw
+        self.posesCompleted = posesCompleted
+        self.splits = splits
+    }
+
+    public var isYoga: Bool { modality == "yoga" }
+}
+
+/// A per-segment split — distance/pace/duration/elevation only. No coordinates.
+public struct SharedCardioSplitDTO: Codable, Sendable, Equatable {
+    public var index: Int
+    public var distanceMeters: Double
+    public var durationSeconds: Int
+    public var paceSecondsPerKm: Double
+    public var elevationGainMeters: Double?
+    public var label: String?
+    public var autoDetected: Bool
+
+    public init(index: Int, distanceMeters: Double, durationSeconds: Int, paceSecondsPerKm: Double, elevationGainMeters: Double?, label: String?, autoDetected: Bool) {
+        self.index = index
+        self.distanceMeters = distanceMeters
+        self.durationSeconds = durationSeconds
+        self.paceSecondsPerKm = paceSecondsPerKm
+        self.elevationGainMeters = elevationGainMeters
+        self.label = label
+        self.autoDetected = autoDetected
     }
 }
 
@@ -174,12 +257,17 @@ public struct SharedWorkoutSummary: Codable, Sendable, Equatable {
     public var reps: Int
     public var durationSeconds: Int
     public var exerciseCount: Int
+    public var distanceMeters: Double
+    /// "strength" | "cardio" | "yoga" — drives the row icon and which stats show.
+    public var kind: String
 
-    public init(volumeKg: Double, workingSets: Int, reps: Int, durationSeconds: Int, exerciseCount: Int) {
+    public init(volumeKg: Double, workingSets: Int, reps: Int, durationSeconds: Int, exerciseCount: Int, distanceMeters: Double = 0, kind: String = "strength") {
         self.volumeKg = volumeKg
         self.workingSets = workingSets
         self.reps = reps
         self.durationSeconds = durationSeconds
         self.exerciseCount = exerciseCount
+        self.distanceMeters = distanceMeters
+        self.kind = kind
     }
 }

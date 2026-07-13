@@ -18,6 +18,15 @@ final class SocialUITests: XCTestCase {
         element.tap()
     }
 
+    /// Scrolls the element into view (friends sit below the profile card /
+    /// action rows) then taps it.
+    private func scrollToTap(_ element: XCUIElement, in app: XCUIApplication, maxSwipes: Int = 6) {
+        XCTAssertTrue(element.waitForExistence(timeout: 8), "expected element to exist before scrolling")
+        var swipes = 0
+        while !element.isHittable, swipes < maxSwipes { app.swipeUp(velocity: .fast); swipes += 1 }
+        tapWhenReady(element)
+    }
+
     @MainActor
     func testOptInThenVisitFriendProfile() throws {
         let app = XCUIApplication()
@@ -59,10 +68,19 @@ final class SocialUITests: XCTestCase {
         XCTAssertTrue(alex.waitForExistence(timeout: 10), "Seeded friend 'Alex Rivera' should appear in the friends list after opting in.")
         XCTAssertTrue(app.staticTexts["Leaderboards"].firstMatch.waitForExistence(timeout: 3), "Leaderboards entry should be present.")
 
-        // Visit the friend's profile → their shared workout is listed.
-        tapWhenReady(alex)
-        let handle = app.staticTexts["@alexlifts"].firstMatch
-        XCTAssertTrue(handle.waitForExistence(timeout: 8), "The friend's profile header (@alexlifts) should render.")
-        XCTAssertTrue(app.staticTexts["Push Day A"].firstMatch.waitForExistence(timeout: 5), "The friend's shared workout 'Push Day A' should be listed.")
+        // Visit the strength friend → their shared workout is listed.
+        scrollToTap(alex, in: app)
+        XCTAssertTrue(app.staticTexts["@alexlifts"].firstMatch.waitForExistence(timeout: 8), "The friend's profile header (@alexlifts) should render.")
+        XCTAssertTrue(app.staticTexts["Push Day A"].firstMatch.waitForExistence(timeout: 5), "The strength workout 'Push Day A' should be listed.")
+
+        // Back, visit the runner → a CARDIO workout renders (health + GPS stripped).
+        tapWhenReady(app.buttons["Back"].firstMatch)
+        scrollToTap(app.staticTexts["Mia Chen"].firstMatch, in: app)
+        XCTAssertTrue(app.staticTexts["Tempo Run"].firstMatch.waitForExistence(timeout: 8), "Mia's cardio workout 'Tempo Run' should render.")
+
+        // Back, visit the yogi → a YOGA workout renders.
+        tapWhenReady(app.buttons["Back"].firstMatch)
+        scrollToTap(app.staticTexts["Sam Okafor"].firstMatch, in: app)
+        XCTAssertTrue(app.staticTexts["Vinyasa Flow"].firstMatch.waitForExistence(timeout: 8), "Sam's yoga workout 'Vinyasa Flow' should render.")
     }
 }

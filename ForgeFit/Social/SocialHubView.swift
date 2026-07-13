@@ -5,6 +5,7 @@ import SwiftUI
 /// visit), find-friends, and leaderboards. Pushed from Profile's Dashboard.
 struct SocialHubView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
     let makeSnapshot: () -> ProfileSnapshot
 
@@ -16,7 +17,8 @@ struct SocialHubView: View {
     private struct IdentifiedProfile: Identifiable { let profile: SocialProfile; var id: String { profile.userID.rawValue } }
 
     var body: some View {
-        ScreenScaffold("Community", trailing: { if social.isDemo { demoChip } }) {
+        DashboardScaffold(title: "Community", dismiss: dismiss) {
+            if social.isDemo { HStack { Spacer(); demoChip } }
             switch social.status {
             case .loading:
                 ProgressView().frame(maxWidth: .infinity).padding(.top, Space.xl)
@@ -28,7 +30,6 @@ struct SocialHubView: View {
                 activeContent
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showOptIn) {
             SocialOptInView(makeSnapshot: makeSnapshot)
         }

@@ -5,6 +5,7 @@ import SwiftUI
 /// sanitized `SharedWorkoutDTO` payload. Includes the like control.
 struct SharedWorkoutDetailView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
     let ref: SocialWorkoutRef
     var ownerName: String
@@ -15,12 +16,17 @@ struct SharedWorkoutDetailView: View {
     @State private var loaded = false
 
     var body: some View {
-        ScreenScaffold(ref.title ?? "Workout", trailing: { EmptyView() }) {
+        DashboardScaffold(title: ref.title ?? "Workout", dismiss: dismiss) {
             summaryCard
             likeBar
             if let dto {
-                ForEach(dto.exercises, id: \.id) { exercise in
+                // Strength exercises (those with sets); cardio/yoga wrappers are
+                // empty shells whose data lives in the sessions below.
+                ForEach(dto.exercises.filter { !$0.sets.isEmpty }, id: \.id) { exercise in
                     exerciseCard(exercise)
+                }
+                ForEach(dto.cardioSessions, id: \.id) { session in
+                    cardioCard(session)
                 }
             } else if loaded {
                 EmptyStateCard(title: "Couldn't load", message: "This workout is no longer available.", systemImage: "exclamationmark.triangle")
@@ -28,7 +34,6 @@ struct SharedWorkoutDetailView: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.top, Space.lg)
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
     }
 
@@ -38,10 +43,39 @@ struct SharedWorkoutDetailView: View {
                 Text("\(ownerName) · \(ref.startedAt.formatted(date: .abbreviated, time: .omitted))")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                 HStack(spacing: Space.lg) {
-                    stat("Volume", Fmt.volume(ref.summary.volumeKg))
-                    stat("Sets", "\(ref.summary.workingSets)")
-                    stat("Reps", "\(ref.summary.reps)")
-                    stat("Time", Fmt.durationShort(ref.summary.durationSeconds))
+                    switch ref.summary.kind {
+                    case "cardio":
+                        stat("Time", Fmt.durationShort(ref.summary.durationSeconds))
+                        if ref.summary.distanceMeters > 0 { stat("Distance", Fmt.distance(ref.summary.distanceMeters)) }
+                    case "yoga":
+                        stat("Time", Fmt.durationShort(ref.summary.durationSeconds))
+                        if let poses = dto?.cardioSessions.first(where: \.isYoga)?.posesCompleted { stat("Poses", "\(poses)") }
+                    default:
+                        stat("Volume", Fmt.volume(ref.summary.volumeKg))
+                        stat("Sets", "\(ref.summary.workingSets)")
+                        stat("Reps", "\(ref.summary.reps)")
+                        stat("Time", Fmt.durationShort(ref.summary.durationSeconds))
+                    }
+                }
+            }
+        }
+    }
+
+    private func cardioCard(_ session: SharedCardioSessionDTO) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                Text(session.isYoga ? (session.yogaStyleRaw?.capitalized ?? "Yoga") : session.modality.capitalized)
+                    .font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                HStack(spacing: Space.lg) {
+                    if let d = session.durationSeconds { stat("Time", Fmt.durationShort(d)) }
+                    if session.isYoga {
+                        if let poses = session.posesCompleted { stat("Poses", "\(poses)") }
+                    } else {
+                        if let dist = session.distanceMeters, dist > 0 { stat("Distance", Fmt.distance(dist)) }
+                        if let pace = session.avgPaceSecondsPerKm, pace > 0 { stat("Pace", "\(Fmt.restTimer(Int(pace)))/km") }
+                        if let watts = session.avgPowerWatts, watts > 0 { stat("Power", "\(Int(watts))w") }
+                    }
+                    if let effort = session.effort { stat("Effort", "\(effort)/10") }
                 }
             }
         }

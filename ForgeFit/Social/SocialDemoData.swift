@@ -34,6 +34,7 @@ enum SocialDemoData {
                 stats: SocialStats(lifetimeVolumeKg: 310_000, bestE1RMKg: 110, cardioDistanceMeters: 512_000, cardioMinutes: 3_100, yogaMinutes: 240),
                 updatedAt: now),
             workouts: [
+                cardioWorkout("Tempo Run", daysAgo: 1, from: now, modality: "run", distanceMeters: 8000, durationSeconds: 2280, paceSecondsPerKm: 285),
                 workout("Full Body B", daysAgo: 2, from: now, exercises: [
                     ("Back Squat", [(90, 5), (90, 5), (90, 5)]),
                     ("Romanian Deadlift", [(80, 8), (80, 8)]),
@@ -49,12 +50,45 @@ enum SocialDemoData {
                 stats: SocialStats(lifetimeVolumeKg: 120_000, bestE1RMKg: 90, cardioDistanceMeters: 60_000, cardioMinutes: 400, yogaMinutes: 3_600),
                 updatedAt: now),
             workouts: [
-                workout("Mobility + Core", daysAgo: 1, from: now, exercises: [
+                yogaWorkout("Vinyasa Flow", daysAgo: 1, from: now, style: "vinyasa", poses: 32, durationSeconds: 2700),
+                workout("Mobility + Core", daysAgo: 2, from: now, exercises: [
                     ("Goblet Squat", [(24, 12), (24, 12)]),
                     ("Kettlebell Swing", [(24, 15), (24, 15)]),
                 ]),
             ],
             follow: true)
+    }
+
+    private static func cardioWorkout(
+        _ title: String, daysAgo: Int, from now: Date,
+        modality: String, distanceMeters: Double, durationSeconds: Int, paceSecondsPerKm: Double
+    ) -> (dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date) {
+        let started = now.addingTimeInterval(Double(-daysAgo) * 86_400)
+        let ended = started.addingTimeInterval(Double(durationSeconds))
+        let session = SharedCardioSessionDTO(
+            id: UUID(), modality: modality, startedAt: started, endedAt: ended,
+            durationSeconds: durationSeconds, distanceMeters: distanceMeters, effort: 6,
+            avgPaceSecondsPerKm: paceSecondsPerKm, split500mSeconds: nil, strokeRate: nil,
+            avgPowerWatts: nil, avgCadence: 168, resistanceLevel: nil, inclinePercent: nil,
+            elevationGainMeters: 45, yogaStyleRaw: nil, posesCompleted: nil, splits: [])
+        let dto = SharedWorkoutDTO(id: UUID(), title: title, startedAt: started, endedAt: ended, exercises: [], cardioSessions: [session])
+        return (dto, dto.summary, ended)
+    }
+
+    private static func yogaWorkout(
+        _ title: String, daysAgo: Int, from now: Date,
+        style: String, poses: Int, durationSeconds: Int
+    ) -> (dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date) {
+        let started = now.addingTimeInterval(Double(-daysAgo) * 86_400)
+        let ended = started.addingTimeInterval(Double(durationSeconds))
+        let session = SharedCardioSessionDTO(
+            id: UUID(), modality: "yoga", startedAt: started, endedAt: ended,
+            durationSeconds: durationSeconds, distanceMeters: nil, effort: 3,
+            avgPaceSecondsPerKm: nil, split500mSeconds: nil, strokeRate: nil, avgPowerWatts: nil,
+            avgCadence: nil, resistanceLevel: nil, inclinePercent: nil, elevationGainMeters: nil,
+            yogaStyleRaw: style, posesCompleted: poses, splits: [])
+        let dto = SharedWorkoutDTO(id: UUID(), title: title, startedAt: started, endedAt: ended, exercises: [], cardioSessions: [session])
+        return (dto, dto.summary, ended)
     }
 
     /// Fabricates a shared workout with plausible derived aggregates.

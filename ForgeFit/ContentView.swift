@@ -470,14 +470,14 @@ struct ContentView: View {
         }
     }
 
-    /// Projects a just-finished workout to its health-safe shared form and
-    /// publishes it (no-op unless the user opted into social). Skips workouts
-    /// with no strength exercises (v1 shares strength content only).
+    /// Projects a just-finished workout to its health-safe shared form
+    /// (strength, cardio, or yoga — health + GPS stripped) and publishes it
+    /// (no-op unless the user opted into social). Skips a genuinely empty one.
     private func publishFinishedWorkout(_ workout: WorkoutModel) {
         guard social.isOptedIn else { return }
         let names = Dictionary(exercises.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let dto = SocialWorkoutMapper.shared(from: workout, exerciseNames: names)
-        guard !dto.exercises.isEmpty else { return }
+        guard !(dto.exercises.isEmpty && dto.cardioSessions.isEmpty) else { return }
         let summary = dto.summary
         Task { await social.publish(dto, summary: summary) }
     }

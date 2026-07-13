@@ -6,6 +6,7 @@ import SwiftUI
 /// unverifiable, matching the app's honest-framing stance.
 struct LeaderboardView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
 
     @State private var scope: LeaderboardScope = .friends
@@ -17,7 +18,7 @@ struct LeaderboardView: View {
     private let categories: [SocialLeaderboardMetric] = [.xp, .totalVolume, .cardioDistance, .yogaMinutes]
 
     var body: some View {
-        ScreenScaffold("Leaderboards", trailing: { EmptyView() }) {
+        DashboardScaffold(title: "Leaderboards", dismiss: dismiss) {
             SegmentedPills(options: [.friends, .global], title: scopeTitle, selection: $scope)
             SegmentedPills(options: categories, title: categoryTitle, selection: $metric)
 
@@ -41,7 +42,6 @@ struct LeaderboardView: View {
                 }
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
         .task(id: TaskKey(scope: scope, metric: metric)) { await load() }
     }
 

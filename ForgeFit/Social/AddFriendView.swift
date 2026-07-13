@@ -6,6 +6,7 @@ import SwiftUI
 /// people-search index yet.
 struct AddFriendView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
 
     @State private var query = ""
@@ -14,7 +15,7 @@ struct AddFriendView: View {
     @State private var searching = false
 
     var body: some View {
-        ScreenScaffold("Find friends", trailing: { EmptyView() }) {
+        DashboardScaffold(title: "Find friends", dismiss: dismiss) {
             Card {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     HStack {
@@ -38,7 +39,6 @@ struct AddFriendView: View {
                 EmptyStateCard(title: "No match", message: "No athlete found with that handle.", systemImage: "person.slash")
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
     }
 
     private func resultRow(_ profile: SocialProfile) -> some View {
