@@ -64,8 +64,9 @@ enum AnalyticsFingerprint {
     /// refreshes — required for anything feeding `RecoveryEngine`.
     @MainActor
     static func withHealth(_ workouts: [WorkoutModel]) -> String {
-        let metrics = HealthMetricsStore.shared.metrics
+        let store = HealthMetricsStore.shared
+        let metrics = store.metrics
         let latestMetric = metrics.last?.date.timeIntervalSince1970 ?? 0
-        return of(workouts) + "|\(metrics.count)|\(latestMetric)"
+        return of(workouts) + "|\(metrics.count)|\(latestMetric)|\(store.metricsRevision)"
     }
 }

@@ -230,7 +230,8 @@ struct WrappedTests {
                 workouts.append(strengthWorkout(on: date(2026, month, day), exercise: bench))
             }
         }
-        // Streak: five consecutive days in September.
+        // Extra September sessions should remain ordinary active days, not a
+        // streak-specific celebration page.
         for day in 7...11 {
             workouts.append(strengthWorkout(on: date(2026, 9, day), exercise: bench))
         }
@@ -238,11 +239,8 @@ struct WrappedTests {
         let payload = try #require(builder.buildYear(2026))
         let kinds = pages(payload)
         #expect(payload.title == "2026 Wrapped")
-        #expect(kinds.contains("longestStreak"))
+        #expect(!kinds.contains("longestStreak"))
         #expect(kinds.contains("topWorkouts"))
-        for case let .longestStreak(streak) in payload.pages {
-            #expect(streak.days == 5)
-        }
         // Yearly is celebration-weighted: no coaching pages.
         #expect(!kinds.contains("nextFocus"))
         #expect(!kinds.contains("heldBack"))

@@ -65,8 +65,8 @@ struct WrapLayout: Layout {
 ///
 /// These aren't rows of independent sets — they're ONE set broken up by
 /// micro-rests, so the UI is a nested block: an activation/main input, a strip
-/// of tap-to-confirm mini-set pills, and an inline micro-rest countdown that
-/// never takes the lifter off the screen.
+/// of tap-to-confirm mini-set pills, and micro-rests in the logger's persistent
+/// top timer.
 struct SetBlockView: View {
     @Bindable var set: SetModel
     @Bindable var workoutExercise: WorkoutExerciseModel
@@ -78,8 +78,10 @@ struct SetBlockView: View {
     /// renders twice ("Side 1" → "Side 2"), same weight and micro-rests,
     /// and only the single complete checkbox finishes the set.
     var isUnilateral: Bool = false
+    var completionDate: Date? = nil
     let onChange: () -> Void
     let onSetType: (SetType) -> Void
+    let onCompleted: () -> Void
     let onDelete: () -> Void
 
     @Environment(\.theme) private var theme
@@ -140,7 +142,6 @@ struct SetBlockView: View {
                     miniSetStrip(side: 2)
                 }
             }
-            MicroRestBar(tint: style.color, ownerID: set.id)
             if let ghost = matchPreviousGhost {
                 matchPreviousRow(ghost)
             }
@@ -256,7 +257,8 @@ struct SetBlockView: View {
         return minis.isEmpty ? "\(activation) reps" : "\(activation) + \(minis)"
     }
 
-    /// Checks off the WHOLE block (all segments done) and starts the full rest.
+    /// Checks off the whole block, then lets the logger's shared completion
+    /// coordinator apply the same rest and superset rules as every other set.
     private var completeButton: some View {
         Button {
             if isDone {
@@ -265,15 +267,13 @@ struct SetBlockView: View {
                 // Side 1's segment sum only — side 2 is added to volume by
                 // recomputeDerivedMetrics from its own fields.
                 if isCluster { set.reps = set.miniReps.reduce(0, +) }
-                set.completedAt = Date()
+                set.completedAt = completionDate ?? Date()
                 HealthMetricsStore.shared.fillBodyweight(set)
-                timer.skip()
-                if let rest = workoutExercise.restSeconds ?? set.setType.defaultRestSeconds {
-                    timer.start(seconds: rest, label: style.label)
-                }
+                if timer.microOwnerID == set.id { timer.skip() }
             }
             set.recomputeDerivedMetrics()
             onChange()
+            if isDone { onCompleted() }
         } label: {
             Image(systemName: "checkmark")
                 .font(.system(size: 13, weight: .bold))

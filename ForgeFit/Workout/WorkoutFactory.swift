@@ -68,6 +68,7 @@ enum WorkoutFactory {
         )
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
+        let effortPreferences = WorkoutEffortPolicy.current()
         var cardioSessions: [CardioSessionModel] = []
         workout.exercises = routine.exercises
             .sorted { $0.position < $1.position }
@@ -81,7 +82,13 @@ enum WorkoutFactory {
                 let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
-                        SetModel(
+                        let effort = WorkoutEffortPolicy.initialEffort(
+                            setType: target.setType,
+                            targetRPE: target.targetRPE,
+                            targetRIR: target.targetRIR,
+                            preferences: effortPreferences
+                        )
+                        return SetModel(
                             userID: ForgeFitDemo.userID,
                             position: target.position,
                             setType: target.setType,
@@ -91,8 +98,8 @@ enum WorkoutFactory {
                             // planned* fields as ghost targets instead.
                             reps: target.setType.isBlockType ? nil : target.targetRepsLow,
                             weight: target.targetWeight,
-                            rpe: target.targetRPE,
-                            rir: target.targetRIR,
+                            rpe: effort.rpe,
+                            rir: effort.rir,
                             durationSeconds: target.targetDurationSeconds,
                             sourceRoutineSetID: target.id,
                             plannedMiniSetCount: target.setType == .myoRep ? target.plannedMiniSetCount : nil,

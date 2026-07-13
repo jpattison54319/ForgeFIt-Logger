@@ -20,23 +20,6 @@ struct TrainingAnalytics {
         workouts.filter { $0.endedAt != nil && $0.deletedAt == nil }
     }
 
-    /// Consecutive training days ending today or yesterday (a streak isn't
-    /// broken until a full day passes with no session). Powers the Profile
-    /// stat and the streak-protection nudge.
-    func currentStreak() -> Int {
-        let days = Set(completed.map { calendar.startOfDay(for: $0.startedAt) })
-        guard !days.isEmpty else { return 0 }
-        var streak = 0
-        var day = calendar.startOfDay(for: now)
-        // Allow the streak to count from today or yesterday.
-        if !days.contains(day) { day = calendar.date(byAdding: .day, value: -1, to: day)! }
-        while days.contains(day) {
-            streak += 1
-            day = calendar.date(byAdding: .day, value: -1, to: day)!
-        }
-        return streak
-    }
-
     /// True when a completed workout exists today.
     func trainedToday() -> Bool {
         let today = calendar.startOfDay(for: now)
@@ -103,10 +86,8 @@ struct TrainingAnalytics {
     }
 
     func thisWeek() -> WeekTotals {
-        guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start else {
-            return WeekTotals(durationSeconds: 0, volume: 0, sets: 0, reps: 0, workoutCount: 0)
-        }
-        let inWeek = completed.filter { $0.startedAt >= weekStart }
+        let week = TrainingWeekSupport.interval(containing: now, calendar: calendar)
+        let inWeek = completed.filter { week.contains($0.startedAt) }
         let summaries = inWeek.map(summary(for:))
         return WeekTotals(
             durationSeconds: summaries.reduce(0) { $0 + $1.durationSeconds },

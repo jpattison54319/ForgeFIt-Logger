@@ -7,9 +7,7 @@ import UIKit
 
 /// Single owner of every local notification the app sends:
 /// - the rest-timer's lock-screen alert (scheduled by RestTimerController),
-/// - weekly workout reminders (user-picked weekdays + time),
-/// - the streak-protection nudge (evening alert when today would break an
-///   active streak).
+/// - weekly workout reminders (user-picked weekdays + time).
 ///
 /// Permission is requested explicitly from the Settings Reminders card —
 /// never silently mid-workout.
@@ -62,17 +60,6 @@ final class NotificationScheduler: NSObject {
         }
     }
 
-    var streakNudgeEnabled: Bool {
-        get {
-            UserDefaults.standard.object(forKey: "streakNudgeEnabled") == nil
-                || UserDefaults.standard.bool(forKey: "streakNudgeEnabled")
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "streakNudgeEnabled")
-            if !newValue { cancelStreakNudge() }
-        }
-    }
-
     var morningReadinessEnabled: Bool {
         get {
             UserDefaults.standard.object(forKey: "morningReadinessEnabled") == nil
@@ -84,16 +71,15 @@ final class NotificationScheduler: NSObject {
         }
     }
 
-    /// The streak nudge fires at 19:00 — late enough to matter, early enough
-    /// to act on.
-    private static let nudgeHour = 19
-
     func activate() {
         UNUserNotificationCenter.current().delegate = self
         refreshStatus()
     }
 
     func refreshStatus() {
+        // Clear any pending request left by app versions that still offered
+        // streak protection.
+        cancelStreakNudge()
         Task {
             let settings = await UNUserNotificationCenter.current().notificationSettings()
             authorizationStatus = settings.authorizationStatus
@@ -301,7 +287,7 @@ final class NotificationScheduler: NSObject {
             .removePendingNotificationRequests(withIdentifiers: [NotificationID.morningReadiness])
     }
 
-    // MARK: - Streak-protection nudge
+    // MARK: - Wrapped
 
     /// One-shot "your Wrapped is ready" alert, fired right after a new
     /// report is generated (generation is launch/foreground-driven, so the
@@ -325,49 +311,14 @@ final class NotificationScheduler: NSObject {
         }
     }
 
-    /// One-shot evening alert for the weekly-goal streak, scheduled only
-    /// when today is genuinely the last chance to hit the week's goal
-    /// (`mustTrainToday` from WeeklyStreak) — a rest day mid-week never
-    /// nags. Recomputed on foreground; cancelled once trained.
-    func refreshStreakNudge(streakWeeks: Int, mustTrainToday: Bool) {
-        guard streakNudgeEnabled, streakWeeks >= 1, mustTrainToday else {
-            cancelStreakNudge()
-            return
-        }
-        let calendar = Calendar.current
-        guard let fireDate = calendar.date(
-            bySettingHour: Self.nudgeHour, minute: 0, second: 0, of: Date()
-        ), fireDate > Date() else {
-            // Past tonight's nudge time — nothing to schedule today.
-            cancelStreakNudge()
-            return
-        }
-        Task {
-            let center = UNUserNotificationCenter.current()
-            let settings = await center.notificationSettings()
-            guard settings.authorizationStatus == .authorized else { return }
-            center.removePendingNotificationRequests(withIdentifiers: [NotificationID.streakNudge])
-            let content = UNMutableNotificationContent()
-            content.title = "Keep your \(streakWeeks)-week streak alive"
-            content.body = "Tonight's session locks in this week's goal."
-            content.sound = .default
-            let trigger = UNTimeIntervalNotificationTrigger(
-                timeInterval: fireDate.timeIntervalSinceNow, repeats: false
-            )
-            try? await center.add(UNNotificationRequest(
-                identifier: NotificationID.streakNudge, content: content, trigger: trigger
-            ))
-        }
-    }
-
-    func cancelStreakNudge() {
+    private func cancelStreakNudge() {
         UNUserNotificationCenter.current()
             .removePendingNotificationRequests(withIdentifiers: [NotificationID.streakNudge])
     }
 }
 
 extension NotificationScheduler: UNUserNotificationCenterDelegate {
-    /// Foreground presentation: reminders and nudges show a banner; the
+    /// Foreground presentation: reminders and alerts show a banner; the
     /// rest-timer alert (and its opt-in loud follow-ups, prefix-matched)
     /// stays suppressed — the in-app haptic + forge-strike chime cover it,
     /// and RestAlarm.cancel() already pulls any pending follow-ups the

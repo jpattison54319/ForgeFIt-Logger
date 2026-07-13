@@ -626,7 +626,7 @@ struct CoachCornerView: View {
 
     private var chatDestination: some View {
         AICoachChatView(
-            context: AICoachContext.build(workouts: workouts, routines: routines, exercises: exercises, recovery: recovery),
+            context: AICoachContext.build(workouts: workouts, routines: routines, exercises: exercises, recovery: recovery, suggestion: suggestion),
             coachPlan: coachPlan,
             suggestedRoutineName: suggestion?.routine.name,
             onApplyPlan: coachPlan != nil ? { plan in

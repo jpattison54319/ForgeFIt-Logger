@@ -8,17 +8,20 @@ struct ScreenScaffold<Trailing: View, Content: View>: View {
     @Environment(\.theme) private var theme
     let title: String
     var subtitle: String? = nil
+    var titleFont: Font
     var trailing: Trailing
     @ViewBuilder var content: Content
 
     init(
         _ title: String,
         subtitle: String? = nil,
+        titleFont: Font = .screenTitle,
         @ViewBuilder trailing: () -> Trailing,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.titleFont = titleFont
         self.trailing = trailing()
         self.content = content()
     }
@@ -29,7 +32,7 @@ struct ScreenScaffold<Trailing: View, Content: View>: View {
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(.screenTitle)
+                            .font(titleFont)
                             .foregroundStyle(theme.textPrimary)
                         if let subtitle {
                             Text(subtitle)
@@ -56,8 +59,13 @@ struct ScreenScaffold<Trailing: View, Content: View>: View {
 }
 
 extension ScreenScaffold where Trailing == EmptyView {
-    init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
-        self.init(title, subtitle: subtitle, trailing: { EmptyView() }, content: content)
+    init(
+        _ title: String,
+        subtitle: String? = nil,
+        titleFont: Font = .screenTitle,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(title, subtitle: subtitle, titleFont: titleFont, trailing: { EmptyView() }, content: content)
     }
 }
 

@@ -63,7 +63,7 @@ enum XPService {
     static let perWorkoutCap = 250
 
     static func previewAward(for workout: WorkoutModel, now: Date = Date(), requireEnded: Bool = true) -> Award {
-        guard workout.deletedAt == nil, workout.xpAwardedAt == nil, !isImportedHistory(workout) else {
+        guard workout.deletedAt == nil, workout.xpAwardedAt == nil, !workout.isImportedHistory else {
             return Award(amount: 0, base: 0, duration: 0, strength: 0, cardioDuration: 0, cardioDistance: 0, eligible: false)
         }
 
@@ -173,13 +173,6 @@ enum XPService {
     static func requiredTotalXP(forLevel level: Int) -> Int {
         guard level > 1 else { return 0 }
         return Int((300 * pow(Double(level - 1), 1.65)).rounded(.up))
-    }
-
-    static func isImportedHistory(_ workout: WorkoutModel) -> Bool {
-        if workout.externalSource != nil || workout.importFingerprint != nil || workout.importBatchID != nil {
-            return true
-        }
-        return workout.sourceDevice?.hasPrefix("healthkit") == true
     }
 
     private static func effectiveWorkoutSeconds(_ workout: WorkoutModel, now: Date) -> Int {

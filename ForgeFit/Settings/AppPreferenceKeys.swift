@@ -21,17 +21,17 @@ enum AppPreferenceKeys {
         "distanceUnitRaw",
         "trainingFocusRaw",
         "homeQuickStartActions.v1",
-        "weeklyWorkoutGoal",
         "activeMacroFolderID",
         "activeMesoFolderID",
         ThemeManager.modeDefaultsKey,
         "liveSyncEnabled",
         "healthWriteEnabled",
-        "showRPEInLogger",
+        WorkoutEffortPolicy.loggingEnabledKey,
         "effortScaleRaw",
+        WorkoutEffortPolicy.failureTrainingKey,
+        WarmupRampConfigStore.key,
         "reminderWeekdays",
         "reminderMinutes",
-        "streakNudgeEnabled",
         "morningReadinessEnabled",
         "timerSoundEnabled",
         "loudRestAlarmEnabled",
@@ -60,5 +60,9 @@ enum AppPreferenceKeys {
         "backupLastSuccessAt",
     ]
 
-    static var allResettable: [String] { backedUp + localOnly }
+    /// Retired preferences kept only so Erase All Data also cleans installs
+    /// that previously used the streak feature.
+    static let deprecated = ["weeklyWorkoutGoal", "streakNudgeEnabled"]
+
+    static var allResettable: [String] { backedUp + localOnly + deprecated }
 }

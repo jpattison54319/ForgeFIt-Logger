@@ -223,7 +223,7 @@ enum BackupRestoreService {
             switch value {
             case .string(let string):
                 // JSON-blob and CSV-encoded prefs round-trip through strings.
-                if key == "homeQuickStartActions.v1" || key.hasPrefix("plateInventory"),
+                if key == "homeQuickStartActions.v1" || key.hasPrefix("plateInventory") || key == WarmupRampConfigStore.key,
                    let data = Data(base64Encoded: string) {
                     defaults.set(data, forKey: key)
                 } else if key == "reminderWeekdays" {

@@ -106,6 +106,30 @@ struct CircleIconButton: View {
     }
 }
 
+/// Navigation counterpart to `CircleIconButton`. Keeping the same 44 pt glass
+/// treatment makes header destinations and header actions feel identical while
+/// still participating in a `NavigationStack`'s typed route system.
+struct CircleIconNavigationLink<Value: Hashable>: View {
+    let systemImage: String
+    let label: String
+    let value: Value
+    var tint: Color? = nil
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        NavigationLink(value: value) {
+            Image(systemName: systemImage)
+                .font(.bodyStrong)
+                .foregroundStyle(tint ?? theme.textPrimary)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
+    }
+}
+
 struct PressableButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

@@ -419,6 +419,249 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(skip.exists, "Skip should stop the rest timer and remove the bar.")
     }
 
+    /// Every active strength exercise can be collapsed before completion. Its
+    /// condensed checkmark completes/uncompletes all sets without opening the
+    /// card, while the summary and persistent header chevron toggle its layout.
+    @MainActor
+    func testCompletedExerciseCollapsesAndReopens() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        // The starter routine's exercise has exactly one set, so one tap
+        // completes the exercise. Auto-presentation of the logger has a
+        // startup race (it polls for the active workout for ~3s and gives
+        // up); the workout is still running, so recover via the mini bar.
+        let completeSet = app.buttons["complete-set-1"].firstMatch
+        if !completeSet.waitForExistence(timeout: 10) {
+            let expand = app.descendants(matching: .any)["expand-active-workout"].firstMatch
+            XCTAssertTrue(expand.waitForExistence(timeout: 5), "Expected either the live logger or the minimized workout bar.")
+            tapWhenReady(expand)
+        }
+        XCTAssertTrue(completeSet.waitForExistence(timeout: 10), "Expected the live logger with a completable set.")
+        let summary = app.descendants(matching: .any)["completed-exercise-summary"].firstMatch
+        let collapse = app.descendants(matching: .any)["collapse-completed-exercise"].firstMatch
+        XCTAssertTrue(collapse.waitForExistence(timeout: 5), "Every expanded exercise should keep a collapse chevron.")
+        tapWhenReady(collapse)
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), "An incomplete exercise should collapse into its summary.")
+
+        let condensedCheckmark = app.descendants(matching: .any)["toggle-condensed-exercise-completion"].firstMatch
+        XCTAssertTrue(condensedCheckmark.waitForExistence(timeout: 5), "A collapsed exercise should keep its completion control.")
+        XCTAssertEqual(condensedCheckmark.value as? String, "0 of 1 sets completed")
+        tapWhenReady(condensedCheckmark)
+        XCTAssertTrue(summary.exists, "Completing all sets while collapsed must keep the exercise collapsed.")
+        XCTAssertEqual(condensedCheckmark.value as? String, "1 of 1 sets completed")
+
+        tapWhenReady(summary)
+        XCTAssertTrue(completeSet.waitForExistence(timeout: 5), "Tapping the summary should reopen the full set grid.")
+
+        XCTAssertTrue(collapse.waitForExistence(timeout: 5), "The collapse chevron should remain after reopening.")
+        tapWhenReady(collapse)
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), "The chevron should recollapse the still-completed exercise.")
+        tapWhenReady(condensedCheckmark)
+        XCTAssertTrue(summary.exists, "Uncompleting all sets must also preserve the user's collapsed state.")
+        XCTAssertEqual(condensedCheckmark.value as? String, "0 of 1 sets completed")
+    }
+
+    /// A partial-wear night surfaces the Home affordance. Repeated close/open
+    /// cycles must always restore full-sized bubbles, while Delete retracts to
+    /// one Undo button and remains reversible across repeated attempts.
+    @MainActor
+    func testPartialSleepCorrectionFlow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
+        app.launch()
+
+        let trigger = app.buttons["sleep-integrity-trigger"].firstMatch
+        XCTAssertTrue(trigger.waitForExistence(timeout: 10), "Expected the flagged-sleep affordance on Home.")
+        let minimizeWorkout = app.descendants(matching: .any)["minimize-workout"].firstMatch
+        if minimizeWorkout.exists {
+            minimizeWorkout.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        let triggerMidX = trigger.frame.midX
+        tapWhenReady(trigger)
+
+        // The single button splits into the option cluster.
+        let edit = app.buttons["sleep-integrity-edit"].firstMatch
+        let confirm = app.buttons["sleep-integrity-confirm"].firstMatch
+        let delete = app.buttons["sleep-integrity-delete"].firstMatch
+        let dismiss = app.buttons["sleep-integrity-dismiss"].firstMatch
+        let undo = app.buttons["sleep-integrity-undo"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "Tapping the trigger should reveal the Edit option.")
+        XCTAssertTrue(confirm.exists, "Confirm option should appear.")
+        XCTAssertTrue(delete.waitForExistence(timeout: 2), "Delete option should appear.")
+        XCTAssertTrue(dismiss.exists, "The trigger should become a dismiss control.")
+        XCTAssertLessThan(delete.frame.maxX, edit.frame.minX, "Delete and Edit must remain distinct bubbles with a gap.")
+        XCTAssertLessThan(edit.frame.maxX, confirm.frame.minX, "Edit and Confirm must remain distinct bubbles with a gap.")
+        XCTAssertLessThan(confirm.frame.maxX, dismiss.frame.minX, "Confirm and Dismiss must remain distinct bubbles with a gap.")
+        XCTAssertEqual(dismiss.frame.midX, triggerMidX, accuracy: 2, "The original trigger should stay pinned when it becomes Dismiss.")
+
+        // Exercise rapid reuse of the same fan subtree. Every reopen must end
+        // at the intended 44pt bubble size, never at the hidden 5% dot scale.
+        for _ in 0..<2 {
+            tapWhenReady(dismiss)
+            XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Closing should restore the original trigger.")
+            tapWhenReady(trigger)
+            XCTAssertTrue(delete.waitForExistence(timeout: 3), "Reopening should remount every option.")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+            XCTAssertGreaterThan(delete.frame.width, 38, "Delete must settle at full bubble size after reopening.")
+            XCTAssertGreaterThan(edit.frame.width, 38, "Edit must settle at full bubble size after reopening.")
+            XCTAssertGreaterThan(confirm.frame.width, 38, "Confirm must settle at full bubble size after reopening.")
+        }
+
+        // Delete retracts the cluster automatically and leaves exactly one
+        // persistent Undo control during the destructive-action grace period.
+        tapWhenReady(delete)
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "Delete should collapse into a single Undo control.")
+        XCTAssertFalse(delete.waitForExistence(timeout: 1), "Delete should retract with the option cluster.")
+        XCTAssertFalse(confirm.exists || edit.exists || dismiss.exists, "Only Undo should remain after Delete retracts.")
+        XCTAssertTrue(app.descendants(matching: .any)["sleep-integrity-feedback"].firstMatch.exists,
+                      "Choosing an option should confirm it with a feedback line.")
+
+        // Undo restores the original trigger and card. Repeating the exact
+        // sequence guards the previously damaging Delete/Undo/Delete race.
+        tapWhenReady(undo)
+        XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Undo should restore the review trigger.")
+        XCTAssertFalse(undo.exists, "Undo should disappear once reverted.")
+        tapWhenReady(trigger)
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        tapWhenReady(delete)
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "A second Delete must retain the same Undo path.")
+        XCTAssertTrue(app.descendants(matching: .any)["sleep-integrity-feedback"].firstMatch.exists,
+                      "The sleep card must remain rendered throughout the second undo window.")
+        tapWhenReady(undo)
+        XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Undoing a second Delete must restore the card again.")
+
+        // Edit path: open the modal, enter a duration, save → Edit becomes Undo.
+        tapWhenReady(trigger)
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        tapWhenReady(edit)
+        let field = app.textFields["sleep-integrity-hours-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Edit should present the hours field.")
+        tapWhenReady(field)
+        field.typeText("7.5")
+        let save = app.descendants(matching: .any)["sleep-integrity-save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 3), "Expected a Save button.")
+        tapWhenReady(save)
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "Saving an edit should swap Edit to Undo, keeping the card open.")
+        XCTAssertTrue(trigger.exists == false && dismiss.exists, "The card must stay open after an edit, not retire.")
+
+        // Return to a clean fan, then allow a final Delete to expire. Undo and
+        // feedback must remain visible during the grace period; only then does
+        // the saved correction update the score and retire the card.
+        tapWhenReady(undo)
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        tapWhenReady(delete)
+        XCTAssertTrue(undo.waitForExistence(timeout: 3))
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        XCTAssertTrue(undo.exists, "Undo must remain available throughout the grace period.")
+        let deadline = Date().addingTimeInterval(9)
+        while undo.exists, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertFalse(undo.exists, "Delete should retire the card after the undo window expires.")
+
+        // Recovery must preserve the user's decision. It may not fall back to
+        // the original partial-capture warning after this night was excluded.
+        let recoveryCard = app.descendants(matching: .any)["home-recovery-card"].firstMatch
+        for _ in 0..<5 where !(recoveryCard.exists && recoveryCard.isHittable) {
+            app.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(recoveryCard.waitForExistence(timeout: 5), "Expected the Home recovery card.")
+        tapWhenReady(recoveryCard)
+
+        let notTracked = app.descendants(matching: .any)["recovery-sleep-override-not-tracked"].firstMatch
+        scrollUntilHittable(notTracked, in: app)
+        XCTAssertTrue(notTracked.waitForExistence(timeout: 5), "Recovery should label the excluded night as Not tracked.")
+        XCTAssertTrue(app.staticTexts["Excluded at your request"].exists)
+        XCTAssertFalse(app.staticTexts["Only part of the night tracked"].exists,
+                       "A resolved night must not retain the raw partial-tracking warning.")
+    }
+
+    /// Delete is durable when its success feedback appears, not eight seconds
+    /// later when the Undo grace period ends. Force-close immediately, rebuild
+    /// the same raw Health night, and verify relaunch applies the saved choice.
+    @MainActor
+    func testSleepDeleteSurvivesImmediateRelaunch() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
+        app.launch()
+
+        let trigger = app.buttons["sleep-integrity-trigger"].firstMatch
+        XCTAssertTrue(trigger.waitForExistence(timeout: 10))
+        tapWhenReady(trigger)
+        let delete = app.buttons["sleep-integrity-delete"].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        tapWhenReady(delete)
+        XCTAssertTrue(app.buttons["sleep-integrity-undo"].firstMatch.waitForExistence(timeout: 3),
+                      "The choice should still offer Undo before the app closes.")
+        XCTAssertTrue(app.descendants(matching: .any)["sleep-integrity-feedback"].firstMatch.exists)
+
+        // Close inside the grace period, then seed the same raw night without
+        // clearing UserDefaults. This is the real regression path.
+        app.terminate()
+        app.launchArguments = [
+            "--seed-partial-sleep-demo",
+            "--preserve-sleep-override-demo",
+            "-didOnboard", "YES",
+            "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let recoveryCard = app.descendants(matching: .any)["home-recovery-card"].firstMatch
+        XCTAssertTrue(recoveryCard.waitForExistence(timeout: 10), "Expected Home to finish relaunching.")
+        XCTAssertFalse(app.buttons["sleep-integrity-trigger"].firstMatch.exists,
+                       "The deleted night must not be questioned again after relaunch.")
+        XCTAssertFalse(app.buttons["sleep-integrity-undo"].firstMatch.exists,
+                       "The resolved affordance should not linger after relaunch.")
+        XCTAssertFalse(app.staticTexts["Sleep removed"].exists)
+        tapWhenReady(recoveryCard)
+
+        let notTracked = app.descendants(matching: .any)["recovery-sleep-override-not-tracked"].firstMatch
+        scrollUntilHittable(notTracked, in: app)
+        XCTAssertTrue(notTracked.waitForExistence(timeout: 5),
+                      "Relaunched Recovery should apply the persisted Not tracked choice.")
+        XCTAssertTrue(app.staticTexts["Excluded at your request"].exists)
+    }
+
+    /// The training calendar shows per-day recovery rings and strain lines;
+    /// selecting a day surfaces all three scores above that day's workouts.
+    @MainActor
+    func testCalendarShowsRecoveryRingsAndSummary() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-recovery-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchEnvironment["FORGEFIT_RECOVERY_DEMO"] = "1"
+        app.launch()
+
+        app.descendants(matching: .any)["tab-profile"].firstMatch.tap()
+        let calendarTile = app.descendants(matching: .any)["Calendar"].firstMatch
+        XCTAssertTrue(calendarTile.waitForExistence(timeout: 8), "Expected the Calendar tile in Profile.")
+        tapWhenReady(calendarTile)
+
+        let anyDay = app.descendants(matching: .any)["calendar-day"].firstMatch
+        XCTAssertTrue(anyDay.waitForExistence(timeout: 8), "Expected calendar day cells.")
+        XCTAssertTrue(anyDay.label.contains("strain"), "Seeded calendar days should expose their strain score.")
+
+        // Selecting a seeded day surfaces recovery, trend, and strain.
+        let recovery = app.descendants(matching: .any)["recovery-summary-recovery"].firstMatch
+        let trend = app.descendants(matching: .any)["recovery-summary-trend"].firstMatch
+        let strain = app.descendants(matching: .any)["recovery-summary-strain"].firstMatch
+        XCTAssertTrue(recovery.waitForExistence(timeout: 5), "Expected the daily recovery score in the summary card.")
+        XCTAssertTrue(trend.exists, "Expected the trend score in the summary card.")
+        XCTAssertTrue(strain.exists, "Expected strain directly beneath the recovery scores.")
+
+        // A day with no snapshot (earlier than the seeded range) shows the
+        // honest empty state, no rings.
+        app.buttons["Previous month"].firstMatch.tap()
+        let firstDay = app.descendants(matching: .any)["calendar-day"].firstMatch
+        XCTAssertTrue(firstDay.waitForExistence(timeout: 3))
+        firstDay.tap()
+        XCTAssertTrue(app.staticTexts["No recovery recorded"].waitForExistence(timeout: 3),
+                      "A day without a snapshot should show the no-recovery empty state.")
+    }
+
     /// Wrapped acceptance: the Home "Report Available" card shows for a
     /// fresh report, opening it presents the story, and after closing, the
     /// card is gone (viewed) — while the report stays reachable in Profile.
@@ -456,23 +699,118 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(card.exists, "The Home card must disappear once the report is viewed.")
     }
 
-    // MARK: - Coach's Corner (Phase 5)
+    // MARK: - Home dashboard and dormant coach
 
-    /// Home's Coach's Corner entry point is a `CircleIconButton` with an
-    /// explicit `accessibilityLabel` (it renders icon-only, so VoiceOver
-    /// coverage depends on that label) — tapping it must present the Corner
-    /// sheet.
+    /// Calendar is the public Home header action. Coach remains implemented,
+    /// but neither coach entry point should be exposed while that experiment is
+    /// dormant.
     @MainActor
-    func testCoachButtonOpensCoachsCornerSheet() throws {
+    func testHomeCalendarReplacesCoachAndOpensCalendar() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launch()
 
-        let coachButton = app.buttons["Coach's Corner"].firstMatch
-        XCTAssertTrue(coachButton.waitForExistence(timeout: 5), "Expected the accessible Coach's Corner button on Home.")
-        tapWhenReady(coachButton)
+        let calendar = app.descendants(matching: .any)["home-calendar"].firstMatch
+        XCTAssertTrue(calendar.waitForExistence(timeout: 8), "Expected the accessible calendar shortcut on Home.")
+        XCTAssertFalse(app.descendants(matching: .any)["home-coach-corner"].firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["home-ask-coach"].firstMatch.exists)
+        tapWhenReady(calendar)
 
-        XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5), "Expected the Coach's Corner sheet to present.")
+        XCTAssertTrue(app.staticTexts["Calendar"].waitForExistence(timeout: 5), "Expected the same training calendar used by Profile.")
+        XCTAssertTrue(app.descendants(matching: .any)["calendar-day"].firstMatch.waitForExistence(timeout: 5))
+    }
+
+    /// Every compact Home metric opens a focused page with the same Today /
+    /// Trends control. Recovery is exercised by the sleep-correction tests;
+    /// this covers the three new destinations.
+    @MainActor
+    func testHomeMetricTilesOpenFocusedDetails() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.descendants(matching: .any)["home-metric-grid"].firstMatch.waitForExistence(timeout: 10))
+        let destinations = [
+            ("home-sleep-card", "sleep-detail", "sleep-detail-tabs"),
+            ("daily-strain-card", "strain-detail", "strain-detail-tabs"),
+            ("home-health-card", "health-detail", "health-detail-tabs"),
+        ]
+        for (tileID, detailID, tabsID) in destinations {
+            let tile = app.descendants(matching: .any)[tileID].firstMatch
+            XCTAssertTrue(tile.waitForExistence(timeout: 5), "Expected \(tileID) on Home.")
+            tapWhenReady(tile)
+            XCTAssertTrue(app.descendants(matching: .any)[detailID].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.descendants(matching: .any)[tabsID].firstMatch.exists)
+            if detailID == "health-detail" {
+                XCTAssertTrue(app.staticTexts["Respiratory rate"].waitForExistence(timeout: 3))
+                XCTAssertTrue(app.staticTexts["Blood oxygen"].exists)
+            }
+            tapWhenReady(app.buttons["Back"].firstMatch)
+        }
+    }
+
+    @MainActor
+    func testHomeRecommendationDisclosureCollapsesDetails() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Today's recommendation"].waitForExistence(timeout: 10))
+        let disclosure = app.descendants(matching: .any)["home-recommendation-disclosure"].firstMatch
+        let details = app.descendants(matching: .any)["home-recommendation-details"].firstMatch
+        XCTAssertTrue(disclosure.exists)
+        XCTAssertTrue(details.exists)
+
+        tapWhenReady(disclosure)
+        XCTAssertTrue(details.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Today's recommendation"].exists)
+
+        tapWhenReady(disclosure)
+        XCTAssertTrue(details.waitForExistence(timeout: 2))
+    }
+
+    /// Home's weekly summary is a Sunday-to-Saturday completion calendar,
+    /// followed by the existing totals. Streak copy and controls are gone.
+    @MainActor
+    func testHomeWeekCardShowsCompletionCalendarWithoutStreaks() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-week-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let heading = app.staticTexts["This week"].firstMatch
+        XCTAssertTrue(heading.waitForExistence(timeout: 8), "Expected the This week card on Home.")
+        XCTAssertTrue(app.descendants(matching: .any)["home-week-date-range"].firstMatch.exists)
+
+        let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+        for weekday in weekdays {
+            XCTAssertTrue(app.descendants(matching: .any)["home-week-day-\(weekday)"].firstMatch.exists,
+                          "Expected a circle for \(weekday).")
+        }
+        let sunday = app.descendants(matching: .any)["home-week-day-sunday"].firstMatch
+        XCTAssertEqual(sunday.value as? String, "Workout completed")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'streak'")).firstMatch.exists)
+    }
+
+    @MainActor
+    func testProfileTrophyShelfRendersAndOpensTrophy() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg",
+            "-initialTab", "profile",
+        ]
+        app.launch()
+
+        let shelf = app.descendants(matching: .any)["trophy-shelf"].firstMatch
+        let firstTrophy = app.descendants(matching: .any)["trophy-workouts-1"].firstMatch
+        XCTAssertTrue(shelf.waitForExistence(timeout: 8), "Expected the trophy shelf on Profile.")
+        scrollUntilHittable(firstTrophy, in: app)
+        XCTAssertTrue(firstTrophy.isHittable, "Expected the first trophy to render inside the shelf.")
+
+        firstTrophy.tap()
+        XCTAssertTrue(app.staticTexts["First session"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["In progress"].exists)
     }
 
     /// A fresh account (no coached program yet) must offer "Build my plan"
@@ -480,12 +818,9 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCoachCornerNoPlanStateShowsBuildMyPlan() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
-        let coachButton = app.buttons["Coach's Corner"].firstMatch
-        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
-        tapWhenReady(coachButton)
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
 
         let buildPlan = app.descendants(matching: .any)["coach-corner-build-plan"].firstMatch
@@ -499,12 +834,9 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCoachCornerSectionsHaveVoiceOverIdentifiers() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
-        let coachButton = app.buttons["Coach's Corner"].firstMatch
-        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
-        tapWhenReady(coachButton)
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
 
         let todaysCall = app.descendants(matching: .any)["coach-corner-section-todays-call"].firstMatch
@@ -524,19 +856,16 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testAskCoachChatIsSessionOnly() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
-        let coachButton = app.buttons["Coach's Corner"].firstMatch
-        XCTAssertTrue(coachButton.waitForExistence(timeout: 5))
-        tapWhenReady(coachButton)
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
 
         let askCoach = app.descendants(matching: .any)["coach-corner-ask-coach"].firstMatch
         scrollUntilHittable(askCoach, in: app)
         tapWhenReady(askCoach)
 
-        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Ask me about your training'")).firstMatch
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your training pulled up'")).firstMatch
         XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the chat's opening greeting.")
 
         let suggestedPrompt = app.buttons["Why this readiness score?"].firstMatch
@@ -555,6 +884,21 @@ final class ForgeFitUITests: XCTestCase {
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'Why this readiness score'")).firstMatch.exists,
             "Chat history must not persist across a reopen — the chat is session-only."
         )
+    }
+
+    /// The dormant chat remains launchable for regression coverage without a
+    /// user-facing Home affordance.
+    @MainActor
+    func testDormantCoachChatStillLaunchesThroughAutomationHook() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-openCoachChat", "YES"]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Ask your Coach"].waitForExistence(timeout: 5), "Expected the chat to present directly.")
+        XCTAssertFalse(app.navigationBars["Coach's Corner"].exists, "Coach's Corner must not present when the flag is off.")
+
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your training pulled up'")).firstMatch
+        XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the chat greeting.")
     }
 
     /// "Review coach's version" only renders once the coach has a dose

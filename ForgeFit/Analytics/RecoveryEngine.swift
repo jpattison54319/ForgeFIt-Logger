@@ -50,11 +50,48 @@ struct RecoveryEngine {
         case positive, caution, neutral
     }
 
+    /// User-visible provenance for a night resolved through Home's sleep
+    /// integrity affordance. This stays separate from data-quality flags so
+    /// Recovery can distinguish an edit from a confirmation or exclusion.
+    enum SleepOverrideStatus: Equatable {
+        case confirmed
+        case edited
+        case notTracked
+
+        var label: String {
+            switch self {
+            case .confirmed: "Confirmed"
+            case .edited: "Edited"
+            case .notTracked: "Not tracked"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .confirmed: "checkmark"
+            case .edited: "pencil"
+            case .notTracked: "eye.slash"
+            }
+        }
+
+        var detailPrefix: String {
+            switch self {
+            case .confirmed: "Confirmed by you"
+            case .edited: "Edited by you"
+            case .notTracked: "Excluded by you"
+            }
+        }
+    }
+
     struct DailyHealthMetric {
         var date: Date
         var hrvSDNN: Double?
         var hrvRMSSD: Double?
         var restingHR: Int?
+        var respiratoryRate: Double?
+        /// Stored as percentage points (for example, 97.0), rather than
+        /// HealthKit's fractional percent representation.
+        var oxygenSaturationPercent: Double?
         var sleepTotalMinutes: Int?
         var sleepNeedMinutes: Int = 480
         var source: String?
@@ -69,6 +106,17 @@ struct RecoveryEngine {
         /// than Apple's daytime-derived resting heart rate. Preferred over
         /// `restingHR` when present.
         var sleepingHR: Int?
+        /// Nocturnal heart-rate sample count — coverage of the sleep window.
+        /// A partial-wear night yields far fewer than a full night, and a
+        /// short fragment can't be trusted for a mean sleeping HR (see
+        /// `SleepIntegrity`).
+        var sleepingHRSampleCount: Int?
+        /// Merged sleep-window bounds for the night. Their deviation from the
+        /// user's habitual bed/wake anchors is what separates a true short
+        /// night (normal anchors, dense samples) from a partial-wear gap
+        /// (window starts hours late or ends hours early).
+        var sleepStart: Date?
+        var sleepEnd: Date?
         /// Sleep-stage breakdown (Apple Watch and most modern wearables write
         /// staged samples). Informational — total minutes drive the score;
         /// stages explain the quality of that total. Nil when the source only
@@ -76,11 +124,49 @@ struct RecoveryEngine {
         var sleepDeepMinutes: Int?
         var sleepREMMinutes: Int?
         var sleepAwakeMinutes: Int?
+        /// The exact Home action applied to this night. Unlike
+        /// `sleepUserCorrected`, this preserves which correction was chosen so
+        /// Recovery can explain the resulting value honestly.
+        var sleepOverride: SleepNightOverride?
+        /// Data-integrity markers stamped by `SleepIntegrity.annotate` and the
+        /// user's own corrections (`SleepOverrideStore`). Read by the sleep
+        /// scoring, the sleep-debt sum, and the baseline filters so a
+        /// low-integrity or manually-corrected night can't masquerade as a
+        /// measured recovery deficit or contaminate the baselines.
+        var integrityFlags: Set<String> = []
+
+        /// A night the app has flagged as probable partial-wear capture —
+        /// present-but-untrustworthy sleep data (see `SleepIntegrity`).
+        var sleepLikelyPartial: Bool { integrityFlags.contains(SleepIntegrity.Flag.partialWear) }
+        /// The user resolved this night by hand: confirmed the data, entered a
+        /// duration, or marked it untracked. Corrected nights are trusted for
+        /// today's score but never feed the rolling baselines.
+        var sleepUserCorrected: Bool { integrityFlags.contains(SleepIntegrity.Flag.userCorrected) }
+        var sleepOverrideStatus: SleepOverrideStatus? {
+            switch sleepOverride {
+            case .confirmed: .confirmed
+            case .manual: .edited
+            case .untracked: .notTracked
+            case nil: nil
+            }
+        }
+        /// Whether this night's sleep may drive scoring, debt, and baselines.
+        /// Partial-wear nights that the user hasn't corrected are excluded.
+        var sleepIsTrustworthy: Bool { !sleepLikelyPartial || sleepUserCorrected }
 
         /// Best HRV signal: nocturnal window first, then all-day RMSSD/SDNN.
-        var bestHRV: Double? { nocturnalHRV ?? hrvRMSSD ?? hrvSDNN }
-        /// Best overnight-cardiac signal: sleeping HR first, then resting HR.
-        var bestRestingHR: Int? { sleepingHR ?? restingHR }
+        /// On a partial-wear night the short nocturnal fragment is circadian-
+        /// biased (a 5am window reads a flatteringly high HRV), so it's skipped
+        /// in favor of the all-day mean.
+        var bestHRV: Double? {
+            (sleepIsTrustworthy ? nocturnalHRV : nil) ?? hrvRMSSD ?? hrvSDNN
+        }
+        /// Best overnight-cardiac signal: sleeping HR first, then all-day
+        /// resting HR. A partial-wear fragment is dropped in favor of Apple's
+        /// all-day resting HR, which is computed independently of the fragment.
+        var bestRestingHR: Int? {
+            (sleepIsTrustworthy ? sleepingHR : nil) ?? restingHR
+        }
     }
 
     struct ReasonChip: Identifiable, Equatable {
@@ -368,14 +454,16 @@ struct RecoveryEngine {
         }()
         let confidence = min(1, max(0.1, biometric.completeness * 0.7 + loadCompleteness * 0.3))
 
+        let breakdown = loadBreakdown(days: 7)
+
         return Report(
             score: score,
             confidence: confidence,
             verdict: verdict,
             acuteLoad: acute,
             chronicLoad: chronic,
-            strengthLoad: loadBreakdown(days: 7).strength,
-            cardioLoad: loadBreakdown(days: 7).cardio,
+            strengthLoad: breakdown.strength,
+            cardioLoad: breakdown.cardio,
             acwr: acwr,
             monotony: monotony,
             strain: strain,
@@ -683,9 +771,10 @@ struct RecoveryEngine {
                 ))
             }
 
-            if let restingHR = current.bestRestingHR {
+            if let heartRate = restingHRChannel(for: current) {
+                let restingHR = heartRate.value
                 availableParts += 1
-                let baseline = baselineRHRValues()
+                let baseline = heartRate.baseline
                 if baseline.count >= 7 {
                     confidenceParts += 1
                     completenessPoints += 1
@@ -712,7 +801,31 @@ struct RecoveryEngine {
                 signals.append(Signal(name: "Resting HR", systemImage: "heart.fill", value: "-", detail: "Connect Apple Health", connected: false))
             }
 
-            if let sleep = current.sleepTotalMinutes {
+            if current.sleepOverrideStatus == .notTracked {
+                // The absence is intentional, not a sync failure or partial
+                // capture. Keep it out of scoring while reflecting the user's
+                // decision everywhere Recovery explains today's inputs.
+                missing.append("Sleep (excluded by you)")
+                chips.append(ReasonChip(text: "Sleep excluded by you", tone: .neutral))
+                signals.append(Signal(
+                    name: "Sleep",
+                    systemImage: "bed.double.fill",
+                    value: "-",
+                    detail: "Not tracked for this night at your request",
+                    connected: true
+                ))
+            } else if let sleep = current.sleepTotalMinutes, !current.sleepIsTrustworthy {
+                // Partial-wear capture: a fragment, not last night's real sleep.
+                // Degrade to a labeled gap — no penalty, no cap, no debt — so a
+                // data hole never masquerades as a recovery deficit. Confidence
+                // falls (sleep is absent from the blend) and the user gets a
+                // one-tap correction on Home (see SleepIntegrityCard).
+                missing.append("Sleep (partial)")
+                chips.append(ReasonChip(text: "Sleep data looks partial", tone: .neutral))
+                signals.append(Signal(name: "Sleep", systemImage: "bed.double.fill",
+                                      value: "~\(minutesLabel(sleep))",
+                                      detail: "Only part of the night tracked — tap to correct", connected: false))
+            } else if let sleep = current.sleepTotalMinutes {
                 availableParts += 1
                 confidenceParts += 1
                 completenessPoints += 1
@@ -733,6 +846,9 @@ struct RecoveryEngine {
                 var sleepDetail = "Debt \(debt.formatted(.number.precision(.fractionLength(1))))h"
                 if let deep = current.sleepDeepMinutes, let rem = current.sleepREMMinutes, deep + rem > 0 {
                     sleepDetail = "\(minutesLabel(deep)) deep · \(minutesLabel(rem)) REM · " + sleepDetail.lowercased()
+                }
+                if let status = current.sleepOverrideStatus {
+                    sleepDetail = "\(status.detailPrefix) · \(sleepDetail.lowercased())"
                 }
                 signals.append(Signal(name: "Sleep", systemImage: "bed.double.fill",
                                       value: minutesLabel(sleep), detail: sleepDetail, connected: true))
@@ -905,7 +1021,9 @@ struct RecoveryEngine {
     /// stand in for users with no nocturnal history at all (no sleep
     /// tracking), where awake-vs-awake is apples-to-apples.
     var usesNocturnalHRV: Bool {
-        baselineMetrics(days: 60).filter { $0.nocturnalHRV != nil }.count >= 14
+        baselineMetrics(days: 60)
+            .filter { $0.sleepIsTrustworthy && !$0.sleepUserCorrected && $0.nocturnalHRV != nil }
+            .count >= 14
     }
 
     /// A day's HRV for baseline comparisons, channel-pure. Apple samples
@@ -914,16 +1032,41 @@ struct RecoveryEngine {
     /// and "awake at 1am" scored against a sleeping baseline reads as a
     /// crashed HRV (the 1am bug, HRV edition).
     func acuteComparableHRV(for metric: DailyHealthMetric) -> Double? {
-        usesNocturnalHRV ? metric.nocturnalHRV : (metric.hrvRMSSD ?? metric.hrvSDNN)
+        if usesNocturnalHRV {
+            guard metric.sleepIsTrustworthy else { return nil }
+            return metric.nocturnalHRV
+        }
+        return metric.hrvRMSSD ?? metric.hrvSDNN
     }
 
     private func baselineHRVValues(preferRMSSD: Bool) -> [Double] {
         _ = preferRMSSD
-        return baselineMetrics(days: 60).compactMap { acuteComparableHRV(for: $0) }
+        return baselineMetrics(days: 60)
+            .filter { !$0.sleepUserCorrected }
+            .compactMap { acuteComparableHRV(for: $0) }
     }
 
-    private func baselineRHRValues() -> [Double] {
-        baselineMetrics(days: 60).compactMap { $0.bestRestingHR.map(Double.init) }
+    private func restingHRChannel(
+        for current: DailyHealthMetric
+    ) -> (value: Int, baseline: [Double])? {
+        let history = baselineMetrics(days: 60).filter { !$0.sleepUserCorrected }
+        let sleepingBaseline = history
+            .filter(\.sleepIsTrustworthy)
+            .compactMap { $0.sleepingHR.map(Double.init) }
+        if current.sleepIsTrustworthy,
+           let value = current.sleepingHR,
+           sleepingBaseline.count >= 7 {
+            return (value, sleepingBaseline)
+        }
+
+        let restingBaseline = history.compactMap { $0.restingHR.map(Double.init) }
+        if let value = current.restingHR {
+            return (value, restingBaseline)
+        }
+        if current.sleepIsTrustworthy, let value = current.sleepingHR {
+            return (value, sleepingBaseline)
+        }
+        return nil
     }
 
     func baselineMetrics(days: Int) -> [DailyHealthMetric] {
@@ -939,7 +1082,10 @@ struct RecoveryEngine {
         let recent = recentHealthMetrics(days: 14)
         guard !recent.isEmpty else { return 0 }
         return recent.reduce(0) { total, metric in
-            guard let sleep = metric.sleepTotalMinutes else { return total }
+            // A partial-wear night is a hole in the record, not zero sleep and
+            // not a full 8 h — skip it so one forgotten watch can't inject days
+            // of phantom debt (Fable 5: exclude the night, shrink the divisor).
+            guard let sleep = metric.sleepTotalMinutes, metric.sleepIsTrustworthy else { return total }
             return total + Double(max(0, metric.sleepNeedMinutes - sleep)) / 60
         }
     }

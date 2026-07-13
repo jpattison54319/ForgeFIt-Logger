@@ -169,6 +169,37 @@ struct RecoveryScoresTests {
         #expect(seasonedPart?.state.value != nil)
     }
 
+    @Test func partialNightDoesNotScoreFragmentedOvernightBiometrics() throws {
+        let history = (1...20).map { day in
+            RecoveryEngine.DailyHealthMetric(
+                date: now.addingTimeInterval(-Double(day) * 86_400),
+                hrvSDNN: 60,
+                restingHR: 58,
+                sleepTotalMinutes: 480,
+                nocturnalHRV: 65,
+                sleepingHR: 52
+            )
+        }
+        var partial = RecoveryEngine.DailyHealthMetric(
+            date: now,
+            hrvSDNN: 60,
+            restingHR: 58,
+            sleepTotalMinutes: 120,
+            nocturnalHRV: 90,
+            sleepingHR: 42
+        )
+        partial.integrityFlags.insert(SleepIntegrity.Flag.partialWear)
+
+        let report = RecoveryEngine(workouts: [], healthMetrics: history + [partial], now: now).report()
+        let hrv = try #require(report.recovery.daily.parts.first { $0.name == "HRV (today)" })
+        let restingHR = try #require(report.recovery.daily.parts.first { $0.name == "Resting HR" })
+
+        #expect(hrv.state.value == nil)
+        #expect(hrv.valueText == "—")
+        #expect(restingHR.valueText == "58 bpm")
+        #expect(!report.recovery.daily.parts.contains { $0.name == "Sleeping HR" && $0.valueText == "42 bpm" })
+    }
+
     // MARK: - Confidence reflects data completeness
 
     /// The reported bug: confidence read 100% even when a signal (sleep) was

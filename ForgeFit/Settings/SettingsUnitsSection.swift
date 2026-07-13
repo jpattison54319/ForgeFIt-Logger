@@ -9,8 +9,9 @@ struct SettingsUnitsSection: View {
     @State private var distanceUnit: DistanceUnit = Fmt.distanceUnit
     @AppStorage("weightUnitRaw") private var weightUnitRaw = WeightUnit.lb.rawValue
     @AppStorage("distanceUnitRaw") private var distanceUnitRaw = DistanceUnit.km.rawValue
-    @AppStorage("showRPEInLogger") private var showRPEInLogger = false
+    @AppStorage(WorkoutEffortPolicy.loggingEnabledKey) private var showRPEInLogger = false
     @AppStorage("effortScaleRaw") private var effortScaleRaw = "rpe"
+    @AppStorage(WorkoutEffortPolicy.failureTrainingKey) private var failureTrainingEnabled = false
 
     var body: some View {
         Section {
@@ -47,6 +48,9 @@ struct SettingsUnitsSection: View {
             }
             .tint(theme.accent)
             .themedListRow()
+            .onChange(of: showRPEInLogger) { _, isEnabled in
+                if !isEnabled { failureTrainingEnabled = false }
+            }
 
             if showRPEInLogger {
                 SettingsRow(title: "Effort scale", subtitle: effortScaleRaw == "rir" ? "RIR \u{2014} reps in reserve (0 = nothing left)." : "RPE \u{2014} how hard it felt, 6\u{2013}10.") {
@@ -57,6 +61,15 @@ struct SettingsUnitsSection: View {
                     .pickerStyle(.segmented)
                     .frame(width: 120)
                 }
+                .themedListRow()
+
+                Toggle(isOn: $failureTrainingEnabled) {
+                    SettingsRowLabel(
+                        title: "Failure training",
+                        subtitle: "Non-warm-up sets default to RPE 10 / RIR 0."
+                    )
+                }
+                .tint(theme.accent)
                 .themedListRow()
             }
         } header: {

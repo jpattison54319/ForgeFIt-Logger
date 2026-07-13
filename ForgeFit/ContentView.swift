@@ -77,6 +77,11 @@ struct ContentView: View {
     @State private var planDeduplicationTask: Task<Void, Never>?
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
+    // Tabs that have been visited at least once. They stay mounted behind the
+    // current tab (keep-resident) so their @State-held Memo caches survive —
+    // switching back is instant instead of re-running full-history analytics in
+    // `body`. Seeded lazily (only the first tab mounts at launch).
+    @State private var mountedTabs: Set<AppTab> = []
     @State private var showBootSplash = true
     // First launch only; UI-test launch hooks skip it.
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didOnboard")
@@ -99,9 +104,8 @@ struct ContentView: View {
         .active(for: themeManager.mode, system: systemColorScheme)
     }
 
-    /// Count of live completed workouts — changes when one is finished OR
-    /// deleted, so downstream state (streak nudge, widget, watch) reacts to
-    /// deletions immediately.
+    /// Count of live completed workouts — changes when one is finished or
+    /// deleted, so the widget and watch react immediately.
     private var completedWorkoutCount: Int {
         workouts.count { $0.endedAt != nil && $0.deletedAt == nil }
     }
@@ -228,7 +232,7 @@ struct ContentView: View {
                 }
             }
             // Deleting or finishing a workout changes today's training reality —
-            // streak, nudge, widget, and watch snapshot must all follow. Deferred
+            // the widget and watch snapshot must follow. Deferred
             // and coalesced: the refreshes run full recovery/analytics passes, and
             // doing that synchronously stalls the dismiss/pop animation the user
             // is watching (first delete used to lag and drop its dismissal).
@@ -296,9 +300,35 @@ struct ContentView: View {
         }
     }
 
+    // Keep-resident tab host. Previously a `switch`, which is `_ConditionalContent`
+    // and tears down the outgoing tab's identity + @State (wiping every Memo
+    // cache) on each switch — so Home/Insights/Profile re-ran their full-history
+    // analytics synchronously in `body` on every visit, stalling the tab
+    // animation. Here each visited tab stays alive (hidden via opacity/hit-
+    // testing), so the memos the tabs' own comments assume ("stays alive behind
+    // the others") actually persist. Tabs mount lazily on first selection, so a
+    // cold launch still builds only Home.
     @ViewBuilder
     private var tabScreens: some View {
-        switch appState.selectedTab {
+        ZStack {
+            ForEach(AppTab.allCases) { tab in
+                if appState.selectedTab == tab || mountedTabs.contains(tab) {
+                    tabContent(for: tab)
+                        .opacity(appState.selectedTab == tab ? 1 : 0)
+                        .allowsHitTesting(appState.selectedTab == tab)
+                        .accessibilityHidden(appState.selectedTab != tab)
+                        .zIndex(appState.selectedTab == tab ? 1 : 0)
+                }
+            }
+        }
+        .onChange(of: appState.selectedTab, initial: true) { _, tab in
+            mountedTabs.insert(tab)
+        }
+    }
+
+    @ViewBuilder
+    private func tabContent(for tab: AppTab) -> some View {
+        switch tab {
         case .home:
             HomeView(workouts: workouts, routines: routines, exercises: exercises, setupNotes: setupNotes)
         case .workout:
@@ -348,7 +378,6 @@ struct ContentView: View {
         workoutCountReactionTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
-            refreshStreakNudge()
             updateWidgetSnapshot()
             WatchLink.shared.publishState()
         }
@@ -452,7 +481,6 @@ struct ContentView: View {
                 if activeWorkout == nil { updateWidgetSnapshot() }
             }
             NotificationScheduler.shared.refreshStatus()
-            refreshStreakNudge()
             // Covers "the app was already running when the month rolled
             // over" — launch alone would miss it.
             generateWrappedIfDue()
@@ -464,20 +492,6 @@ struct ContentView: View {
             // Flush any pending (debounced) backup before iOS suspends us.
             BackupScheduler.shared.exportNow()
         }
-    }
-
-    /// Keep the streak-protection nudge honest: scheduled only when the
-    /// weekly goal can still be met — and only by training on every
-    /// remaining day. Rest days never trigger it.
-    private func refreshStreakNudge() {
-        let streak = WeeklyStreak.compute(
-            workoutDates: workouts.compactMap { $0.endedAt != nil && $0.deletedAt == nil ? $0.startedAt : nil },
-            goalPerWeek: UserDefaults.standard.object(forKey: "weeklyWorkoutGoal") as? Int ?? 3
-        )
-        NotificationScheduler.shared.refreshStreakNudge(
-            streakWeeks: streak.weeks,
-            mustTrainToday: streak.mustTrainToday
-        )
     }
 
     /// Wrapped generation is launch/foreground-driven (idempotent, keyed by
@@ -576,6 +590,20 @@ struct ContentView: View {
     }
 
     private func launchTasks() async {
+        #if DEBUG
+        let preserveSleepDemoOverride = ProcessInfo.processInfo.arguments.contains("--preserve-sleep-override-demo")
+        // UI automation needs the flagged night before any launch migration or
+        // HealthKit authorization work can delay the Home affordance.
+        if ProcessInfo.processInfo.arguments.contains("--seed-partial-sleep-demo")
+            || ProcessInfo.processInfo.environment["FORGEFIT_PARTIAL_SLEEP_DEMO"] == "1" {
+            HealthMetricsStore.shared.seedPartialSleepDemo(resetOverride: !preserveSleepDemoOverride)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-recovery-demo")
+            || ProcessInfo.processInfo.environment["FORGEFIT_RECOVERY_DEMO"] == "1" {
+            RecoverySnapshotStore.shared.seedDemo()
+        }
+        #endif
+
         // F10: a 7+ day lapse arms Home's welcome-back card — measured BEFORE
         // stamping today as active, and only for users with training history
         // (an install that sat unused isn't "coming back to training").
@@ -615,6 +643,18 @@ struct ContentView: View {
         }
         BLEHeartRateService.shared.reconnectIfRemembered()
         await seedLaunchData()
+        #if DEBUG
+        // Forced-reset automation can rebuild the visible shell while the
+        // launch task is running. Re-assert this in-memory fixture after that
+        // reset so the seeded Health state is also the final state Home sees.
+        if ProcessInfo.processInfo.arguments.contains("--seed-partial-sleep-demo")
+            || ProcessInfo.processInfo.environment["FORGEFIT_PARTIAL_SLEEP_DEMO"] == "1" {
+            HealthMetricsStore.shared.seedPartialSleepDemo(resetOverride: !preserveSleepDemoOverride)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-week-demo") {
+            seedCurrentWeekDemo()
+        }
+        #endif
         await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
         SetTypeRetirementBackfill.run(in: modelContext)
         #if DEBUG
@@ -636,15 +676,41 @@ struct ContentView: View {
             presentLoggerWhenActiveWorkoutIsReady()
         }
         await importHealthWorkoutHistory()
+        // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
         NotificationScheduler.shared.activate()
         ReadinessDelivery.shared.configure(container: modelContext.container)
         BackupScheduler.shared.configure(container: modelContext.container)
         BackupScheduler.shared.dailyCheckIfDue()
-        refreshStreakNudge()
         updateWidgetSnapshot()
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
     }
+
+    #if DEBUG
+    /// UI-automation fixture for Home's Sunday-to-Saturday completion strip.
+    /// Seeds only days that have already occurred, so it never creates a
+    /// completed workout in the future.
+    private func seedCurrentWeekDemo() {
+        let calendar = Calendar.current
+        let now = Date()
+        let week = TrainingWeekSupport.interval(containing: now, calendar: calendar)
+        let todayOffset = calendar.dateComponents([.day], from: week.start, to: calendar.startOfDay(for: now)).day ?? 0
+        let offsets = [0, 2, 5].filter { $0 <= todayOffset }
+
+        for offset in offsets {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: week.start),
+                  let start = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) else { continue }
+            modelContext.insert(WorkoutModel(
+                userID: ForgeFitDemo.userID,
+                title: "Week demo \(offset)",
+                startedAt: start,
+                endedAt: start.addingTimeInterval(3_600),
+                totalVolume: 1_000
+            ))
+        }
+        try? modelContext.save()
+    }
+    #endif
 
     private func launchRoutineForAutoStart() -> RoutineModel? {
         let launchRoutines = (try? modelContext.fetch(FetchDescriptor<RoutineModel>())) ?? routines

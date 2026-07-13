@@ -54,22 +54,46 @@ enum AICoach {
         #endif
     }
 
-    static func answer(question: String, context: AICoachContext) async -> String? {
+    static func answer(
+        question: String,
+        context: AICoachContext,
+        coachCornerAvailable: Bool = FeatureFlags.coachCorner
+    ) async -> String? {
         #if canImport(FoundationModels)
         guard case .available = SystemLanguageModel.default.availability else { return nil }
         do {
+            // Where plan changes actually happen depends on whether the full
+            // Coach's Corner surface is enabled — never send the user to a
+            // screen they can't reach.
+            let planGuidance = coachCornerAvailable
+                ? """
+                If they want to change the plan, adjust today's dose, or build a program, point them warmly \
+                to Coach's Corner — the review screen for today's session, or "Build my plan" / "Coach this \
+                plan" for a program. You explain the numbers; you never silently rewrite them.
+                """
+                : """
+                To start today's session with the adjusted dose, they tap Start on the coach's-version card — \
+                right here in chat, or on their Home session card. You explain the numbers; you never silently \
+                rewrite them. Building a full multi-week program isn't available yet, so if they ask for one, \
+                tell them warmly it's on the way and help them make the most of today's session meanwhile.
+                """
+
             let instructions = """
             You are ForgeFit Coach — the user's personal strength & conditioning coach, living inside their
             fitness app. You know their training history, recovery, and readiness because it's handed to you
             as context below.
 
-            Voice: warm, encouraging, and conversational — a knowledgeable coach who's genuinely in their
-            corner. Talk WITH them, not at them. Celebrate their progress and PRs, be motivating and honest
-            when readiness is low, and always sound human — never robotic, clinical, or preachy.
+            Voice: talk like a real coach texting a client back — warm, direct, and unmistakably human. Use
+            contractions and plain words, vary your rhythm, and lead with the answer instead of a preamble
+            (no "Great question!", no "As your coach…"). React like a person: hyped about a PR, calm and
+            honest when readiness is low. Call back to their actual sessions and numbers by name so it lands
+            personal. You may use their first name once if it feels natural — never force it. Never sound like
+            a form letter, a disclaimer, or a textbook; skip corporate hedging like "it's important to note"
+            and don't use emoji unless they do first.
 
-            Grounding: base every answer on the provided ForgeFit data — reference their actual numbers,
-            recent workouts, and recovery signals so it feels personal. Never invent data you weren't given.
-            When a signal is missing or confidence is low, say so plainly and still give your best call.
+            Grounding: base every answer on the provided ForgeFit data — their real numbers, recent workouts,
+            suggested session, and recovery signals. Never invent data you weren't given. When a signal is
+            missing or confidence is low, say so plainly and still give your best call.
 
             Scope: stay in the training lane — workouts, technique, readiness, recovery, cardio, routines,
             progress, and nutrition around training. If asked something off-topic, warmly decline in a
@@ -77,9 +101,7 @@ enum AICoach {
 
             Boundaries: you EXPLAIN the deterministic readiness score, progression targets, and coach dose
             adjustments the app has already computed — you never invent, create, or modify a training program
-            or its numbers yourself. If asked to change the plan, adjust today's dose, or build a new program,
-            tell them warmly that's done in Coach's Corner — the review screen for today's session, or "Build
-            my plan" / "Coach this plan" for a program — not here.
+            or its numbers yourself. \(planGuidance)
 
             Safety: you're a coach, not a doctor — no medical diagnosis. For pain, injury, illness, chest
             pain, fainting, or severe symptoms, tell them to stop or ease off and see a qualified professional.
@@ -139,7 +161,8 @@ struct AICoachContext {
         workouts: [WorkoutModel],
         routines: [RoutineModel],
         exercises: [ExerciseLibraryModel],
-        recovery: RecoveryEngine.Report
+        recovery: RecoveryEngine.Report,
+        suggestion: (routine: RoutineModel, reason: String)? = nil
     ) -> AICoachContext {
         let analytics = TrainingAnalytics(workouts: workouts, exercises: exercises)
         let completed = analytics.completed.sorted { $0.startedAt > $1.startedAt }
@@ -147,6 +170,11 @@ struct AICoachContext {
         let records = analytics.records()
         let muscleRows = analytics.weeklyMuscleVolume()
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // Their name, only if they set a real one — a default "Athlete" would
+        // just make the coach greet a placeholder.
+        let rawName = UserDefaults.standard.string(forKey: "profileDisplayName")
+        let athleteName = (rawName.map { !$0.isEmpty && $0 != "Athlete" } == true) ? rawName : nil
 
         // Use displayScore — the same number the user sees on Home / Recovery
         // (evidence-based systemic score when available, legacy composite
@@ -233,8 +261,24 @@ struct AICoachContext {
         }
         let missing = recovery.missingInputs.isEmpty ? "none" : recovery.missingInputs.joined(separator: ", ")
 
+        // What the app is actually suggesting they do today, with its exercises
+        // and the reason — so "what should I train?" gets a concrete answer
+        // instead of a generic one.
+        let suggestedSessionLine: String = {
+            guard let suggestion else { return "Today's suggested session: none queued right now." }
+            let names = suggestion.routine.exercises
+                .sorted { $0.position < $1.position }
+                .compactMap { exerciseByID[$0.exerciseID]?.name }
+                .prefix(6)
+                .joined(separator: ", ")
+            let exercisesPart = names.isEmpty ? "" : " — \(names)"
+            return "Today's suggested session: \(suggestion.routine.name)\(exercisesPart). Why: \(suggestion.reason)"
+        }()
+
+        let todayTrainingLine = "Trained today: \(analytics.trainedToday() ? "yes" : "not yet")."
+
         let prompt = """
-        \(readinessLine)
+        \(athleteName.map { "You're coaching \($0).\n" } ?? "")\(readinessLine)
         \(actionLine)
         \(topReasonLine)
         Confidence: \(Int((recovery.confidence * 100).rounded()))% (lower confidence = sparser data, hedge advice accordingly).
@@ -245,7 +289,10 @@ struct AICoachContext {
         \(cardioLine)
         \(muscleRecoveryLine)
 
+        \(suggestedSessionLine)
+
         This week: \(week.workoutCount) workouts, \(Fmt.durationShort(week.durationSeconds)), \(week.sets) working sets, \(week.reps) reps, \(Fmt.volume(week.volume)).
+        \(todayTrainingLine)
 
         Recent workouts:
         \(recentLines.isEmpty ? "- none logged yet" : recentLines.joined(separator: "\n"))
@@ -308,7 +355,7 @@ struct AICoachChatView: View {
         _messages = State(initialValue: [
             CoachChatMessage(
                 role: .coach,
-                text: "Ask me about your training, recovery, routines, progress, or what to do next. I’ll use your ForgeFit data and keep it practical."
+                text: "Hey — I’ve got your training pulled up: readiness, recent sessions, what’s recovered and what isn’t. Ask me anything, or tap a question below to get going."
             )
         ])
     }
@@ -426,17 +473,19 @@ struct AICoachChatView: View {
 
     /// A few one-tap starting points so a blank chat isn't an intimidating
     /// empty text field — each sends immediately, as if typed and submitted.
-    private static let suggestedPromptOptions = [
-        "Why this readiness score?",
-        "What changed in my coach's version?",
-        "How is my week going?",
-        "Why these weight targets?",
-    ]
+    /// The coach-dose question only appears when there's actually an adjusted
+    /// dose to explain.
+    private var suggestedPromptOptions: [String] {
+        var options = ["Why this readiness score?"]
+        if coachPlan != nil { options.append("What changed in my coach's version?") }
+        options.append(contentsOf: ["What should I train today?", "How is my week going?", "Am I making progress?"])
+        return options
+    }
 
     private var suggestedPrompts: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Space.sm) {
-                ForEach(Self.suggestedPromptOptions, id: \.self) { prompt in
+                ForEach(suggestedPromptOptions, id: \.self) { prompt in
                     Button {
                         send(prompt)
                     } label: {

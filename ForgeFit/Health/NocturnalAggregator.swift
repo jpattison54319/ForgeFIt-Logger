@@ -21,6 +21,9 @@ enum NocturnalAggregator {
         var hrv: Double?
         var sleepingHR: Int?
         var hrvSampleCount: Int
+        /// Nocturnal HR sample count — coverage of the sleep window, used to
+        /// tell a real short night (dense samples) from a partial-wear fragment.
+        var sleepingHRSampleCount: Int
     }
 
     /// Merge asleep segments into whole sleep windows, stitching brief
@@ -83,7 +86,8 @@ enum NocturnalAggregator {
                 sleepingHR: hrValues.count >= minSleepingHRSamples
                     ? Int((Double(hrValues.reduce(0, +)) / Double(hrValues.count)).rounded())
                     : nil,
-                hrvSampleCount: hrvValues.count
+                hrvSampleCount: hrvValues.count,
+                sleepingHRSampleCount: hrValues.count
             )
         }
         return out

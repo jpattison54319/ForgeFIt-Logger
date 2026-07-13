@@ -1,5 +1,6 @@
 import ForgeCore
 import ForgeData
+import Observation
 import SwiftData
 import SwiftUI
 #if canImport(UIKit)
@@ -53,10 +54,6 @@ struct ActiveWorkoutLoggerView: View {
     var onMinimize: (() -> Void)? = nil
 
     @State private var reordering = false
-    /// The exercise currently being dragged by its handle (touch-and-drag
-    /// entry into reorder mode — see `beginReorderDrag`).
-    @State private var draggingExerciseID: UUID?
-    @State private var dragOriginIndex: Int?
     @State private var showAddPicker = false
     @State private var replaceTarget: WorkoutExerciseModel?
     /// This session's progression suggestions, keyed by workout-exercise id.
@@ -75,8 +72,9 @@ struct ActiveWorkoutLoggerView: View {
     @State private var isPureCardio = false
     @State private var isPureYoga = false
     @State private var inputRouter = SetInputRouter()
-    @AppStorage("showRPEInLogger") private var showRPEInLogger = false
+    @AppStorage(WorkoutEffortPolicy.loggingEnabledKey) private var showRPEInLogger = false
     @AppStorage("effortScaleRaw") private var effortScaleRaw = EffortScale.rpe.rawValue
+    @AppStorage(WorkoutEffortPolicy.failureTrainingKey) private var failureTrainingEnabled = false
 
     private var sortedExercises: [WorkoutExerciseModel] {
         workout.exercises.sorted { $0.position < $1.position }
@@ -94,27 +92,11 @@ struct ActiveWorkoutLoggerView: View {
     var body: some View {
         ZStack(alignment: .top) {
             ScreenBackground()
-
-            // `loggerScroll` stays mounted (just hidden) even while
-            // reordering, instead of being swapped out by an `if/else`.
-            // Touch-and-drag entry into reorder mode (see `ExerciseLogCard`'s
-            // handle) starts its gesture on a row inside `loggerScroll`; if
-            // that view were removed from the tree the instant `reordering`
-            // flips true, the in-flight touch would be cancelled and the
-            // drag would die right as it began. Keeping it mounted lets the
-            // same continuous gesture keep driving the reorder after
-            // `reorderList` appears on top of it.
-            loggerScroll
-                .opacity(reordering ? 0 : 1)
-                // Visually hidden, not removed (see comment above) — but it
-                // must not stay reachable by VoiceOver or UI-test element
-                // queries while `reorderList` is what's actually on screen.
-                // `accessibilityHidden` only affects the accessibility tree,
-                // not hit-testing, so it can't cancel the in-flight drag
-                // gesture the way toggling `allowsHitTesting` mid-touch would.
-                .accessibilityHidden(reordering)
             if reordering {
                 reorderList
+                    .transition(.opacity)
+            } else {
+                loggerScroll
                     .transition(.opacity)
             }
         }
@@ -139,6 +121,8 @@ struct ActiveWorkoutLoggerView: View {
             .animation(.snappy(duration: 0.25), value: RestTimerController.shared.isRunning)
         }
         .environment(inputRouter)
+        .onAppear(perform: reconcileEffortVisibility)
+        .onChange(of: showRPEInLogger) { _, _ in reconcileEffortVisibility() }
         // One keyboard toolbar for every set input in the logger, driven by
         // whichever field registered itself with the router on focus. A
         // single root-level toolbar can't hit the per-field UIKit
@@ -232,77 +216,7 @@ struct ActiveWorkoutLoggerView: View {
             // keystroke re-renders don't touch off-screen exercises.
             LazyVStack(alignment: .leading, spacing: Space.lg) {
                 ForEach(sortedExercises, id: \.id) { we in
-                    let ex = exercises.first { $0.id == we.exerciseID }
-                    let isYogaRow = ex?.isYoga == true
-                        || we.yogaFlowJSON != nil
-                        || workout.cardioSessions.contains { $0.workoutExerciseID == we.id && $0.isYogaSession }
-                    if isYogaRow {
-                        YogaExerciseCard(
-                            workout: workout,
-                            workoutExercise: we,
-                            exercise: ex,
-                            allowsLiveControls: !isHistoricalEdit,
-                            availableSupersetGroups: supersetGroups,
-                            onAssignSuperset: { assignSuperset($0, to: we) },
-                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
-                            onUngroupSuperset: { ungroupSuperset($0) },
-                            onShowExerciseDetail: { exercise in detailExercise = exercise },
-                            onReplace: { replaceTarget = we },
-                            onRemove: { removeExercise(we) }
-                        )
-                    } else if ex?.isCardio == true {
-                        CardioExerciseCard(
-                            workout: workout,
-                            workoutExercise: we,
-                            exercise: ex,
-                            allowsLiveControls: !isHistoricalEdit,
-                            availableSupersetGroups: supersetGroups,
-                            onAssignSuperset: { assignSuperset($0, to: we) },
-                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
-                            onUngroupSuperset: { ungroupSuperset($0) },
-                            onShowExerciseDetail: { exercise in detailExercise = exercise },
-                            onReplace: { replaceTarget = we },
-                            onRemove: { removeExercise(we) },
-                            history: history
-                        )
-                    } else {
-                        ExerciseLogCard(
-                            workout: workout,
-                            workoutExercise: we,
-                            exercise: ex,
-                            pinnedNote: setupNotes.first { $0.exerciseID == we.exerciseID && $0.userID == ForgeFitDemo.userID },
-                            previousSets: cachedPreviousSets(for: we),
-                            recordBaseline: recordBaselines[we.exerciseID],
-                            allowsRestTimers: !isHistoricalEdit,
-                            showRPE: showRPEInLogger,
-                            effortScale: EffortScale(rawValue: effortScaleRaw) ?? .rpe,
-                            completionDate: isHistoricalEdit ? (workout.endedAt ?? workout.startedAt) : nil,
-                            availableSupersetGroups: supersetGroups,
-                            onAssignSuperset: { assignSuperset($0, to: we) },
-                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
-                            onUngroupSuperset: { ungroupSuperset($0) },
-                            onCompletedSet: { set in handleCompletedSet(set, in: we) },
-                            onLiveStatsChanged: refreshLiveStats,
-                            onWorkoutChanged: publishWorkoutChange,
-                            onShowExerciseDetail: { exercise in detailExercise = exercise },
-                            onReplace: { replaceTarget = we },
-                            onRemove: { removeExercise(we) },
-                            onReorder: { withAnimation { reordering = true } },
-                            onReorderDragChanged: { translation in
-                                if draggingExerciseID != we.id { beginReorderDrag(we) }
-                                updateReorderDrag(we, translation: translation)
-                            },
-                            onReorderDragEnded: { endReorderDrag() },
-                            progression: progressionByWorkoutExercise[we.id],
-                            onRejectProgression: { rejectProgression(for: we) }
-                        )
-                        // Keyed by row + *library* exercise so a gym swap tears
-                        // down card state (drafts, edited-suggestion flags) and
-                        // the new exercise starts from a clean slate. The row id
-                        // stays in the key so two blocks of the same exercise
-                        // can never collide on identity.
-                        .id("\(we.id.uuidString)-\(we.exerciseID.uuidString)")
-                    }
+                    exerciseCard(for: we)
                 }
                 if workout.exercises.isEmpty {
                     emptyLoggerState
@@ -325,20 +239,22 @@ struct ActiveWorkoutLoggerView: View {
     private var reorderList: some View {
         List {
             ForEach(sortedExercises) { we in
-                HStack(spacing: Space.md) {
-                    if let ex = exercises.first(where: { $0.id == we.exerciseID }) {
-                        ExerciseThumbnail(exercise: ex, size: 40)
-                        Text(ex.name).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
-                    }
-                    Spacer()
-                    // No explicit handle here: with `.onMove` + editMode
-                    // active, List already renders its own native drag
-                    // handle on the trailing edge. Drawing a second
-                    // "line.3.horizontal" here used to show two hamburger
-                    // icons per row.
-                }
-                .listRowBackground(theme.surface)
-                .listRowSeparatorTint(theme.separator)
+                // The native move control lifts this entire row and opens an
+                // insertion gap as it travels. Rendering the real logger card
+                // here keeps the exercise visibly attached to the user's
+                // thumb instead of swapping it for an ambiguous compact row.
+                exerciseCard(for: we, isReorderPreview: true)
+                    .allowsHitTesting(false)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(
+                        EdgeInsets(
+                            top: Space.sm,
+                            leading: Space.lg,
+                            bottom: Space.sm,
+                            trailing: Space.sm
+                        )
+                    )
             }
             .onMove(perform: moveExercises)
         }
@@ -346,45 +262,81 @@ struct ActiveWorkoutLoggerView: View {
         .scrollContentBackground(.hidden)
         .background(theme.background)
         .environment(\.editMode, .constant(.active))
+        .accessibilityIdentifier("live-workout-reorder-list")
     }
 
-    /// Begins a touch-and-drag reorder seeded from `we`'s handle in the
-    /// normal (non-reordering) card — collapses into `reorderList`
-    /// immediately instead of requiring a separate tap-then-drag.
-    /// `dragOriginIndex` is fixed for the whole gesture; every
-    /// `updateReorderDrag` call recomputes the target index fresh from it so
-    /// index math can't drift as rows move.
-    private func beginReorderDrag(_ we: WorkoutExerciseModel) {
-        draggingExerciseID = we.id
-        dragOriginIndex = sortedExercises.firstIndex { $0.id == we.id }
-        if !reordering {
-            withAnimation(.snappy(duration: 0.22)) { reordering = true }
+    @ViewBuilder
+    private func exerciseCard(
+        for we: WorkoutExerciseModel,
+        isReorderPreview: Bool = false
+    ) -> some View {
+        let ex = exercises.first { $0.id == we.exerciseID }
+        let isYogaRow = ex?.isYoga == true
+            || we.yogaFlowJSON != nil
+            || workout.cardioSessions.contains { $0.workoutExerciseID == we.id && $0.isYogaSession }
+        if isYogaRow {
+            YogaExerciseCard(
+                workout: workout,
+                workoutExercise: we,
+                exercise: ex,
+                allowsLiveControls: !isHistoricalEdit,
+                availableSupersetGroups: supersetGroups,
+                onAssignSuperset: { assignSuperset($0, to: we) },
+                onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
+                onUngroupSuperset: { ungroupSuperset($0) },
+                onShowExerciseDetail: { exercise in detailExercise = exercise },
+                onReplace: { replaceTarget = we },
+                onRemove: { removeExercise(we) }
+            )
+        } else if ex?.isCardio == true {
+            CardioExerciseCard(
+                workout: workout,
+                workoutExercise: we,
+                exercise: ex,
+                allowsLiveControls: !isHistoricalEdit,
+                availableSupersetGroups: supersetGroups,
+                onAssignSuperset: { assignSuperset($0, to: we) },
+                onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
+                onUngroupSuperset: { ungroupSuperset($0) },
+                onShowExerciseDetail: { exercise in detailExercise = exercise },
+                onReplace: { replaceTarget = we },
+                onRemove: { removeExercise(we) },
+                history: history
+            )
+        } else {
+            ExerciseLogCard(
+                workout: workout,
+                workoutExercise: we,
+                exercise: ex,
+                pinnedNote: setupNotes.first { $0.exerciseID == we.exerciseID && $0.userID == ForgeFitDemo.userID },
+                previousSets: cachedPreviousSets(for: we),
+                recordBaseline: recordBaselines[we.exerciseID],
+                allowsRestTimers: !isHistoricalEdit,
+                allowsCollapse: !isHistoricalEdit,
+                showRPE: showRPEInLogger,
+                failureTrainingEnabled: showRPEInLogger && failureTrainingEnabled,
+                showsPreviousTapHint: !isHistoricalEdit,
+                showsReorderHandle: !isReorderPreview,
+                effortScale: EffortScale(rawValue: effortScaleRaw) ?? .rpe,
+                completionDate: isHistoricalEdit ? (workout.endedAt ?? workout.startedAt) : nil,
+                availableSupersetGroups: supersetGroups,
+                onAssignSuperset: { assignSuperset($0, to: we) },
+                onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
+                onUngroupSuperset: { ungroupSuperset($0) },
+                onCompletedSet: { set in handleCompletedSet(set, in: we) },
+                onLiveStatsChanged: refreshLiveStats,
+                onWorkoutChanged: publishWorkoutChange,
+                onShowExerciseDetail: { exercise in detailExercise = exercise },
+                onReplace: { replaceTarget = we },
+                onRemove: { removeExercise(we) },
+                onReorder: { withAnimation(.snappy(duration: 0.22)) { reordering = true } },
+                progression: progressionByWorkoutExercise[we.id],
+                onRejectProgression: { rejectProgression(for: we) }
+            )
+            // Keyed by row + *library* exercise so a gym swap tears down card
+            // state and the replacement begins with clean drafts.
+            .id("\(we.id.uuidString)-\(we.exerciseID.uuidString)")
         }
-    }
-
-    /// Compact-row height in `reorderList` (40pt thumbnail + row padding) —
-    /// the unit `translation` is measured against to decide how many rows to
-    /// step the dragged exercise past.
-    private static let reorderRowHeight: CGFloat = 56
-
-    private func updateReorderDrag(_ we: WorkoutExerciseModel, translation: CGFloat) {
-        guard draggingExerciseID == we.id, let originIndex = dragOriginIndex else { return }
-        let delta = Int((translation / Self.reorderRowHeight).rounded())
-        var rows = sortedExercises
-        let targetIndex = max(0, min(rows.count - 1, originIndex + delta))
-        guard let currentIndex = rows.firstIndex(where: { $0.id == we.id }), currentIndex != targetIndex else { return }
-        rows.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: targetIndex > currentIndex ? targetIndex + 1 : targetIndex)
-        for (index, row) in rows.enumerated() { row.position = index }
-    }
-
-    private func endReorderDrag() {
-        guard draggingExerciseID != nil else { return }
-        draggingExerciseID = nil
-        dragOriginIndex = nil
-        try? modelContext.save()
-        // Deliberately NOT `reordering = false` here — per the requested
-        // interaction, dropping a dragged row stays on the reorder view
-        // until the user explicitly taps Done.
     }
 
     // MARK: - Header
@@ -401,6 +353,7 @@ struct ActiveWorkoutLoggerView: View {
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                         .buttonBorderShape(.capsule)
+                        .accessibilityIdentifier("live-reorder-done")
                 } else {
                     CircleIconButton(systemImage: isHistoricalEdit ? "xmark" : "chevron.down", label: isHistoricalEdit ? "Close editor" : "Minimize workout") {
                         if isHistoricalEdit {
@@ -523,8 +476,10 @@ struct ActiveWorkoutLoggerView: View {
                 // control. Reserving sage for interactive elements lets the
                 // Finish button and tappable fields actually stand out.
                 StatColumn(label: "Duration", value: Fmt.elapsed(elapsed))
-                StatColumn(label: "Volume", value: Fmt.volume(liveStats.volume))
-                StatColumn(label: "Sets", value: Fmt.sets(liveStats.completedSets))
+                // Volume/Sets read `liveStats` inside their OWN body, so a set
+                // completion (which mutates liveStats in place) re-renders only
+                // these two columns — not statsContent or the exercise list.
+                LiveVolumeSetsColumns(liveStats: liveStats)
                 if !isHistoricalEdit {
                     LiveHeartRateStat()
                 }
@@ -539,10 +494,27 @@ struct ActiveWorkoutLoggerView: View {
 
     // MARK: - Data + mutations
 
-    private struct WorkoutLiveStats {
+    /// Live volume/sets counters. An @Observable reference (mutated in place by
+    /// `refreshLiveStats`) so only the columns that read it re-render on a set
+    /// completion, not the whole logger. See `LiveVolumeSetsColumns`.
+    @Observable final class WorkoutLiveStats {
         var volume: Double = 0
         /// Effective sets (`VolumeMath.effectiveSetCount`) — fractional.
         var completedSets: Double = 0
+    }
+
+    /// Isolated reader of `liveStats`: keeping the `.volume`/`.completedSets`
+    /// reads out of the root body is what stops every set completion from
+    /// re-rendering all visible exercise cards.
+    private struct LiveVolumeSetsColumns: View {
+        let liveStats: WorkoutLiveStats
+
+        var body: some View {
+            Group {
+                StatColumn(label: "Volume", value: Fmt.volume(liveStats.volume))
+                StatColumn(label: "Sets", value: Fmt.sets(liveStats.completedSets))
+            }
+        }
     }
 
     /// Reads `LiveMetricsHub` inside its OWN body so the Observation
@@ -745,16 +717,12 @@ struct ActiveWorkoutLoggerView: View {
         return []
     }
 
-    private func makeLiveStats() -> WorkoutLiveStats {
-        let completed = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
-        return WorkoutLiveStats(
-            volume: completed.reduce(0) { $0 + ($1.totalVolume ?? 0) },
-            completedSets: completed.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
-        )
-    }
-
+    /// Recompute the live counters in place — mutating the @Observable object
+    /// invalidates only `LiveVolumeSetsColumns`, not the whole logger body.
     private func refreshLiveStats() {
-        liveStats = makeLiveStats()
+        let completed = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
+        liveStats.volume = completed.reduce(0) { $0 + ($1.totalVolume ?? 0) }
+        liveStats.completedSets = completed.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
     }
 
     private func addExercises(_ list: [ExerciseLibraryModel]) {
@@ -1093,6 +1061,17 @@ struct ActiveWorkoutLoggerView: View {
         scheduleWidgetSnapshot()
     }
 
+    /// A visibility setting is a logging contract, not just layout. Clear any
+    /// effort entered earlier in this live workout as soon as the user turns
+    /// the column off; historical editing is intentionally unaffected.
+    private func reconcileEffortVisibility() {
+        guard !isHistoricalEdit, !showRPEInLogger else { return }
+        guard WorkoutEffortPolicy.removeEffort(from: workout) else { return }
+        workout.updatedAt = .now
+        try? modelContext.save()
+        publishWorkoutChange()
+    }
+
     /// Widget writes hit disk + WidgetCenter; coalesce bursts of set edits
     /// into one write shortly after the last change.
     private func scheduleWidgetSnapshot() {
@@ -1172,7 +1151,7 @@ private struct PostWorkoutSummaryView: View {
     @State private var saveError: String?
     /// One-shot notification prime, shown at the value moment (a finished
     /// workout) instead of buried in Settings — accepting turns on the
-    /// rest-timer alerts, reminders, streak nudges, and Wrapped alerts that
+    /// rest-timer alerts, reminders, and Wrapped alerts that
     /// otherwise silently no-op.
     @AppStorage("notificationPrimeShown") private var notificationPrimeShown = false
     @State private var shareImage: UIImage?
@@ -1734,7 +1713,15 @@ private struct ExerciseLogCard: View {
     let previousSets: [SetModel]
     let recordBaseline: ExerciseRecordBaseline?
     let allowsRestTimers: Bool
+    /// Whether the exercise may fold into the one-line summary. Active
+    /// workouts only — the historical editor always shows every set.
+    var allowsCollapse: Bool = false
     let showRPE: Bool
+    let failureTrainingEnabled: Bool
+    let showsPreviousTapHint: Bool
+    /// The normal logger card owns the deliberate entry gesture. Reorder
+    /// previews hide it because List supplies the drag control for the row.
+    var showsReorderHandle: Bool = true
     let effortScale: EffortScale
     let completionDate: Date?
     let availableSupersetGroups: [Int]
@@ -1747,17 +1734,9 @@ private struct ExerciseLogCard: View {
     let onShowExerciseDetail: (ExerciseLibraryModel) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
-    /// Enters reorder mode — fired by a plain tap-release on the handle with
-    /// no meaningful movement, or by the long-press on the exercise name, or
-    /// by the overflow menu's "Reorder Exercises" item.
+    /// Enters reorder mode after a deliberate handle hold, or immediately
+    /// from the overflow menu's explicit "Reorder Exercises" command.
     let onReorder: () -> Void
-    /// Fired continuously while the handle is pressed AND dragged (not just
-    /// tapped) — collapses into reorder mode immediately and carries this
-    /// row's live drag translation, instead of requiring a discrete tap to
-    /// enter reorder mode before a separate press-and-drag on the (now
-    /// visible) list handle can begin.
-    var onReorderDragChanged: (CGFloat) -> Void = { _ in }
-    var onReorderDragEnded: () -> Void = {}
     /// This exercise's progression suggestion for the session (nil = none
     /// offered — no history, rule off, or not a strength exercise).
     var progression: ProgressionSuggestionModel? = nil
@@ -1780,8 +1759,22 @@ private struct ExerciseLogCard: View {
     /// visible rows, and running PersonalRecords per row per render caused
     /// visible stutter opening the set-type menu on long workouts.
     @State private var awardsCache: [UUID: [RecordKind]] = [:]
+    /// User-controlled fold state. Completing the last set no longer folds the
+    /// card out from under the user — it stays open and green so the final set
+    /// is visibly logged; the user folds it with the header chevron when ready.
+    /// `onAppear` still re-folds an already-completed exercise on revisit so the
+    /// list stays tidy and the fold survives LazyVStack row recycling.
+    @State private var collapsed = false
+    @State private var reorderHandlePressed = false
 
     private var sortedSets: [SetModel] { workoutExercise.sets.sorted { $0.position < $1.position } }
+    private var completedSetIDs: Set<UUID> {
+        Set(sortedSets.lazy.filter { $0.completedAt != nil }.map(\.id))
+    }
+    private var allSetsCompleted: Bool {
+        !workoutExercise.sets.isEmpty && workoutExercise.sets.allSatisfy { $0.completedAt != nil }
+    }
+    private var isCollapsed: Bool { allowsCollapse && collapsed }
     private var isCardio: Bool { exercise?.isCardio == true }
     private var weightMode: WeightMode { exercise?.defaultWeightMode ?? .external }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
@@ -1806,6 +1799,143 @@ private struct ExerciseLogCard: View {
     }
 
     var body: some View {
+        Group {
+            if isCollapsed {
+                collapsedCard
+            } else {
+                expandedCard
+            }
+        }
+        .animation(.snappy(duration: 0.28), value: isCollapsed)
+        .onAppear {
+            if allowsCollapse && allSetsCompleted { collapsed = true }
+        }
+        .onChange(of: completedSetIDs) { oldIDs, newIDs in
+            guard allowsRestTimers else { return }
+            let newlyCompleted = newIDs.subtracting(oldIDs)
+            guard !newlyCompleted.isEmpty else { return }
+
+            var didMaterialize = false
+            for (index, set) in sortedSets.enumerated()
+            where newlyCompleted.contains(set.id)
+                && !set.setType.isBlockType
+                && !editedSuggestionSetIDs.contains(set.id) {
+                materializeSuggestion(for: set, index: index, allowsCompletedSet: true)
+                didMaterialize = true
+            }
+            if didMaterialize { recompute() }
+        }
+        .onChange(of: firstWorkingSetWeight) { _, _ in
+            // A ramp added before the working weight was known parks its
+            // warm-ups with blank weights; fill them the moment that weight
+            // exists (typed, matched, or materialized from a suggestion).
+            fillPendingWarmupRamp()
+        }
+    }
+
+    /// One-line receipt shown once every set is checked off: name, set count,
+    /// and completed load. The checkmark toggles every set without expanding;
+    /// the remainder of the row reopens the full grid for review or editing.
+    private var collapsedCard: some View {
+        Card(padding: Space.md) {
+            HStack(spacing: Space.sm) {
+                Button(action: toggleAllSetsCompletion) {
+                    Image(systemName: allSetsCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.sectionTitle)
+                        .foregroundStyle(allSetsCompleted ? theme.success : theme.textTertiary)
+                        .frame(width: grid.check, height: grid.fieldHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel(allSetsCompleted ? "Mark all sets incomplete" : "Complete all sets")
+                .accessibilityValue(completionProgressLabel)
+                .accessibilityIdentifier("toggle-condensed-exercise-completion")
+
+                Button {
+                    withAnimation(.snappy(duration: 0.28)) { collapsed = false }
+                } label: {
+                    HStack(spacing: Space.sm) {
+                        Text(exercise?.name ?? "Exercise")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        if let group = workoutExercise.supersetGroup {
+                            SupersetChip(group: group)
+                        }
+                        Spacer(minLength: Space.sm)
+                        Text(completedSummary)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: grid.fieldHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Edit \(exercise?.name ?? "exercise") — \(completedSummary)")
+                .accessibilityHint("Reopens the completed sets for review or editing")
+                .accessibilityIdentifier("completed-exercise-summary")
+            }
+        }
+    }
+
+    private var completionProgressLabel: String {
+        "\(sortedSets.count { $0.completedAt != nil }) of \(sortedSets.count) sets completed"
+    }
+
+    private func toggleAllSetsCompletion() {
+        let sets = sortedSets
+        guard !sets.isEmpty else { return }
+        if allSetsCompleted {
+            withAnimation(.snappy(duration: 0.28)) {
+                for set in sets { set.completedAt = nil }
+            }
+        } else {
+            let completedAt = completionDate ?? Date()
+            var lastCompletedSet: SetModel?
+            withAnimation(.snappy(duration: 0.28)) {
+                for (index, set) in sets.enumerated() where set.completedAt == nil {
+                    materializeSuggestion(for: set, index: index)
+                    if set.setType == .cluster {
+                        set.reps = set.miniReps.reduce(0, +)
+                    }
+                    set.completedAt = completedAt
+                    HealthMetricsStore.shared.fillBodyweight(set)
+                    lastCompletedSet = set
+                }
+            }
+            if allowsRestTimers, let lastCompletedSet {
+                onCompletedSet(lastCompletedSet)
+            }
+        }
+        for set in sets { set.recomputeDerivedMetrics() }
+        recompute()
+    }
+
+    /// "4 sets · 3,420 lb" — the same per-set volume the live stats bar sums,
+    /// scoped to this exercise. Cardio rows total duration instead; loadless
+    /// (bodyweight) work falls back to total reps.
+    private var completedSummary: String {
+        let sets = sortedSets
+        let completed = sets.filter { $0.completedAt != nil }
+        let count = completed.count == sets.count
+            ? "\(sets.count) \(sets.count == 1 ? "set" : "sets")"
+            : "\(completed.count)/\(sets.count) sets"
+        if isCardio {
+            let seconds = completed.compactMap(\.durationSeconds).reduce(0, +)
+            return seconds > 0 ? "\(count) · \(Fmt.durationShort(seconds))" : count
+        }
+        let volume = completed.compactMap(\.totalVolume).reduce(0, +)
+        if volume > 0 { return "\(count) · \(Fmt.volume(volume, unit: displayUnit))" }
+        let reps = completed.compactMap(\.reps).reduce(0, +)
+        return reps > 0 ? "\(count) · \(reps) reps" : count
+    }
+
+    private var expandedCard: some View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 header
@@ -1848,18 +1978,29 @@ private struct ExerciseLogCard: View {
                     if set.setType.isBlockType {
                         // Myo-reps / rest-pause / cluster log as a nested block,
                         // not a flat row.
-                        SetBlockView(
-                            set: set,
-                            workoutExercise: workoutExercise,
-                            blockNumber: workingNumber(upTo: index, in: sets),
-                            previous: blockTemplate(for: set, index: index, in: sets),
-                            showWeight: weightHeader != nil,
-                            displayUnit: displayUnit,
-                            isUnilateral: exercise?.isUnilateral == true,
-                            onChange: recompute,
-                            onSetType: { set.setType = $0; recompute() },
+                        SwipeToDeleteRow(
+                            isOpen: openSwipeSetID == set.id,
+                            onOpenChange: { open in
+                                if open { openSwipeSetID = set.id }
+                                else if openSwipeSetID == set.id { openSwipeSetID = nil }
+                            },
                             onDelete: { deleteSet(set) }
-                        )
+                        ) {
+                            SetBlockView(
+                                set: set,
+                                workoutExercise: workoutExercise,
+                                blockNumber: workingNumber(upTo: index, in: sets),
+                                previous: blockTemplate(for: set, index: index, in: sets),
+                                showWeight: weightHeader != nil,
+                                displayUnit: displayUnit,
+                                isUnilateral: exercise?.isUnilateral == true,
+                                completionDate: completionDate,
+                                onChange: recompute,
+                                onSetType: { set.setType = $0; recompute() },
+                                onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
+                                onDelete: { deleteSet(set) }
+                            )
+                        }
                     } else {
                         SetRow(
                             set: set,
@@ -1870,6 +2011,7 @@ private struct ExerciseLogCard: View {
 	                            isCardio: isCardio,
 	                            showWeight: weightHeader != nil,
 	                            showRPE: showRPE,
+	                            defaultsToFailure: failureTrainingEnabled && set.setType != .warmup,
 	                            effortScale: effortScale,
 	                            displayUnit: displayUnit,
                                 focusedInput: $focusedInput,
@@ -1888,7 +2030,13 @@ private struct ExerciseLogCard: View {
                                     if isEdited { fields.insert(field) } else { fields.remove(field) }
                                     editedSuggestionFields[set.id] = fields
                                 },
-	                                onMaterializeSuggestion: { materializeSuggestion(for: set, index: index) },
+                                onMaterializeSuggestion: { editedFields in
+                                    materializeSuggestion(
+                                        for: set,
+                                        index: index,
+                                        editedFields: editedFields
+                                    )
+                                },
 	                            onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
 	                            onMatchPrevious: { matchPrevious(set, from: previousSet(for: set, at: index)) },
                                 onAdvancePastLastField: { focusNextSet(after: index, in: sets) },
@@ -1896,22 +2044,10 @@ private struct ExerciseLogCard: View {
 	                            onPlates: isBarbellLoaded ? { plateSet = set } : nil,
 	                            onDelete: { deleteSet(set) }
 	                        )
-	                        if set.setType.countsAsWorkingVolume && set.setType != .drop {
-	                            HStack {
-	                                Spacer()
-	                                Button {
-	                                    addDropSet(below: set, index: index)
-	                                } label: {
-	                                    Label("Drop set", systemImage: "arrow.down.right")
-	                                        .font(.tag)
-	                                        .padding(.vertical, 10)
-	                                        .padding(.horizontal, 4)
-	                                        .contentShape(Rectangle())
-	                                }
-	                                .foregroundStyle(theme.accent)
-	                            }
-	                            .padding(.trailing, 40)
-	                        }
+	                        // Drop sets are added on demand from the set-type menu
+	                        // ("Add Drop Set Below") or preplanned in the routine
+	                        // editor — no persistent per-row affordance cluttering
+	                        // every working set.
 	                    }
 	                }
 
@@ -1958,12 +2094,10 @@ private struct ExerciseLogCard: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .onLongPressGesture { onReorder() }
             } else {
                 Text("Exercise")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(theme.textPrimary)
-                    .onLongPressGesture { onReorder() }
             }
 		    if let group = workoutExercise.supersetGroup {
 		        SupersetChip(group: group)
@@ -1973,36 +2107,54 @@ private struct ExerciseLogCard: View {
 	            // ambient spacing) so both controls can sit at the HIG's
 	            // 44x44 minimum without their hit areas overlapping.
 	            HStack(spacing: Space.sm) {
-	                Image(systemName: "line.3.horizontal")
-	                    .font(.bodyStrong)
-	                    .foregroundStyle(theme.textTertiary)
-	                    .frame(width: 44, height: 44)
-	                    .contentShape(Rectangle())
-	                    // A plain tap-release (~0 translation) still just
-	                    // enters reorder mode, matching the old Button. Any
-	                    // real movement is treated as "grab and drag this
-	                    // exercise right now" — one continuous touch collapses
-	                    // into the compact reorder list AND starts moving this
-	                    // exercise, instead of tap-to-enter-mode then a second
-	                    // separate press-and-drag on the list's own handle.
-	                    // `.highPriorityGesture` so the ambient ScrollView
-	                    // doesn't win the vertical pan first.
-	                    .highPriorityGesture(
-	                        DragGesture(minimumDistance: 0, coordinateSpace: .global)
-	                            .onChanged { value in
-	                                guard abs(value.translation.height) > 2 || abs(value.translation.width) > 2 else { return }
-	                                onReorderDragChanged(value.translation.height)
-	                            }
-	                            .onEnded { value in
-	                                if abs(value.translation.height) <= 2, abs(value.translation.width) <= 2 {
-	                                    onReorder()
-	                                } else {
-	                                    onReorderDragEnded()
+	                if allowsCollapse && allSetsCompleted {
+	                    // Positive close-out: every set is logged. Springs in on
+	                    // the final completion (inside completeSet's animation) so
+	                    // finishing reads as "saved ✓" without folding the card.
+	                    Image(systemName: "checkmark.circle.fill")
+	                        .font(.bodyStrong)
+	                        .foregroundStyle(theme.success)
+	                        .frame(height: 44)
+	                        .transition(.scale.combined(with: .opacity))
+	                        .accessibilityLabel("Exercise complete")
+	                }
+	                if allowsCollapse {
+	                    Button {
+	                        withAnimation(.snappy(duration: 0.28)) { collapsed = true }
+	                    } label: {
+	                        Image(systemName: "chevron.up")
+	                            .font(.bodyStrong)
+	                            .foregroundStyle(theme.textTertiary)
+	                            .frame(width: 44, height: 44)
+	                            .contentShape(Rectangle())
+	                    }
+	                    .buttonStyle(.plain)
+	                    .accessibilityLabel(allSetsCompleted ? "Exercise complete, collapse" : "Collapse exercise")
+	                    .accessibilityIdentifier("collapse-completed-exercise")
+	                }
+	                if showsReorderHandle {
+	                    Image(systemName: "line.3.horizontal")
+	                        .font(.bodyStrong)
+	                        .foregroundStyle(theme.textTertiary)
+	                        .frame(width: 44, height: 44)
+	                        .contentShape(Rectangle())
+	                        .scaleEffect(reorderHandlePressed ? 0.88 : 1)
+	                        .onLongPressGesture(
+	                            minimumDuration: 0.45,
+	                            maximumDistance: 12,
+	                            pressing: { isPressing in
+	                                withAnimation(.easeOut(duration: 0.12)) {
+	                                    reorderHandlePressed = isPressing
 	                                }
-	                            }
-	                    )
-	                    .accessibilityLabel("Reorder exercises")
-	                    .accessibilityAddTraits(.isButton)
+	                            },
+	                            perform: onReorder
+	                        )
+	                        .accessibilityLabel("Reorder exercises")
+	                        .accessibilityHint("Touch and hold to open the reorder screen")
+	                        .accessibilityAddTraits(.isButton)
+	                        .accessibilityAction { onReorder() }
+	                        .accessibilityIdentifier("hold-to-reorder-exercises")
+	                }
 	                Menu {
                     if let exercise {
                         Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
@@ -2038,9 +2190,19 @@ private struct ExerciseLogCard: View {
 	        HStack(spacing: 6) {
 	            Image(systemName: "checkmark").frame(width: grid.check)
 	            Text("SET").frame(width: grid.setBadge)
-	            Text("PREVIOUS")
+	            HStack(spacing: 3) {
+                    Text("PREVIOUS")
+                    if showsPreviousTapHint {
+                        Image(systemName: "hand.tap")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                            .accessibilityHidden(true)
+                    }
+                }
 	                .lineLimit(1)
 	                .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(showsPreviousTapHint ? "Previous, tap a value to autofill" : "Previous")
+                    .accessibilityIdentifier("previous-autofill-hint")
 	            if let weightHeader {
                 Button(action: toggleExerciseUnit) {
                     HStack(spacing: 3) {
@@ -2082,7 +2244,11 @@ private struct ExerciseLogCard: View {
 
     private func usesSuggestedValues(for set: SetModel) -> Bool {
         set.completedAt == nil
-            && set.sourceRoutineSetID != nil
+            && suggestionBacked(for: set)
+    }
+
+    private func suggestionBacked(for set: SetModel) -> Bool {
+        set.sourceRoutineSetID != nil
             && !editedSuggestionSetIDs.contains(set.id)
     }
 
@@ -2122,19 +2288,31 @@ private struct ExerciseLogCard: View {
     /// see SetSuggestionPolicy). Marking the set edited afterwards is what
     /// makes uncompleting preserve the committed values as real entries
     /// instead of reverting them to placeholders.
-    private func materializeSuggestion(for set: SetModel, index: Int) {
-        let edited = editedSuggestionFields[set.id] ?? []
+    private func materializeSuggestion(
+        for set: SetModel,
+        index: Int,
+        editedFields: Set<SetInputField>? = nil,
+        allowsCompletedSet: Bool = false
+    ) {
+        let edited = editedFields ?? editedSuggestionFields[set.id] ?? []
         var policyFields = Set<SetSuggestionPolicy.Field>()
         if edited.contains(.weight) { policyFields.insert(.weight) }
         if edited.contains(.primary) { policyFields.insert(.primary) }
+        let previous = previousSet(for: set, at: index)
         SetSuggestionPolicy.materialize(
             set: set,
-            // When the progression target leads, the values to commit are
-            // already ON the set — passing previous here would overwrite the
-            // engine's target with last session's weight at completion.
-            previous: progressionLeads(for: set) ? nil : previousSet(for: set, at: index),
-            suggestionBacked: usesSuggestedValues(for: set),
-            editedFields: policyFields
+            suggestions: SetSuggestionPolicy.SuggestedValues(
+                weight: suggestedWeight(for: set, index: index),
+                reps: suggestedReps(for: set, index: index),
+                durationSeconds: suggestedDurationSeconds(for: set, index: index),
+                rpe: suggestedRPE(for: set, index: index),
+                rir: previous?.rir ?? set.rir
+            ),
+            suggestionBacked: suggestionBacked(for: set),
+            editedFields: policyFields,
+            effortLoggingEnabled: showRPE,
+            failureTrainingEnabled: failureTrainingEnabled,
+            allowsCompletedSet: allowsCompletedSet
         )
         editedSuggestionSetIDs.insert(set.id)
     }
@@ -2201,8 +2379,13 @@ private struct ExerciseLogCard: View {
         set.assistanceWeight = previous.assistanceWeight
         set.reps = previous.reps
         set.durationSeconds = previous.durationSeconds
-        set.rpe = previous.rpe
-        set.rir = previous.rir
+        if showRPE {
+            set.rpe = previous.rpe
+            set.rir = previous.rir
+        } else {
+            set.rpe = nil
+            set.rir = nil
+        }
         set.recomputeDerivedMetrics()
         // An explicit "copy my previous set" is a manual materialization —
         // the values are real entries now, not placeholder suggestions.
@@ -2241,30 +2424,29 @@ private struct ExerciseLogCard: View {
         }
     }
 
-    /// Warm-up ramp (T4-6): 40/60/80% of the first working set's target —
-    /// engine-advanced or last-session weight — snapped to clean display-unit
-    /// steps and inserted above the working sets. Nothing to ramp toward →
-    /// one plain warm-up row instead.
+    /// Warm-up ramp: the user's configured ramp (default 40/60/80% × 10/6/3,
+    /// editable in Settings › Training). Each warm-up's weight is that
+    /// percentage of the first working set's target — engine-advanced or
+    /// last-session weight — snapped to clean display-unit steps; reps come
+    /// straight from the config. When there's nothing to ramp toward yet, the
+    /// rows are still created with their reps and blank weights, and
+    /// `fillPendingWarmupRamp` fills the weights once a working weight exists.
     private func addWarmupRamp() {
-        guard let workingIndex = sortedSets.firstIndex(where: { $0.setType != .warmup }),
-              let topKg = suggestedWeight(for: sortedSets[workingIndex], index: workingIndex),
-              topKg > 0 else {
-            addSet(type: .warmup)
-            return
-        }
+        let config = WarmupRampConfigStore.load()
         let displayPerKilogram = displayUnit == .lb ? 2.2046226218 : 1.0
         let step: Double = displayUnit == .lb ? 5 : 2.5
-        let topDisplay = topKg * displayPerKilogram
-        let ramp: [(fraction: Double, reps: Int)] = [(0.4, 10), (0.6, 6), (0.8, 3)]
-        let newSets: [SetModel] = ramp.map { stage in
-            let display = max(step, (topDisplay * stage.fraction / step).rounded() * step)
+        let topKg = sortedSets.firstIndex(where: { $0.setType != .warmup })
+            .flatMap { suggestedWeight(for: sortedSets[$0], index: $0) }
+        let topDisplay = (topKg ?? 0) * displayPerKilogram
+        let newSets: [SetModel] = config.stages.enumerated().map { ordinal, stage in
+            let display = config.weight(forStageAt: ordinal, topWeightInDisplayUnit: topDisplay, step: step)
             let set = SetModel(
                 userID: ForgeFitDemo.userID,
                 position: 0,
                 setType: .warmup,
                 weightMode: weightMode,
                 reps: stage.reps,
-                weight: display / displayPerKilogram
+                weight: display.map { $0 / displayPerKilogram }
             )
             modelContext.insert(set)
             return set
@@ -2277,6 +2459,38 @@ private struct ExerciseLogCard: View {
         // recompute() already schedules a debounced save — the extra
         // synchronous save() that used to run here duplicated the write.
         recompute()
+    }
+
+    /// The first working set's entered weight (kg) — the trigger for filling a
+    /// ramp that was added before the working weight was known.
+    private var firstWorkingSetWeight: Double? {
+        sortedSets.first { $0.setType != .warmup }?.weight
+    }
+
+    /// Fills the weights of ramp warm-ups still parked at blank once the first
+    /// working set's weight exists, reusing each warm-up's configured percentage
+    /// by its position among the warm-ups. Fill-once: a warm-up that already has
+    /// a weight (auto-filled earlier or hand-typed) is left untouched.
+    private func fillPendingWarmupRamp() {
+        let warmups = sortedSets.filter { $0.setType == .warmup }
+        let pending = warmups.filter { $0.weight == nil }
+        guard !pending.isEmpty,
+              let workingIndex = sortedSets.firstIndex(where: { $0.setType != .warmup }),
+              let topKg = suggestedWeight(for: sortedSets[workingIndex], index: workingIndex),
+              topKg > 0 else { return }
+        let config = WarmupRampConfigStore.load()
+        let displayPerKilogram = displayUnit == .lb ? 2.2046226218 : 1.0
+        let step: Double = displayUnit == .lb ? 5 : 2.5
+        let topDisplay = topKg * displayPerKilogram
+        var didFill = false
+        for warmup in pending {
+            guard let ordinal = warmups.firstIndex(where: { $0.id == warmup.id }),
+                  let display = config.weight(forStageAt: ordinal, topWeightInDisplayUnit: topDisplay, step: step)
+            else { continue }
+            warmup.weight = display / displayPerKilogram
+            didFill = true
+        }
+        if didFill { recompute() }
     }
 
     private func addSet(type: SetType) {
@@ -2356,6 +2570,7 @@ private struct ExerciseLogCard: View {
     }
 
     private func deleteSet(_ set: SetModel) {
+        if openSwipeSetID == set.id { openSwipeSetID = nil }
         modelContext.delete(set)
         for (i, s) in sortedSets.filter({ $0.id != set.id }).enumerated() { s.position = i }
         recompute()
@@ -2427,6 +2642,10 @@ private struct SetRow: View {
     @State private var primaryDraft = ""
     @State private var rpeDraft = ""
     @State private var editedDraftFields = Set<SetInputField>()
+    /// Immediate local truth for suggestion-backed fields. Parent `@State`
+    /// re-renders on the next update cycle; completion can happen in the same
+    /// tap that commits a draft, so these overrides close that timing gap.
+    @State private var suggestionFieldOverrides: [SetInputField: Bool] = [:]
     /// Bumped on each locally-completed set so the confirmation haptic fires
     /// only for taps on this device — never for watch-mirrored completions,
     /// and never when un-checking. PRs escalate separately via `.success`.
@@ -2439,6 +2658,7 @@ private struct SetRow: View {
     let isCardio: Bool
     let showWeight: Bool
     let showRPE: Bool
+    let defaultsToFailure: Bool
     let effortScale: EffortScale
     let displayUnit: WeightUnit
     let focusedInput: FocusState<SetInputFocus?>.Binding
@@ -2458,7 +2678,7 @@ private struct SetRow: View {
     /// the grayed placeholder suggestion shows through.
     var editedFields: Set<SetInputField>
     var onSuggestionFieldEdited: (SetInputField, Bool) -> Void = { _, _ in }
-    var onMaterializeSuggestion: () -> Void = {}
+    var onMaterializeSuggestion: (Set<SetInputField>) -> Void = { _ in }
     var onCompleted: () -> Void = {}
     var onMatchPrevious: () -> Void = {}
     var onAdvancePastLastField: () -> Void = {}
@@ -2476,6 +2696,7 @@ private struct SetRow: View {
         isCardio: Bool,
         showWeight: Bool,
         showRPE: Bool,
+        defaultsToFailure: Bool,
         effortScale: EffortScale = .rpe,
         displayUnit: WeightUnit,
         focusedInput: FocusState<SetInputFocus?>.Binding,
@@ -2490,7 +2711,7 @@ private struct SetRow: View {
         suggestedRPE: Double? = nil,
         editedFields: Set<SetInputField>,
         onSuggestionFieldEdited: @escaping (SetInputField, Bool) -> Void = { _, _ in },
-        onMaterializeSuggestion: @escaping () -> Void = {},
+        onMaterializeSuggestion: @escaping (Set<SetInputField>) -> Void = { _ in },
         onCompleted: @escaping () -> Void = {},
         onMatchPrevious: @escaping () -> Void = {},
         onAdvancePastLastField: @escaping () -> Void = {},
@@ -2506,6 +2727,7 @@ private struct SetRow: View {
         self.isCardio = isCardio
         self.showWeight = showWeight
         self.showRPE = showRPE
+        self.defaultsToFailure = defaultsToFailure
         self.effortScale = effortScale
         self.displayUnit = displayUnit
         self.focusedInput = focusedInput
@@ -2905,7 +3127,12 @@ private struct SetRow: View {
     private func toggleCompletion() {
         commitFocusedDraft()
         if isDone {
-            set.completedAt = nil
+            // Animated at the source: this may be what un-folds a collapsed
+            // exercise card, and the transaction must include the sibling
+            // cards below so they slide instead of snapping.
+            withAnimation(.snappy(duration: 0.28)) {
+                set.completedAt = nil
+            }
             set.recomputeDerivedMetrics()
             onChange()
         } else {
@@ -2914,9 +3141,17 @@ private struct SetRow: View {
     }
 
     private func completeSet() {
-        commitFocusedDraft()
-        onMaterializeSuggestion()
-        set.completedAt = completionDate ?? Date()
+        // A completion tap can clear focus before SwiftUI delivers the focus
+        // change callback. Commit every locally edited draft, not just the
+        // field that still appears focused in this exact frame.
+        commitAllEditedDrafts()
+        onMaterializeSuggestion(effectiveEditedSuggestionFields)
+        // Animated at the source: completing the exercise's last set folds
+        // the card into its one-line summary (see ExerciseLogCard), and the
+        // sibling cards below must join the same transaction.
+        withAnimation(.snappy(duration: 0.28)) {
+            set.completedAt = completionDate ?? Date()
+        }
         set.recomputeDerivedMetrics()
         completionHapticTrigger += 1
         onChange()
@@ -2932,6 +3167,8 @@ private struct SetRow: View {
         // the load model reads it directly (it prefers rir over rpe).
         if effortScale == .rir, value >= 6 {
             set.rir = Int((10 - value).rounded())
+        } else {
+            set.rir = nil
         }
         rpeDraft = formattedRPE(value)
         onChange()
@@ -2994,6 +3231,26 @@ private struct SetRow: View {
         }
     }
 
+    private func commitAllEditedDrafts() {
+        for field in [SetInputField.weight, .primary, .rpe]
+        where editedDraftFields.contains(field) {
+            commitDraft(for: field)
+        }
+    }
+
+    private var effectiveEditedSuggestionFields: Set<SetInputField> {
+        var result = editedFields
+        for (field, isEdited) in suggestionFieldOverrides {
+            if isEdited { result.insert(field) } else { result.remove(field) }
+        }
+        return result
+    }
+
+    private func recordSuggestionField(_ field: SetInputField, isEdited: Bool) {
+        suggestionFieldOverrides[field] = isEdited
+        onSuggestionFieldEdited(field, isEdited)
+    }
+
     private func commitDraft(for field: SetInputField) {
         guard editedDraftFields.contains(field) else { return }
         defer { editedDraftFields.remove(field) }
@@ -3011,7 +3268,7 @@ private struct SetRow: View {
         let next = Fmt.loadKilograms(from: weightDraft, unit: displayUnit)
         // Clearing a field back to empty returns it to suggestion state —
         // display and commit-on-complete stay consistent either way.
-        if usesSuggestedValues { onSuggestionFieldEdited(.weight, next != nil) }
+        if usesSuggestedValues { recordSuggestionField(.weight, isEdited: next != nil) }
         guard !sameLoad(set.modeWeight, next) else { return }
         set.setModeWeight(next)
         onChange()
@@ -3020,12 +3277,12 @@ private struct SetRow: View {
     private func commitPrimaryDraft() {
         if isCardio {
             let next = parsedInt(primaryDraft).map { $0 * 60 }
-            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
+            if usesSuggestedValues { recordSuggestionField(.primary, isEdited: next != nil) }
             guard set.durationSeconds != next else { return }
             set.durationSeconds = next
         } else {
             let next = parsedInt(primaryDraft)
-            if usesSuggestedValues { onSuggestionFieldEdited(.primary, next != nil) }
+            if usesSuggestedValues { recordSuggestionField(.primary, isEdited: next != nil) }
             guard set.reps != next else { return }
             set.reps = next
         }
@@ -3034,8 +3291,10 @@ private struct SetRow: View {
 
     private func commitRPEDraft() {
         let next = parsedRPE(rpeDraft)
-        guard !sameLoad(set.rpe, next) else { return }
+        let nextRIR = effortScale == .rir ? next.flatMap { $0 >= 6 ? Int((10 - $0).rounded()) : nil } : nil
+        guard !sameLoad(set.rpe, next) || set.rir != nextRIR else { return }
         set.rpe = next
+        set.rir = nextRIR
         onChange()
     }
 
@@ -3074,6 +3333,7 @@ private struct SetRow: View {
     /// "—" until a tap materializes it.
     private var effectiveRPE: Double? {
         if let rpe = set.rpe { return rpe }
+        if defaultsToFailure { return 10 }
         return usesSuggestedValues ? suggestedRPE : nil
     }
 
@@ -3180,6 +3440,8 @@ private struct SetRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(effortScale.columnTitle)
+        .accessibilityValue(rpeDisplay)
+        .accessibilityIdentifier("effort-set-\(workingNumber)")
     }
 
     private func rpeOptionLabel(_ option: RPEQuickPick) -> String {

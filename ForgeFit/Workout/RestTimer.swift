@@ -53,8 +53,8 @@ final class RestTimerController {
     private(set) var label: String = "Rest"
     /// True while the block micro-rest is running (styles the pill teal).
     private(set) var isMicro = false
-    /// The set that started the current countdown — a block's micro-rest or
-    /// an AMRAP time window — so only that set shows the inline countdown.
+    /// The set that started the current countdown — used to replace a block's
+    /// own micro-rest on completion and to scope the AMRAP controls.
     private(set) var ownerID: UUID?
     /// The micro-rest's owner (nil for full rests / AMRAP windows).
     var microOwnerID: UUID? { isMicro ? ownerID : nil }
@@ -271,52 +271,6 @@ struct RestTimerBar: View {
             .padding(.horizontal, Space.md)
             .glassEffect(.regular.tint(tint.opacity(0.22)), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
             .transition(.move(edge: .top).combined(with: .opacity))
-        }
-    }
-}
-
-/// Compact inline countdown bar for intra-set micro-rests (inside myo-rep /
-/// cluster blocks) — the lifter never leaves the card.
-struct MicroRestBar: View {
-    @Environment(\.theme) private var theme
-    var timer = RestTimerController.shared
-    let tint: Color
-    var ownerID: UUID?
-
-    var body: some View {
-        if timer.isRunning && timer.isMicro && (ownerID == nil || timer.microOwnerID == ownerID) {
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                let remaining = timer.remaining(at: context.date)
-                let fraction = timer.totalSeconds > 0 ? Double(remaining) / Double(timer.totalSeconds) : 0
-                HStack(spacing: Space.sm) {
-                    Image(systemName: "timer")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(tint)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(tint.opacity(0.18))
-                            Capsule().fill(tint).frame(width: geo.size.width * fraction)
-                        }
-                    }
-                    .frame(height: 5)
-                    .animation(.linear(duration: 0.5), value: fraction)
-                    Text("\(remaining)s")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(tint)
-                        .frame(width: 34, alignment: .trailing)
-                    Button("Skip") { timer.skip() }
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(tint)
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Skip micro-rest")
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(tint.opacity(0.10))
-                .clipShape(Capsule())
-            }
-            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 }

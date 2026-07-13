@@ -6,7 +6,6 @@ import SwiftUI
 private struct ProfileStats {
     var importedHealthWorkouts: Int
     var lifetimeHours: Int
-    var streak: Int
 }
 
 /// Hevy-style profile: identity + lifetime stats, a weekly activity chart with a
@@ -41,8 +40,7 @@ struct ProfileView: View {
             let totalSeconds = completed.reduce(0) { $0 + analytics.summary(for: $1).durationSeconds }
             return ProfileStats(
                 importedHealthWorkouts: completed.filter { $0.sourceDevice?.hasPrefix("healthkit") == true }.count,
-                lifetimeHours: totalSeconds / 3600,
-                streak: analytics.currentStreak()
+                lifetimeHours: totalSeconds / 3600
             )
         }
     }
@@ -55,24 +53,9 @@ struct ProfileView: View {
 
     private var trophies: [Trophy] {
         trophiesMemo(profileKey) {
-            let completed = analytics.completed
-            let sets = completed.reduce(0) { total, workout in
-                total + workout.exercises.reduce(0) { $0 + $1.sets.filter { $0.completedAt != nil }.count }
-            }
-            let distance = completed.reduce(0.0) { total, workout in
-                total + workout.cardioSessions.reduce(0.0) { $0 + ($1.distanceMeters ?? 0) }
-            }
-            let streak = WeeklyStreak.compute(
-                workoutDates: completed.map(\.startedAt),
-                goalPerWeek: UserDefaults.standard.object(forKey: "weeklyWorkoutGoal") as? Int ?? 3
-            )
-            return TrophyCatalog.trophies(.init(
-                completedWorkouts: completed.count,
-                totalSets: sets,
-                totalDistanceMeters: distance,
-                lifetimeHours: Double(profileStats.lifetimeHours),
-                longestStreakWeeks: streak.longestWeeks,
-                recordCount: analytics.records().count
+            TrophyCatalog.trophies(TrophyCatalog.inputs(
+                workouts: workouts,
+                exercises: exercises
             ))
         }
     }
@@ -146,33 +129,84 @@ struct ProfileView: View {
 
     private var identityCard: some View {
         Card {
-            HStack(spacing: Space.lg) {
-                Circle().fill(theme.recoveryHigh.opacity(0.9))
-                    .frame(width: 64, height: 64)
-                    .overlay(Text(profileInitials).font(.system(size: 16, weight: .bold)).foregroundStyle(.white))
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    HStack(spacing: Space.sm) {
-                        Text(displayName.isEmpty ? "Athlete" : displayName)
-                            .font(.cardTitle)
-                            .foregroundStyle(theme.textPrimary)
-                        LevelBadge(level: xpProgress.level)
+            VStack(alignment: .leading, spacing: Space.lg) {
+                HStack(spacing: Space.lg) {
+                    avatarBadge
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        HStack(spacing: Space.sm) {
+                            Text(displayName.isEmpty ? "Athlete" : displayName)
+                                .font(.sectionTitle)
+                                .foregroundStyle(theme.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            LevelBadge(level: xpProgress.level)
+                        }
+                        HStack(spacing: Space.sm) {
+                            statTile("flame.fill", "\(completed.count)", "Logged")
+                            statTile("clock.fill", "\(profileStats.lifetimeHours)", "Hours")
+                        }
                     }
-                    HStack(spacing: Space.xl) {
-                        miniStat("Logged", "\(completed.count)")
-                        miniStat("Hours", "\(profileStats.lifetimeHours)")
-                        miniStat("Streak", "\(profileStats.streak)d")
-                    }
-                    XPProgressBar(progress: xpProgress)
-                    if completed.count > 0 {
+                }
+                XPProgressBar(progress: xpProgress)
+                if completed.count > 0 {
+                    Divider().overlay(theme.separator)
+                    HStack(spacing: Space.md) {
+                        Image(systemName: "heart")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                            .frame(width: 36, height: 36)
+                            .background(theme.surfaceElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.tag))
+                            .accessibilityHidden(true)
                         Text(historyScopeText)
                             .font(.system(size: 12))
-                            .foregroundStyle(theme.textTertiary)
+                            .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer()
             }
         }
+    }
+
+    private var avatarBadge: some View {
+        ZStack {
+            Circle()
+                .stroke(theme.accent.opacity(0.28), lineWidth: 1.5)
+                .frame(width: 76, height: 76)
+            Circle()
+                .fill(theme.recoveryHigh.opacity(0.9))
+                .frame(width: 64, height: 64)
+                .shadow(color: theme.accent.opacity(0.35), radius: 10)
+            Text(profileInitials)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func statTile(_ icon: String, _ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: Space.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .accessibilityHidden(true)
+                Text(value)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Space.sm)
+        .padding(.horizontal, Space.xs)
+        .background(theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control))
+        .accessibilityElement(children: .combine)
     }
 
     private var profileInitials: String {
@@ -186,13 +220,6 @@ struct ProfileView: View {
             "Includes \(profileStats.importedHealthWorkouts) Apple Health imports from the last 60 days, plus workouts logged in ForgeFit."
         } else {
             "Completed workouts logged in ForgeFit."
-        }
-    }
-
-    private func miniStat(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 18, weight: .bold)).foregroundStyle(theme.textPrimary)
-            Text(label).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -294,15 +321,42 @@ private struct XPProgressBar: View {
     let progress: XPService.Progress
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ProgressView(value: progress.fraction)
-                .tint(theme.accent)
-                .background(theme.surfaceElevated)
-                .clipShape(Capsule())
-            Text("\(progress.xpIntoLevel) / \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
-                .font(.tag)
-                .foregroundStyle(theme.textSecondary)
+        HStack(spacing: Space.md) {
+            ZStack {
+                Image(systemName: "hexagon.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(theme.accentSoft)
+                Image(systemName: "hexagon")
+                    .font(.system(size: 44, weight: .medium))
+                    .foregroundStyle(theme.accent)
+                Text("XP")
+                    .font(.system(size: 13, weight: .heavy))
+                    .foregroundStyle(theme.textPrimary)
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                (Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent)
+                    + Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary)
+                    + Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))
+                    .font(.system(size: 16, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                ProgressView(value: progress.fraction)
+                    .tint(theme.accent)
+                    .background(theme.surfaceHighlight)
+                    .clipShape(Capsule())
+            }
+            ZStack {
+                Image(systemName: "shield")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                Text("\(progress.level + 1)")
+                    .font(.tag)
+                    .foregroundStyle(theme.textSecondary)
+            }
         }
+        .padding(Space.md)
+        .background(theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(progress.xpIntoLevel) of \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
     }
@@ -683,7 +737,9 @@ struct WorkoutHistoryListView: View {
     }
 
     var body: some View {
-        DashboardScaffold(title: "History", dismiss: dismiss) {
+        // Lazy: History can be hundreds of rows, and each WorkoutFeedRow faults
+        // that workout's sets to compute its summary — build only what's visible.
+        DashboardScaffold(title: "History", dismiss: dismiss, lazy: true) {
             ForEach(byMonth, id: \.month) { group in
                 Text(group.month).font(.bodyStrong).foregroundStyle(theme.textSecondary)
                 ForEach(group.items) { workout in
@@ -707,26 +763,47 @@ struct DashboardScaffold<Content: View>: View {
     @Environment(\.theme) private var theme
     let title: String
     let dismiss: DismissAction
+    /// Opt-in lazy body: long lists (e.g. the full workout History) pass `true`
+    /// so only on-screen rows are built and their per-row summaries computed,
+    /// instead of instantiating the whole history up front. Defaults to `false`
+    /// so every existing dashboard sub-screen is unchanged.
+    var lazy: Bool = false
     @ViewBuilder var content: Content
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                HStack {
-                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
-                    Spacer()
-                    Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
-                }
-                .padding(.top, Space.sm)
-                content
-            }
-            .padding(.horizontal, Space.lg)
-            .padding(.bottom, Space.tabBarClearance)
+            stack
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.tabBarClearance)
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+    }
+
+    @ViewBuilder
+    private var stack: some View {
+        if lazy {
+            LazyVStack(alignment: .leading, spacing: Space.lg) {
+                header
+                content
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                header
+                content
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+            Spacer()
+            Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
+            Spacer()
+            Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
+        }
+        .padding(.top, Space.sm)
     }
 }

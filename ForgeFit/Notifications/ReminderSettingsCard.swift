@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The Settings card for workout reminders: explicit permission flow, weekday
-/// + time scheduling, and the streak-protection toggle.
+/// The Settings card for workout reminders: explicit permission flow plus
+/// weekday and time scheduling.
 struct ReminderSettingsCard: View {
     @Environment(\.theme) private var theme
     @State private var scheduler = NotificationScheduler.shared
@@ -10,7 +10,6 @@ struct ReminderSettingsCard: View {
         let minutes = NotificationScheduler.shared.reminderMinutes
         return Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
     }()
-    @State private var streakNudge = NotificationScheduler.shared.streakNudgeEnabled
     @State private var morningReadiness = NotificationScheduler.shared.morningReadinessEnabled
 
     private static let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"] // 1...7 Sun–Sat
@@ -33,7 +32,7 @@ struct ReminderSettingsCard: View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 Text("Workout reminders").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                Text("Get a nudge on training days, a heads-up when a streak is at risk, and rest-timer alerts while your phone is locked.")
+                Text("Get a nudge on training days and rest-timer alerts while your phone is locked.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 PrimaryButton(title: "Enable Notifications", systemImage: "bell.fill") {
@@ -100,19 +99,6 @@ struct ReminderSettingsCard: View {
                     Text("Pick the days you plan to train.")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                 }
-            }
-        }
-        Card {
-            Toggle(isOn: $streakNudge) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Protect my streak").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Text("An evening heads-up (7 PM) when today would break an active streak.")
-                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
-                }
-            }
-            .tint(theme.accent)
-            .onChange(of: streakNudge) { _, newValue in
-                scheduler.streakNudgeEnabled = newValue
             }
         }
         Card {

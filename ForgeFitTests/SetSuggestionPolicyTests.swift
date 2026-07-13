@@ -34,6 +34,85 @@ struct SetSuggestionPolicyTests {
         #expect(set.reps == 8)
     }
 
+    /// Completion receives the exact values displayed as ghosts. Each field
+    /// resolves independently, so typing either side cannot strand the other
+    /// side as a placeholder.
+    @Test func displayedWeightAndRepsMaterializeIndependently() {
+        let suggestions = SetSuggestionPolicy.SuggestedValues(weight: 84, reps: 8)
+
+        let onlyWeightTyped = SetModel(userID: userID, weight: 90)
+        SetSuggestionPolicy.materialize(
+            set: onlyWeightTyped,
+            suggestions: suggestions,
+            suggestionBacked: true,
+            editedFields: [.weight]
+        )
+        #expect(onlyWeightTyped.weight == 90)
+        #expect(onlyWeightTyped.reps == 8)
+
+        let onlyRepsTyped = SetModel(userID: userID, reps: 12)
+        SetSuggestionPolicy.materialize(
+            set: onlyRepsTyped,
+            suggestions: suggestions,
+            suggestionBacked: true,
+            editedFields: [.primary]
+        )
+        #expect(onlyRepsTyped.weight == 84)
+        #expect(onlyRepsTyped.reps == 12)
+
+        let nothingTyped = SetModel(userID: userID)
+        SetSuggestionPolicy.materialize(
+            set: nothingTyped,
+            suggestions: suggestions,
+            suggestionBacked: true,
+            editedFields: []
+        )
+        #expect(nothingTyped.weight == 84)
+        #expect(nothingTyped.reps == 8)
+    }
+
+    /// Added/assisted bodyweight fields display their mode-specific load, not
+    /// `SetModel.weight`; completion must write back to that same field.
+    @Test func displayedWeightUsesTheSetsWeightMode() {
+        let added = SetModel(userID: userID, weightMode: .bodyweightAdded)
+        SetSuggestionPolicy.materialize(
+            set: added,
+            suggestions: .init(weight: 20, reps: 10),
+            suggestionBacked: true,
+            editedFields: []
+        )
+        #expect(added.addedWeight == 20)
+        #expect(added.weight == nil)
+        #expect(added.reps == 10)
+
+        let assisted = SetModel(userID: userID, weightMode: .bodyweightAssisted)
+        SetSuggestionPolicy.materialize(
+            set: assisted,
+            suggestions: .init(weight: 35, reps: 6),
+            suggestionBacked: true,
+            editedFields: []
+        )
+        #expect(assisted.assistanceWeight == 35)
+        #expect(assisted.weight == nil)
+        #expect(assisted.reps == 6)
+    }
+
+    /// Watch mirroring marks the model complete before the phone row observes
+    /// it. The reconciliation path may materialize that just-completed set,
+    /// while the default policy still protects established history.
+    @Test func externalCompletionCanMaterializeDisplayedGhosts() {
+        let set = SetModel(userID: userID, completedAt: Date())
+        SetSuggestionPolicy.materialize(
+            set: set,
+            suggestions: .init(weight: 84, reps: 8),
+            suggestionBacked: true,
+            editedFields: [],
+            allowsCompletedSet: true
+        )
+        #expect(set.weight == 84)
+        #expect(set.reps == 8)
+    }
+
     /// A field the user typed into and then cleared is un-marked by the
     /// caller — it returns to suggestion state and commits the placeholder.
     @Test func clearedFieldReturnsToSuggestionState() {
@@ -45,8 +124,9 @@ struct SetSuggestionPolicyTests {
     /// A menu-picked RPE is never overwritten by the suggestion.
     @Test func pickedRPESurvivesMaterialization() {
         let set = SetModel(userID: userID, rpe: 9)
-        SetSuggestionPolicy.materialize(set: set, previous: previousSet(rpe: 7), suggestionBacked: true, editedFields: [])
+        SetSuggestionPolicy.materialize(set: set, previous: previousSet(rpe: 7, rir: 3), suggestionBacked: true, editedFields: [])
         #expect(set.rpe == 9)
+        #expect(set.rir == nil)
     }
 
     /// Requirement 6 + seeded targets: no previous session → the placeholders
@@ -94,5 +174,56 @@ struct SetSuggestionPolicyTests {
         let typed = SetModel(userID: userID, durationSeconds: 900)
         SetSuggestionPolicy.materialize(set: typed, previous: previous, suggestionBacked: true, editedFields: [.primary])
         #expect(typed.durationSeconds == 900)
+    }
+
+    /// Turning the effort column off is a logging decision, not just a visual
+    /// one. Neither a prior-session suggestion nor an already-seeded value may
+    /// survive completion while effort is hidden.
+    @Test func hiddenEffortClearsSeedAndDoesNotCopyPrevious() {
+        let set = SetModel(userID: userID, rpe: 9, rir: 1)
+        SetSuggestionPolicy.materialize(
+            set: set,
+            previous: previousSet(rpe: 8, rir: 2),
+            suggestionBacked: true,
+            editedFields: [],
+            effortLoggingEnabled: false
+        )
+        #expect(set.rpe == nil)
+        #expect(set.rir == nil)
+    }
+
+    @Test func failureTrainingDefaultsOnlyUnratedNonWarmupSets() {
+        let working = SetModel(userID: userID, setType: .working)
+        SetSuggestionPolicy.materialize(
+            set: working,
+            previous: previousSet(rpe: 7, rir: 3),
+            suggestionBacked: true,
+            editedFields: [],
+            failureTrainingEnabled: true
+        )
+        #expect(working.rpe == 10)
+        #expect(working.rir == 0)
+
+        let warmup = SetModel(userID: userID, setType: .warmup)
+        SetSuggestionPolicy.materialize(
+            set: warmup,
+            previous: previousSet(rpe: 5),
+            suggestionBacked: true,
+            editedFields: [],
+            failureTrainingEnabled: true
+        )
+        #expect(warmup.rpe == 5)
+        #expect(warmup.rir == nil)
+
+        let manuallyRated = SetModel(userID: userID, setType: .working, rpe: 8, rir: 2)
+        SetSuggestionPolicy.materialize(
+            set: manuallyRated,
+            previous: previousSet(rpe: 10, rir: 0),
+            suggestionBacked: true,
+            editedFields: [],
+            failureTrainingEnabled: true
+        )
+        #expect(manuallyRated.rpe == 8)
+        #expect(manuallyRated.rir == 2)
     }
 }

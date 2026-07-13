@@ -55,6 +55,9 @@ enum WorkoutFinisher {
         guard hasSubstance(workout) else {
             return discard(workout, in: context)
         }
+        // Hidden effort must never leak into history, exports, analytics, or
+        // HealthKit. Failure mode fills only unrated completed non-warm-up sets.
+        WorkoutEffortPolicy.prepareForFinish(workout)
         let now = Date.now
         let workoutExercisesByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // The deferred HealthKit fills below outlive this call. If the
@@ -214,9 +217,6 @@ enum WorkoutFinisher {
         }
 
         // Tell the watch the session is over and refresh its snapshot.
-        // A finished session means today's streak is safe — drop the nudge.
-        Task { @MainActor in NotificationScheduler.shared.cancelStreakNudge() }
-
         WatchLink.shared.sendCommand(.workoutFinished)
         WatchLink.shared.publishState()
         endLiveSurfaces()

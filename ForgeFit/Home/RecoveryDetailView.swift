@@ -62,13 +62,11 @@ struct RecoveryDetailView: View {
     /// are enough readings to form a baseline.
     private var hrvTrend: HRVTrendData? {
         let metrics = HealthMetricsStore.shared.metrics.sorted { $0.date < $1.date }.suffix(45)
+        guard let channel = HealthMetricChannelSeries.hrv(metrics: Array(metrics)) else { return nil }
         let usedRMSSD = metrics.contains { $0.hrvRMSSD != nil || $0.nocturnalHRV != nil }
-        // Same signal the scores use: nocturnal window first, all-day fallback.
-        let values: [(Date, Double)] = metrics.compactMap { metric in
-            metric.bestHRV.map { (metric.date, $0) }
-        }
+        let values = channel.values.map { ($0.date, $0.value) }
         guard values.count >= 7, let today = values.last?.1 else { return nil }
-        let all = values.map(\.1)
+        let all = channel.baselineValues.isEmpty ? values.map(\.1) : channel.baselineValues
         let mean = all.reduce(0, +) / Double(all.count)
         let variance = all.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(all.count)
         return HRVTrendData(
@@ -78,59 +76,6 @@ struct RecoveryDetailView: View {
             today: today,
             usedRMSSD: usedRMSSD
         )
-    }
-
-    /// Same 45-day baseline-band math as the HRV trend, for any daily metric.
-    private func baselineTrend(_ value: (RecoveryEngine.DailyHealthMetric) -> Double?) -> MetricTrend? {
-        let metrics = HealthMetricsStore.shared.metrics.sorted { $0.date < $1.date }.suffix(45)
-        let values: [(Date, Double)] = metrics.compactMap { metric in
-            value(metric).map { (metric.date, $0) }
-        }
-        guard values.count >= 7, let today = values.last?.1 else { return nil }
-        let all = values.map(\.1)
-        let mean = all.reduce(0, +) / Double(all.count)
-        let variance = all.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(all.count)
-        return MetricTrend(
-            points: values.map { .init(date: $0.0, value: $0.1) },
-            mean: mean,
-            sd: variance.squareRoot(),
-            today: today
-        )
-    }
-
-    private var rhrTrend: MetricTrend? {
-        baselineTrend { $0.bestRestingHR.map(Double.init) }
-    }
-
-    /// Nightly sleep in hours (the chart reads better in hours than minutes).
-    private var sleepTrend: MetricTrend? {
-        baselineTrend { $0.sleepTotalMinutes.map { Double($0) / 60 } }
-    }
-
-    private func rhrStatus(_ trend: MetricTrend) -> (text: String, tint: Color) {
-        let elevated = trend.today > trend.mean + max(5, trend.mean * 0.08)
-        if elevated {
-            return ("Elevated vs your \(Int(trend.mean.rounded())) bpm baseline — a common sign of incomplete recovery, illness brewing, alcohol, or heat.", theme.danger)
-        }
-        if trend.today < trend.mean - 3 {
-            return ("Below your \(Int(trend.mean.rounded())) bpm baseline — a good recovery sign.", theme.success)
-        }
-        return ("Within your normal overnight range.", theme.textSecondary)
-    }
-
-    private func sleepStatus(_ trend: MetricTrend) -> (text: String, tint: Color) {
-        if trend.mean < 7 {
-            return ("Averaging \(hoursLabel(trend.mean)) a night over this window — under the 8 h your readiness score assumes you need.", theme.danger)
-        }
-        if trend.today < trend.mean - 1.5 {
-            return ("Well short of your usual night — expect readiness to reflect it.", theme.danger)
-        }
-        return ("Averaging \(hoursLabel(trend.mean)) a night — on target.", theme.success)
-    }
-
-    private func hoursLabel(_ hours: Double) -> String {
-        let minutes = Int((hours * 60).rounded())
-        return "\(minutes / 60)h \(minutes % 60)m"
     }
 
     /// CTL/ATL/TSB over the last 90 days from the same session loads the
@@ -178,26 +123,6 @@ struct RecoveryDetailView: View {
                         HRVTrendCard(trend: trend, readiness: report.displayScore)
                     }
 
-                    if rhrTrend != nil || sleepTrend != nil {
-                        SectionHeader("Overnight trends")
-                        if let trend = rhrTrend {
-                            BaselineTrendCard(
-                                title: "Resting HR vs baseline",
-                                valueLabel: "\(Int(trend.today.rounded())) bpm",
-                                status: rhrStatus(trend),
-                                trend: trend
-                            )
-                        }
-                        if let trend = sleepTrend {
-                            BaselineTrendCard(
-                                title: "Sleep vs your normal",
-                                valueLabel: hoursLabel(trend.today),
-                                status: sleepStatus(trend),
-                                trend: trend
-                            )
-                        }
-                    }
-
                     MuscleRecoveryCard(muscles: report.recovery.muscles) { selectedInfo = $0 }
 
                     CardioRecoveryCard(cardio: report.recovery.cardio) { selectedInfo = $0 }
@@ -208,9 +133,6 @@ struct RecoveryDetailView: View {
                         SectionHeader("Fitness vs fatigue")
                         FitnessFatigueCard(points: fitnessFatigue)
                     }
-
-                    SectionHeader("Today's signals")
-                    HealthSignalRows(report: report)
                 }
             }
             .padding(.horizontal, Space.lg)
@@ -393,39 +315,6 @@ private struct HRVTrendData {
     var z: Double { sd > 0 ? (today - mean) / sd : 0 }
 }
 
-/// Baseline-band trend for any daily metric (RHR, sleep) — the HRV card's
-/// honest "trend, not one night" framing generalized.
-private struct MetricTrend {
-    var points: [HRVBaselineBandChart.Point]
-    var mean: Double
-    var sd: Double
-    var today: Double
-}
-
-private struct BaselineTrendCard: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    let valueLabel: String
-    let status: (text: String, tint: Color)
-    let trend: MetricTrend
-
-    var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    Text(valueLabel).font(.tag).foregroundStyle(theme.textSecondary)
-                }
-                HRVBaselineBandChart(points: trend.points, mean: trend.mean, sd: trend.sd)
-                Text(status.text)
-                    .font(.system(size: 12)).foregroundStyle(status.tint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
 /// Shows the HRV baseline band as evidence behind the one global daily verdict.
 /// It reports the signal's state without issuing a competing training command.
 private struct HRVTrendCard: View {
@@ -558,7 +447,12 @@ private struct RecoverySummaryCard: View {
                 VStack(spacing: Space.md) {
                     ForEach(daily.parts) { part in
                         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                            if let value = part.state.value {
+                            if part.sleepOverrideStatus == .notTracked {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(theme.textTertiary)
+                                    .frame(width: 8)
+                            } else if let value = part.state.value {
                                 Circle().fill(theme.readinessColor(value)).frame(width: 8, height: 8)
                             } else {
                                 Image(systemName: "hourglass")
@@ -567,9 +461,15 @@ private struct RecoverySummaryCard: View {
                                     .frame(width: 8)
                             }
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(part.name)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(theme.textPrimary)
+                                HStack(spacing: 6) {
+                                    Text(part.name)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(theme.textPrimary)
+                                        .lineLimit(1)
+                                    if let status = part.sleepOverrideStatus {
+                                        SleepOverrideStatusBadge(status: status)
+                                    }
+                                }
                                 Text(detailText(for: part))
                                     .font(.system(size: 12))
                                     .foregroundStyle(theme.textSecondary)
@@ -642,7 +542,12 @@ private struct SystemicScoreCard: View {
                 VStack(spacing: Space.md) {
                     ForEach(systemic.parts) { part in
                         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                            if let value = part.state.value {
+                            if part.sleepOverrideStatus == .notTracked {
+                                Image(systemName: "minus")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(theme.textTertiary)
+                                    .frame(width: 8)
+                            } else if let value = part.state.value {
                                 Circle().fill(theme.readinessColor(value)).frame(width: 8, height: 8)
                             } else {
                                 Image(systemName: "hourglass")
@@ -651,9 +556,15 @@ private struct SystemicScoreCard: View {
                                     .frame(width: 8)
                             }
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(part.name)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(theme.textPrimary)
+                                HStack(spacing: 6) {
+                                    Text(part.name)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(theme.textPrimary)
+                                        .lineLimit(1)
+                                    if let status = part.sleepOverrideStatus {
+                                        SleepOverrideStatusBadge(status: status)
+                                    }
+                                }
                                 Text(detailText(for: part))
                                     .font(.system(size: 12))
                                     .foregroundStyle(theme.textSecondary)
@@ -935,6 +846,7 @@ private struct HealthSignalRows: View {
             if chips.contains("RHR normal") { return "Resting heart rate is near baseline" }
             return "Resting heart rate baseline is building"
         case "Sleep":
+            if chips.contains("Sleep excluded by you") { return "Sleep excluded by you" }
             if chips.contains("Sleep debt") { return "Sleep debt is high enough to matter" }
             if chips.contains("Sleep slightly short") { return "Sleep is a little short" }
             if chips.contains("Sleep okay") { return "Sleep is supporting normal training" }

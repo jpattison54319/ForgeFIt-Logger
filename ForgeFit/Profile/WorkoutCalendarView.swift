@@ -114,7 +114,7 @@ struct WorkoutCalendarView: View {
                 if let day {
                     dayCell(day)
                 } else {
-                    Color.clear.frame(height: 44)
+                    Color.clear.frame(height: 58)
                 }
             }
         }
@@ -125,53 +125,75 @@ struct WorkoutCalendarView: View {
         let dayWorkouts = workoutsByDay[key] ?? []
         let isSelected = selectedDay == key
         let isToday = calendar.isDateInToday(day)
+        let snapshot = RecoverySnapshotStore.shared.snapshot(for: day)
         return Button {
             withAnimation(.spring(duration: 0.25)) { selectedDay = key }
         } label: {
-            VStack(spacing: 4) {
-                Text("\(calendar.component(.day, from: day))")
-                    .font(.system(size: 15, weight: isSelected || isToday ? .bold : .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(isSelected ? theme.background : (isToday ? theme.accent : theme.textPrimary))
-                // One marker per workout (capped at 3) so a double day reads
-                // at a glance without getting noisy.
+            VStack(spacing: 3) {
+                ZStack {
+                    // Recovery rings wrap the number; only present on days with a
+                    // captured snapshot (honest — no ring means no reading).
+                    if let snapshot {
+                        RecoveryDayRings(daily: snapshot.daily, trend: snapshot.trend)
+                    }
+                    Text("\(calendar.component(.day, from: day))")
+                        .font(.system(size: 14, weight: isSelected || isToday ? .bold : .medium))
+                        .monospacedDigit()
+                        .minimumScaleFactor(0.7)
+                        .foregroundStyle(isToday ? theme.accent : theme.textPrimary)
+                }
+                .frame(width: 36, height: 36)
+
+                // The third daily score stays distinct from the two recovery
+                // rings and uses the same horizontal target language as Home.
+                CalendarStrainBar(score: snapshot?.strain, target: snapshot?.strainTargetRange)
+                    .frame(width: 28)
+
+                // One marker per workout (capped at 3), below the rings.
                 HStack(spacing: 3) {
                     ForEach(Array(dayWorkouts.prefix(3).enumerated()), id: \.offset) { _, workout in
-                        markerDot(for: workout, isSelected: isSelected)
+                        markerDot(for: workout)
                     }
                 }
-                .frame(height: 5)
+                .frame(height: 4)
             }
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 58)
             .background {
+                // Selection is a subtle lift, not a solid fill — the recovery
+                // rings must stay legible on top.
                 if isSelected {
                     RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                        .fill(theme.accent)
-                } else if isToday {
-                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                        .stroke(theme.accent.opacity(0.6), lineWidth: 1.5)
+                        .fill(theme.surfaceHighlight)
                 }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(day.formatted(date: .abbreviated, time: .omitted))
-        .accessibilityValue(dayWorkouts.isEmpty
-            ? "No workouts"
-            : "\(dayWorkouts.count) workout\(dayWorkouts.count == 1 ? "" : "s")")
+        .accessibilityLabel(dayAccessibilityLabel(day, snapshot: snapshot, workoutCount: dayWorkouts.count))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("calendar-day")
     }
 
+    private func dayAccessibilityLabel(_ day: Date, snapshot: RecoverySnapshot?, workoutCount: Int) -> String {
+        var parts = [day.formatted(date: .abbreviated, time: .omitted)]
+        if let daily = snapshot?.daily { parts.append("daily recovery \(Int((daily * 100).rounded()))") }
+        if let trend = snapshot?.trend { parts.append("trend \(Int((trend * 100).rounded()))") }
+        if let strain = snapshot?.strain {
+            parts.append("strain \(strain.formatted(.number.precision(.fractionLength(1)))) out of 10")
+        }
+        parts.append(workoutCount == 0 ? "no workouts" : "\(workoutCount) workout\(workoutCount == 1 ? "" : "s")")
+        return parts.joined(separator: ", ")
+    }
+
     /// Strength = accent, cardio = secondary accent, mixed = a two-tone dot.
-    private func markerDot(for workout: WorkoutModel, isSelected: Bool) -> some View {
+    private func markerDot(for workout: WorkoutModel) -> some View {
         let kind = WorkoutCalendarSupport.workoutKind(
             exerciseIDs: workout.exercises.map(\.id),
             cardioLinkedExerciseIDs: Set(workout.cardioSessions.compactMap(\.workoutExerciseID)),
             cardioSessionCount: workout.cardioSessions.count
         )
         return Circle()
-            .fill(isSelected ? AnyShapeStyle(theme.background) : dotStyle(for: kind))
+            .fill(dotStyle(for: kind))
             .frame(width: 5, height: 5)
     }
 
@@ -194,6 +216,8 @@ struct WorkoutCalendarView: View {
     private var selectedDaySection: some View {
         let items = (workoutsByDay[selectedDay] ?? []).sorted { $0.startedAt < $1.startedAt }
         SectionHeader(selectedDay.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+        // Recovery leads the day — it's the read that frames the workouts below.
+        RecoveryDaySummaryCard(snapshot: RecoverySnapshotStore.shared.snapshot(for: selectedDay))
         if items.isEmpty {
             EmptyStateCard(
                 title: "No workouts this day",

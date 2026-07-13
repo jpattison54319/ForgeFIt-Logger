@@ -17,6 +17,16 @@ struct SettingsTrainingSection: View {
             }
             .themedListRow()
 
+            NavigationLink(value: SettingsRoute.warmupRamp) {
+                SettingsRowLabel(
+                    icon: "flame.fill",
+                    iconTint: theme.warmup,
+                    title: "Warm-up ramp",
+                    subtitle: "The warm-up sets added before your working sets."
+                )
+            }
+            .themedListRow()
+
             NavigationLink(value: SettingsRoute.reminders) {
                 SettingsRowLabel(
                     icon: "bell.badge.fill",

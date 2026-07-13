@@ -119,56 +119,58 @@ struct MiniWorkoutBar: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let elapsed = max(0, Int(context.date.timeIntervalSince(workout.startedAt)))
-            GlassEffectContainer(spacing: Space.sm) {
-                HStack(spacing: Space.md) {
-                    Button(action: onExpand) {
-                        Image(systemName: "chevron.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(width: 44, height: 44)   // HIG minimum touch target
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
+        GlassEffectContainer(spacing: Space.sm) {
+            HStack(spacing: Space.md) {
+                Button(action: onExpand) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Resume workout")
+                .accessibilityIdentifier("expand-active-workout")
 
-                    Button(action: onExpand) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 6) {
-                                Circle().fill(theme.success).frame(width: 8, height: 8)
-                                Text("Workout")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(theme.textPrimary)
+                Button(action: onExpand) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Circle().fill(theme.success).frame(width: 8, height: 8)
+                            Text("Workout")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(theme.textPrimary)
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                let elapsed = max(0, Int(context.date.timeIntervalSince(workout.startedAt)))
                                 Text(Fmt.elapsed(elapsed))
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(theme.textSecondary)
                                     .monospacedDigit()
                             }
-                            Text(subtitle)
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(1)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
-
-                    Button(action: onDiscard) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.danger)
-                            .frame(width: 44, height: 44)   // HIG minimum touch target
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .tint(theme.danger)
-                    .accessibilityIdentifier("discard-active-workout")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(8)
-                .glassEffect(.regular.tint(theme.accent.opacity(0.16)), in: Capsule())
-                .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
-                .shadow(color: .black.opacity(0.42), radius: 14, y: 5)
+                .buttonStyle(.plain)
+
+                Button(action: onDiscard) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(theme.danger)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .tint(theme.danger)
+                .accessibilityIdentifier("discard-active-workout")
             }
+            .padding(8)
+            .glassEffect(.regular.tint(theme.accent.opacity(0.16)), in: Capsule())
+            .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
+            .shadow(color: .black.opacity(0.42), radius: 14, y: 5)
         }
     }
 }

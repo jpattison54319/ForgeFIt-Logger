@@ -55,9 +55,10 @@ enum CoachWeeklyReview {
 
         let allWorkouts = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
         let completed = allWorkouts.filter { $0.endedAt != nil && $0.deletedAt == nil }
-        // Imported history (Hevy/Strong/CSV/HealthKit) never counts toward a
-        // "did you train this week" tally — same provenance fields other
-        // import-aware code (e.g. `XPService.isImportedHistory`) checks.
+        // Imported history files (Hevy/Strong/CSV) never count toward a
+        // "did you train this week" tally. Deliberately narrower than
+        // `WorkoutModel.isImportedHistory`: recent Apple Health workouts are
+        // real training this week, so they stay in the tally.
         let completedNonImported = completed.filter {
             $0.externalSource == nil && $0.importFingerprint == nil && $0.importBatchID == nil
         }

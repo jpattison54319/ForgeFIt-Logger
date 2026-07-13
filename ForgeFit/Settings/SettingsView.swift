@@ -53,6 +53,8 @@ struct SettingsView: View {
                 switch route {
                 case .heartRateZones:
                     HRZoneSettingsView()
+                case .warmupRamp:
+                    WarmupRampSettingsView()
                 case .platesAndBars:
                     PlatesAndBarsDetailView()
                 case .reminders:
