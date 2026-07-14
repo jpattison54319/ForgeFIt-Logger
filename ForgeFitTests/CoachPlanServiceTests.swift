@@ -9,15 +9,6 @@ import Testing
 struct CoachPlanServiceTests {
     private static let activeMesoFolderKey = "activeMesoFolderID"
 
-    /// Returns the container WITH its context — see `RoutineProgramImportTests`
-    /// for why the container must be kept alive by the caller.
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private static func answers(
         focus: TrainingFocus = .strength,
         goal: String = "muscle gain",
@@ -64,7 +55,7 @@ struct CoachPlanServiceTests {
 
     @Test func confirmPlanImportsFolderCreatesActiveProgramAndSyncsActiveMesoDefault() throws {
         try Self.withIsolatedActiveMesoDefault {
-            let (container, context) = try Self.makeContainer()
+            let (container, context) = try TestStore.make()
 
             // A pre-existing routine that must survive untouched.
             let priorRoutine = RoutineModel(userID: ForgeFitDemo.userID, name: "My Own Routine")
@@ -97,7 +88,7 @@ struct CoachPlanServiceTests {
 
     @Test func confirmingSecondPlanDeactivatesFirstWithoutTouchingItsFolder() throws {
         try Self.withIsolatedActiveMesoDefault {
-            let (container, context) = try Self.makeContainer()
+            let (container, context) = try TestStore.make()
 
             let first = try #require(CoachPlanService.confirmPlan(
                 candidate: Self.stubCandidate(id: "dumbbell-home-builder"),
@@ -149,7 +140,7 @@ struct CoachPlanServiceTests {
 
     @Test func attachPlanActivatesWithoutModifyingTheFolder() throws {
         try Self.withIsolatedActiveMesoDefault {
-            let (container, context) = try Self.makeContainer()
+            let (container, context) = try TestStore.make()
 
             let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Hand Built Split")
             context.insert(folder)
@@ -180,7 +171,7 @@ struct CoachPlanServiceTests {
     // MARK: - Yoga
 
     @Test func confirmYogaPlanCreatesFolderlessActiveProgram() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
 
         let coached = CoachPlanService.confirmYogaPlan(
             answers: Self.answers(focus: .yoga, goal: "general fitness", equipment: []),
@@ -204,7 +195,7 @@ struct CoachPlanServiceTests {
 
     @Test func updatePlanEditsWeeksAndTargetAndSyncsProfileCadence() throws {
         try Self.withIsolatedActiveMesoDefault {
-            let (container, context) = try Self.makeContainer()
+            let (container, context) = try TestStore.make()
 
             let coached = try #require(CoachPlanService.confirmPlan(
                 candidate: Self.stubCandidate(id: "dumbbell-home-builder"),
@@ -234,7 +225,7 @@ struct CoachPlanServiceTests {
     }
 
     @Test func updatePlanClampsNegativeWeeksToOpenEnded() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let coached = CoachedProgramModel(userID: ForgeFitDemo.userID, startDate: Date(), weeks: 8, isActive: true)
         context.insert(coached)
         try context.save()
@@ -248,7 +239,7 @@ struct CoachPlanServiceTests {
 
     @Test func stopCoachingDeactivatesWithoutDeletingAnything() throws {
         try Self.withIsolatedActiveMesoDefault {
-            let (container, context) = try Self.makeContainer()
+            let (container, context) = try TestStore.make()
 
             let coached = try #require(CoachPlanService.confirmPlan(
                 candidate: Self.stubCandidate(id: "dumbbell-home-builder"),
@@ -277,7 +268,7 @@ struct CoachPlanServiceTests {
     // MARK: - currentWeek
 
     @Test func currentWeekIsOneBasedAndUnclamped() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let calendar = Calendar.current
         let now = Date()
         let program = CoachedProgramModel(userID: ForgeFitDemo.userID, startDate: now, weeks: 2)
@@ -298,7 +289,7 @@ struct CoachPlanServiceTests {
     // MARK: - buildPlan
 
     @Test func buildPlanReturnsHonestNoneForImpossibleEquipment() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         try ExerciseSeedRepository.seedGlobalLibrary(in: context)
         try context.save()
 
@@ -316,7 +307,7 @@ struct CoachPlanServiceTests {
     }
 
     @Test func buildPlanShortCircuitsToYogaWithoutMatching() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
 
         let recommendation = CoachPlanService.buildPlan(
             answers: Self.answers(focus: .yoga, sessionsPerWeek: 4, equipment: []),

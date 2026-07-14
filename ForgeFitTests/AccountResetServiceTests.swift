@@ -8,10 +8,8 @@ import Testing
 @MainActor
 struct AccountResetServiceTests {
     @Test func deleteAllLocalModelsRemovesUserDataAndProgress() throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let userID = ForgeFitDemo.userID
 
         let exercise = ExerciseLibraryModel(ownerID: userID, name: "Custom Press")
@@ -86,10 +84,8 @@ struct AccountResetServiceTests {
     /// this test by construction — this is how ProgressionSuggestionModel
     /// and DailyCheckinModel slipped through the hand-maintained list.
     @Test func resetDeletesEveryRegisteredModelType() throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let userID = ForgeFitDemo.userID
 
         for modelType in ForgeDataSchema.models {

@@ -111,7 +111,7 @@ struct ProfileView: View {
                 case .importedExerciseReview: ReviewImportedExercisesView(workouts: workouts)
                 case .measures: MeasuresView()
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
-                case .history: WorkoutHistoryListView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
                 case .community:
                     SocialHubView(makeSnapshot: {
@@ -721,53 +721,6 @@ struct MeasuresView: View {
                     // the button back — write access is the usual culprit.
                     weightSaveError = "Couldn't save to Apple Health. Allow write access in Health → Sharing → Apps → ForgeFit, then try again."
                 }
-            }
-        }
-    }
-}
-
-/// The classic month-grouped history list — still the "See all workouts"
-/// destination at the end of the Profile feed.
-struct WorkoutHistoryListView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
-    let workouts: [WorkoutModel]
-    let exercises: [ExerciseLibraryModel]
-
-    @State private var monthMemo = Memo<String, [(month: String, items: [WorkoutModel])]>()
-
-    private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var byMonth: [(month: String, items: [WorkoutModel])] {
-        monthMemo(AnalyticsFingerprint.of(workouts)) {
-            let completed = analytics.completed
-            var order: [String] = []
-            var map: [String: [WorkoutModel]] = [:]
-            for w in completed {
-                let key = w.startedAt.formatted(.dateTime.month(.wide).year())
-                if map[key] == nil { order.append(key); map[key] = [] }
-                map[key]?.append(w)
-            }
-            return order.map { ($0, map[$0] ?? []) }
-        }
-    }
-
-    var body: some View {
-        // Lazy: History can be hundreds of rows, and each WorkoutFeedRow faults
-        // that workout's sets to compute its summary — build only what's visible.
-        DashboardScaffold(title: "History", dismiss: dismiss, lazy: true) {
-            ForEach(byMonth, id: \.month) { group in
-                Text(group.month).font(.bodyStrong).foregroundStyle(theme.textSecondary)
-                ForEach(group.items) { workout in
-                    NavigationLink(value: workout.id) {
-                        WorkoutFeedRow(workout: workout, analytics: analytics)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .navigationDestination(for: UUID.self) { id in
-            if let w = workouts.first(where: { $0.id == id }) {
-                WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
             }
         }
     }

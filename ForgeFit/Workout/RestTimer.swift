@@ -63,6 +63,10 @@ final class RestTimerController {
     @ObservationIgnored private var soundOnEnd = false
     @ObservationIgnored private var endNotification: (title: String, body: String)?
     @ObservationIgnored private var onComplete: ((Int) -> Void)?
+    /// Fired on every state change — start, ±adjust, skip, natural end — so the
+    /// watch mirror can push the new countdown to the wrist immediately. Keeps
+    /// this controller unaware of WatchConnectivity (wired in WatchLink).
+    @ObservationIgnored var onStateChange: (() -> Void)?
 
     var isRunning: Bool {
         guard let endsAt else { return false }
@@ -101,6 +105,7 @@ final class RestTimerController {
         self.onComplete = onComplete
         scheduleCompletionHaptic()
         scheduleLockScreenNotification()
+        onStateChange?()
     }
 
     /// Hand the seconds actually run to whoever started the countdown (AMRAP
@@ -119,6 +124,7 @@ final class RestTimerController {
         totalSeconds = max(totalSeconds + delta, remaining())
         scheduleCompletionHaptic()
         scheduleLockScreenNotification()
+        onStateChange?()
     }
 
     func skip() {
@@ -130,6 +136,7 @@ final class RestTimerController {
         ownerID = nil
         soundOnEnd = false
         endNotification = nil
+        onStateChange?()
     }
 
     private func scheduleCompletionHaptic() {
@@ -159,6 +166,7 @@ final class RestTimerController {
             self.ownerID = nil
             self.soundOnEnd = false
             self.endNotification = nil
+            self.onStateChange?()
         }
     }
 

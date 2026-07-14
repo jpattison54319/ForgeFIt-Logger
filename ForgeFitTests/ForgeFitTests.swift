@@ -27,10 +27,7 @@ struct ForgeFitTests {
 
     @MainActor
     @Test func cardioRoutineStartsAsCardioSessionWithoutStrengthSets() async throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
 
         let userID = ForgeFitDemo.userID
         let treadmill = ExerciseLibraryModel(
@@ -70,14 +67,12 @@ struct ForgeFitTests {
         #expect(workout.cardioSessions.count == 1)
         #expect(workout.cardioSessions.first?.modality == CardioKind.run.rawValue)
         #expect(workout.cardioSessions.first?.durationSeconds == 1_800)
+        _ = container   // keep models alive to the end (see TestStore.make)
     }
 
     @MainActor
     @Test func routineStartLoadsSavedSetupNoteWhenRoutineExerciseHasNoNote() async throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
 
         let exercise = ExerciseLibraryModel(name: "Machine Chest Press", primaryMuscles: ["chest"], equipment: "machine")
         let setupNote = UserExerciseNoteModel(
@@ -102,14 +97,12 @@ struct ForgeFitTests {
 
         #expect(workout.exercises.first?.notes == setupNote.note)
         #expect(workout.exercises.first?.notePinned == true)
+        _ = container   // keep models alive to the end (see TestStore.make)
     }
 
     @MainActor
     @Test func routineStartPreservesRoutineExerciseNoteOverSavedSetupNote() async throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
 
         let exercise = ExerciseLibraryModel(name: "Machine Chest Press", primaryMuscles: ["chest"], equipment: "machine")
         let setupNote = UserExerciseNoteModel(userID: userID, exerciseID: exercise.id, note: "Saved setup cue")
@@ -131,6 +124,7 @@ struct ForgeFitTests {
 
         #expect(workout.exercises.first?.notes == "Routine-specific cue")
         #expect(workout.exercises.first?.notePinned == false)
+        _ = container   // keep models alive to the end (see TestStore.make)
     }
 
     @Test func cardioSRPELoadFallsBackToDurationTimesEffort() {
@@ -192,17 +186,19 @@ struct ForgeFitTests {
 
         let report = RecoveryEngine(workouts: [workout], now: now).report()
 
-        #expect(abs(report.acuteLoad - 225) < 0.001)
-        #expect(abs(report.strengthLoad - 225) < 0.001)
+        #expect(abs(report.acuteLoad - 270) < 0.001)
+        #expect(abs(report.strengthLoad - 270) < 0.001)
         #expect(report.cardioLoad == 0)
     }
 
-    @Test func strengthLoadUsesTonnageAndProximityToFailure() {
+    @Test func strengthLoadCountsCompletedSetsScaledByEffort() {
         let bench = exercise("Bench Press", muscles: ["chest"])
         let workout = strengthWorkout(daysAgo: 1, exercise: bench, reps: 10, weight: 100, rpe: 8)
         let report = RecoveryEngine(workouts: [workout], exercises: [bench], now: now).report()
 
-        #expect(abs(report.strengthLoad - 252.9822) < 0.001)
+        // One working set at RPE 8 = 35 load points; a lone set in a long
+        // workout no longer inherits the whole hour as load.
+        #expect(abs(report.strengthLoad - 35) < 0.001)
         #expect(abs(report.acuteLoad - report.strengthLoad) < 0.001)
         #expect(report.cardioLoad == 0)
     }
@@ -289,13 +285,14 @@ struct ForgeFitTests {
         #expect(report.reasonChips.contains { $0.text == "Sleep debt" })
     }
 
-    @Test func largeLoadSpikeDeloadsInsteadOfCallingItASweetSpot() {
+    @Test func recentLoadWaitsForBaselineAndDoesNotDriveReadiness() {
         let run = cardioWorkout(daysAgo: 0, minutes: 120, effort: 9)
         let report = RecoveryEngine(workouts: [run], now: now).report()
 
-        #expect(report.action == .deloadRecover)
-        #expect(report.reasonChips.contains { $0.text == "Large load spike" })
-        #expect(report.insights.contains { $0.contains("not an injury prediction") })
+        #expect(report.trainingLoad.state == .building)
+        #expect(report.loadRatio == nil)
+        #expect(report.action != .deloadRecover)
+        #expect(!report.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("load") })
     }
 
     @Test func targetMuscleTrainedYesterdayIsContextNotAnAutomaticReduction() {

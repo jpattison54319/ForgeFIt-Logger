@@ -11,11 +11,19 @@ import HealthKit
 @MainActor
 final class HealthWorkoutImporter {
     static let shared = HealthWorkoutImporter()
+    private var isImporting = false
 
     private init() {}
 
     @discardableResult
     func importRecent(in context: ModelContext, days: Int = 60) async -> Int {
+        // MainActor async functions can still be re-entered at an `await`.
+        // Serialize imports so two refresh triggers cannot insert the same
+        // Health workout before either one saves.
+        guard !isImporting else { return 0 }
+        isImporting = true
+        defer { isImporting = false }
+
         #if canImport(HealthKit)
         guard HealthService.shared.isAvailable else { return 0 }
         let end = Date()
@@ -26,8 +34,8 @@ final class HealthWorkoutImporter {
             .sorted { $0.endDate < $1.endDate }
         guard !healthWorkouts.isEmpty else { return 0 }
 
-        let existing = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
-        let existingHealthUUIDs = Set(existing.compactMap(\.hkWorkoutUUID))
+        var existing = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
+        var existingHealthUUIDs = Set(existing.compactMap(\.hkWorkoutUUID))
         var imported = 0
 
         for healthWorkout in healthWorkouts {
@@ -106,6 +114,8 @@ final class HealthWorkoutImporter {
                 cardioSessions: cardioSession.map { [$0] } ?? []
             )
             context.insert(workout)
+            existingHealthUUIDs.insert(healthWorkout.uuid)
+            existing.append(workout)
             if let cardioSession, kind.cardioKind?.supportsOutdoorRoute == true {
                 let locations = await routeLocations(for: healthWorkout, store: healthStore)
                 CardioRouteMath.replaceRoute(for: cardioSession, locations: locations, in: context)

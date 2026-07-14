@@ -521,9 +521,7 @@ struct HomeView: View {
 
                 HomeWeekCalendarStrip(days: days)
 
-                if let ratio = recovery.acwr {
-                    TrainingLoadGauge(ratio: ratio)
-                }
+                TrainingLoadGauge(comparison: recovery.trainingLoad)
 
                 HStack {
                     StatColumn(label: "Workouts", value: "\(week.workoutCount)")

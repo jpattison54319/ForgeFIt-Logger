@@ -876,6 +876,9 @@ struct ContentView: View {
                 try seedStarterSetupNote()
                 try seedStarterRoutine()
             }
+            if ProcessInfo.processInfo.arguments.contains("--seed-history") {
+                try seedHistoryFixtures()
+            }
             // Stamp AFTER everything succeeded, so a thrown seed retries next
             // launch instead of being skipped forever.
             if needsSeed {
@@ -884,6 +887,97 @@ struct ContentView: View {
         } catch {
             assertionFailure("Launch data seed failed: \(error)")
         }
+    }
+
+    /// `--seed-history`: a deterministic 14-month training history — 120
+    /// sessions of push/pull/legs rotation with progressing loads (so PRs
+    /// exist), runs with heart rate, yoga, sparse RPE, notes, and a few
+    /// import-flagged sessions — so UI tests and simulator walkthroughs of
+    /// the History screen have real volume to search, filter, and paginate.
+    /// Idempotent per store; test-launch plumbing, never a user path.
+    private func seedHistoryFixtures() throws {
+        let probeTitle = "Push Day #120"
+        var probe = FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.title == probeTitle })
+        probe.fetchLimit = 1
+        guard try modelContext.fetch(probe).isEmpty else { return }
+
+        let userID = ForgeFitDemo.userID
+        let now = Date()
+        struct Lift {
+            let exerciseID: UUID
+            let base: Double
+        }
+        let splits: [(title: String, lifts: [Lift])] = [
+            ("Push Day", [
+                Lift(exerciseID: GlobalExerciseLibrary.machineChestPressID, base: 60),
+                Lift(exerciseID: GlobalExerciseLibrary.overheadCableTricepsExtensionID, base: 25),
+            ]),
+            ("Pull Day", [
+                Lift(exerciseID: GlobalExerciseLibrary.chestSupportedTBarRowID, base: 50),
+                Lift(exerciseID: GlobalExerciseLibrary.bayesianCableCurlID, base: 15),
+            ]),
+            ("Leg Day", [
+                Lift(exerciseID: GlobalExerciseLibrary.smithMachineSquatID, base: 80),
+                Lift(exerciseID: GlobalExerciseLibrary.romanianDeadliftID, base: 70),
+            ]),
+        ]
+
+        for i in 0..<120 {
+            let sessionNumber = 120 - i
+            let start = now.addingTimeInterval(-Double(i) * 3.5 * 86_400 - 5 * 3_600)
+            let workout: WorkoutModel
+
+            if i % 4 == 3 {
+                let isYoga = i % 12 == 11
+                let session = CardioSessionModel(
+                    userID: userID,
+                    modality: isYoga ? CardioSessionModel.yogaModality : CardioKind.run.rawValue,
+                    startedAt: start,
+                    endedAt: start.addingTimeInterval(2_100),
+                    durationSeconds: 1_800 + (i % 4) * 300,
+                    avgHR: isYoga ? nil : 148 + (i % 20),
+                    yogaStyleRaw: isYoga ? "vinyasa" : nil
+                )
+                workout = WorkoutModel(
+                    userID: userID,
+                    title: isYoga ? "Yoga Flow #\(sessionNumber)" : "Morning Run #\(sessionNumber)",
+                    startedAt: start,
+                    endedAt: start.addingTimeInterval(2_100),
+                    cardioSessions: [session]
+                )
+            } else {
+                let split = splits[i % 4]
+                // Loads rise toward the present, so chronologically each bump
+                // is a fresh PR and the PR filter has hits in every era.
+                let progression = Double((120 - i) / 8) * 2.5
+                let workoutExercises = split.lifts.enumerated().map { position, lift in
+                    let sets = (0..<3).map { setIndex in
+                        SetModel(
+                            userID: userID,
+                            position: setIndex,
+                            setType: .working,
+                            reps: 8 + setIndex,
+                            weight: lift.base + progression,
+                            rpe: i % 5 == 0 ? nil : 8,
+                            completedAt: start.addingTimeInterval(Double(600 + position * 900 + setIndex * 180))
+                        )
+                    }
+                    return WorkoutExerciseModel(userID: userID, exerciseID: lift.exerciseID, position: position, sets: sets)
+                }
+                workout = WorkoutModel(
+                    userID: userID,
+                    title: "\(split.title) #\(sessionNumber)",
+                    startedAt: start,
+                    endedAt: start.addingTimeInterval(3_900),
+                    exercises: workoutExercises
+                )
+                workout.recomputeTotalVolume()
+            }
+            if i % 9 == 0 { workout.notes = "Felt strong today — belt on top sets." }
+            if i % 10 == 7 { workout.externalSource = "hevy" }
+            modelContext.insert(workout)
+        }
+        try modelContext.save()
     }
 
     private var isAutomationLaunch: Bool {

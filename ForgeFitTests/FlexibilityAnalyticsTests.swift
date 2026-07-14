@@ -10,13 +10,6 @@ import Testing
 @MainActor
 struct FlexibilityAnalyticsTests {
 
-    private func makeContainer() throws -> (ModelContainer, ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     /// A custom pose row so region lookup exercises the library path.
     private func insertPose(
         _ name: String,
@@ -51,7 +44,7 @@ struct FlexibilityAnalyticsTests {
     }
 
     @Test func guidedExposureCreditsActualHoldsByLabel() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let hamstrings = insertPose("Forward Fold", primary: ["hamstrings"], secondary: ["lower back"], in: context)
         let hips = insertPose("Deep Squat Hold", primary: ["hips"], unilateral: true, in: context)
 
@@ -77,7 +70,7 @@ struct FlexibilityAnalyticsTests {
     }
 
     @Test func manualLogScalesPlanToLoggedDuration() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = insertPose("Butterfly", primary: ["adductors"], in: context)
         let plan = YogaFlowPlan(style: .yin, steps: [
             YogaFlowPlan.PoseStep(poseID: pose.id, name: "Butterfly", holdSeconds: 120)
@@ -93,7 +86,7 @@ struct FlexibilityAnalyticsTests {
     }
 
     @Test func stampExposureFreezesSnapshotOnSession() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = insertPose("Sphinx", primary: ["spine"], in: context)
         let plan = YogaFlowPlan(style: .gentle, steps: [
             YogaFlowPlan.PoseStep(poseID: pose.id, name: "Sphinx", holdSeconds: 60)
@@ -109,7 +102,7 @@ struct FlexibilityAnalyticsTests {
     }
 
     @Test func regionSecondsAggregatesYogaAndStretchingSets() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let now = Date()
 
         // A finished yoga workout with a frozen exposure snapshot.

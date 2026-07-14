@@ -260,3 +260,36 @@ extension WatchSyncTests {
         #expect(decoded.readinessDetail == nil)
     }
 }
+
+// MARK: - Rest-timer mirroring (incl. block micro-rests)
+
+extension WatchSyncTests {
+    @Test func snapshotRoundTripsMicroRestFlag() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 0),
+            restEndsAt: Date(timeIntervalSinceReferenceDate: 15),
+            restTotalSeconds: 15,
+            restIsMicro: true
+        )
+        let data = try #require(WatchWire.encode(WatchAppContext(workout: snapshot)))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        #expect(decoded.workout?.restIsMicro == true)
+        #expect(decoded.workout?.restTotalSeconds == 15)
+    }
+
+    /// A full rest — or an older snapshot — leaves `restIsMicro` nil while the
+    /// countdown itself still mirrors.
+    @Test func fullRestLeavesMicroFlagNil() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 0),
+            restEndsAt: Date(timeIntervalSinceReferenceDate: 120),
+            restTotalSeconds: 120
+        )
+        let data = try #require(WatchWire.encode(WatchAppContext(workout: snapshot)))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        #expect(decoded.workout?.restIsMicro == nil)
+        #expect(decoded.workout?.restEndsAt != nil)
+    }
+}

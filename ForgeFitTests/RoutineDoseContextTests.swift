@@ -75,11 +75,7 @@ struct RoutineDoseContextTests {
         #expect(chestContext.projectedWeeklySets > chestContext.weeklyThreshold)
         #expect(dose.affectedExerciseIDs == Set([chest.id]))
 
-        let schema = Schema(ForgeDataSchema.models)
-        let container = try ModelContainer(
-            for: schema,
-            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
-        )
+        let container = try TestStore.makeContainer()
         let modelContext = ModelContext(container)
         let started = startedWorkout(chest: chest, quads: quads)
         modelContext.insert(started)

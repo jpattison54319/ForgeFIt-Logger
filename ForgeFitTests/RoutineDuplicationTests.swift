@@ -13,12 +13,6 @@ import Testing
 struct RoutineDuplicationTests {
     private let userID = ForgeFitDemo.userID
 
-    private func inMemoryContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
-    }
-
     /// A routine exercising every planned field at once: myo plan, cluster
     /// plan, targets, superset, progression rule, notes, interval plan and
     /// yoga flow.
@@ -60,7 +54,7 @@ struct RoutineDuplicationTests {
     }
 
     @Test func copyCarriesEveryPlannedField() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let source = planHeavyRoutine(in: context)
 
         let copy = RoutineDuplicator.duplicate(source, position: 7, in: context)
@@ -105,7 +99,7 @@ struct RoutineDuplicationTests {
     }
 
     @Test func copyUsesFreshIdentityAndLeavesSourceUntouched() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let source = planHeavyRoutine(in: context)
         let sourceExerciseIDs = Set(source.exercises.map(\.id))
         let sourceSetIDs = Set(source.exercises.flatMap(\.sets).map(\.id))

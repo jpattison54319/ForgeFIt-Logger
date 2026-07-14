@@ -112,6 +112,97 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
     }
 
+    /// End-to-end pass over Profile → See all workouts: seeded 120-session
+    /// history, text search narrows, the PR chip filters, clearing restores,
+    /// and scrolling past the first page mounts more rows (windowed
+    /// pagination). Screenshots attach for visual review.
+    @MainActor
+    func testHistorySearchFiltersAndPagination() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-history", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-profile"].firstMatch.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["home-workout-Push Day #120"].firstMatch.waitForExistence(timeout: 8),
+            "Expected the Profile feed to render seeded recents before scrolling."
+        )
+
+        // Press-drag instead of swipeUp: a fast momentum swipe can misfire as
+        // a tap on a feed row's NavigationLink and push a workout detail.
+        let seeAll = app.staticTexts["See all workouts"]
+        dragUp(app, until: seeAll)
+        XCTAssertTrue(seeAll.waitForExistence(timeout: 5), "Expected the See all workouts row at the end of the Profile feed.")
+        seeAll.tap()
+
+        // Scope every row assertion to `history-workout-` identifiers: the
+        // Profile feed underneath stays in the NavigationStack's accessibility
+        // hierarchy with its own `home-workout-` copies of the same titles.
+        let searchField = app.textFields["history-search-field"]
+        let pushRow = app.descendants(matching: .any)["history-workout-Push Day #120"].firstMatch
+        let pullRow = app.descendants(matching: .any)["history-workout-Pull Day #119"].firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the History search field.")
+        XCTAssertTrue(pushRow.waitForExistence(timeout: 5), "Expected the newest seeded session on page one.")
+        attachScreenshot(app, name: "history-default")
+
+        // Text search narrows to matching sessions (250 ms debounce). 120
+        // seeds ÷ 4-day split = exactly 30 push sessions.
+        searchField.tap()
+        searchField.typeText("push day")
+        XCTAssertTrue(pullRow.waitForNonExistence(timeout: 3), "Search should filter out pull sessions.")
+        XCTAssertTrue(app.staticTexts["30 workouts"].waitForExistence(timeout: 3), "Count line should reflect the narrowed result.")
+        XCTAssertTrue(pushRow.exists, "Matching sessions should survive the search.")
+        attachScreenshot(app, name: "history-search")
+
+        // Clear the text, then filter by PRs via the chip. The chips row
+        // scrolls horizontally; swipe it (not the page) to reveal the chip.
+        searchField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8))
+        XCTAssertTrue(pullRow.waitForExistence(timeout: 3), "Clearing the search should restore the list.")
+        // PRs sits past the viewport in the default chip row; one row swipe
+        // reveals the tail. Don't probe `isHittable` while it may be fully
+        // off-screen — on this OS the check throws ("activation point
+        // invalid") instead of returning false.
+        let chipRow = app.scrollViews["history-filter-row"].firstMatch
+        let prsChip = app.descendants(matching: .any)["history-filter-prs"].firstMatch
+        chipRow.swipeLeft()
+        tapWhenReady(prsChip)
+        XCTAssertTrue(pushRow.waitForExistence(timeout: 3), "The newest session carries its split's latest load bump, so it PRs.")
+        attachScreenshot(app, name: "history-prs")
+        // Clear pins to the FRONT of the chips row while filters are active.
+        chipRow.swipeRight()
+        let clearChip = app.descendants(matching: .any)["history-clear-filters"].firstMatch
+        XCTAssertTrue(clearChip.waitForExistence(timeout: 2), "Clear should lead the chips row when a filter is active.")
+        tapWhenReady(clearChip)
+
+        // Windowed pagination: row ~48 must not exist up top, then mounts on scroll.
+        let deepRow = app.descendants(matching: .any)["history-workout-Push Day #72"].firstMatch
+        XCTAssertFalse(deepRow.exists, "Rows beyond the first page should not be mounted before scrolling.")
+        dragUp(app, until: deepRow, maxDrags: 30)
+        XCTAssertTrue(deepRow.exists, "Expected deeper history to mount as the list scrolls (windowed pagination).")
+    }
+
+    /// Deterministic vertical scrolling: press-then-drag is always recognized
+    /// as a drag, unlike `swipeUp` whose fast flick can land as a tap on a
+    /// row's NavigationLink and push a detail screen mid-test. Drags start
+    /// mid-screen so they stay above a software keyboard and the floating tab
+    /// bar, both of which silently eat gestures.
+    private func dragUp(_ app: XCUIApplication, until element: XCUIElement, maxDrags: Int = 40) {
+        var drags = 0
+        while !(element.exists && element.isHittable), drags < maxDrags {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            drags += 1
+        }
+    }
+
+    private func attachScreenshot(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Regression: typing in the exercise picker's search crashed the app when
     /// the library contained duplicate exercise IDs (CloudKit can't enforce
     /// unique constraints, so a sync/re-seed race produces them). Drives the

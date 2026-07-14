@@ -793,7 +793,7 @@ private struct HealthSignalRows: View {
     let report: RecoveryEngine.Report
 
     private var healthSignals: [RecoveryEngine.Signal] {
-        report.signals.filter { !["Load ratio", "Monotony"].contains($0.name) }
+        report.signals
     }
 
     var body: some View {
@@ -865,25 +865,64 @@ private struct AdvancedLoadDisclosure: View {
     let onInfo: (RecoveryInfoTopic) -> Void
     @State private var expanded = false
 
+    private var baselineValue: String {
+        report.trainingLoad.state == .building
+            ? "—"
+            : Int(report.chronicLoad.rounded()).formatted()
+    }
+
+    private var comparisonValue: String {
+        switch report.trainingLoad.state {
+        case .building:
+            return "\(report.trainingLoad.baselineDaysAvailable)/28d"
+        case .noRecentLoad:
+            return "No baseline"
+        case .sparseBaseline:
+            return "Too light"
+        case .ready:
+            guard let ratio = report.loadRatio else { return "—" }
+            let percent = Int((abs(ratio - 1) * 100).rounded())
+            if percent <= 5 { return "Near" }
+            return "\(percent)% \(ratio > 1 ? "above" : "below")"
+        }
+    }
+
     var body: some View {
         Card {
             DisclosureGroup(isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    Text("Used to spot load spikes and trends — a coaching guide, not injury prediction.")
+                    Text("Descriptive context only. This comparison does not change readiness or predict injury.")
                         .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     HStack {
-                        StatColumn(label: "Acute 7d", value: Int(report.acuteLoad).formatted())
-                        StatColumn(label: "Chronic", value: Int(report.chronicLoad).formatted())
-                        StatColumn(label: "Ratio", value: report.acwr.map { $0.formatted(.number.precision(.fractionLength(2))) } ?? "-")
+                        StatColumn(label: "Last 7d", value: Int(report.acuteLoad.rounded()).formatted())
+                        StatColumn(label: "Prior 4w avg", value: baselineValue)
+                        StatColumn(label: "Comparison", value: comparisonValue)
                     }
 
                     HStack {
                         StatColumn(label: "Strength", value: Int(report.strengthLoad).formatted())
                         StatColumn(label: "Cardio", value: Int(report.cardioLoad).formatted())
                         StatColumn(label: "Monotony", value: report.monotony.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "-")
+                    }
+
+                    if report.trainingLoad.state == .building {
+                        Text("ForgeFit needs \(report.trainingLoad.baselineDaysRemaining) more prior day\(report.trainingLoad.baselineDaysRemaining == 1 ? "" : "s") before showing a comparison.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if report.trainingLoad.state == .sparseBaseline {
+                        Text("The prior 4 weeks carry too little logged load to compare against — a percentage of almost nothing would read as a spike no matter what you did this week.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if report.trainingLoad.estimatedEffortSessionCount > 0 {
+                        Text("Effort was estimated for \(report.trainingLoad.estimatedEffortSessionCount) session\(report.trainingLoad.estimatedEffortSessionCount == 1 ? "" : "s") with no directly logged effort.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if !report.missingInputs.isEmpty {
@@ -998,15 +1037,15 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .dailyScore:
             return "Compares last night's HRV, sleeping heart rate, and sleep against your own baseline. It's deliberately reactive — one rough night will move it."
         case .systemicScore:
-            return "The slow-moving picture: 7-day HRV, sleep, resting heart rate, and training load against your baseline. It answers \"am I adapting or digging a hole\" rather than \"how am I today\"."
+            return "The slow-moving picture: 7-day HRV, sleep, and resting heart rate against your baseline. It answers \"how has recovery been trending\" rather than \"how am I today\"."
         case .muscleScore:
             return "Each muscle recovers on its own clock — a session deposits fatigue based on your sets and how close to failure they were, clearing over roughly 24–72 hours. Bigger muscles recover more slowly."
         case .cardioScore:
             return "Cardio stress depends on intensity, not just minutes. Easy Zone 2 clears in about a day; hard intervals can take two to three."
         case .trainingLoad:
-            return "Compares recent work against your own norm to flag spikes and unusually flat weeks."
+            return "Strength load counts every completed working set — sets closer to failure and technique sets like myo-reps or drop sets count for more, and with failure training on, an unlogged effort counts as failure. Cardio load is minutes weighted by time in heart-rate zones, or by your logged effort when you rated the session. The last 7 days compare against the preceding 28 non-overlapping days only once that full history exists."
         case .confidence:
-            return "Reflects how much useful data was available. More logged workouts and consistent Health data sharpen the recommendation."
+            return "Reflects how complete the health signals behind the recommendation are. Consistent HRV, resting heart rate, and sleep data make it more reliable."
         }
     }
 
@@ -1021,7 +1060,7 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .cardioScore:
             return "You can layer easy Zone 2 on most days. It's back-to-back hard interval days that this score will warn you about."
         case .trainingLoad:
-            return "If load is spiking, keep intensity controlled or drop sets even when motivation is high."
+            return "Use this to understand how recent training differs from your own history, not as an injury warning or an automatic reason to change today's workout."
         case .confidence:
             return "Low confidence does not mean the recommendation is useless; it means the app is being appropriately humble."
         }
@@ -1040,9 +1079,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
                 "Plews et al. 2013 (Sports Med) — 7-day rolling HRV averages track training status better than single readings.",
                 "Buchheit 2014 (Front Physiol) — interpret HRV and resting HR against your own baseline variability.",
                 "Fullagar et al. 2015 (Sports Med) — sleep loss measurably impairs strength, sprint, and endurance performance.",
-                "Williams et al. 2017 (BJSM) — exponentially weighted workload ratios outperform rolling averages.",
-                "Foster 1998 (MSSE) — monotonous training weeks raise strain at the same total load.",
-                "Impellizzeri et al. 2020 (Int J Sports Physiol Perform) — load ratios flag fatigue risk but do not measure recovery, so they can only cap this trend, not inflate it.",
             ]
         case .muscleScore:
             return [
@@ -1055,7 +1091,16 @@ private enum RecoveryInfoTopic: String, Identifiable {
                 "Stanley, Peake & Buchheit 2013 (Sports Med) — parasympathetic recovery: ≈24 h after easy sessions, 24–48 h after threshold, 48 h+ after high-intensity work.",
                 "Seiler 2010 (IJSPP) — most endurance volume belongs at low intensity precisely because it recovers quickly.",
             ]
-        case .trainingLoad, .confidence:
+        case .trainingLoad:
+            return [
+                "Foster et al. 2001 (JSCR) — session RPE: duration × perceived effort as the common currency of internal load.",
+                "Edwards' summated heart-rate-zone method — minutes in higher zones count for more load than the same minutes lower down.",
+                "Pareja-Blanco et al. 2017 (Scand J Med Sci Sports) — sets taken closer to failure produce disproportionately more fatigue and slower recovery.",
+                "Refalo et al. 2023 (Sports Med) — proximity-to-failure meta-analysis behind weighting each set by how hard it was.",
+                "Sødal et al. 2023; Prestes et al. 2019 — drop-set and rest-pause equivalences behind the effective-set weights.",
+                "Impellizzeri et al. 2020 (IJSPP); Coyne et al. 2019 — workload ratios have real conceptual limits, so this comparison stays descriptive.",
+            ]
+        case .confidence:
             return nil
         }
     }

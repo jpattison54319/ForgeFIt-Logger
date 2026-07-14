@@ -9,17 +9,6 @@ import Testing
 struct ProgressionPlannerTests {
     private let userID = ForgeFitDemo.userID
 
-    /// Returns the container WITH its context: returning only
-    /// `container.mainContext` lets the container deinit mid-test, which
-    /// resets the context and destroys every model (see
-    /// `RoutineProgramImportTests`). Callers must keep `container` alive.
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     /// A barbell-class strength exercise with a clean 5 lb step, so an
     /// increase suggestion is exactly +5 lb with no rounding noise.
     private func makeExercise(id: UUID, bodyweight: Bool = false) -> ExerciseLibraryModel {
@@ -89,7 +78,7 @@ struct ProgressionPlannerTests {
     // MARK: (a) preview targets == what apply() writes, external increase
 
     @Test func previewTargetsMatchApplyForExternalIncrease() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let exerciseID = UUID()
         let exercise = makeExercise(id: exerciseID)
         context.insert(exercise)
@@ -128,7 +117,7 @@ struct ProgressionPlannerTests {
     // MARK: (b) bodyweight exercise → reps-only, sets untouched, preview matches
 
     @Test func bodyweightExerciseIsRepsOnlyAndLeavesSetsUntouched() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let exerciseID = UUID()
         let exercise = makeExercise(id: exerciseID, bodyweight: true)
         context.insert(exercise)
@@ -162,7 +151,7 @@ struct ProgressionPlannerTests {
     // MARK: (c) held exercise → hold with override reason, last-session numbers, preview matches
 
     @Test func heldExerciseHoldsAtLastSessionNumbersWithOverrideReason() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let exerciseID = UUID()
         let exercise = makeExercise(id: exerciseID)
         context.insert(exercise)
@@ -209,7 +198,7 @@ struct ProgressionPlannerTests {
     // MARK: (d) no history → no suggestions in either path
 
     @Test func noHistoryProducesNoSuggestionsInEitherPath() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let exerciseID = UUID()
         let exercise = makeExercise(id: exerciseID)
         context.insert(exercise)

@@ -57,8 +57,10 @@ watch destinations often fail to resolve.
 - New Swift files under a target's folder compile automatically
   (file-system-synchronized groups). Never edit `project.pbxproj` to add files.
 - New tests use Swift Testing (`import Testing`, `@Test`, `#expect`), not
-  XCTest. For SwiftData, copy the in-memory container pattern in
-  `ForgeFitTests/CoachPlanServiceTests.swift`.
+  XCTest. For SwiftData, use `TestStore.make()` from
+  `ForgeFitTests/TestStore.swift` — never construct a raw `ModelConfiguration`
+  in app tests (the factory carries the required `cloudKitDatabase: .none` and
+  the container keep-alive rule).
 - UI matches the existing Hevy-style design system: theme colors via
   `@Environment(\.theme)`, spacing/radii via `Space`/`Radius` tokens, `Card`
   containers, `PrimaryButton`/`SecondaryButton`. Fixed point font sizes are the

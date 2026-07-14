@@ -6,18 +6,6 @@ import Testing
 
 @MainActor
 struct RoutineProgramImportTests {
-    /// Returns the container WITH its context: returning only
-    /// `container.mainContext` let the container deinit mid-test, which
-    /// resets the context and destroys every model — a SwiftData fatal that
-    /// crashed the whole test host (and collaterally failed unrelated
-    /// suites). Callers must keep `container` alive for the test body.
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private static let upperDay = RoutineTemplate(
         id: "upper-a", name: "Upper Body A", goal: "muscle gain", level: "intermediate",
         daysPerWeek: 4, estimatedMinutes: 55, equipment: ["barbell"], tags: [],
@@ -39,7 +27,7 @@ struct RoutineProgramImportTests {
     )
 
     @Test func importProgramCreatesFolderWithRoutinesInside() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
 
         let folder = RoutineTemplateCatalog.importProgram(Self.program, templates: [Self.upperDay, Self.lowerDay], in: context)
 
@@ -56,7 +44,7 @@ struct RoutineProgramImportTests {
     }
 
     @Test func importProgramTwiceKeepsFolderAndRoutineNamesUnique() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let templates = [Self.upperDay, Self.lowerDay]
 
         let first = RoutineTemplateCatalog.importProgram(Self.program, templates: templates, in: context)
@@ -72,7 +60,7 @@ struct RoutineProgramImportTests {
     }
 
     @Test func importProgramWithNoResolvableDaysReturnsNil() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let orphan = RoutineProgramTemplate(
             id: "ghost", name: "Ghost", goal: "strength", level: "beginner",
             daysPerWeek: 3, weeks: 4, equipment: [], tags: [],

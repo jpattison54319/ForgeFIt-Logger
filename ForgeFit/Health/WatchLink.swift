@@ -53,6 +53,12 @@ final class WatchLink: NSObject {
     /// Give the link data access; called once from ContentView.
     func configure(context: ModelContext) {
         modelContext = context
+        // Push rest-timer start / ±adjust / skip / end to the watch the instant
+        // it happens, so a countdown a lifter extends or skips on the phone
+        // never goes stale on the wrist.
+        RestTimerController.shared.onStateChange = { [weak self] in
+            self?.publishState(force: true)
+        }
     }
 
     private func refresh() {
@@ -194,8 +200,9 @@ final class WatchLink: NSObject {
                         sets: setSnapshots(for: we, exercise: library)
                     )
                 },
-                restEndsAt: timer.isRunning && !timer.isMicro ? timer.endsAt : nil,
-                restTotalSeconds: timer.isRunning && !timer.isMicro ? timer.totalSeconds : nil,
+                restEndsAt: timer.isRunning ? timer.endsAt : nil,
+                restTotalSeconds: timer.isRunning ? timer.totalSeconds : nil,
+                restIsMicro: timer.isRunning ? timer.isMicro : nil,
                 intervalStepName: stepName,
                 intervalStepEndsAt: stepEndsAt,
                 intervalStepKind: stepKind,

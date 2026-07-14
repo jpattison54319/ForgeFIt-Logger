@@ -10,13 +10,6 @@ import Testing
 @MainActor
 struct YogaWorkoutPipelineTests {
 
-    private func makeContainer() throws -> (ModelContainer, ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private func makePose(name: String = "Pigeon Pose", hold: Int = 60, unilateral: Bool = true) -> ExerciseLibraryModel {
         let pose = ExerciseLibraryModel(name: name, modalityRaw: "yoga", defaultHoldSeconds: hold)
         pose.isUnilateral = unilateral
@@ -26,7 +19,7 @@ struct YogaWorkoutPipelineTests {
     // MARK: - Factory
 
     @Test func routineStartCreatesYogaSessionNotSets() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose()
         context.insert(pose)
 
@@ -55,7 +48,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func routineStartSynthesizesFlowForBarePose() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Child's Pose", hold: 45, unilateral: false)
         context.insert(pose)
 
@@ -76,7 +69,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func routineStartKeepsYogaSessionUnconfiguredUntilBuilt() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let sessionExercise = YogaPoseCatalog.sessionExercise(in: context)
 
         let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "Choose Later")
@@ -97,7 +90,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func startYogaQuickStartAnchorsOnSessionCard() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Downward-Facing Dog", hold: 30, unilateral: false)
         context.insert(pose)
         try context.save()
@@ -114,7 +107,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func runnerHubResumesAtFirstIncompletePoseSplit() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let first = makePose(name: "Forward Fold", hold: 30, unilateral: false)
         let second = makePose(name: "Low Lunge", hold: 30, unilateral: false)
         context.insert(first)
@@ -152,7 +145,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func strengthRoutineStartIsUnchangedByYogaBranch() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let bench = ExerciseLibraryModel(name: "Bench Press")
         context.insert(bench)
 
@@ -171,7 +164,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func finishWorkoutCompletesManualYogaAndStampsExposure() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Butterfly", hold: 120, unilateral: false)
         pose.primaryMuscles = ["adductors"]
         context.insert(pose)
@@ -214,7 +207,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func finishWorkoutSkipsUntouchedYogaBlock() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Sphinx", hold: 60, unilateral: false)
         context.insert(pose)
 

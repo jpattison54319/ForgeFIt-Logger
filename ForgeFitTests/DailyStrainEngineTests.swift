@@ -86,8 +86,12 @@ struct DailyStrainEngineTests {
             now: now
         ).report()
         let midpoint = try #require(report.targetMidpoint)
-        let maximumMidpoint = DailyStrainEngine.score(forLoadRatio: 1.20)
-        #expect(abs(midpoint - maximumMidpoint) < 0.0001)
+        // Perfect recovery centers the target band on a 1.20× ratio. The
+        // display curve is concave, so the band's score midpoint sits just
+        // BELOW score(1.20) — the cap holds; equality would be a curve
+        // identity no concave mapping can satisfy.
+        #expect(midpoint <= DailyStrainEngine.score(forLoadRatio: 1.20))
+        #expect(midpoint > DailyStrainEngine.score(forLoadRatio: 1.08))
     }
 
     @Test func shortMovementHistoryDoesNotClaimAPersonalScore() {
@@ -143,14 +147,25 @@ struct DailyStrainEngineTests {
         return metrics
     }
 
+    /// A workout shaped like the app actually produces one: load math zeroes
+    /// bare local shells (no sets, no cardio, not imported), so the fixture
+    /// carries a cardio session and lets effort resolve from the workout HR.
     private func workout(daysAgo: Int, durationMinutes: Int, averageHeartRate: Int) -> WorkoutModel {
         let start = calendar.date(byAdding: .day, value: -daysAgo, to: now)!
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: "run",
+            startedAt: start.addingTimeInterval(Double(-durationMinutes * 60)),
+            endedAt: start,
+            durationSeconds: durationMinutes * 60
+        )
         return WorkoutModel(
             userID: userID,
             title: "Training",
             startedAt: start.addingTimeInterval(Double(-durationMinutes * 60)),
             endedAt: start,
-            avgHR: averageHeartRate
+            avgHR: averageHeartRate,
+            cardioSessions: [session]
         )
     }
 

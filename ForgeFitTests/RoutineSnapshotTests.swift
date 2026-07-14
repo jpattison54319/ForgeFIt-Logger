@@ -9,12 +9,6 @@ import Testing
 struct RoutineSnapshotTests {
     private let userID = ForgeFitDemo.userID
 
-    private func inMemoryContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
-    }
-
     private func routine(in context: ModelContext) -> RoutineModel {
         let set = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetRepsHigh: 12, targetWeight: 100)
         let exercise = RoutineExerciseModel(userID: userID, exerciseID: UUID(), position: 0, sets: [set])
@@ -25,14 +19,14 @@ struct RoutineSnapshotTests {
     }
 
     @Test func unchangedRoutineComparesEqual() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let snapshot = RoutineSnapshot(of: r)
         #expect(snapshot == RoutineSnapshot(of: r))
     }
 
     @Test func editsMakeSnapshotsUnequal() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let snapshot = RoutineSnapshot(of: r)
         r.name = "Upper B"
@@ -40,7 +34,7 @@ struct RoutineSnapshotTests {
     }
 
     @Test func restoreUndoesRenameRemovalAndAddition() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let originalExerciseID = r.exercises[0].id
         let snapshot = RoutineSnapshot(of: r)
@@ -74,7 +68,7 @@ struct RoutineSnapshotTests {
     }
 
     @Test func restoreUndoesSetTargetEdits() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let snapshot = RoutineSnapshot(of: r)
 
@@ -92,7 +86,7 @@ struct RoutineSnapshotTests {
     /// snapshot: leaving it out made flow-only edits skip the discard prompt
     /// entirely AND made "Discard Changes" keep the edited flow.
     @Test func flowOnlyEditsAreDetectedAndRestored() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let original = #"{"poses":[{"name":"Balasana","holdSeconds":30}]}"#
         r.exercises[0].yogaFlowJSON = original
@@ -111,7 +105,7 @@ struct RoutineSnapshotTests {
     }
 
     @Test func restoreClearsFlowAddedSinceSnapshot() throws {
-        let context = ModelContext(try inMemoryContainer())
+        let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)
         let snapshot = RoutineSnapshot(of: r)   // captured with no flow
 

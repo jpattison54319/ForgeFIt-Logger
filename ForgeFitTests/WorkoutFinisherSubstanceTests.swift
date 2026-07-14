@@ -11,17 +11,10 @@ import Testing
 /// user text is worse than an odd history entry.
 @MainActor
 struct WorkoutFinisherSubstanceTests {
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private let userID = UUID()
 
     @Test func emptyAndUntouchedWorkoutsHaveNoSubstance() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
 
         let empty = WorkoutModel(userID: userID)
@@ -39,7 +32,7 @@ struct WorkoutFinisherSubstanceTests {
     }
 
     @Test func completedSetLiveCardioManualYogaAndNotesAllCount() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
 
         let done = SetModel(userID: userID, position: 0, reps: 8, weight: 100, completedAt: .now)
@@ -69,7 +62,7 @@ struct WorkoutFinisherSubstanceTests {
     /// The behavioral guarantee: finish() on an empty workout tombstones it
     /// instead of completing it — deletedAt set, endedAt never stamped.
     @Test func finishingAnEmptyWorkoutDiscardsInsteadOfSaving() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let workout = WorkoutModel(userID: userID)
         context.insert(workout)

@@ -11,13 +11,6 @@ import Testing
 /// correctly from live models.
 @MainActor
 struct DataExportTests {
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private let userID = UUID()
     // Sentinels: values that cannot occur incidentally in the fixture.
     private static let sentinelAvgHR = 19_991
@@ -60,7 +53,7 @@ struct DataExportTests {
     }
 
     @Test func jsonKeepsHealthInAppendixOnlyAndDropsTombstones() async throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let (workout, _) = try seed(context: context)
 
@@ -96,7 +89,7 @@ struct DataExportTests {
     }
 
     @Test func csvExportsWorkoutsAndRoutinesWithTombstonesDropped() async throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         _ = try seed(context: context)
 

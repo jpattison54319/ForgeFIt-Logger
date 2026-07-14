@@ -11,13 +11,6 @@ import UIKit
 /// hollow or overflowing share image.
 @MainActor
 struct ShareCardStyleTests {
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private let userID = UUID()
 
     private func strengthExercise(sets: Int = 3, weight: Double = 100) -> WorkoutExerciseModel {
@@ -42,7 +35,7 @@ struct ShareCardStyleTests {
     // MARK: - Shape detection
 
     @Test func shapesResolveForAllFourWorkoutKinds() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
 
         let strength = WorkoutModel(userID: userID, exercises: [strengthExercise()])
@@ -65,7 +58,7 @@ struct ShareCardStyleTests {
     // MARK: - Page availability
 
     @Test func metricsPageOnlyExistsWithHeartRateData() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let workout = WorkoutModel(userID: userID, exercises: [strengthExercise()])
         context.insert(workout)
@@ -83,7 +76,7 @@ struct ShareCardStyleTests {
     // MARK: - Training-log budget
 
     @Test func smallSessionShowsEverySet() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let workout = WorkoutModel(userID: userID, exercises: [strengthExercise(sets: 3), strengthExercise(sets: 4)])
         context.insert(workout)
@@ -100,7 +93,7 @@ struct ShareCardStyleTests {
     }
 
     @Test func largeSessionCollapsesToTopSets() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         // 4 exercises × 6 sets = 24 completed sets — over any budget.
         let workout = WorkoutModel(userID: userID, exercises: (0..<4).map { _ in strengthExercise(sets: 6) })
@@ -116,7 +109,7 @@ struct ShareCardStyleTests {
     }
 
     @Test func exercisesBeyondCapBecomeMoreCount() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         // Exactly maxExercises → all shown, no "+N more" line.
         let exact = WorkoutModel(
@@ -143,7 +136,7 @@ struct ShareCardStyleTests {
     /// worst-case layout (charts, zone bar, splits, GeometryReader bars all
     /// live). Catches render-time layout crashes the type checker can't.
     @Test func allCardStylesRenderToCorrectlySizedImages() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let lift = strengthExercise(sets: 4)
         let runExercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
@@ -185,7 +178,7 @@ struct ShareCardStyleTests {
     }
 
     @Test func hybridPlanKeepsCardioInPosition() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let lift = strengthExercise(sets: 3)
         lift.position = 0

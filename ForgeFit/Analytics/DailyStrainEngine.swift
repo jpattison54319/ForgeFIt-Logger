@@ -199,8 +199,12 @@ struct DailyStrainEngine {
         ratios.append((cappedRatio(today / reference), weight, history.count))
     }
 
+    private var trainingLoadCalculator: TrainingLoadCalculator {
+        TrainingLoadCalculator(workouts: workouts, calendar: calendar, now: now)
+    }
+
     private var completedWorkouts: [WorkoutModel] {
-        workouts.filter { $0.endedAt != nil && $0.deletedAt == nil }
+        trainingLoadCalculator.completedWorkouts
     }
 
     private func workoutLoadsByDay(today: Date) -> [Date: Double] {
@@ -208,7 +212,7 @@ struct DailyStrainEngine {
         return completedWorkouts
             .filter { $0.startedAt >= cutoff && $0.startedAt < now.addingTimeInterval(1) }
             .reduce(into: [:]) { loads, workout in
-                loads[calendar.startOfDay(for: workout.startedAt), default: 0] += sessionRPELoad(workout)
+                loads[calendar.startOfDay(for: workout.startedAt), default: 0] += trainingLoadCalculator.sessionEstimate(workout).total
             }
     }
 
@@ -221,61 +225,8 @@ struct DailyStrainEngine {
         return robustMean(daily)
     }
 
-    private func sessionRPELoad(_ workout: WorkoutModel) -> Double {
-        let strengthSets = workout.exercises.flatMap(\.sets).filter {
-            $0.completedAt != nil && $0.setType.countsAsWorkingVolume
-        }
-        let hasStrength = !strengthSets.isEmpty
-        let activeCardio = workout.cardioSessions.filter {
-            !$0.isYogaSession || !$0.resolvedYogaStyle.isRestorative
-        }
-        if !hasStrength, activeCardio.isEmpty, !workout.cardioSessions.isEmpty { return 0 }
-
-        var efforts: [Double] = strengthSets.compactMap { set in
-            if let rpe = set.rpe { return min(10, max(0, rpe)) }
-            if let rir = set.rir { return min(10, max(0, 10 - Double(rir))) }
-            return nil
-        }
-        efforts += activeCardio.map(cardioEffort)
-        if efforts.isEmpty, let avgHR = workout.avgHR {
-            efforts.append(effort(forHeartRate: avgHR))
-        }
-        let effort = efforts.isEmpty ? 7 : efforts.reduce(0, +) / Double(efforts.count)
-        return durationMinutes(workout) * effort
-    }
-
-    private func cardioEffort(_ session: CardioSessionModel) -> Double {
-        if let effort = session.effort { return min(10, max(0, Double(effort))) }
-        if let avgHR = session.avgHR { return effort(forHeartRate: avgHR) }
-        if session.isYogaSession {
-            return switch session.resolvedYogaStyle {
-            case .power: 5
-            case .vinyasa: 4
-            default: 3
-            }
-        }
-        return 7
-    }
-
-    private func effort(forHeartRate heartRate: Int) -> Double {
-        switch HRZone.zone(forAvgHR: heartRate) {
-        case 1: 3
-        case 2: 4
-        case 3: 6
-        case 4: 8
-        default: 9
-        }
-    }
-
     private func durationMinutes(_ workout: WorkoutModel) -> Double {
-        if let endedAt = workout.endedAt {
-            let elapsed = endedAt.timeIntervalSince(workout.startedAt) / 60
-            if elapsed >= 1, elapsed <= 8 * 60 { return elapsed }
-        }
-        let cardioMinutes = workout.cardioSessions.reduce(0) {
-            $0 + Double($1.durationSeconds ?? 0) / 60
-        }
-        return cardioMinutes > 0 ? cardioMinutes : 45
+        trainingLoadCalculator.durationMinutes(workout)
     }
 
     private func strainTargetRange() -> ClosedRange<Double>? {

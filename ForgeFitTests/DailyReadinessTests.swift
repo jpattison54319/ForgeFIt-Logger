@@ -3,7 +3,7 @@ import Testing
 @testable import ForgeFit
 
 /// Verifies the two-score recovery model: the acute daily score reacts to one
-/// bad night, the chronic trend doesn't; load balance can cap but not inflate;
+/// bad night, the chronic trend doesn't; training load remains descriptive;
 /// sleep need personalizes upward only; and the guidance text always agrees
 /// with the flags that shaped the number.
 struct DailyReadinessTests {

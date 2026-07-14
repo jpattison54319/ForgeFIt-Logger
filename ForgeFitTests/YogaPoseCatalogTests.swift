@@ -10,15 +10,6 @@ import Testing
 @MainActor
 struct YogaPoseCatalogTests {
 
-    /// In-memory container; the caller must retain the container — the
-    /// context holds it weakly.
-    private func makeContainer() throws -> (ModelContainer, ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     @Test func catalogLoadsAndIsInternallyConsistent() {
         let poses = YogaPoseCatalog.load()
         // The catalog ships only fully-illustrated poses; every one must have
@@ -96,7 +87,7 @@ struct YogaPoseCatalogTests {
     }
 
     @Test func seedIsIdempotentAndTagsRowsAsYoga() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
 
         YogaPoseCatalog.seed(into: context)
         YogaPoseCatalog.seed(into: context)
@@ -126,7 +117,7 @@ struct YogaPoseCatalogTests {
     }
 
     @Test func seedRespectsUserModifiedRows() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         YogaPoseCatalog.seed(into: context)
 
         let id = YogaPoseCatalog.id(forSlug: "pigeon-pose")
@@ -142,7 +133,7 @@ struct YogaPoseCatalogTests {
     }
 
     @Test func sanskritAliasResolvesInSearch() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         YogaPoseCatalog.seed(into: context)
 
         let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).map(\.domainInfo)
@@ -158,7 +149,7 @@ struct YogaPoseCatalogTests {
     /// different deterministic IDs, so the launch deduplicator never groups
     /// (and never merges) them.
     @Test func yogaPosesSurviveDeduplicationAlongsideStretches() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
 
         // Simulate the free-exercise-db "Child's Pose" stretching row.
         let stretchRow = ExerciseLibraryModel(
@@ -201,7 +192,7 @@ struct YogaPoseCatalogTests {
     /// current poses, the session anchor, user-created poses, and
     /// user-modified rows all survive.
     @Test func pruneRemovesDeprecatedPosesOnly() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         YogaPoseCatalog.seed(into: context)
 
         // A pose from a previous catalog version (no longer bundled).

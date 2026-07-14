@@ -19,18 +19,6 @@ private struct MockHealth: HealthEnriching {
 @MainActor
 struct HealthEnrichmentServiceTests {
 
-    /// Returns the container WITH its context: returning only
-    /// `container.mainContext` lets the container deinit mid-test (the
-    /// context holds it weakly), and the next `context.insert` traps in
-    /// SwiftData (see `RoutineProgramImportTests`). Callers must keep
-    /// `container` alive.
-    private func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private func restoredWorkout(userID: UUID, in context: ModelContext) -> WorkoutModel {
         let workout = WorkoutModel(userID: userID, title: "Restored", startedAt: Date(timeIntervalSinceNow: -7200))
         workout.endedAt = workout.startedAt.addingTimeInterval(3600)
@@ -39,7 +27,7 @@ struct HealthEnrichmentServiceTests {
     }
 
     @Test func fillsNilHealthFieldsAndRelinksUUID() async throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let userID = ForgeFitDemo.userID
         let workout = restoredWorkout(userID: userID, in: context)
@@ -58,7 +46,7 @@ struct HealthEnrichmentServiceTests {
     }
 
     @Test func neverOverwritesExistingValues() async throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let userID = ForgeFitDemo.userID
         let workout = restoredWorkout(userID: userID, in: context)
@@ -78,7 +66,7 @@ struct HealthEnrichmentServiceTests {
     }
 
     @Test func skipsSoftDeletedWorkouts() async throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let userID = ForgeFitDemo.userID
         let workout = restoredWorkout(userID: userID, in: context)
@@ -92,7 +80,7 @@ struct HealthEnrichmentServiceTests {
     }
 
     @Test func refillsBodyweightAndRecomputesVolume() async throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let userID = ForgeFitDemo.userID
         let workout = restoredWorkout(userID: userID, in: context)
@@ -116,7 +104,7 @@ struct HealthEnrichmentServiceTests {
     }
 
     @Test func enrichesOnlyRequestedWorkouts() async throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let userID = ForgeFitDemo.userID
         let target = restoredWorkout(userID: userID, in: context)

@@ -8,22 +8,21 @@ import ForgeData
 ///
 /// The model, with its literature anchors:
 ///
-/// **Systemic** — a weighted blend of four components (weights renormalize
+/// **Systemic** — a weighted blend of three components (weights renormalize
 /// over whatever data exists):
-///  - HRV (35%): 7-day rolling average compared against a 14–60 day baseline,
+///  - HRV (47%): 7-day rolling average compared against a 14–60 day baseline,
 ///    banded by the baseline's own variability. Rolling-average HRV tracks
 ///    training adaptation and fatigue better than single readings
 ///    (Plews et al. 2013, Sports Med; Buchheit 2014, Front Physiol).
-///  - Sleep (25%): last night vs need, plus 7-day accumulated debt. Sleep is
+///  - Sleep (35%): last night vs need, plus 7-day accumulated debt. Sleep is
 ///    the best-supported recovery behavior in athletes (Fullagar et al. 2015,
 ///    Sports Med).
-///  - Resting HR (15%): today vs baseline; a slower-moving corroborator of
+///  - Resting HR (18%): today vs baseline; a slower-moving corroborator of
 ///    autonomic status (Buchheit 2014).
-///  - Training-stress balance (25%): exponentially-weighted acute (7d) vs
-///    chronic (28d) load — EWMA outperforms rolling averages for workload
-///    monitoring (Williams et al. 2017, BJSM); flat weeks are penalized via
-///    Foster's monotony (Foster 1998, MSSE). Treated as a fatigue flag, not
-///    an injury predictor (Impellizzeri et al. 2020 critique acknowledged).
+/// Training-load comparisons are shown separately as descriptive context.
+/// They do not change recovery because acute:chronic ratios have conceptual
+/// and mathematical limitations that do not support an injury-risk or
+/// readiness prescription (Impellizzeri et al. 2020; Coyne et al. 2019).
 ///
 /// **Per muscle** — force capacity after a bout recovers roughly
 /// exponentially over 24–72 h, slower with more volume, closer proximity to
@@ -90,9 +89,8 @@ extension RecoveryEngine {
     /// The acute, today-only readiness score — nocturnal autonomic state plus
     /// last night's sleep, judged against the individual's own baseline. Built
     /// to move with the day (like Athlytic/WHOOP) so the headline number always
-    /// agrees with the guidance shown beside it. Training-load balance is
-    /// deliberately excluded here — it belongs to the chronic trend, not to
-    /// "how stressed is my body this morning".
+    /// agrees with the guidance shown beside it. Training load is deliberately
+    /// excluded from every recovery score and shown separately as context.
     struct DailyReadiness {
         var state: ScoreState
         var parts: [ScorePart]
@@ -153,25 +151,23 @@ extension RecoveryEngine {
 
     // MARK: - Systemic
 
-    /// Chronic-trend weights. Load balance is capped at 15% — EWMA-ACWR is a
-    /// training-management heuristic, not a recovery measure (Impellizzeri
-    /// 2020), so it flavors the trend without being able to mask autonomic or
-    /// sleep deterioration. HRV trend keeps the largest share (Plews 2013).
+    /// Chronic-trend weights. HRV keeps the largest share (Plews 2013).
+    /// Training load is deliberately absent: its comparison is useful context,
+    /// but a workload ratio is not a recovery measurement.
     private enum SystemicWeight {
-        static let hrv = 0.40, sleep = 0.30, rhr = 0.15, load = 0.15
+        static let hrv = 0.47, sleep = 0.35, rhr = 0.18
     }
 
     private func systemicRecovery() -> SystemicRecovery {
         let hrv = hrvPart()
         let sleep = sleepPart()
         let rhr = rhrPart()
-        let load = loadBalancePart()
-        let parts = [hrv, sleep, rhr, load]
+        let parts = [hrv, sleep, rhr]
 
         var weighted = 0.0
         var weightSum = 0.0
         for (part, weight) in [(hrv, SystemicWeight.hrv), (sleep, SystemicWeight.sleep),
-                               (rhr, SystemicWeight.rhr), (load, SystemicWeight.load)] {
+                               (rhr, SystemicWeight.rhr)] {
             if let value = part.state.value {
                 weighted += value * weight
                 weightSum += weight
@@ -181,9 +177,9 @@ extension RecoveryEngine {
         // Require at least one real component before claiming a score.
         guard weightSum >= 0.15 else {
             return SystemicRecovery(
-                state: .building("Log workouts or connect Apple Health to build this score."),
+                state: .building("Connect Apple Health to build this score."),
                 parts: parts,
-                guidance: "Systemic recovery blends HRV, sleep, resting heart rate, and training-load balance once data is available."
+                guidance: "Systemic recovery blends HRV, sleep, and resting heart rate once data is available."
             )
         }
 
@@ -194,8 +190,8 @@ extension RecoveryEngine {
     private func systemicGuidance(_ score: Double) -> String {
         switch score {
         case 0.85...: "Strong recovery trend — adaptation is on track."
-        case 0.7..<0.85: "Stable recovery trend — training load and recovery are in balance."
-        case 0.4..<0.7: "Recovery trend is softening — recent load or sleep may be accumulating."
+        case 0.7..<0.85: "Stable recovery trend — your recent health signals are holding steady."
+        case 0.4..<0.7: "Recovery trend is softening — sleep or autonomic signals may be accumulating."
         default: "Downward recovery trend — accumulated fatigue is building."
         }
     }
@@ -590,57 +586,6 @@ extension RecoveryEngine {
             detailText: debt > 1
                 ? "7-day debt \(debt.formatted(.number.precision(.fractionLength(1)))) h vs \(String(format: "%.1f", Double(need) / 60)) h need"
                 : "Meeting your \(String(format: "%.1f", Double(need) / 60)) h need"
-        )
-    }
-
-    /// EWMA acute (7d) vs chronic (28d) training-stress balance.
-    private func loadBalancePart() -> ScorePart {
-        let sessions = completed
-        guard let earliest = sessions.map(\.startedAt).min() else {
-            return ScorePart(name: "Load balance", state: .building("Log workouts to build this"),
-                             valueText: "—", detailText: "Training-stress balance needs a history")
-        }
-        let historyDays = calendarDaysBetween(earliest, and: now)
-        let recentCount = sessions.filter { calendarDaysBetween($0.startedAt, and: now) <= 28 }.count
-        guard historyDays >= 14, recentCount >= 4 else {
-            return ScorePart(name: "Load balance", state: .building("Needs ~2 more weeks of logging"),
-                             valueText: "—", detailText: "\(recentCount) session\(recentCount == 1 ? "" : "s") in the last 4 weeks")
-        }
-
-        let daily = dailyLoads(days: 56)              // index 0 = today
-        let lambdaAcute = 2.0 / (7 + 1)
-        let lambdaChronic = 2.0 / (28 + 1)
-        var acute = 0.0
-        var chronic = 0.0
-        for index in stride(from: daily.count - 1, through: 0, by: -1) {
-            acute = lambdaAcute * daily[index] + (1 - lambdaAcute) * acute
-            chronic = lambdaChronic * daily[index] + (1 - lambdaChronic) * chronic
-        }
-        guard chronic > 0.5 else {
-            return ScorePart(name: "Load balance", state: .building("Chronic baseline still near zero"),
-                             valueText: "—", detailText: "Keep logging sessions")
-        }
-        // Asymmetric by design: a spike pulls recovery down hard, but a tidy
-        // ratio only reads slightly-positive — ACWR is a fatigue flag, not a
-        // recovery credit (Impellizzeri 2020), so good load management can't
-        // paper over poor sleep or a sagging HRV trend.
-        let ratio = acute / chronic
-        var score: Double = switch ratio {
-        case ..<0.8: 0.85        // fresh / tapered
-        case ..<1.3: 0.80        // balanced — neutral, not a bonus
-        case ..<1.5: 0.60        // elevated
-        case ..<2.0: 0.60 - (ratio - 1.5) * 0.6   // 1.5→0.60 … 2.0→0.30
-        default: 0.25
-        }
-        if let monotonyValue = monotony(dailyLoads(days: 7)), monotonyValue > 2 {
-            score -= monotonyValue > 3 ? 0.15 : 0.08  // flat weeks accumulate strain (Foster 1998)
-        }
-        score = min(1, max(0, score))
-        return ScorePart(
-            name: "Load balance",
-            state: .ready(score),
-            valueText: ratio.formatted(.number.precision(.fractionLength(2))),
-            detailText: "7-day vs 28-day training stress (EWMA)"
         )
     }
 

@@ -85,7 +85,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "11D5DF1F2FF3743000F018A9"
             BuildableName = "ForgeFitWatch Watch App.app"
-            BlueprintName = "ForgeFitWatch Watch App"
             ReferencedContainer = "container:ForgeFit.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -102,7 +101,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "11D5DF1F2FF3743000F018A9"
             BuildableName = "ForgeFitWatch Watch App.app"
-            BlueprintName = "ForgeFitWatch Watch App"
             ReferencedContainer = "container:ForgeFit.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

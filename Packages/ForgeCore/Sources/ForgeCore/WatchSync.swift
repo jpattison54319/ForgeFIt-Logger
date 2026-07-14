@@ -100,6 +100,9 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
     /// Mirror of the phone's rest timer so the watch shows the same countdown.
     public var restEndsAt: Date?
     public var restTotalSeconds: Int?
+    /// True while the countdown is a block micro-rest (myo-rep / drop / cluster)
+    /// so the wrist can style it distinctly. Additive-optional.
+    public var restIsMicro: Bool?
     /// Mirror of the phone's interval runner (structured cardio): current
     /// step name + when it ends. Display only — the phone drives execution.
     public var intervalStepName: String?
@@ -124,6 +127,7 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         exercises: [WatchExerciseSnapshot] = [],
         restEndsAt: Date? = nil,
         restTotalSeconds: Int? = nil,
+        restIsMicro: Bool? = nil,
         intervalStepName: String? = nil,
         intervalStepEndsAt: Date? = nil,
         intervalStepKind: String? = nil,
@@ -138,6 +142,7 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         self.exercises = exercises
         self.restEndsAt = restEndsAt
         self.restTotalSeconds = restTotalSeconds
+        self.restIsMicro = restIsMicro
         self.intervalStepName = intervalStepName
         self.intervalStepEndsAt = intervalStepEndsAt
         self.intervalStepKind = intervalStepKind

@@ -16,7 +16,7 @@ struct HealthDetailView: View {
     private var supplementalSignals: [RecoveryEngine.Signal] {
         let separated = Set([
             "HRV", "Resting HR", "Sleep", "Respiratory", "Blood O₂",
-            "Load ratio", "Monotony", "Steps", "Active energy",
+            "Steps", "Active energy",
         ])
         return report.signals.filter { !separated.contains($0.name) && $0.connected }
     }

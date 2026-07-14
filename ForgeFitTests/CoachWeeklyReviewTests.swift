@@ -9,15 +9,6 @@ import Testing
 struct CoachWeeklyReviewTests {
     private let userID = ForgeFitDemo.userID
 
-    /// Returns the container WITH its context — see `RoutineProgramImportTests`
-    /// for why the container must be kept alive by the caller.
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     /// A single fixed "now" for every test, and the week anchors derived
     /// from it via the function under test — self-referential on purpose so
     /// these tests never depend on which real calendar day they happen to
@@ -107,7 +98,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 1. On-track week → no proposals, anchor stamped
 
     @Test func onTrackWeekProducesNoProposalsAndStampsAnchor() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram(weeks: 0, sessionsPerWeek: 3)
         context.insert(program)
         for offsetDays in [1, 3, 5] {
@@ -129,7 +120,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 2. Incomplete week → carryForward proposal
 
     @Test func incompleteWeekProducesCarryForwardProposal() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram(weeks: 0, sessionsPerWeek: 3)
         context.insert(program)
         // Only 1 of 3 target sessions this week.
@@ -154,7 +145,7 @@ struct CoachWeeklyReviewTests {
     // active override → ProgressionPlanner actually holds it (preview == apply)
 
     @Test func liftHeldTwoConsecutiveSessionsProducesHoldProposalAndAcceptedOverrideHoldsInProgressionPlanner() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram(weeks: 0, sessionsPerWeek: 1)
         context.insert(program)
 
@@ -247,7 +238,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 4. Completed block → deloadWeek proposal
 
     @Test func completedBlockProducesDeloadWeekProposal() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         // A 4-week block that started 5 whole weeks before the reviewed
         // week — block week 6 of 4, well past the block's length.
         let blockStart = Calendar.current.date(byAdding: .day, value: -35, to: Self.reviewedWeekStart)!
@@ -274,7 +265,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 5. Declined proposal never recreated on re-review same week
 
     @Test func declinedProposalNeverRecreatedOnRereviewSameWeek() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram(weeks: 0, sessionsPerWeek: 3)
         context.insert(program)
         insertCompletedWorkout(
@@ -305,7 +296,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 6. Last week's active override is NOT returned for this week (expiry)
 
     @Test func lastWeeksActiveOverrideIsNotReturnedForThisWeek() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram()
         context.insert(program)
         let lastWeekOverride = CoachingWeekOverrideModel(
@@ -327,7 +318,7 @@ struct CoachWeeklyReviewTests {
     // MARK: - 7. Cancel works
 
     @Test func cancelTurnsAnActiveOverrideCancelled() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         let program = makeProgram()
         context.insert(program)
         let override = CoachingWeekOverrideModel(

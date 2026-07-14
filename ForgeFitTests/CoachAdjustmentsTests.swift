@@ -9,12 +9,6 @@ import Testing
 struct CoachAdjustmentsTests {
     private let userID = ForgeFitDemo.userID
 
-    private func inMemoryContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
-    }
-
     /// Workout with one exercise: 1 warmup + 4 working sets at 100, RPE 9.
     private func workout(in context: ModelContext, exerciseID: UUID = UUID()) -> WorkoutModel {
         let sets = [SetModel(userID: userID, position: 0, setType: .warmup, reps: 10, weight: 50)]
@@ -63,7 +57,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func reduceVolumeDropsOneSetAndCapsRPE() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let w = workout(in: context)
         let plan = CoachAdjustments.plan(for: .reduceVolume)!
@@ -79,7 +73,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func deloadHalvesSetsAndTrimsLoad() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let w = workout(in: context)
         let plan = CoachAdjustments.plan(for: .deloadRecover)!
@@ -96,7 +90,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func smallExercisesKeepMinimumOneWorkingSet() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let exercise = WorkoutExerciseModel(
             userID: userID, exerciseID: UUID(),
@@ -110,7 +104,7 @@ struct CoachAdjustmentsTests {
         #expect(w.exercises[0].sets.count == 1)
 
         // reduceVolume never cuts a 2-set exercise below 2.
-        let context2 = ModelContext(try inMemoryContainer())
+        let context2 = ModelContext(try TestStore.makeContainer())
         let two = WorkoutExerciseModel(
             userID: userID, exerciseID: UUID(),
             sets: (0..<2).map { SetModel(userID: userID, position: $0, reps: 8, weight: 60, rpe: 9) }
@@ -131,12 +125,12 @@ struct CoachAdjustmentsTests {
         let exerciseID = UUID()
         let plan = CoachAdjustments.plan(for: .deloadRecover)!
 
-        let legacyContainer = try inMemoryContainer()
+        let legacyContainer = try TestStore.makeContainer()
         let legacyContext = ModelContext(legacyContainer)
         let legacyWorkout = workout(in: legacyContext, exerciseID: exerciseID)
         CoachAdjustments.apply(plan, to: legacyWorkout, in: legacyContext)
 
-        let draftContainer = try inMemoryContainer()
+        let draftContainer = try TestStore.makeContainer()
         let draftContext = ModelContext(draftContainer)
         let draftWorkout = workout(in: draftContext, exerciseID: exerciseID)
         let (routine, libraryExercise) = matchingRoutine(exerciseID: exerciseID)
@@ -154,7 +148,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func excludedExerciseStaysUntouched() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let idA = UUID()
         let idB = UUID()
@@ -181,7 +175,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func editedSetsToDropFloorsAtOneWorkingSet() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let exerciseID = UUID()
         let w = workout(in: context, exerciseID: exerciseID)
@@ -200,7 +194,7 @@ struct CoachAdjustmentsTests {
     }
 
     @Test func editedWeightCutIsApplied() throws {
-        let container = try inMemoryContainer()
+        let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let exerciseID = UUID()
         let w = workout(in: context, exerciseID: exerciseID)
@@ -228,13 +222,13 @@ struct CoachAdjustmentsTests {
         let (routine, libraryExercise) = matchingRoutine(exerciseID: exerciseID)
         let baseDraft = CoachAdjustments.draft(for: plan, routine: routine, exercises: [libraryExercise])
 
-        let defaultContainer = try inMemoryContainer()
+        let defaultContainer = try TestStore.makeContainer()
         let defaultContext = ModelContext(defaultContainer)
         let defaultWorkout = workout(in: defaultContext, exerciseID: exerciseID)
         CoachAdjustments.apply(draft: baseDraft, to: defaultWorkout, in: defaultContext)
         #expect(defaultWorkout.notes?.hasPrefix("Coach-adjusted (reduce volume):") == true)
 
-        let editedContainer = try inMemoryContainer()
+        let editedContainer = try TestStore.makeContainer()
         let editedContext = ModelContext(editedContainer)
         let editedWorkout = workout(in: editedContext, exerciseID: exerciseID)
         var editedDraft = baseDraft

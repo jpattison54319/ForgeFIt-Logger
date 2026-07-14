@@ -10,13 +10,6 @@ import Testing
 /// and never from pure-cardio workouts, where shading everything says nothing.
 @MainActor
 struct HeartRateBandTests {
-    private static func makeContainer() throws -> (container: ModelContainer, context: ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private let userID = UUID()
     private let start = Date(timeIntervalSince1970: 1_780_000_000)
 
@@ -27,7 +20,7 @@ struct HeartRateBandTests {
     }
 
     @Test func liveCardioInHybridWorkoutProducesBand() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let lift = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
         let runExercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
@@ -44,7 +37,7 @@ struct HeartRateBandTests {
     }
 
     @Test func manualCardioWithoutLiveWindowIsSkipped() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let lift = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
         let runExercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
@@ -57,7 +50,7 @@ struct HeartRateBandTests {
     }
 
     @Test func pureCardioWorkoutHasNoBands() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let runExercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
         let session = run(linkedTo: runExercise)
@@ -70,7 +63,7 @@ struct HeartRateBandTests {
     }
 
     @Test func openEndedSessionFallsBackToDuration() throws {
-        let (container, context) = try Self.makeContainer()
+        let (container, context) = try TestStore.make()
         defer { _ = container }
         let lift = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
         let runExercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())

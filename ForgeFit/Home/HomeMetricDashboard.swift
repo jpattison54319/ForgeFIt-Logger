@@ -221,26 +221,56 @@ private struct HomeMetricTile: View {
 
 struct TrainingLoadGauge: View {
     @Environment(\.theme) private var theme
-    let ratio: Double
+    let comparison: TrainingLoadComparison
 
+    /// Tone grades with the size of the deviation — still descriptive, but a
+    /// week 50%+ over baseline should not read the same as +8%.
     private var tint: Color {
-        if ratio < 0.8 { return theme.textTertiary }
-        if ratio <= 1.3 { return theme.success }
-        if ratio <= 1.5 { return theme.recoveryMid }
+        guard let ratio = comparison.ratio else { return theme.textTertiary }
+        if ratio < 0.95 { return theme.textSecondary }
+        if ratio <= 1.05 { return theme.success }
+        if ratio <= 1.5 { return theme.warmup }
         return theme.danger
     }
 
     private var label: String {
-        if ratio < 0.8 { return "Light week - room to push" }
-        if ratio <= 1.3 { return "On target" }
-        if ratio <= 1.5 { return "Elevated" }
-        return "Spiking"
+        switch comparison.state {
+        case .building:
+            return "\(comparison.baselineDaysAvailable)/28 prior days"
+        case .noRecentLoad:
+            return "No recent baseline"
+        case .sparseBaseline:
+            return "Baseline too light"
+        case .ready:
+            guard let ratio = comparison.ratio else { return "Baseline unavailable" }
+            let percent = Int((abs(ratio - 1) * 100).rounded())
+            if percent <= 5 { return "Near baseline" }
+            return "\(percent)% \(ratio > 1 ? "above" : "below")"
+        }
+    }
+
+    private var detail: String {
+        switch comparison.state {
+        case .building:
+            let days = comparison.baselineDaysRemaining
+            return "Needs \(days) more prior day\(days == 1 ? "" : "s") before comparing the last 7 days."
+        case .noRecentLoad:
+            return "No logged load in the prior 4 weeks, so ForgeFit does not show a percentage."
+        case .sparseBaseline:
+            return "The prior 4 weeks carry too little load for a percentage against them to mean anything."
+        case .ready:
+            let estimated = comparison.estimatedEffortSessionCount
+            if estimated > 0 {
+                return "Set-by-set effort + zone-weighted cardio · effort estimated for \(estimated) session\(estimated == 1 ? "" : "s") · descriptive only"
+            }
+            return "Set-by-set effort + zone-weighted cardio · descriptive only"
+        }
     }
 
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Training load vs your norm")
+                Text(comparison.state == .building ? "Training load baseline" : "Last 7 days vs prior 4 weeks")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
@@ -251,18 +281,33 @@ struct TrainingLoadGauge: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(theme.surfaceElevated)
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max(6, proxy.size.width * min(ratio, 2) / 2))
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(theme.textTertiary)
-                        .frame(width: 2, height: 10)
-                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                    if comparison.state == .building {
+                        let progressWidth = proxy.size.width * Double(comparison.baselineDaysAvailable) / 28
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: comparison.baselineDaysAvailable == 0 ? 0 : max(6, progressWidth))
+                    } else if let ratio = comparison.ratio {
+                        let baselineX = proxy.size.width / 2
+                        let currentX = proxy.size.width * min(1, max(0, ratio / 2))
+                        Capsule()
+                            .fill(tint)
+                            .frame(width: max(3, abs(currentX - baselineX)))
+                            .offset(x: min(currentX, baselineX))
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(theme.textTertiary)
+                            .frame(width: 2, height: 10)
+                            .position(x: baselineX, y: proxy.size.height / 2)
+                    }
                 }
             }
             .frame(height: 6)
+
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("This week's training load is \(Int((ratio * 100).rounded())) percent of your norm, \(label)")
+        .accessibilityLabel("Training load, \(label). \(detail)")
     }
 }
