@@ -587,11 +587,6 @@ struct MeasuresView: View {
     @Environment(\.theme) private var theme
     @State private var health = HealthMetricsStore.shared
     @State private var showLogWeight = false
-    @State private var weightDraft = ""
-    @State private var savingWeight = false
-    /// Health write failed (usually write access off) — shown inline so the
-    /// save isn't a silent no-op; the draft is kept so nothing retyped.
-    @State private var weightSaveError: String?
     @State private var bodyweightRange: TimeChartRange = .oneYear
 
     var body: some View {
@@ -601,7 +596,6 @@ struct MeasuresView: View {
                 series.map { MetricPoint(date: $0.date, value: Fmt.unit.displayValue(fromKilograms: $0.value)) }
             )
             PrimaryButton(title: "Log Weight", systemImage: "plus") {
-                weightDraft = series.last.map { Fmt.load($0.value) } ?? ""
                 showLogWeight = true
             }
             if let latest = series.last {
@@ -656,72 +650,7 @@ struct MeasuresView: View {
         }
         .onAppear { health.refresh() }
         .sheet(isPresented: $showLogWeight) {
-            logWeightSheet
-        }
-    }
-
-    private var logWeightSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                FieldLabel("Weight")
-                HStack(spacing: Space.sm) {
-                    DarkTextField(text: $weightDraft, placeholder: "180")
-                        .keyboardType(.decimalPad)
-                    Text(Fmt.unit.suffix)
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textSecondary)
-                }
-                Text("ForgeFit writes this weigh-in to Apple Health so your other health apps can use the same source of truth.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                if let weightSaveError {
-                    HStack(alignment: .top, spacing: Space.sm) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.danger)
-                        Text(weightSaveError)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(theme.danger)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer()
-            }
-            .padding(Space.lg)
-            .background(theme.background)
-            .onChange(of: weightDraft) { weightSaveError = nil }
-            .navigationTitle("Log Weight")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showLogWeight = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(savingWeight ? "Saving..." : "Save") { saveWeight() }
-                        .font(.bodyStrong)
-                        .disabled(savingWeight || Fmt.loadKilograms(from: weightDraft) == nil)
-                }
-            }
-        }
-    }
-
-    private func saveWeight() {
-        guard let kilograms = Fmt.loadKilograms(from: weightDraft) else { return }
-        savingWeight = true
-        weightSaveError = nil
-        Task {
-            let saved = await HealthService.shared.logBodyMass(kilograms: kilograms)
-            await MainActor.run {
-                savingWeight = false
-                if saved {
-                    showLogWeight = false
-                    health.refresh(force: true)
-                } else {
-                    // Say why nothing happened instead of silently flipping
-                    // the button back — write access is the usual culprit.
-                    weightSaveError = "Couldn't save to Apple Health. Allow write access in Health → Sharing → Apps → ForgeFit, then try again."
-                }
-            }
+            LogWeightSheet()
         }
     }
 }

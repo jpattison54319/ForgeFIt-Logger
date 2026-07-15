@@ -500,7 +500,8 @@ struct CreateExerciseView: View {
     @State private var secondaryMuscles: Set<String> = []
     @State private var equipment = "barbell"
     @State private var weightMode: WeightMode = .external
-    @State private var preferredUnit: WeightUnit = Fmt.unit
+    /// nil = no override — the exercise follows the app-wide unit.
+    @State private var preferredUnit: WeightUnit?
     @State private var modality: Modality = .strength
     @State private var isUnilateral = false
     /// Explicit cardio modality; nil = auto-detect from name/equipment. Only
@@ -567,7 +568,7 @@ struct CreateExerciseView: View {
             _secondaryMuscles = State(initialValue: Set(editing.secondaryMuscles))
             _equipment = State(initialValue: editing.equipment ?? "barbell")
             _weightMode = State(initialValue: editing.defaultWeightMode)
-            _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? "") ?? Fmt.unit)
+            _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? ""))
             _modality = State(initialValue: editing.modality)
             _isUnilateral = State(initialValue: editing.isUnilateral)
             _cardioKindChoice = State(initialValue: editing.cardioKindRaw.flatMap(CardioKind.init(rawValue:)))
@@ -781,11 +782,12 @@ struct CreateExerciseView: View {
                     Text("Weight unit").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Picker("Weight unit", selection: $preferredUnit) {
-                        Text("lb").tag(WeightUnit.lb)
-                        Text("kg").tag(WeightUnit.kg)
+                        Text("Auto").tag(WeightUnit?.none)
+                        Text("lb").tag(WeightUnit?.some(.lb))
+                        Text("kg").tag(WeightUnit?.some(.kg))
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 120)
+                    .frame(width: 170)
                 }
             }
         }
@@ -1059,7 +1061,7 @@ struct CreateExerciseView: View {
         exercise.secondaryMuscles = isCardio ? [] : secondaryMuscles.subtracting([primaryMuscle]).sorted()
         exercise.equipment = equipment
         exercise.defaultWeightMode = isCardio || isYoga ? .bodyweight : weightMode
-        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit.rawValue
+        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit?.rawValue
         exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
         // Yoga keeps laterality (one-sided poses run L/R in guided flows).
         exercise.isUnilateral = isCardio ? false : isUnilateral

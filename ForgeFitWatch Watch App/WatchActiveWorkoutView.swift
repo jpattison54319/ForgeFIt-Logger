@@ -29,7 +29,7 @@ struct WatchActiveWorkoutView: View {
             }
         }
         .task {
-            store.ensureWorkoutSessionRunning()
+            await store.recoverOrStartWorkoutSession()
         }
     }
 }
@@ -77,6 +77,7 @@ struct WatchMetricsPage: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let heartRate = engine.liveHeartRate(at: context.date)
             VStack(alignment: .leading, spacing: 6) {
                 // Interval step, then rest countdown, take over the headline —
                 // whichever number the athlete needs right now.
@@ -100,8 +101,8 @@ struct WatchMetricsPage: View {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(WTheme.danger)
-                        .symbolEffect(.pulse, isActive: engine.heartRate != nil)
-                    Text(engine.heartRate.map(String.init) ?? "—")
+                        .symbolEffect(.pulse, isActive: heartRate != nil)
+                    Text(heartRate.map(String.init) ?? "—")
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                     Text("bpm").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -229,21 +230,24 @@ struct WatchExercisesPage: View {
     }
 
     private var heartRateRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "heart.fill")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(WTheme.danger)
-                .symbolEffect(.pulse, isActive: engine.heartRate != nil)
-            Text(engine.heartRate.map { "\($0) bpm" } ?? "Starting HR…")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(engine.heartRate == nil ? .secondary : WTheme.danger)
-            Spacer()
-            if let avg = engine.avgHR {
-                Text("avg \(avg)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let heartRate = engine.liveHeartRate(at: context.date)
+            HStack(spacing: 8) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(WTheme.danger)
+                    .symbolEffect(.pulse, isActive: heartRate != nil)
+                Text(heartRate.map { "\($0) bpm" } ?? (engine.hasReceivedHeartRate ? "Reacquiring HR…" : "Starting HR…"))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .monospacedDigit()
+                    .foregroundStyle(heartRate == nil ? .secondary : WTheme.danger)
+                Spacer()
+                if let avg = engine.avgHR {
+                    Text("avg \(avg)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
             }
         }
         .listRowBackground(WTheme.surface)

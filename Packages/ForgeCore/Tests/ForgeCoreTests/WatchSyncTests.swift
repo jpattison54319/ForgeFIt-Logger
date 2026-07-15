@@ -198,6 +198,14 @@ extension WatchSyncTests {
         }
         #expect(decodedMetrics == metrics)
     }
+
+    @Test func liveHeartRateExpiresInsteadOfPresentingAFrozenReading() {
+        let sampledAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let metrics = WatchLiveMetrics(heartRate: 158, asOf: sampledAt)
+
+        #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(14)) == 158)
+        #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(16)) == nil)
+    }
 }
 
 // MARK: - Yoga mirroring

@@ -2,10 +2,8 @@ import SwiftUI
 
 /// One pose's line-art figure from the bundled `yoga_pose_figures.json` —
 /// hand-authored stick-figure geometry (head + stroked limb polylines) in a
-/// 100×100 space, y down, facing LEFT. The player mirrors it for right-side
-/// holds, so every pose ships one figure. Drawing geometry instead of bitmap
-/// assets keeps the art crisp from 18pt row thumbnails to the 130pt player,
-/// tinted by the live theme for free.
+/// 100×100 space, y down, facing LEFT. It provides an immediate loading and
+/// custom-pose fallback while instructor photos decode off-main.
 struct YogaPoseFigure: Decodable {
     /// [cx, cy, radius] — the head, drawn as a filled circle.
     let head: [Double]

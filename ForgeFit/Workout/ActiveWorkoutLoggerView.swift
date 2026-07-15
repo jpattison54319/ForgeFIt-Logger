@@ -75,6 +75,7 @@ struct ActiveWorkoutLoggerView: View {
     @State private var isPureCardio = false
     @State private var isPureYoga = false
     @State private var inputRouter = SetInputRouter()
+    @State private var quickIncrement = QuickIncrementController()
     @AppStorage(WorkoutEffortPolicy.loggingEnabledKey) private var showRPEInLogger = false
     @AppStorage("effortScaleRaw") private var effortScaleRaw = EffortScale.rpe.rawValue
     @AppStorage(WorkoutEffortPolicy.failureTrainingKey) private var failureTrainingEnabled = false
@@ -123,7 +124,10 @@ struct ActiveWorkoutLoggerView: View {
             }
             .animation(.snappy(duration: 0.25), value: RestTimerController.shared.isRunning)
         }
+        .overlay { QuickIncrementOverlay() }
         .environment(inputRouter)
+        .environment(quickIncrement)
+        .coordinateSpace(name: QuickIncrementController.spaceName)
         .onAppear(perform: reconcileEffortVisibility)
         .onChange(of: showRPEInLogger) { _, _ in reconcileEffortVisibility() }
         // One keyboard toolbar for every set input in the logger, driven by
@@ -1785,6 +1789,13 @@ private struct ExerciseLogCard: View {
     private var isBarbellLoaded: Bool { ExerciseCatalog.isBarbellLoaded(exercise?.equipment) }
     private var restSeconds: Int { workoutExercise.restSeconds ?? SetType.working.defaultRestSeconds ?? 120 }
 
+    /// Flat 2.5 display units per band for the hold-drag quick increment fan
+    /// (founder spec: "+2.5 lb, or the kg equivalent" — gyms think in 2.5s in
+    /// both units). Deliberately NOT the progression engine's equipment-aware
+    /// step: the fan is a manual nudge, and predictable bands beat clever
+    /// ones.
+    private var quickWeightStep: Double { 2.5 }
+
     private var weightHeader: String? {
         guard !isCardio else { return nil }
         let unit = displayUnit.suffix.uppercased()
@@ -1948,7 +1959,9 @@ private struct ExerciseLogCard: View {
                     StickyNoteView(workoutExercise: workoutExercise, exerciseID: workoutExercise.exerciseID, pinnedNote: pinnedNote)
                 }
 
-                if let progression, progressionActive {
+                // Also gated on the park flag so a workout started before the
+                // park can't render a stale strip.
+                if let progression, progressionActive, !ProgressionPlanner.isParked {
                     progressionStrip(progression)
                 }
 
@@ -1997,6 +2010,7 @@ private struct ExerciseLogCard: View {
                                 previous: blockTemplate(for: set, index: index, in: sets),
                                 showWeight: weightHeader != nil,
                                 displayUnit: displayUnit,
+                                quickWeightStep: quickWeightStep,
                                 isUnilateral: exercise?.isUnilateral == true,
                                 completionDate: completionDate,
                                 onChange: recompute,
@@ -2018,6 +2032,7 @@ private struct ExerciseLogCard: View {
 	                            defaultsToFailure: failureTrainingEnabled && set.setType != .warmup,
 	                            effortScale: effortScale,
 	                            displayUnit: displayUnit,
+                                quickWeightStep: quickWeightStep,
                                 focusedInput: $focusedInput,
                                 openSwipeSetID: $openSwipeSetID,
 	                            onChange: recompute,
@@ -2415,7 +2430,12 @@ private struct ExerciseLogCard: View {
 
     private func toggleExerciseUnit() {
         guard let exercise else { return }
-        exercise.preferredWeightUnit = displayUnit.toggled
+        let next = displayUnit.toggled
+        // Toggling back to the app-wide unit CLEARS the override — the
+        // exercise resumes following Settings. A frozen stamp here is how a
+        // kg lifter ends up with lb increments on one exercise after
+        // changing their global unit.
+        exercise.preferredWeightUnit = next == Fmt.unit ? nil : next
         exercise.updatedAt = Date()
         try? modelContext.save()
     }
@@ -2665,6 +2685,9 @@ private struct SetRow: View {
     let defaultsToFailure: Bool
     let effortScale: EffortScale
     let displayUnit: WeightUnit
+    /// Display-unit jump for the hold-drag quick increment fan (equipment-
+    /// aware via `ProgressionPlanner.increment(for:)` at the call site).
+    var quickWeightStep: Double = 2.5
     let focusedInput: FocusState<SetInputFocus?>.Binding
     /// The set whose swipe-to-delete tray is open, shared across sibling rows so
     /// only one opens at a time.
@@ -2703,6 +2726,7 @@ private struct SetRow: View {
         defaultsToFailure: Bool,
         effortScale: EffortScale = .rpe,
         displayUnit: WeightUnit,
+        quickWeightStep: Double = 2.5,
         focusedInput: FocusState<SetInputFocus?>.Binding,
         openSwipeSetID: Binding<UUID?>,
         onChange: @escaping () -> Void,
@@ -2734,6 +2758,7 @@ private struct SetRow: View {
         self.defaultsToFailure = defaultsToFailure
         self.effortScale = effortScale
         self.displayUnit = displayUnit
+        self.quickWeightStep = quickWeightStep
         self.focusedInput = focusedInput
         self._openSwipeSetID = openSwipeSetID
         self.onChange = onChange
@@ -3041,6 +3066,12 @@ private struct SetRow: View {
                     get: { weightDraft },
                     set: { editDraft(.weight, value: $0) }
                 ), placeholder: suggestedWeightText, width: grid.weight, field: .weight)
+                .quickIncrementable(
+                    options: QuickIncrementController.weightOptions(step: quickWeightStep, suffix: displayUnit.shortSuffix),
+                    onBegin: { clearFocus() },
+                    base: quickWeightBase,
+                    apply: applyQuickWeight
+                )
             }
 
             if isCardio {
@@ -3053,6 +3084,12 @@ private struct SetRow: View {
                     get: { primaryDraft },
                     set: { editDraft(.primary, value: $0) }
                 ), placeholder: suggestedRepsText, width: grid.reps, field: .primary, keyboardType: .numberPad)
+                .quickIncrementable(
+                    options: QuickIncrementController.repsOptions(),
+                    onBegin: { clearFocus() },
+                    base: quickRepsBase,
+                    apply: applyQuickReps
+                )
             }
 
             if showRPE && !isCardio {
@@ -3266,6 +3303,36 @@ private struct SetRow: View {
         case .rpe:
             commitRPEDraft()
         }
+    }
+
+    // MARK: - Quick increment (hold-drag fan)
+
+    /// The value the fan increments from: whatever the lifter is looking at —
+    /// typed draft, entered value, ghost suggestion, then last session.
+    private func quickWeightBase() -> Double {
+        if let typedKg = Fmt.loadKilograms(from: weightDraft, unit: displayUnit) {
+            return displayUnit.displayValue(fromKilograms: typedKg)
+        }
+        let kilograms = set.modeWeight ?? suggestedWeight ?? previousSet?.modeWeight
+        return kilograms.map(displayUnit.displayValue(fromKilograms:)) ?? 0
+    }
+
+    /// Routes through the same draft/commit path as typing, so ghost
+    /// suggestions materialize as entered values.
+    private func applyQuickWeight(_ newDisplay: Double) {
+        let kilograms = displayUnit.kilograms(fromDisplayValue: newDisplay)
+        editDraft(.weight, value: Fmt.load(kilograms, unit: displayUnit))
+        commitDraft(for: .weight)
+    }
+
+    private func quickRepsBase() -> Double {
+        if let typed = Int(primaryDraft) { return Double(typed) }
+        return Double(set.reps ?? suggestedReps ?? previousSet?.reps ?? 0)
+    }
+
+    private func applyQuickReps(_ newValue: Double) {
+        editDraft(.primary, value: String(Int(newValue.rounded())))
+        commitDraft(for: .primary)
     }
 
     private func commitWeightDraft() {

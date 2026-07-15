@@ -133,7 +133,7 @@ final class WatchLink: NSObject {
             exerciseByID = Dictionary(scoped.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         }
         let routines = (try? context.fetch(FetchDescriptor<RoutineModel>(
-            predicate: #Predicate { $0.deletedAt == nil },
+            predicate: #Predicate { $0.deletedAt == nil && $0.archivedAt == nil },
             sortBy: [SortDescriptor(\.position)]
         ))) ?? []
 
@@ -309,7 +309,7 @@ final class WatchLink: NSObject {
             let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
             let setupNotes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
             let routines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
-            guard let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil }) else { return }
+            guard let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
             let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: context)
             beginSession(for: workout, workouts: workouts, in: context)
 

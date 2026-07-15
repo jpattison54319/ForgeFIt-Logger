@@ -343,8 +343,8 @@ struct ExerciseThumbnail: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
     }
 
-    /// Pose line-art: a bundled template asset (`yoga_<slug>`, tintable) when
-    /// present, else the pose's SF Symbol stand-in from the catalog.
+    /// Pose photo for the selected instructor, with authored line art as the
+    /// instantaneous loading and custom-pose fallback.
     private var yogaArt: some View {
         ZStack {
             theme.surfaceElevated
@@ -360,73 +360,4 @@ struct ExerciseThumbnail: View {
                 .foregroundStyle(theme.accent)
         }
     }
-}
-
-/// The pose visual used across rows, cards, and the guided player. It prefers
-/// a bundled pose image (`yoga_pose_<slug>` photo, then `yoga_<slug>` tintable
-/// template), then the authored line-art figure from `yoga_pose_figures.json`
-/// — every catalog pose has one, drawn so users can imitate the shape — and
-/// only custom poses with no slug fall back to an SF Symbol.
-struct YogaPoseArt: View {
-    @Environment(\.theme) private var theme
-    let exercise: ExerciseLibraryModel?
-    var slug: String?
-    var size: CGFloat = 46
-
-    init(exercise: ExerciseLibraryModel?, size: CGFloat = 46) {
-        self.exercise = exercise
-        self.slug = exercise.flatMap(YogaPoseCatalog.slug(for:))
-        self.size = size
-    }
-
-    init(slug: String?, size: CGFloat = 46) {
-        self.exercise = nil
-        self.slug = slug
-        self.size = size
-    }
-
-    var body: some View {
-        Group {
-            #if canImport(UIKit)
-            if let slug, let uiImage = Self.photoAsset(for: slug) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-            } else if let slug, let uiImage = Self.templateAsset(for: slug) {
-                Image(uiImage: uiImage)
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-            } else if let figure = YogaPoseFigureCatalog.figure(forSlug: slug) {
-                YogaPoseFigureView(figure: figure, size: size)
-            } else {
-                Image(systemName: YogaPoseCatalog.pose(forSlug: slug)?.symbol ?? "figure.yoga")
-                    .font(.system(size: size * 0.72, weight: .medium))
-            }
-            #else
-            if let figure = YogaPoseFigureCatalog.figure(forSlug: slug) {
-                YogaPoseFigureView(figure: figure, size: size)
-            } else {
-                Image(systemName: YogaPoseCatalog.pose(forSlug: slug)?.symbol ?? "figure.yoga")
-                    .font(.system(size: size * 0.72, weight: .medium))
-            }
-            #endif
-        }
-        .foregroundStyle(theme.accent)
-    }
-
-    #if canImport(UIKit)
-    private static func photoAsset(for slug: String) -> UIImage? {
-        UIImage(named: "yoga_pose_" + slug.replacingOccurrences(of: "-", with: "_"))
-    }
-
-    private static func templateAsset(for slug: String) -> UIImage? {
-        UIImage(named: "yoga_" + slug.replacingOccurrences(of: "-", with: "_"))
-    }
-    #else
-    private static func photoAsset(for slug: String) -> UIImage? { nil }
-    private static func templateAsset(for slug: String) -> UIImage? { nil }
-    #endif
 }

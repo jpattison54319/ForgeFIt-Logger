@@ -27,7 +27,7 @@ Prefer single suites while iterating:
 
 ```bash
 xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
   -only-testing:ForgeFitTests/DailyReadinessTests
 ```
 
@@ -48,6 +48,12 @@ watch destinations often fail to resolve.
 
 - `[CloudKit] ... CKAccountStatusNoAccount` spam in test logs is normal —
   simulators have no iCloud account.
+- Keep simulator destinations pinned to a release OS (`OS=26.5`). A bare
+  `name=iPhone 17 Pro` resolves to the newest installed runtime — the iOS
+  27.0 beta — where full-suite runs stall 600 s in "collecting diagnostics"
+  after the tests already passed, and have failed with "test runner never
+  established connection". Targeted single-suite runs usually dodge it,
+  which made the hang look suite-specific when it wasn't.
 - Reset-store UI tests intermittently crash in CloudKit ModelContainer init.
   Retry the failing test in isolation before treating it as a regression.
 - Before chasing any failure, confirm it also fails on an unmodified checkout.

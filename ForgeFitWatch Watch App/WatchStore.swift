@@ -40,14 +40,19 @@ final class WatchStore: NSObject {
         // If watchOS relaunched us mid-workout (crash/jetsam), the workout
         // session may still be running headless — reattach before the phone's
         // next snapshot arrives so metric collection resumes immediately.
-        engine.recoverSessionIfNeeded()
+        Task { await recoverOrStartWorkoutSession() }
     }
 
     var activeWorkout: WatchWorkoutSnapshot? { context?.workout }
 
     func ensureWorkoutSessionRunning() {
-        guard let workout = activeWorkout, !engine.isRunning else { return }
+        guard let workout = activeWorkout, !engine.hasActiveSession else { return }
         engine.start(configuration: workoutConfiguration(for: workout), startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
+    }
+
+    func recoverOrStartWorkoutSession() async {
+        await engine.recoverSessionIfNeeded()
+        ensureWorkoutSessionRunning()
     }
 
     // MARK: - Commands (watch → phone)
@@ -228,10 +233,10 @@ final class WatchStore: NSObject {
         // collection here; a workout that vanished (finished/discarded on the
         // phone) ends it.
         if let workout = newContext.workout {
-            if !engine.isRunning {
+            if !engine.hasActiveSession {
                 engine.start(configuration: workoutConfiguration(for: workout), startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
             }
-        } else if engine.isRunning {
+        } else if engine.hasActiveSession {
             if let old = previous?.workout {
                 captureSummary(for: old, metrics: engine.currentMetrics())
             }
@@ -306,7 +311,7 @@ final class WatchStore: NSObject {
     private func handle(_ command: WatchCommand) {
         switch command {
         case .workoutFinished:
-            if engine.isRunning {
+            if engine.hasActiveSession {
                 if let workout = activeWorkout {
                     captureSummary(for: workout, metrics: engine.currentMetrics())
                 }
@@ -376,7 +381,7 @@ extension WatchStore: WCSessionDelegate {
             // Any reconnection is a chance to notice "phone says a workout is
             // live but our engine is idle" (e.g. the engine died while we
             // were unreachable) and restart collection.
-            if session.isReachable { self.ensureWorkoutSessionRunning() }
+            if session.isReachable { await self.recoverOrStartWorkoutSession() }
         }
     }
 

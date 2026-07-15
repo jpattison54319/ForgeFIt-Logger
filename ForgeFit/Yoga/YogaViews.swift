@@ -111,6 +111,8 @@ struct YogaExerciseCard: View {
                 flowRow
             }
 
+            YogaInstructorPicker()
+
             Button {
                 if plan?.hasSteps == true {
                     start(session)
@@ -658,12 +660,13 @@ struct YogaPlayerView: View {
                     .foregroundStyle(theme.textSecondary)
             }
             Spacer()
-            if let hr = LiveMetricsHub.shared.liveMetrics?.heartRate {
-                Label("\(hr)", systemImage: "heart.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.danger)
-            } else {
-                Color.clear.frame(width: 44, height: 44)
+            HStack(spacing: Space.sm) {
+                if let hr = LiveMetricsHub.shared.liveMetrics?.heartRate {
+                    Label("\(hr)", systemImage: "heart.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(theme.danger)
+                }
+                YogaInstructorMenu()
             }
         }
     }

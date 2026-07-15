@@ -1317,11 +1317,28 @@ struct OptionalLoadField: View {
     var width: CGFloat? = nil
     var onChange: () -> Void = {}
 
+    /// Raw text while focused; formatted from the model otherwise. A
+    /// get-formats/set-parses round trip erases a trailing "." the moment
+    /// it's typed ("62." re-renders as "62"), making fractional loads
+    /// impossible to enter.
+    @State private var draft = ""
+    @State private var draftActive = false
+    @FocusState private var focused: Bool
+
     var body: some View {
         TextField(placeholder, text: Binding(
-            get: { value.map { Fmt.load($0, unit: unit) } ?? "" },
-            set: { value = Fmt.loadKilograms(from: $0, unit: unit); onChange() }
+            get: { focused && draftActive ? draft : (value.map { Fmt.load($0, unit: unit) } ?? "") },
+            set: { text in
+                draft = text
+                draftActive = true
+                value = Fmt.loadKilograms(from: text, unit: unit)
+                onChange()
+            }
         ))
+        .focused($focused)
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { draftActive = false }
+        }
         .keyboardType(.decimalPad)
         .font(.bodyStrong)
         .multilineTextAlignment(.center)

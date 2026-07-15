@@ -148,7 +148,7 @@ struct HomeView: View {
     /// The active folder plus its whole subtree, so an active macrocycle picks
     /// up routines inside its mesocycle subfolders too.
     private func folderSubtree(rootID: UUID) -> Set<UUID> {
-        let live = allFolders.filter { $0.deletedAt == nil }
+        let live = allFolders.filter { $0.deletedAt == nil && $0.archivedAt == nil }
         var result: Set<UUID> = [rootID]
         var queue = [rootID]
         while let next = queue.popLast() {
@@ -388,7 +388,7 @@ struct HomeView: View {
     }
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
+        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
     }
 
     /// Shown in place of "Up next" when no routine exists yet — the way into
@@ -881,7 +881,7 @@ struct HomeView: View {
         return actions.filter { action in
             switch action.kind {
             case .cardio: true
-            case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil }
+            case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }
             case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
             }
         }
@@ -927,7 +927,7 @@ struct HomeView: View {
             case .cardio(let modality):
                 _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
             case .routine(let id):
-                guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil }) else { return }
+                guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
                 _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
             case .yoga(let slug):
                 guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }

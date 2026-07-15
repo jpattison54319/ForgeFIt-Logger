@@ -64,6 +64,27 @@ final class ForgeFitUITests: XCTestCase {
         }
     }
 
+    /// Auto-start creates the workout asynchronously. On a slow simulator the
+    /// logger's initial presentation can time out even though the workout did
+    /// start, leaving its mini bar on Home. Open that bar so interaction tests
+    /// exercise the logger instead of failing during fixture setup.
+    private func waitForLiveLogger(
+        containing element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval = 8
+    ) -> Bool {
+        if element.waitForExistence(timeout: timeout) { return true }
+
+        // Query the real Button. The surrounding Liquid Glass accessibility
+        // proxy exposes the same identifier with a degenerate {-1, -1} frame,
+        // so a broad `.any` query can find an element that exists but can never
+        // receive the recovery tap.
+        let expand = app.buttons["expand-active-workout"].firstMatch
+        guard expand.waitForExistence(timeout: 5) else { return false }
+        tapWhenReady(expand)
+        return element.waitForExistence(timeout: 5)
+    }
+
     @MainActor
     func testRoutineStartLogSetCompleteAndShowsSetupNotes() throws {
         throw XCTSkip("Routine auto-start presentation is still being stabilized; setup-note propagation is covered by ForgeFitTests.")
@@ -78,7 +99,7 @@ final class ForgeFitUITests: XCTestCase {
         // session on this simulator could leave "Row" anywhere in the row —
         // force the built-in default order [Run, Cycle, Row, Walk] so the tile
         // is always in the same place.
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-homeQuickStartActions.v1", ""]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg", "-homeQuickStartActions.v1", ""]
         app.launch()
 
         let startRow = app.descendants(matching: .any).matching(identifier: "start-cardio-row").firstMatch
@@ -112,6 +133,94 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
     }
 
+    /// The complete quick-input contract: a stationary hold cancels, a tap
+    /// edits normally, and repeated hold-drags each apply one logical step.
+    @MainActor
+    func testQuickIncrementFanAdjustsGhostWeight() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let weightField = app.textFields.matching(NSPredicate(format: "label == %@", "Weight")).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: weightField, in: app),
+            "Expected the live logger's weight field."
+        )
+
+        // A recognized hold that never leaves the field is the neutral path:
+        // release closes the fan, does not focus the field, and changes
+        // nothing. This was previously one way the fan became stuck.
+        let originalValue = weightField.value as? String
+        weightField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.7)
+        XCTAssertEqual(weightField.value as? String, originalValue)
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "A hold should not also focus the TextField.")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["quick-increment-option-0"].exists,
+            "Releasing without choosing should close the fan."
+        )
+
+        // A regular tap still owns the normal editing path after the neutral
+        // hold. Dismiss it before starting the continuous hold-drag below.
+        tapWhenReady(weightField)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "A tap should still open the keyboard.")
+        weightField.typeText("70")
+        let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3))
+        dismissKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(weightField.value as? String, "70")
+
+        // Band 1 center sits fieldHeight/2 + gap + bandHeight/2 ≈ 50 pt above
+        // the field's center. Stationary hold (0.7 s > the 0.45 s trigger),
+        // then drag — one continuous touch.
+        func choosePlusOne() {
+            let start = weightField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let target = start.withOffset(CGVector(dx: 0, dy: -50))
+            start.press(forDuration: 0.7, thenDragTo: target)
+        }
+
+        choosePlusOne()
+
+        XCTAssertEqual(weightField.value as? String, "72.5", "Expected 70 kg + one 2.5 kg band applied on release.")
+
+        // Both input modes must remain reusable after applying an option.
+        tapWhenReady(weightField)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Keyboard should still open after quick adjustment.")
+        dismissKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+
+        choosePlusOne()
+        XCTAssertEqual(weightField.value as? String, "75", "A second hold-drag should apply normally.")
+    }
+
+    /// A fast vertical drag that originates on a weight field belongs to the
+    /// workout ScrollView. It must fail the pending long press before the fan
+    /// opens, leave the value untouched, and avoid focusing the keyboard.
+    @MainActor
+    func testQuickIncrementDoesNotHijackScrollFromField() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let weightField = app.textFields.matching(NSPredicate(format: "label == %@", "Weight")).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: weightField, in: app),
+            "Expected the live logger's weight field."
+        )
+
+        let originalValue = weightField.value as? String
+        let start = weightField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -120)))
+
+        XCTAssertEqual(weightField.value as? String, originalValue, "Scrolling from the field must not change its value.")
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Scrolling from the field must not open the keyboard.")
+        XCTAssertFalse(
+            app.descendants(matching: .any)["quick-increment-option-0"].exists,
+            "Scrolling from the field must not open the quick picker."
+        )
+    }
+
     /// End-to-end pass over Profile → See all workouts: seeded 120-session
     /// history, text search narrows, the PR chip filters, clearing restores,
     /// and scrolling past the first page mounts more rows (windowed
@@ -119,7 +228,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHistorySearchFiltersAndPagination() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-history", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-history", "-weightUnitRaw", "kg"]
         app.launch()
 
         app.descendants(matching: .any)["tab-profile"].firstMatch.tap()
@@ -211,7 +320,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testExerciseSearchDoesNotCrash() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg"]
         app.launch()
 
         app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
@@ -273,7 +382,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCreateExerciseSuggestsExistingDuplicate() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg"]
         app.launch()
 
         app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
@@ -311,7 +420,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testYogaPoseDetailCanReturnToPosePickerAndContinueAdding() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg"]
         app.launch()
 
         app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
@@ -379,7 +488,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testRoutineEditorReordersAndReplacesExercises() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg"]
         app.launch()
 
         app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
@@ -458,7 +567,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testKeyboardAccessorySurvivesDismissAndRefocus() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
         app.launch()
 
         let weightField = app.textFields["Weight"].firstMatch
@@ -492,7 +601,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testRestTimerBarAppearsAndSkipWorks() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
         app.launch()
 
         let completeSet = app.buttons["complete-set-1"].firstMatch
@@ -516,7 +625,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCompletedExerciseCollapsesAndReopens() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
         app.launch()
 
         // The starter routine's exercise has exactly one set, so one tap
@@ -560,7 +669,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testPartialSleepCorrectionFlow() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
         app.launch()
 
@@ -676,7 +785,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testSleepDeleteSurvivesImmediateRelaunch() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
         app.launch()
 
@@ -722,7 +831,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCalendarShowsRecoveryRingsAndSummary() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-recovery-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-recovery-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launchEnvironment["FORGEFIT_RECOVERY_DEMO"] = "1"
         app.launch()
 
@@ -759,7 +868,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testWrappedCardOpensStoryThenDisappearsFromHome() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-wrapped-demo", "-weightUnitRaw", "kg", "-didOnboard", "YES"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-wrapped-demo", "-weightUnitRaw", "kg", "-didOnboard", "YES"]
         app.launch()
 
         let card = app.descendants(matching: .any)["wrapped-report-available"].firstMatch
@@ -798,7 +907,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHomeCalendarReplacesCoachAndOpensCalendar() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launch()
 
         let calendar = app.descendants(matching: .any)["home-calendar"].firstMatch
@@ -817,7 +926,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHomeMetricTilesOpenFocusedDetails() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
         app.launch()
 
@@ -844,7 +953,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHomeRecommendationDisclosureCollapsesDetails() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
         app.launch()
 
@@ -867,7 +976,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHomeWeekCardShowsCompletionCalendarWithoutStreaks() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-week-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-week-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launch()
 
         let heading = app.staticTexts["This week"].firstMatch
@@ -888,7 +997,7 @@ final class ForgeFitUITests: XCTestCase {
     func testProfileTrophyShelfRendersAndOpensTrophy() throws {
         let app = XCUIApplication()
         app.launchArguments = [
-            "--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg",
+            "--reset-store", "-didOnboard", "YES","-didOnboard", "YES", "-weightUnitRaw", "kg",
             "-initialTab", "profile",
         ]
         app.launch()
@@ -909,7 +1018,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCoachCornerNoPlanStateShowsBuildMyPlan() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
@@ -925,7 +1034,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testCoachCornerSectionsHaveVoiceOverIdentifiers() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
@@ -947,7 +1056,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testAskCoachChatIsSessionOnly() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg", "-coach_corner", "YES", "-openCoachCorner", "YES"]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Coach's Corner"].waitForExistence(timeout: 5))
@@ -982,7 +1091,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testDormantCoachChatStillLaunchesThroughAutomationHook() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-weightUnitRaw", "kg", "-openCoachChat", "YES"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","-weightUnitRaw", "kg", "-openCoachChat", "YES"]
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Ask your Coach"].waitForExistence(timeout: 5), "Expected the chat to present directly.")

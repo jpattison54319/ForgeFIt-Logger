@@ -21,6 +21,7 @@ enum AppPreferenceKeys {
         "distanceUnitRaw",
         "trainingFocusRaw",
         "homeQuickStartActions.v1",
+        AppQuickActionStore.key,
         "activeMacroFolderID",
         "activeMesoFolderID",
         ThemeManager.modeDefaultsKey,
@@ -41,6 +42,7 @@ enum AppPreferenceKeys {
         "yogaVoiceCues",
         "yogaVoiceID",
         "yogaVoiceRate",
+        YogaInstructor.preferenceKey,
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
     ]

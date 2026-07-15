@@ -507,9 +507,12 @@ private struct ExerciseUnitSettingsCard: View {
     @Environment(\.theme) private var theme
     @Bindable var exercise: ExerciseLibraryModel
 
-    private var unitBinding: Binding<WeightUnit> {
+    /// nil = Auto: the exercise follows the app-wide unit from Settings.
+    /// Surfacing the nil state matters — a stamped unit stays frozen when the
+    /// user later changes their global unit, which reads as a bug mid-workout.
+    private var unitBinding: Binding<WeightUnit?> {
         Binding(
-            get: { exercise.effectiveWeightUnit },
+            get: { exercise.preferredWeightUnit },
             set: { newValue in
                 exercise.preferredWeightUnit = newValue
                 exercise.updatedAt = Date()
@@ -528,11 +531,12 @@ private struct ExerciseUnitSettingsCard: View {
                 }
                 Spacer()
                 Picker("Exercise unit", selection: unitBinding) {
-                    Text("lb").tag(WeightUnit.lb)
-                    Text("kg").tag(WeightUnit.kg)
+                    Text("Auto").tag(WeightUnit?.none)
+                    Text("lb").tag(WeightUnit?.some(.lb))
+                    Text("kg").tag(WeightUnit?.some(.kg))
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 120)
+                .frame(width: 170)
             }
         }
     }

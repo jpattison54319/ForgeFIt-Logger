@@ -205,10 +205,12 @@ struct CoachWeeklyReviewTests {
         let exercises = [heldExercise, progressingExercise]
 
         let previewed = ProgressionPlanner.preview(
-            routine: routine, exercises: exercises, in: context, heldExerciseIDs: holds.ids, holdReasons: holds.reasons
+            routine: routine, exercises: exercises, in: context, heldExerciseIDs: holds.ids, holdReasons: holds.reasons,
+            parked: false
         )
         ProgressionPlanner.apply(
-            to: workout, routine: routine, exercises: exercises, in: context, heldExerciseIDs: holds.ids, holdReasons: holds.reasons
+            to: workout, routine: routine, exercises: exercises, in: context, heldExerciseIDs: holds.ids, holdReasons: holds.reasons,
+            parked: false
         )
 
         let heldPlan = try #require(previewed.first { $0.exerciseID == heldExerciseID })

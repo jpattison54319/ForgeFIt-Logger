@@ -121,17 +121,41 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// Rest gap between adjacent bubbles.
     var gap: CGFloat = 12
     /// Show each child's `label` as a caption directly below its bubble. The
-    /// label rises out from under the glass as its bubble settles. Intended for
-    /// horizontal fans (`.leading` / `.trailing`), where the label band sits
-    /// below the row.
+    /// label rises out from under the glass as its bubble settles. Horizontal
+    /// fans (`.leading` / `.trailing`) reserve a band under the row for the
+    /// captions; vertical fans (`.up` / `.down`) draw them in the inter-bubble
+    /// gap instead — pass a `gap` large enough to hold a caption line (≈32).
     var showsLabels: Bool = false
+    /// Cap on a caption's width: long captions (e.g. routine names) tail-
+    /// truncate inside a centered slot this wide. nil = natural width —
+    /// captions never wrap, which is fine for one-word labels on a card but
+    /// can run off-screen for a fan hugging a screen edge.
+    var labelMaxWidth: CGFloat? = nil
+    /// How strongly each child bubble's glass carries its `tint`. The default
+    /// keeps the tinted look the sleep card ships with; pass 0 for clear
+    /// see-through glass that matches the tab bar, letting the glyph alone
+    /// carry the color.
+    var bubbleGlassTintOpacity: CGFloat = 0.18
+    /// Uses ordinary material-backed circles and a deterministic relay instead
+    /// of native Liquid Glass compositing. This is for root-level controls whose
+    /// children cross cards, bars, and screen edges: the native compositor can
+    /// keep subpixel glass fragments alive after SwiftUI has hidden a child.
+    /// The sleep correction menu keeps the native cell-division effect.
+    var usesStableMaterialRelay: Bool = false
     /// Tint of the trigger's glass (nil = neutral/clear glass).
     var triggerTint: Color? = nil
     var dismissSystemImage: String = "xmark"
+    /// Optional quiet caption drawn beside the expanded dismiss control (its
+    /// trailing edge `labelGap` left of the control) — e.g. "Hold to edit" to
+    /// teach the long-press right where it applies. Below the control is not
+    /// an option for `.up` fans: that space belongs to whatever the fan is
+    /// anchored above. Rendered only when `showsLabels` is on.
+    var dismissCaption: String? = nil
     var triggerAccessibilityLabel: String = "More options"
     var triggerAccessibilityHint: String = ""
     var triggerAccessibilityID: String? = nil
     var dismissAccessibilityLabel: String = "Dismiss"
+    var dismissAccessibilityHint: String = ""
     var dismissAccessibilityID: String? = nil
     /// Optional action for the collapsed bubble. When nil, tapping expands the
     /// menu as usual. This lets a destructive choice retract to one persistent
@@ -140,6 +164,18 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// Fired whenever the menu expands (true) or collapses (false) — e.g. to
     /// make room in a surrounding layout while the fan is open.
     var onExpandedChange: (Bool) -> Void = { _ in }
+    /// Increment to request a collapse from outside (e.g. a tap-outside
+    /// scrim). One-directional by design: the menu keeps sole ownership of its
+    /// expand/collapse state machine (generation guards, deferred spacing
+    /// release) — callers observe state via `onExpandedChange`.
+    var collapseSignal: Int = 0
+    /// Optional long-press on the menu's "main button" in BOTH states — the
+    /// collapsed trigger and the expanded dismiss control (e.g. opening a
+    /// "customize these actions" editor). Attached only when set, so existing
+    /// call sites keep an unchanged gesture graph. A recognized long press
+    /// suppresses the Button's tap — SwiftUI fires it on the eventual
+    /// touch-up even after a hold — so only the hook runs.
+    var onTriggerLongPress: (() -> Void)? = nil
     @ViewBuilder var trigger: () -> Trigger
 
     @Environment(\.theme) private var theme
@@ -149,10 +185,18 @@ struct GlassDivisionMenu<Trigger: View>: View {
     @State private var expanded = false
     @State private var childrenShown = false
     @State private var clusterSpacing: CGFloat = 8
+    /// Stable-material children reveal by birth index: nearest first, then the
+    /// next child from that settled neighbor. -1 is fully retracted.
+    @State private var relayStage = -1
     /// Invalidates delayed reveal/retract work when the user opens and closes
     /// the menu quickly. Without it, an older task can leave a new fan at its
     /// hidden 5% birth scale (the "tiny dots" failure).
     @State private var transitionGeneration = 0
+    /// Set when the main button's long press recognizes (trigger or dismiss —
+    /// never both mounted at once); the Button's action (which still fires on
+    /// the same touch's release) consumes it and does nothing, so a hold
+    /// doesn't also expand or collapse the menu.
+    @State private var suppressNextTriggerTap = false
 
     // Morph tuning — see the doc comment / memory reference. Merged ≈ bubble
     // radius so the neck bridges the rest gap; crisp is small enough that the
@@ -161,6 +205,14 @@ struct GlassDivisionMenu<Trigger: View>: View {
     private var clusterSpacingCrisp: CGFloat { min(8, gap - 2) }
     private let beat = 0.07
     private var birthSpring: Animation { .spring(response: 0.30, dampingFraction: 0.58) }
+    private let relayBeat: Duration = .milliseconds(72)
+    private let retractionBeat: Duration = .milliseconds(34)
+    private var relaySpring: Animation { .spring(response: 0.18, dampingFraction: 0.84) }
+    private var retractionSpring: Animation { .spring(response: 0.13, dampingFraction: 0.92) }
+    /// A visible 5% birth scale left a real 2.2 pt glass particle behind when
+    /// the vertical fan was replaced by its trigger. Keep the glass mounted for
+    /// the spring, but below a physical pixel while it is inside its parent.
+    private let hiddenScale: CGFloat = 0.001
     private let rootID = "glass-division-root"
     /// Air between a bubble's bottom edge and its label. 6, not 4: the bubble's
     /// spring overshoot briefly swells its radius ~2.4pt into the gap.
@@ -170,17 +222,31 @@ struct GlassDivisionMenu<Trigger: View>: View {
     private var labelBand: CGFloat { showsLabels && direction.isHorizontal ? 22 : 0 }
 
     var body: some View {
-        GlassEffectContainer(spacing: clusterSpacing) {
-            if expanded {
-                fan
+        Group {
+            if usesStableMaterialRelay {
+                menuContents
             } else {
-                triggerButton
+                GlassEffectContainer(spacing: clusterSpacing) {
+                    menuContents
+                }
+                .animation(
+                    reduceMotion ? .easeOut(duration: 0.18) : .bouncy(duration: 0.52, extraBounce: 0.18),
+                    value: expanded
+                )
             }
         }
-        .animation(
-            reduceMotion ? .easeOut(duration: 0.18) : .bouncy(duration: 0.52, extraBounce: 0.18),
-            value: expanded
-        )
+        .onChange(of: collapseSignal) { _, _ in
+            if expanded { collapse() }
+        }
+    }
+
+    @ViewBuilder
+    private var menuContents: some View {
+        if expanded {
+            fan
+        } else {
+            triggerButton
+        }
     }
 
     // MARK: Fan
@@ -232,36 +298,19 @@ struct GlassDivisionMenu<Trigger: View>: View {
         let birth = Double(birthIndex) * beat
         let retract = Double(max(items.count - 1, 0)) * beat - birth
         let offset = hiddenOffset
-        return Button(role: item.role) { handleTap(item) } label: {
-            // Glass on the LABEL (outside the Button it swallows the tap); scale
-            // + offset wrap the whole button so the glass bubble travels with
-            // them. Only the GLYPH fades — fading the glass reads as a pop-in.
-            item.icon
-                .foregroundStyle(item.tint)
-                // Crossfade when the slot's content is swapped in place (e.g. an
-                // option becoming its own Undo) — the `id` change drives an
-                // opacity transition while the stable `glassEffectID` keeps the
-                // glass put.
-                .id(item.contentKey)
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.22), value: item.contentKey)
-                .opacity(childrenShown ? 1 : 0)
-                .animation(.easeOut(duration: 0.10).delay(childrenShown ? birth + 0.10 : 0), value: childrenShown)
-                .frame(width: bubbleSize, height: bubbleSize)
-                .contentShape(Circle())
-                .glassEffect(.regular.tint(item.tint.opacity(0.18)).interactive(), in: Circle())
-                .glassEffectID(item.id, in: morph)
+        let isShown = usesStableMaterialRelay ? relayStage >= birthIndex : childrenShown
+        let button = Button(role: item.role) { handleTap(item) } label: {
+            childFace(item, isShown: isShown, birth: birth, retract: retract)
         }
         .buttonStyle(PressableButtonStyle())
-        .scaleEffect(reduceMotion ? 1 : (childrenShown ? 1 : 0.05))
-        .offset(reduceMotion ? .zero : (childrenShown ? .zero : offset))
-        .allowsHitTesting(childrenShown)
-        .animation(
-            reduceMotion
-                ? .easeOut(duration: 0.18)
-                : (childrenShown ? birthSpring.delay(birth) : birthSpring.delay(retract)),
-            value: childrenShown
+        return transformedChild(
+            button,
+            isShown: isShown,
+            birth: birth,
+            retract: retract,
+            offset: offset
         )
+        .allowsHitTesting(isShown)
         // The fan mounts on expand; the container-level animation would fade the
         // bubble in (opacity on glass = pop-in). Suppress it — the birth spring
         // owns all motion.
@@ -270,38 +319,114 @@ struct GlassDivisionMenu<Trigger: View>: View {
         // sideways bud ride, and `.background` draws it BEHIND the glass, so the
         // glass occludes it as it rises out — a free mask (see Fable advisory).
         .background(alignment: .top) {
-            if showsLabels { bubbleLabel(item, birth: birth) }
+            if showsLabels { bubbleLabel(item, birth: birth, isShown: isShown) }
         }
         .accessibilityIdentifier(item.accessibilityID ?? "")
         .accessibilityLabel(item.accessibilityLabel)
     }
 
+    @ViewBuilder
+    private func childFace(
+        _ item: GlassDivisionItem,
+        isShown: Bool,
+        birth: Double,
+        retract: Double
+    ) -> some View {
+        let glyph = item.icon
+            .foregroundStyle(item.tint)
+            // Crossfade when the slot's content is swapped in place (e.g. an
+            // option becoming its own Undo).
+            .id(item.contentKey)
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.22), value: item.contentKey)
+            .opacity(usesStableMaterialRelay ? 1 : (isShown ? 1 : 0))
+            .animation(
+                .easeOut(duration: 0.10).delay(isShown ? birth + 0.10 : retract),
+                value: isShown
+            )
+            .frame(width: bubbleSize, height: bubbleSize)
+            .contentShape(Circle())
+
+        if usesStableMaterialRelay {
+            glyph.background {
+                stableMaterialCircle(tint: item.tint, tintOpacity: bubbleGlassTintOpacity)
+            }
+        } else {
+            // Native glass stays on the label: putting it outside the Button
+            // swallows taps on iOS 26.
+            glyph
+                .glassEffect(bubbleGlass(for: item), in: Circle())
+                .glassEffectID(item.id, in: morph)
+        }
+    }
+
+    @ViewBuilder
+    private func transformedChild<Content: View>(
+        _ content: Content,
+        isShown: Bool,
+        birth: Double,
+        retract: Double,
+        offset: CGSize
+    ) -> some View {
+        if usesStableMaterialRelay {
+            content
+                // A flat squeeze travels from its actual parent. Ordinary
+                // material respects opacity, so no hidden compositor particle
+                // remains after the circle reaches that parent.
+                .scaleEffect(
+                    x: reduceMotion ? 1 : (isShown ? 1 : 0.68),
+                    y: reduceMotion ? 1 : (isShown ? 1 : 0.12)
+                )
+                .offset(reduceMotion ? .zero : (isShown ? .zero : offset))
+                .opacity(isShown ? 1 : 0)
+                .animation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.12)
+                        : (isShown ? relaySpring : retractionSpring),
+                    value: isShown
+                )
+        } else {
+            content
+                .scaleEffect(reduceMotion ? 1 : (isShown ? 1 : hiddenScale))
+                .offset(reduceMotion ? .zero : (isShown ? .zero : offset))
+                .animation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.18)
+                        : (isShown ? birthSpring.delay(birth) : birthSpring.delay(retract)),
+                    value: isShown
+                )
+        }
+    }
+
     /// A caption that rises out from under its bubble as the bubble settles.
     /// Trails the bubble's birth by 0.12s — it emerges right as the bubble pops
     /// to full size, so it reads as "the button produced this."
-    private func bubbleLabel(_ item: GlassDivisionItem, birth: Double) -> some View {
-        let delay = birth + 0.12
+    private func bubbleLabel(_ item: GlassDivisionItem, birth: Double, isShown: Bool) -> some View {
+        let delay = usesStableMaterialRelay ? 0.045 : birth + 0.12
         // Fade fast, move soft. The type never bounces — the bubble owns the
         // jelly; bouncing text reads cheap. On exit, labels die first and
         // together (fast, no stagger) so they never ride the goo backward.
-        let fade: Animation = childrenShown
+        let fade: Animation = isShown
             ? .easeOut(duration: 0.15).delay(reduceMotion ? 0.10 : delay)
             : .easeIn(duration: 0.08)
-        let rise: Animation = childrenShown
-            ? (reduceMotion ? .easeOut(duration: 0.15).delay(0.10) : .spring(response: 0.28, dampingFraction: 0.8).delay(delay))
+        let rise: Animation = isShown
+            ? (reduceMotion ? .easeOut(duration: 0.15).delay(0.10) : .spring(response: 0.22, dampingFraction: 0.84).delay(delay))
             : .easeIn(duration: 0.08)
         return Text(item.label)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(item.role == .destructive ? theme.danger : theme.textSecondary)
-            .fixedSize()                       // natural width; never clamps to the bubble
+            // Natural width (never clamped to the bubble) unless the caller
+            // caps it; a capped caption truncates inside its centered slot.
+            .fixedSize(horizontal: labelMaxWidth == nil, vertical: true)
+            .frame(width: labelMaxWidth)
             .lineLimit(1)
             .dynamicTypeSize(...DynamicTypeSize.xxLarge)
             .contentTransition(.opacity)       // crossfade the caption on a content swap
             .animation(.easeInOut(duration: 0.22), value: item.label)
-            .opacity(childrenShown ? 1 : 0)
-            .animation(fade, value: childrenShown)
-            .offset(y: (childrenShown || reduceMotion) ? 0 : -12)   // starts tucked under the glass
-            .animation(rise, value: childrenShown)
+            .opacity(isShown ? 1 : 0)
+            .animation(fade, value: isShown)
+            .offset(y: (isShown || reduceMotion) ? 0 : -12)   // starts tucked under the glass
+            .animation(rise, value: isShown)
             .offset(y: bubbleSize + labelGap)  // static slot: top = bubble bottom + gap
             .allowsHitTesting(false)
             .accessibilityHidden(true)         // the Button already carries the label
@@ -309,44 +434,164 @@ struct GlassDivisionMenu<Trigger: View>: View {
 
     // MARK: Trigger + dismiss (share glassEffectID so they morph, not cross-fade)
 
-    private var triggerGlass: Glass {
-        if let triggerTint { return .regular.tint(triggerTint).interactive() }
+    private func bubbleGlass(for item: GlassDivisionItem) -> Glass {
+        bubbleGlassTintOpacity > 0
+            ? .regular.tint(item.tint.opacity(bubbleGlassTintOpacity)).interactive()
+            : .regular.interactive()
+    }
+
+    private func rootGlass(tint: Color?) -> Glass {
+        if let tint { return .regular.tint(tint).interactive() }
         return .regular.interactive()
     }
 
+    private func stableMaterialCircle(tint: Color?, tintOpacity: CGFloat) -> some View {
+        Circle()
+            .fill(.thinMaterial)
+            .overlay {
+                if let tint, tintOpacity > 0 {
+                    Circle().fill(tint.opacity(tintOpacity))
+                }
+            }
+            .overlay {
+                Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.75)
+            }
+            .shadow(color: Color.black.opacity(0.16), radius: 8, y: 3)
+    }
+
+    @ViewBuilder
+    private func rootFace<Content: View>(_ content: Content, tint: Color?) -> some View {
+        if usesStableMaterialRelay {
+            content.background {
+                stableMaterialCircle(tint: tint, tintOpacity: tint == nil ? 0 : 0.16)
+            }
+        } else {
+            content
+                .glassEffect(rootGlass(tint: tint), in: Circle())
+                .glassEffectID(rootID, in: morph)
+        }
+    }
+
+    @ViewBuilder
     private var triggerButton: some View {
-        Button {
-            if let collapsedAction {
+        let button = Button {
+            if suppressNextTriggerTap {
+                // A long press just ran the hook; this is the same touch's
+                // release reaching the Button. Swallow it.
+                suppressNextTriggerTap = false
+            } else if let collapsedAction {
                 collapsedAction()
             } else {
                 expand()
             }
         } label: {
-            trigger()
-                .frame(width: triggerSize, height: triggerSize)
-                .contentShape(Circle())
-                .glassEffect(triggerGlass, in: Circle())
-                .glassEffectID(rootID, in: morph)
+            rootFace(
+                trigger()
+                    .frame(width: triggerSize, height: triggerSize)
+                    .contentShape(Circle()),
+                tint: triggerTint
+            )
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityIdentifier(triggerAccessibilityID ?? "")
         .accessibilityLabel(triggerAccessibilityLabel)
         .accessibilityHint(triggerAccessibilityHint)
+
+        // `.simultaneousGesture` rather than `.onLongPressGesture`-on-Button:
+        // the latter can eat the Button's tap; simultaneous keeps it alive and
+        // the suppression flag closes the resulting hold-then-release double
+        // fire. Attached only when configured.
+        if onTriggerLongPress != nil {
+            button.simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    triggerLongPressRecognized()
+                }
+            )
+        } else {
+            button
+        }
     }
 
+    private func triggerLongPressRecognized() {
+        guard let onTriggerLongPress else { return }
+        suppressNextTriggerTap = true
+        onTriggerLongPress()
+        // Self-heal: if the surface the hook presents cancels the touch, the
+        // Button's action never consumes the flag — clear it so the next
+        // plain tap still works.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            suppressNextTriggerTap = false
+        }
+    }
+
+    @ViewBuilder
     private var dismissBubble: some View {
-        Button(action: collapse) {
-            Image(systemName: dismissSystemImage)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(theme.textSecondary)
-                .frame(width: triggerSize, height: triggerSize)
-                .contentShape(Circle())
-                .glassEffect(.regular.interactive(), in: Circle())
-                .glassEffectID(rootID, in: morph)
+        let button = Button {
+            if suppressNextTriggerTap {
+                // A long press just ran the hook; this is the same touch's
+                // release reaching the Button. Swallow it — the hook's owner
+                // decides whether to collapse.
+                suppressNextTriggerTap = false
+            } else {
+                collapse()
+            }
+        } label: {
+            rootFace(
+                Image(systemName: dismissSystemImage)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: triggerSize, height: triggerSize)
+                    .contentShape(Circle()),
+                tint: nil
+            )
         }
         .buttonStyle(PressableButtonStyle())
+        .allowsHitTesting(childrenShown)
         .accessibilityLabel(dismissAccessibilityLabel)
+        .accessibilityHint(dismissAccessibilityHint)
         .accessibilityIdentifier(dismissAccessibilityID ?? "")
+        // Quiet gesture hint beside the control. `.background` draws behind
+        // the glass and takes no layout space; trailing alignment + the fixed
+        // offset pins the caption's trailing edge `labelGap` left of the
+        // control's leading edge regardless of text width.
+        .background(alignment: .trailing) {
+            if let dismissCaption, showsLabels {
+                dismissCaptionView(dismissCaption)
+            }
+        }
+
+        if onTriggerLongPress != nil {
+            button.simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    triggerLongPressRecognized()
+                }
+            )
+        } else {
+            button
+        }
+    }
+
+    /// Styled like a child caption, but always present while the fan is open
+    /// (it labels the control's hold gesture, not a spawned action).
+    private func dismissCaptionView(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(childrenShown ? 1 : 0)
+            .animation(
+                childrenShown
+                    ? .easeOut(duration: 0.15).delay(
+                        reduceMotion ? 0.10 : (usesStableMaterialRelay ? 0.11 : 0.30)
+                    )
+                    : .easeIn(duration: 0.08),
+                value: childrenShown
+            )
+            .offset(x: -(triggerSize + labelGap))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     // MARK: Actions
@@ -355,6 +600,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         transitionGeneration &+= 1
         let generation = transitionGeneration
         childrenShown = false
+        relayStage = -1
         clusterSpacing = reduceMotion ? clusterSpacingCrisp : clusterSpacingMerged
         expanded = true
         onExpandedChange(true)
@@ -376,6 +622,30 @@ struct GlassDivisionMenu<Trigger: View>: View {
         guard expanded, transitionGeneration == generation else { return }
         guard !childrenShown else { return }
         childrenShown = true
+
+        if usesStableMaterialRelay {
+            guard !items.isEmpty else { return }
+            guard !reduceMotion else {
+                relayStage = items.count - 1
+                return
+            }
+            Task { @MainActor in
+                // Render one fully hidden frame at the real parent positions,
+                // then hand the motion from parent to child every 72 ms.
+                await Task.yield()
+                for stage in items.indices {
+                    guard expanded, transitionGeneration == generation else { return }
+                    withAnimation(relaySpring) {
+                        relayStage = stage
+                    }
+                    if stage < items.count - 1 {
+                        try? await Task.sleep(for: relayBeat)
+                    }
+                }
+            }
+            return
+        }
+
         guard !reduceMotion else { return }
         // Hold the merged field through the division, then release the necks so
         // the settled bubbles round into crisp circles.
@@ -394,15 +664,64 @@ struct GlassDivisionMenu<Trigger: View>: View {
     private func collapse() {
         transitionGeneration &+= 1
         let generation = transitionGeneration
-        // Re-merge so the bubbles goo back together as they retract into the
-        // dismiss anchor, then flip to the trigger once they've melted in.
-        if !reduceMotion { clusterSpacing = clusterSpacingMerged }
-        withAnimation(birthSpring) { childrenShown = false }
         onExpandedChange(false)
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(260))
-            guard transitionGeneration == generation, childrenShown == false else { return }
+
+        guard !reduceMotion else {
+            childrenShown = false
+            relayStage = -1
             clusterSpacing = clusterSpacingCrisp
+            expanded = false
+            return
+        }
+
+        if usesStableMaterialRelay {
+            retractStableRelay(generation: generation)
+            return
+        }
+
+        // First widen the glass blend field so the separated circles grow
+        // necks again. Only then retract them toward the trigger. The old code
+        // replaced the fan after a fixed 260 ms, even though the nearest child
+        // still had its stagger plus most of a 300 ms spring left; SwiftUI then
+        // reparented that live 5%-scale layer as the detached exit speck.
+        withAnimation(.easeIn(duration: 0.08)) {
+            clusterSpacing = clusterSpacingMerged
+        } completion: {
+            guard transitionGeneration == generation else { return }
+            withAnimation(birthSpring) {
+                childrenShown = false
+            } completion: {
+                guard transitionGeneration == generation, childrenShown == false else { return }
+                clusterSpacing = clusterSpacingCrisp
+                expanded = false
+            }
+        }
+    }
+
+    private func retractStableRelay(generation: Int) {
+        childrenShown = false
+        let firstStage = min(relayStage, items.count - 1)
+        guard firstStage >= 0 else {
+            relayStage = -1
+            expanded = false
+            return
+        }
+
+        Task { @MainActor in
+            // Outside-in: the farthest child squeezes back into its parent,
+            // then that parent follows. The final material spring is allowed
+            // to finish before the fan subtree is replaced by the trigger.
+            for stage in stride(from: firstStage, through: 0, by: -1) {
+                guard transitionGeneration == generation else { return }
+                withAnimation(retractionSpring) {
+                    relayStage = stage - 1
+                }
+                if stage > 0 {
+                    try? await Task.sleep(for: retractionBeat)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(145))
+            guard transitionGeneration == generation, relayStage == -1 else { return }
             expanded = false
         }
     }

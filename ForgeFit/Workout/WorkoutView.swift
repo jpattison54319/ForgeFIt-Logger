@@ -103,7 +103,7 @@ struct WorkoutHomeView: View {
     @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil }.sorted { $0.position < $1.position }
+        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.position < $1.position }
     }
     private var folders: [RoutineFolderModel] {
         // CloudKit can deliver a pre-split record after launch cleanup. Keep
@@ -111,7 +111,7 @@ struct WorkoutHomeView: View {
         // cleanup removes the extra physical row in the background.
         var byID: [UUID: RoutineFolderModel] = [:]
         for folder in allFolders {
-            guard folder.deletedAt == nil else { continue }
+            guard folder.deletedAt == nil, folder.archivedAt == nil else { continue }
             if let incumbent = byID[folder.id], incumbent.updatedAt >= folder.updatedAt {
                 continue
             }
@@ -213,9 +213,21 @@ struct WorkoutHomeView: View {
                 }
 
                 ForEach(topLevelFolders) { folder in folderSection(folder) }
+
+                // Pinned below everything that's live; exists only once
+                // something is archived, so it never clutters a fresh library.
+                if archiveInventory.rootCount > 0 {
+                    archiveRow
+                }
             }
             .navigationDestination(for: RoutineModel.self) { routine in
                 RoutineDetailView(routine: routine, exercises: exercises, setupNotes: setupNotes)
+            }
+            .navigationDestination(for: WorkoutRoute.self) { route in
+                switch route {
+                case .archive:
+                    ArchiveView(routines: routines, folders: allFolders)
+                }
             }
             .navigationDestination(item: $newRoutine) { routine in
                 RoutineEditorView(
@@ -297,6 +309,42 @@ struct WorkoutHomeView: View {
             }
         }
         .interactiveBackSwipeEnabled()
+    }
+
+    // MARK: - Archive entry point
+
+    private var archiveInventory: ArchiveInventory {
+        ArchiveInventory(routines: routines, folders: allFolders)
+    }
+
+    private var archiveRow: some View {
+        NavigationLink(value: WorkoutRoute.archive) {
+            HStack(spacing: Space.md) {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                Text("Archive")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                Text("\(archiveInventory.rootCount)")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(theme.surfaceElevated)
+                    .clipShape(Capsule())
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+            }
+            .padding(Space.md)
+            .background(theme.surface.opacity(0.55))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("workout-archive-row")
+        .padding(.top, Space.sm)
     }
 
     // MARK: - Folder section
@@ -500,6 +548,9 @@ struct WorkoutHomeView: View {
                 }
             }
             Divider()
+            Button("Archive", systemImage: "archivebox") {
+                archiveFolder(folder)
+            }
             Button("Delete Folder", systemImage: "trash", role: .destructive) { folderPendingDelete = folder }
         } label: {
             Image(systemName: "ellipsis")
@@ -659,6 +710,7 @@ struct WorkoutHomeView: View {
             onEdit: { edit(routine) },
             onDelete: { routinePendingDelete = routine },
             onDuplicate: { duplicate(routine) },
+            onArchive: { archive(routine) },
             moveDestinations: destinations.map { ($0.id, destinationLabel($0)) },
             showsMoveToRoot: routine.folderID != nil,
             onMove: { folderID in moveRoutine(routine, toFolder: folderID) }
@@ -814,6 +866,34 @@ struct WorkoutHomeView: View {
         try? modelContext.save()
     }
 
+    // MARK: - Archive
+
+    /// No confirmation dialog: archiving is fully reversible, and the Archive
+    /// row appearing at the bottom of the list is the feedback.
+    private func archive(_ routine: RoutineModel) {
+        RoutineArchiver.archive(routine)
+        save()
+    }
+
+    private func archiveFolder(_ folder: RoutineFolderModel) {
+        try? RoutineArchiver.archive(folder, in: modelContext)
+        clearActivePrefsIfArchived()
+        save()
+    }
+
+    /// Archiving a macro cascades to its mesocycles, so the active meso can be
+    /// swept into the archive even when it wasn't the tapped folder.
+    private func clearActivePrefsIfArchived() {
+        if let macro = allFolders.first(where: { $0.id.uuidString == activeMacroFolderRaw }),
+           macro.archivedAt != nil {
+            activeMacroFolderRaw = ""
+        }
+        if let meso = allFolders.first(where: { $0.id.uuidString == activeMesoFolderRaw }),
+           meso.archivedAt != nil {
+            activeMesoFolderRaw = ""
+        }
+    }
+
     // MARK: - Move to folder (accessible alternative to drag & drop)
 
     /// Folders that can directly hold a routine — leaf folders only, whether
@@ -947,6 +1027,7 @@ private struct RoutineCard: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
+    let onArchive: () -> Void
     /// (folder id, display label) for every folder this routine could move
     /// into — the accessible alternative to dragging the card onto a folder.
     var moveDestinations: [(id: UUID, label: String)] = []
@@ -1009,6 +1090,7 @@ private struct RoutineCard: View {
                                 }
                             }
                             Divider()
+                            Button("Archive", systemImage: "archivebox", action: onArchive)
                             Button("Delete Routine", systemImage: "xmark", role: .destructive, action: onDelete)
                         } label: {
                             Image(systemName: "ellipsis")
@@ -1046,4 +1128,9 @@ private struct RoutineCard: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+/// Typed pushes for Workout-tab screens that aren't model-backed.
+enum WorkoutRoute: Hashable {
+    case archive
 }

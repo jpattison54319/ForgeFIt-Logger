@@ -36,6 +36,16 @@ struct PlannedProgression: Equatable {
 @MainActor
 enum ProgressionPlanner {
 
+    /// Progression is PARKED (2026-07): the increase criteria are being
+    /// redesigned (all-sets-top reads wrong under failure training — see the
+    /// founder's 6,5,5 critique), so until that lands, workouts start on
+    /// plain routine targets: no advancement, no suggestion rows, no
+    /// explanation strips in the logger, and Coach's Corner shows no
+    /// progression preview (preview == start stays true — both no-op).
+    /// The machinery below stays fully tested via the explicit
+    /// `parked: false` parameter. Flip this constant when the redesign ships.
+    static let isParked = true
+
     /// Runs once at start. No-ops per exercise when: rule is `.off`, the
     /// exercise is cardio/yoga, or there is no prior completed session
     /// (brand-new exercises keep their plain routine targets — no banner).
@@ -52,8 +62,10 @@ enum ProgressionPlanner {
         exercises: [ExerciseLibraryModel],
         in context: ModelContext,
         heldExerciseIDs: Set<UUID> = [],
-        holdReasons: [UUID: String] = [:]
+        holdReasons: [UUID: String] = [:],
+        parked: Bool = ProgressionPlanner.isParked
     ) {
+        guard !parked else { return }
         let planned = plan(
             routine: routine, exercises: exercises, in: context,
             excludingWorkoutID: workout.id,
@@ -94,9 +106,11 @@ enum ProgressionPlanner {
         exercises: [ExerciseLibraryModel],
         in context: ModelContext,
         heldExerciseIDs: Set<UUID> = [],
-        holdReasons: [UUID: String] = [:]
+        holdReasons: [UUID: String] = [:],
+        parked: Bool = ProgressionPlanner.isParked
     ) -> [PlannedProgression] {
-        plan(
+        guard !parked else { return [] }
+        return plan(
             routine: routine, exercises: exercises, in: context,
             excludingWorkoutID: nil,
             heldExerciseIDs: heldExerciseIDs, holdReasons: holdReasons

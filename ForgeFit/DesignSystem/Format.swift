@@ -63,9 +63,14 @@ enum Fmt {
     }
 
     /// A single load value without a unit suffix (for set tables).
+    /// kg shows two decimals because microplate loads land on quarter-kilos
+    /// (1.25 kg jumps → 71.25); one decimal would display AND round-trip
+    /// 71.25 as 71.2. lb stays at one decimal — its plate math never needs
+    /// more ("220.5"), and gyms don't read hundredths of a pound.
     static func load(_ value: Double?, unit: WeightUnit = Fmt.unit) -> String {
         guard let value else { return "—" }
-        return unit.displayValue(fromKilograms: value).formatted(.number.precision(.fractionLength(0...1)))
+        let maxFractionDigits = unit == .kg ? 2 : 1
+        return unit.displayValue(fromKilograms: value).formatted(.number.precision(.fractionLength(0...maxFractionDigits)))
     }
 
     static func loadUnit(_ value: Double?, unit: WeightUnit = Fmt.unit) -> String {

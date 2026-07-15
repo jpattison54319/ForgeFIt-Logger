@@ -67,7 +67,7 @@ public enum ExportMapper {
         let exportFolders = folders
             .filter { $0.deletedAt == nil }
             .sorted { ($0.parentID == nil ? 0 : 1, $0.position) < ($1.parentID == nil ? 0 : 1, $1.position) }
-            .map { ExportRoutineFolder(id: $0.id, name: $0.name, position: $0.position, parentID: $0.parentID) }
+            .map { ExportRoutineFolder(id: $0.id, name: $0.name, position: $0.position, parentID: $0.parentID, archivedAt: $0.archivedAt) }
 
         let exportRoutines = routines
             .filter { $0.deletedAt == nil }
@@ -79,6 +79,7 @@ public enum ExportMapper {
                     notes: routine.notes,
                     folderID: routine.folderID,
                     position: routine.position,
+                    archivedAt: routine.archivedAt,
                     exercises: routine.exercises
                         .sorted { $0.position < $1.position }
                         .map { exercise in

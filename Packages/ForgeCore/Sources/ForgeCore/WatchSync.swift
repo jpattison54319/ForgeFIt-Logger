@@ -243,6 +243,12 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
 /// Rolling health metrics from the watch's workout session. The final values
 /// are stored on the workout itself so the user can reflect on them later.
 public struct WatchLiveMetrics: Codable, Sendable, Equatable {
+    /// A live HR value older than this is a sensor/session gap, not a current
+    /// reading. Workout sessions normally deliver wrist samples every few
+    /// seconds; 15 seconds leaves room for HealthKit batching without letting
+    /// a frozen value masquerade as live.
+    public static let heartRateFreshnessInterval: TimeInterval = 15
+
     public var heartRate: Int?
     public var avgHR: Int?
     public var maxHR: Int?
@@ -252,6 +258,8 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
     public var distanceMeters: Double?
     /// Seconds spent in each of the 5 HR zones.
     public var hrZoneSeconds: [Int]
+    /// Time of the heart-rate sample when `heartRate` is present. Producers
+    /// without HR use their packet timestamp instead.
     public var asOf: Date
 
     public init(
@@ -270,6 +278,12 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         self.distanceMeters = distanceMeters
         self.hrZoneSeconds = hrZoneSeconds
         self.asOf = asOf
+    }
+
+    public func freshHeartRate(at date: Date = Date()) -> Int? {
+        guard let heartRate,
+              date.timeIntervalSince(asOf) <= Self.heartRateFreshnessInterval else { return nil }
+        return heartRate
     }
 }
 

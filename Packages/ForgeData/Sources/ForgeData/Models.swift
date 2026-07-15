@@ -68,6 +68,13 @@ public final class RoutineFolderModel {
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
+    /// Hidden-but-kept, distinct from `deletedAt`: an archived folder vanishes
+    /// from every active surface yet keeps its structure (children stay
+    /// linked) so restoring it rebuilds the cycle intact. A whole archived
+    /// subtree shares ONE timestamp — that identity is what "restore the
+    /// folder" uses to bring back exactly what was archived with it.
+    /// Additive-optional for CloudKit.
+    public var archivedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -77,7 +84,8 @@ public final class RoutineFolderModel {
         parentID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        deletedAt: Date? = nil
+        deletedAt: Date? = nil,
+        archivedAt: Date? = nil
     ) {
         self.id = id
         self.userID = userID
@@ -87,6 +95,7 @@ public final class RoutineFolderModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+        self.archivedAt = archivedAt
     }
 }
 
@@ -326,6 +335,11 @@ public final class RoutineModel {
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
+    /// Hidden-but-kept, distinct from `deletedAt`: hidden from every active
+    /// surface (lists, Home, watch, quick actions) but restorable. Carries the
+    /// owning folder's stamp when archived as part of a folder — see
+    /// `RoutineFolderModel.archivedAt`. Additive-optional for CloudKit.
+    public var archivedAt: Date?
     // CloudKit requires relationships to be optional; the optional storage is
     // private and the public face stays non-optional. `originalName` keeps
     // existing local stores migrating in place.
@@ -347,6 +361,7 @@ public final class RoutineModel {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
+        archivedAt: Date? = nil,
         exercises: [RoutineExerciseModel] = []
     ) {
         self.id = id
@@ -359,6 +374,7 @@ public final class RoutineModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+        self.archivedAt = archivedAt
         self.exercises = exercises
     }
 }

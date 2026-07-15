@@ -75,6 +75,37 @@ struct ProgressionPlannerTests {
         return workout
     }
 
+    // MARK: Parked (product default while the criteria redesign is open)
+
+    /// The park lock-in: with the DEFAULT arguments (product call sites), a
+    /// scenario that would earn an increase changes nothing — no advanced
+    /// targets, no suggestion rows, an empty preview. Preview == start holds
+    /// in the parked state too, trivially.
+    @Test func parkedDefaultLeavesTargetsAloneAndRecordsNothing() throws {
+        let (container, context) = try TestStore.make()
+        let exerciseID = UUID()
+        let exercise = makeExercise(id: exerciseID)
+        context.insert(exercise)
+        let routine = makeRoutine(exerciseID: exerciseID)
+        context.insert(routine)
+        let lastWeightKg = WeightUnit.lb.kilograms(fromDisplayValue: 100)
+        completedHistoryWorkout(exerciseID: exerciseID, weight: lastWeightKg, reps: 10, in: context)
+        try context.save()
+
+        let workout = startWorkout(routine: routine, in: context)
+        let routineWeights = workout.exercises.flatMap(\.sets).map(\.weight)
+
+        #expect(ProgressionPlanner.isParked, "Product default is parked until the criteria redesign lands.")
+        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context)
+        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context)
+
+        #expect(previewed.isEmpty)
+        #expect(workout.exercises.flatMap(\.sets).map(\.weight) == routineWeights)
+        let suggestions = (try? context.fetch(FetchDescriptor<ProgressionSuggestionModel>())) ?? []
+        #expect(suggestions.isEmpty)
+        _ = container
+    }
+
     // MARK: (a) preview targets == what apply() writes, external increase
 
     @Test func previewTargetsMatchApplyForExternalIncrease() throws {
@@ -91,8 +122,8 @@ struct ProgressionPlannerTests {
 
         let workout = startWorkout(routine: routine, in: context)
 
-        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context)
-        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context)
+        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context, parked: false)
+        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context, parked: false)
 
         let plan = try #require(previewed.first)
         #expect(previewed.count == 1)
@@ -132,8 +163,8 @@ struct ProgressionPlannerTests {
         let beforeReps = workout.exercises[0].sets.map(\.reps)
         let beforeWeights = workout.exercises[0].sets.map(\.weight)
 
-        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context)
-        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context)
+        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context, parked: false)
+        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context, parked: false)
 
         let plan = try #require(previewed.first)
         #expect(plan.suggestion.kind == .addReps)
@@ -168,11 +199,13 @@ struct ProgressionPlannerTests {
 
         let previewed = ProgressionPlanner.preview(
             routine: routine, exercises: [exercise], in: context,
-            heldExerciseIDs: [exerciseID], holdReasons: [exerciseID: reason]
+            heldExerciseIDs: [exerciseID], holdReasons: [exerciseID: reason],
+            parked: false
         )
         ProgressionPlanner.apply(
             to: workout, routine: routine, exercises: [exercise], in: context,
-            heldExerciseIDs: [exerciseID], holdReasons: [exerciseID: reason]
+            heldExerciseIDs: [exerciseID], holdReasons: [exerciseID: reason],
+            parked: false
         )
 
         let plan = try #require(previewed.first)
@@ -208,8 +241,8 @@ struct ProgressionPlannerTests {
 
         let workout = startWorkout(routine: routine, in: context)
 
-        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context)
-        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context)
+        let previewed = ProgressionPlanner.preview(routine: routine, exercises: [exercise], in: context, parked: false)
+        ProgressionPlanner.apply(to: workout, routine: routine, exercises: [exercise], in: context, parked: false)
 
         #expect(previewed.isEmpty)
         let suggestions = try context.fetch(FetchDescriptor<ProgressionSuggestionModel>())

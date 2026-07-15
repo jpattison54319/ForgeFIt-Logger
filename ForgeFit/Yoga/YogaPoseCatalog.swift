@@ -27,8 +27,8 @@ struct YogaPoseSeed: Decodable {
     let unilateral: Bool
     let difficulty: String
     let defaultHoldSeconds: Int
-    /// SF Symbol used until dedicated line-art ships; the art pipeline looks
-    /// for an asset named `yoga_<slug>` first and falls back to this.
+    /// Final fallback when neither a bundled instructor photo nor authored
+    /// line art is available.
     let symbol: String
     let cues: Cues
     /// Seconds per breath phase, for spoken "inhale… exhale" pacing.
@@ -98,10 +98,9 @@ enum YogaPoseCatalog {
         return model
     }
 
-    /// Slugs of poses that ship with a real illustration. The bundled catalog
-    /// only carries poses we can show properly, so this currently equals the
-    /// full pose list — but it's the single source of truth for "do we have
-    /// art for this pose," used to prune poses dropped from the catalog.
+    /// Slugs of poses that ship with complete female and male instructor art.
+    /// The bundled catalog only carries poses we can show properly, so this
+    /// currently equals the full pose list and drives stale-pose pruning.
     static var catalogSlugs: Set<String> { Set(load().map(\.slug)) }
 
     /// Remove yoga poses that used to be seeded but are no longer in the
@@ -203,8 +202,8 @@ enum YogaPoseCatalog {
             set(\.isUnilateral, seed.unilateral)
             set(\.difficulty, seed.difficulty)
             set(\.defaultHoldSeconds, seed.defaultHoldSeconds)
-            // "yoga/<slug>" both links the row back to this catalog and maps
-            // to the future art asset name (yoga_<slug>).
+            // "yoga/<slug>" links the row back to this catalog and its
+            // instructor-specific bundled image resources.
             set(\.mediaSlug, idNamespace + seed.slug)
             set(\.instructions, seed.cues.entry + seed.cues.hold + [seed.cues.exit])
             if model.defaultWeightMode != .bodyweight {

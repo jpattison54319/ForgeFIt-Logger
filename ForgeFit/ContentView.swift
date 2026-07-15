@@ -70,6 +70,17 @@ struct ContentView: View {
     @State private var yogaHub = YogaFlowRunnerHub.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
+    /// Mirrors the quick-action fan's open state (via `onExpandedChange`) so
+    /// the shell can show the tap-outside scrim behind it.
+    @State private var quickActionsExpanded = false
+    /// Bumped by a scrim tap to ask the fan to collapse itself.
+    @State private var quickActionsCollapseSignal = 0
+    /// Bumped when the editor dismisses (and on account reset) so the bubble
+    /// re-reads its store — the dotted preference key defeats UserDefaults
+    /// KVO, so @AppStorage-style live observation can't do this.
+    @State private var quickActionsReloadToken = 0
+    @State private var showQuickActionsEditor = false
+    @State private var showLogWeightSheet = false
     @State private var cleanedOnboardingSlate = false
     @State private var lastHealthWorkoutImportAt: Date?
     @State private var workoutCountReactionTask: Task<Void, Never>?
@@ -242,6 +253,35 @@ struct ContentView: View {
             // doing that synchronously stalls the dismiss/pop animation the user
             // is watching (first delete used to lag and drop its dismissal).
             .onChange(of: completedWorkoutCount) { handleCompletedWorkoutCountChange() }
+            // Quick-action presentations live on this handler layer, not on
+            // `presentedShell`'s already-at-budget modifier expression. Theme
+            // is pinned explicitly, mirroring the onboarding cover.
+            .sheet(isPresented: $showLogWeightSheet) {
+                LogWeightSheet()
+                    .environment(\.theme, activeTheme)
+                    .preferredColorScheme(resolvedColorScheme)
+            }
+            .fullScreenCover(
+                isPresented: $showQuickActionsEditor,
+                onDismiss: { quickActionsReloadToken += 1 }
+            ) {
+                quickActionsEditorCover
+            }
+    }
+
+    private var quickActionsEditorCover: some View {
+        NavigationStack {
+            QuickActionsEditorView()
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showQuickActionsEditor = false }
+                            .font(.bodyStrong)
+                            .accessibilityIdentifier("quick-actions-editor-done")
+                    }
+                }
+        }
+        .environment(\.theme, activeTheme)
+        .preferredColorScheme(resolvedColorScheme)
     }
 
     private var shellRealtimeHandlers: some View {
@@ -280,7 +320,15 @@ struct ContentView: View {
             tabScreens
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            quickActionsScrim
+
             VStack(spacing: Space.sm) {
+                // The quick-action bubble and the mini bar never coexist: an
+                // active workout owns the band above the tab bar, and most
+                // bubble actions are workout starts anyway.
+                if activeWorkout == nil {
+                    quickActionsBubbleRow
+                }
                 if let activeWorkout {
                     MiniWorkoutBar(
                         workout: activeWorkout,
@@ -303,6 +351,48 @@ struct ContentView: View {
             // gets normal keyboard avoidance/insetting.
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
+    }
+
+    /// Dimmed tap-catcher behind the open quick-action fan: above the tab
+    /// screens, below the bar stack, so a background tap collapses the fan
+    /// while the tab bar stays undimmed and usable.
+    @ViewBuilder
+    private var quickActionsScrim: some View {
+        if quickActionsExpanded {
+            Color.black.opacity(0.18)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { quickActionsCollapseSignal += 1 }
+                .transition(.opacity)
+                .accessibilityLabel("Dismiss quick actions")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier("quick-actions-scrim")
+        }
+    }
+
+    /// Bottom-trailing slot for the bubble, one row above the tab bar. The
+    /// transparent remainder of the row has no background or content shape,
+    /// so taps left of the trigger fall through to the tab screens.
+    private var quickActionsBubbleRow: some View {
+        QuickActionsBubble(
+            routines: routines,
+            exercises: exercises,
+            setupNotes: setupNotes,
+            collapseSignal: quickActionsCollapseSignal,
+            reloadToken: quickActionsReloadToken,
+            onExpandedChange: { expanded in
+                withAnimation(.easeInOut(duration: 0.2)) { quickActionsExpanded = expanded }
+            },
+            onOpenEditor: {
+                // Long-press works expanded too — retract the fan behind the
+                // incoming editor so dismissal never lands on a stale fan.
+                quickActionsCollapseSignal += 1
+                showQuickActionsEditor = true
+            },
+            onLogBodyweight: { showLogWeightSheet = true }
+        )
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, Space.xl)
     }
 
     // Keep-resident tab host. Previously a `switch`, which is `_ConditionalContent`
@@ -457,7 +547,7 @@ struct ContentView: View {
         case "start":
             let routineID = url.pathComponents.dropFirst().first.flatMap(UUID.init)
             if let routineID,
-               let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && !$0.exercises.isEmpty }) {
+               let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }) {
                 appState.requestStart {
                     _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
                     appState.showingLogger = true
@@ -538,6 +628,10 @@ struct ContentView: View {
             IntervalRunnerHub.shared.stop()
             LiveMetricsHub.shared.endSession()
         } else {
+            // A workout can start from the watch or a deep link while the
+            // quick-action fan is open; the bubble unmounts with the fan, so
+            // it can never report the collapse — clear the scrim here.
+            quickActionsExpanded = false
             LiveMetricsHub.shared.beginSession()
             // Latch onto a paired heart-rate monitor (Garmin broadcast /
             // strap) for the session; no-op when none is remembered.
@@ -1024,6 +1118,7 @@ struct ContentView: View {
         appState.selectedTab = .home
         appState.showingLogger = false
         appState.pendingWorkoutStart = nil
+        quickActionsReloadToken += 1
         cleanedOnboardingSlate = false
         lastHealthWorkoutImportAt = nil
         showOnboarding = true

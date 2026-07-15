@@ -134,12 +134,15 @@ public struct ExportRoutineFolder: Codable, Sendable {
     /// Folders nest one level: a top-level folder with children is a
     /// macrocycle, its children are mesocycles.
     public var parentID: UUID?
+    /// Present when the folder is archived (hidden but kept). Additive.
+    public var archivedAt: Date?
 
-    public init(id: UUID, name: String, position: Int, parentID: UUID? = nil) {
+    public init(id: UUID, name: String, position: Int, parentID: UUID? = nil, archivedAt: Date? = nil) {
         self.id = id
         self.name = name
         self.position = position
         self.parentID = parentID
+        self.archivedAt = archivedAt
     }
 }
 
@@ -149,6 +152,8 @@ public struct ExportRoutine: Codable, Sendable {
     public var notes: String?
     public var folderID: UUID?
     public var position: Int
+    /// Present when the routine is archived (hidden but kept). Additive.
+    public var archivedAt: Date?
     public var exercises: [ExportRoutineExercise]
 
     public init(
@@ -157,6 +162,7 @@ public struct ExportRoutine: Codable, Sendable {
         notes: String? = nil,
         folderID: UUID? = nil,
         position: Int,
+        archivedAt: Date? = nil,
         exercises: [ExportRoutineExercise] = []
     ) {
         self.id = id
@@ -164,6 +170,7 @@ public struct ExportRoutine: Codable, Sendable {
         self.notes = notes
         self.folderID = folderID
         self.position = position
+        self.archivedAt = archivedAt
         self.exercises = exercises
     }
 }

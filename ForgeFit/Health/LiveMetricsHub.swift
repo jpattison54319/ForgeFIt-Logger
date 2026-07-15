@@ -63,8 +63,10 @@ final class LiveMetricsHub {
     }
 
     func updateFromWatch(_ metrics: WatchLiveMetrics) {
-        liveMetrics = metrics
-        source = .appleWatch
+        var current = metrics
+        current.heartRate = metrics.freshHeartRate()
+        liveMetrics = current
+        source = current.heartRate == nil ? .none : .appleWatch
     }
 
     func updateFromBLE(heartRate bpm: Int, at date: Date = Date()) {

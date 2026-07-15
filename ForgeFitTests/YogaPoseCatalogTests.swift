@@ -72,6 +72,21 @@ struct YogaPoseCatalogTests {
         }
     }
 
+    #if canImport(UIKit)
+    /// The catalog promise is stronger than a generic fallback: every pose
+    /// must include a photo for both instructor choices in the app bundle.
+    @Test func everyPoseHasBothInstructorImages() {
+        for pose in YogaPoseCatalog.load() {
+            for instructor in YogaInstructor.allCases {
+                #expect(
+                    YogaPoseImageStore.imageURL(slug: pose.slug, instructor: instructor) != nil,
+                    "\(pose.slug): missing \(instructor.rawValue) instructor image"
+                )
+            }
+        }
+    }
+    #endif
+
     @Test func poseIDsAreNamespacedAndCollisionFree() {
         let poses = YogaPoseCatalog.load()
         var ids = Set<UUID>()

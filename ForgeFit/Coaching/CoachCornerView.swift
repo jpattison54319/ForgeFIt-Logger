@@ -38,7 +38,7 @@ struct CoachCornerView: View {
     }
 
     private var topLevelFolders: [RoutineFolderModel] {
-        allFolders.filter { $0.parentID == nil && $0.deletedAt == nil }.sorted { $0.position < $1.position }
+        allFolders.filter { $0.parentID == nil && $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.position < $1.position }
     }
 
     private var doseContext: RoutineDoseContext? {

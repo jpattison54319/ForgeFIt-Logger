@@ -74,6 +74,8 @@ struct SetBlockView: View {
     let previous: SetModel?
     let showWeight: Bool
     let displayUnit: WeightUnit
+    /// Display-unit jump for the hold-drag quick increment fan.
+    var quickWeightStep: Double = 2.5
     /// Unilateral exercises run the whole block once per limb: the flow
     /// renders twice ("Side 1" → "Side 2"), same weight and micro-rests,
     /// and only the single complete checkbox finishes the set.
@@ -96,6 +98,20 @@ struct SetBlockView: View {
     @State private var editingSide = 1
     @State private var entryText = ""
     @FocusState private var entryFocused: Bool
+
+    /// Raw weight text while the field has focus. Without this, the
+    /// get-formats/set-parses binding erased a trailing decimal point the
+    /// instant it was typed ("62." re-rendered as "62"), making fractional
+    /// loads impossible to enter in blocks.
+    @State private var weightDraft = ""
+    @State private var weightDraftActive = false
+    @FocusState private var weightFocused: Bool
+
+    /// Which side's activation reps field has the keyboard, so the log
+    /// button can hand focus to its field instead of sitting dead when no
+    /// reps are typed yet (the retrofit-to-unilateral path made that
+    /// disabled state read as a bug).
+    @FocusState private var activationFocus: Int?
 
     private var timer: RestTimerController { RestTimerController.shared }
 
@@ -185,6 +201,12 @@ struct SetBlockView: View {
 
     private var headerRow: some View {
         HStack(spacing: Space.sm) {
+            // Leading circle checkbox, identical to every other set row —
+            // the block's old trailing rounded-rect checkmark read as a
+            // different control, and lifters finished blocks without ever
+            // completing them.
+            completeButton
+
             Menu {
                 ForEach(SetType.selectable, id: \.self) { type in
                     Button {
@@ -239,8 +261,6 @@ struct SetBlockView: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Capsule())
             }
-
-            completeButton
         }
     }
 
@@ -259,6 +279,8 @@ struct SetBlockView: View {
 
     /// Checks off the whole block, then lets the logger's shared completion
     /// coordinator apply the same rest and superset rules as every other set.
+    /// Rendered exactly like `SetRow`'s leading circle checkbox — one
+    /// completion control across every set type.
     private var completeButton: some View {
         Button {
             if isDone {
@@ -275,14 +297,15 @@ struct SetBlockView: View {
             onChange()
             if isDone { onCompleted() }
         } label: {
-            Image(systemName: "checkmark")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(isDone ? .white : theme.textTertiary)
-                .frame(width: 34, height: 30)
-                .background(isDone ? theme.success : theme.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                .font(.sectionTitle)
+                .foregroundStyle(isDone ? theme.success : theme.textTertiary)
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())
+        .accessibilityIdentifier("complete-set-\(blockNumber)")
+        .accessibilityLabel(isDone ? "Completed, tap to un-complete" : "Complete set")
     }
 
     // MARK: - Activation set (myo-reps / rest-pause)
@@ -295,13 +318,7 @@ struct SetBlockView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Weight is the implement's — shared across sides, entered once.
             if showWeight && side == 1 {
-                blockField(
-                    text: Binding(
-                        get: { set.weight.map { Fmt.load($0, unit: displayUnit) } ?? "" },
-                        set: { set.weight = Fmt.loadKilograms(from: $0, unit: displayUnit); onChange() }
-                    ),
-                    placeholder: previous?.weight.map { Fmt.load($0, unit: displayUnit) } ?? displayUnit.suffix
-                )
+                weightField
             }
             blockField(
                 text: Binding(
@@ -311,30 +328,77 @@ struct SetBlockView: View {
                 placeholder: activationPlaceholder(side: side),
                 keyboardType: .numberPad
             )
+            .accessibilityIdentifier("activation-reps-\(side)")
+            .focused($activationFocus, equals: side)
+            .quickIncrementable(
+                options: QuickIncrementController.repsOptions(),
+                onBegin: { activationFocus = nil },
+                base: {
+                    // Mirrors the ghost the placeholder shows: side 2 leans
+                    // on side 1, side 1 on last session.
+                    Double(sideReps(side) ?? (side == 2 ? self.set.reps : previous?.reps) ?? 0)
+                },
+                apply: { setSideReps(side, Int($0.rounded())); onChange() }
+            )
             // Log the activation → the first micro-rest starts immediately.
+            // With nothing typed it adopts the ghost the placeholder shows —
+            // the same "as planned" contract as the working-set checkbox —
+            // so a lifter who hit the target logs the activation in one tap.
+            // Never disabled: with no reps AND no ghost it hands focus to the
+            // field instead — a dead-looking no-op here read as a bug when a
+            // set was converted to unilateral mid-workout and side 2 started
+            // empty.
             Button {
-                guard sideReps(side) != nil else { return }
-                timer.start(seconds: microRest, label: miniRestLabel(side: side, count: 1), micro: true, ownerID: set.id)
-                onChange()
+                if sideReps(side) == nil, let ghost = activationGhostReps(side: side) {
+                    setSideReps(side, ghost)
+                    if showWeight && side == 1 && set.weight == nil {
+                        set.weight = previous?.weight
+                    }
+                    logActivation(side: side)
+                } else if sideReps(side) == nil {
+                    activationFocus = side
+                } else {
+                    logActivation(side: side)
+                }
             } label: {
                 Image(systemName: "arrow.down.to.line")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(sideReps(side) == nil ? theme.textTertiary : style.color)
+                    .foregroundStyle(activationLoggable(side: side) ? style.color : theme.textSecondary)
                     .frame(width: 34, height: 30)
-                    .background(style.color.opacity(sideReps(side) == nil ? 0.08 : 0.18))
+                    .background(style.color.opacity(activationLoggable(side: side) ? 0.18 : 0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(PressableButtonStyle())
-            .disabled(sideReps(side) == nil)
+            .accessibilityIdentifier("log-activation-\(side)")
+            .accessibilityLabel(activationAccessibilityLabel(side: side))
         }
     }
 
     /// Side 2 suggests matching side 1's activation; side 1 suggests history.
     private func activationPlaceholder(side: Int) -> String {
-        if side == 2 {
-            return set.reps.map(String.init) ?? "reps"
-        }
-        return previous?.reps.map(String.init) ?? "reps"
+        activationGhostReps(side: side).map(String.init) ?? "reps"
+    }
+
+    /// The ghost the placeholder shows — what the log button adopts when
+    /// nothing is typed. Side 2 mirrors side 1; side 1 leans on last session.
+    private func activationGhostReps(side: Int) -> Int? {
+        side == 2 ? set.reps : previous?.reps
+    }
+
+    /// Typed reps, or a ghost the log button can adopt.
+    private func activationLoggable(side: Int) -> Bool {
+        sideReps(side) != nil || activationGhostReps(side: side) != nil
+    }
+
+    private func activationAccessibilityLabel(side: Int) -> String {
+        if sideReps(side) != nil { return "Log activation and start micro-rest" }
+        if activationGhostReps(side: side) != nil { return "Log activation as planned and start micro-rest" }
+        return "Enter activation reps"
+    }
+
+    private func logActivation(side: Int) {
+        timer.start(seconds: microRest, label: miniRestLabel(side: side, count: 1), micro: true, ownerID: set.id)
+        onChange()
     }
 
     // MARK: - Mini-set pill strip
@@ -346,13 +410,7 @@ struct SetBlockView: View {
                     Text("Weight")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(theme.textSecondary)
-                    blockField(
-                        text: Binding(
-                            get: { set.weight.map { Fmt.load($0, unit: displayUnit) } ?? "" },
-                            set: { set.weight = Fmt.loadKilograms(from: $0, unit: displayUnit); onChange() }
-                        ),
-                        placeholder: previous?.weight.map { Fmt.load($0, unit: displayUnit) } ?? displayUnit.suffix
-                    )
+                    weightField
                     Spacer()
                 }
             }
@@ -386,21 +444,14 @@ struct SetBlockView: View {
         }
     }
 
-    /// A confirmed mini-set. Tap-and-hold to adjust when you fell short or
-    /// pushed past the target — or retype it entirely.
+    /// A confirmed mini-set. Tap the number to retype it; touch-and-hold for
+    /// quick ±1 adjustments or removal. Button + context menu instead of a
+    /// `Menu` label on purpose: Menu labels claim the touch on contact
+    /// (press-and-slide selection), so a scroll that began on any pill never
+    /// reached the ScrollView — and pills are most of a block's surface.
     private func miniPill(side: Int, index: Int, reps: Int) -> some View {
-        Menu {
-            Button("+1 rep", systemImage: "plus") { adjustMini(side: side, index: index, by: 1) }
-            Button("−1 rep", systemImage: "minus") { adjustMini(side: side, index: index, by: -1) }
-            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: index) }
-            Divider()
-            Button("Remove", systemImage: "trash", role: .destructive) {
-                var minis = sideMinis(side)
-                minis.remove(at: index)
-                setSideMinis(side, minis)
-                syncClusterReps()
-                onChange()
-            }
+        Button {
+            beginEntry(side: side, editing: index)
         } label: {
             Text("+\(reps)")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -411,14 +462,33 @@ struct SetBlockView: View {
                 .clipShape(Capsule())
                 .overlay(Capsule().strokeBorder(style.color.opacity(0.35), lineWidth: 1))
         }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("+1 rep", systemImage: "plus") { adjustMini(side: side, index: index, by: 1) }
+            Button("−1 rep", systemImage: "minus") { adjustMini(side: side, index: index, by: -1) }
+            Divider()
+            Button("Remove", systemImage: "trash", role: .destructive) {
+                var minis = sideMinis(side)
+                minis.remove(at: index)
+                setSideMinis(side, minis)
+                syncClusterReps()
+                onChange()
+            }
+        }
     }
 
     /// The "next mini-set" pill. First mini-set: opens keyboard entry so the
     /// user logs what they actually got (no forced target). After that, one
-    /// tap repeats the last mini — long-press to type a different number.
+    /// tap repeats the last mini — touch-and-hold to type a different number.
+    /// Button + context menu (not a `Menu` label) so scrolls that start here
+    /// reach the ScrollView.
     private func addMiniPill(side: Int) -> some View {
-        Menu {
-            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
+        Button {
+            if let target = nextMiniTarget(side: side) {
+                appendMini(side: side, target)
+            } else {
+                beginEntry(side: side, editing: Self.newEntryIndex)
+            }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus").font(.system(size: 12, weight: .bold))
@@ -437,12 +507,10 @@ struct SetBlockView: View {
                     style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                 )
             )
-        } primaryAction: {
-            if let target = nextMiniTarget(side: side) {
-                appendMini(side: side, target)
-            } else {
-                beginEntry(side: side, editing: Self.newEntryIndex)
-            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
         }
         .disabled(isDone)
     }
@@ -516,8 +584,14 @@ struct SetBlockView: View {
         let label = goal.map { "+\($0)" }
             ?? (isNext ? nextMiniTarget(side: side).map { "+\($0)" } : nil)
             ?? "+ reps"
-        return Menu {
-            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
+        return Button {
+            if let goal {
+                appendMini(side: side, goal)
+            } else if let target = nextMiniTarget(side: side) {
+                appendMini(side: side, target)
+            } else {
+                beginEntry(side: side, editing: Self.newEntryIndex)
+            }
         } label: {
             Text(label)
                 .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -530,14 +604,10 @@ struct SetBlockView: View {
                         style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                     )
                 )
-        } primaryAction: {
-            if let goal {
-                appendMini(side: side, goal)
-            } else if let target = nextMiniTarget(side: side) {
-                appendMini(side: side, target)
-            } else {
-                beginEntry(side: side, editing: Self.newEntryIndex)
-            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Enter manually", systemImage: "keyboard") { beginEntry(side: side, editing: Self.newEntryIndex) }
         }
         .disabled(isDone || !isNext)
         .accessibilityLabel(goal.map { "Planned mini-set: \($0) reps" } ?? "Planned mini-set")
@@ -636,6 +706,48 @@ struct SetBlockView: View {
     }
 
     // MARK: - Field
+
+    /// The block's one weight entry (myo/rest-pause activation row, or the
+    /// cluster strip header). Shows the raw draft while focused — the model
+    /// still parses per keystroke so dependent UI stays live — and re-formats
+    /// only on blur, so "62.5" survives being typed.
+    private var weightField: some View {
+        blockField(
+            text: Binding(
+                get: { weightFocused && weightDraftActive ? weightDraft : storedWeightText },
+                set: { text in
+                    weightDraft = text
+                    weightDraftActive = true
+                    set.weight = Fmt.loadKilograms(from: text, unit: displayUnit)
+                    onChange()
+                }
+            ),
+            placeholder: previous?.weight.map { Fmt.load($0, unit: displayUnit) } ?? displayUnit.suffix
+        )
+        .focused($weightFocused)
+        .onChange(of: weightFocused) { _, focused in
+            if !focused { weightDraftActive = false }
+        }
+        .quickIncrementable(
+            options: QuickIncrementController.weightOptions(step: quickWeightStep, suffix: displayUnit.shortSuffix),
+            onBegin: { weightFocused = false },
+            base: {
+                let kilograms = self.set.weight ?? previous?.weight
+                return kilograms.map(displayUnit.displayValue(fromKilograms:)) ?? 0
+            },
+            apply: { newDisplay in
+                weightDraftActive = false
+                self.set.weight = displayUnit.kilograms(fromDisplayValue: newDisplay)
+                onChange()
+            }
+        )
+    }
+
+    private var storedWeightText: String {
+        // `self.` required: a computed-var body statement starting with `set`
+        // parses as a setter declaration (the property is named `set`).
+        self.set.weight.map { Fmt.load($0, unit: displayUnit) } ?? ""
+    }
 
     /// Weight fields keep the decimal pad; rep fields must use `.numberPad` —
     /// their setters parse with `Int(...)`, so a stray "." (e.g. "12.")
