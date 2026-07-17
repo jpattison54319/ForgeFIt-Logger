@@ -1,17 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- ForgeFit icon — MARK layer for Icon Composer (transparent canvas).
-       The Anvil-F: anvil face + right-facing horn as the F's top arm, the
-       flared footing as the middle arm, and the anvil's concave throat
-       extended downward as the single vertical stem, landing on a forged
-       foot. One compound path, brand gradient fill (Fresh Mint -> Active
-       Sage). No baked highlights or shadows — the system's Liquid Glass
-       supplies specular, depth, and the dark/tinted/clear modes. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Flat full-bleed composition (default + dark appearances) for the
+       legacy single-size appiconset. No corner mask, no baked gloss — iOS 26
+       masks the corners and applies its default glass treatment to flat
+       icons. Replaced by the Icon Composer .icon when that lands. -->
   <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2129"/>
+      <stop offset="1" stop-color="#0B0E13"/>
+    </linearGradient>
     <linearGradient id="mk" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#3ADFA0"/>
       <stop offset="1" stop-color="#3F9A63"/>
     </linearGradient>
   </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
   <path fill="url(#mk)" d="M260 274 L620 274 A40 40 0 0 1 660 314 L660 362 A40 40 0 0 1 620 402 L260 402 A40 40 0 0 1 220 362 L220 314 A40 40 0 0 1 260 274 Z
     M600 274 L656 274 C724 276 788 296 812 326 C824 340 814 356 794 362 L656 402 L600 402 Z
     M256 402 L424 402 C406 444 404 474 406 534 L406 664 C406 694 418 710 426 726 C434 742 426 754 408 754 L272 754 C254 754 246 742 254 726 C262 710 274 694 274 664 L274 534 C276 474 274 444 256 402 Z
