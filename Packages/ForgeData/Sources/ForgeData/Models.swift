@@ -24,7 +24,8 @@ public enum ForgeDataSchema {
             YogaFlowModel.self,
             CoachingProfileModel.self,
             CoachedProgramModel.self,
-            CoachingWeekOverrideModel.self
+            CoachingWeekOverrideModel.self,
+            SavedInsightModel.self
         ]
     }
 
@@ -448,6 +449,10 @@ public final class RoutineSetModel {
     public var targetRPE: Double?
     public var targetRIR: Int?
     public var targetDurationSeconds: Int?
+    /// Cardio distance target in meters — the peer of `targetDurationSeconds`
+    /// for distance-planned efforts ("row 2000 m"). Plan-store synced; a
+    /// planned distance is training intent, not health data.
+    public var targetDistanceMeters: Double?
     /// Myo-reps plan: how many mini-sets to perform after the activation set.
     /// Reps are deliberately NOT planned — myo minis log whatever the lifter
     /// achieves live.
@@ -469,6 +474,7 @@ public final class RoutineSetModel {
         targetRPE: Double? = nil,
         targetRIR: Int? = nil,
         targetDurationSeconds: Int? = nil,
+        targetDistanceMeters: Double? = nil,
         plannedMiniSetCount: Int? = nil,
         plannedMiniRepsJSON: String? = nil,
         createdAt: Date = Date()
@@ -483,6 +489,7 @@ public final class RoutineSetModel {
         self.targetRPE = targetRPE
         self.targetRIR = targetRIR
         self.targetDurationSeconds = targetDurationSeconds
+        self.targetDistanceMeters = targetDistanceMeters
         self.plannedMiniSetCount = plannedMiniSetCount
         self.plannedMiniRepsJSON = plannedMiniRepsJSON
         self.createdAt = createdAt
@@ -1031,6 +1038,32 @@ public final class SetModel {
         side2Reps != nil || side2MiniRepsJSON != nil
     }
 
+    /// The weight input means a different stored field per mode: external
+    /// load, weight added to bodyweight, or assistance subtracted from
+    /// bodyweight. Every read/write of "the set's weight number" must route
+    /// through this accessor so inputs, "previous" ghosts, watch sync, and
+    /// the volume math (`VolumeMath.effectiveLoad`) agree on the same field —
+    /// writing a non-external set's value into `weight` silently computes
+    /// tonnage as if the raw number were an external load.
+    public var modeWeight: Double? {
+        switch weightMode {
+        case .external: weight
+        case .bodyweightAdded: addedWeight
+        case .bodyweightAssisted: assistanceWeight
+        case .bodyweight: nil
+        }
+    }
+
+    public func setModeWeight(_ value: Double?) {
+        switch weightMode {
+        case .external: weight = value
+        case .bodyweightAdded: addedWeight = value
+        case .bodyweightAssisted: assistanceWeight = value
+        case .bodyweight: break
+        }
+        recomputeDerivedMetrics()
+    }
+
     public func recomputeDerivedMetrics() {
         let entry = domainEntry
         effectiveLoad = VolumeMath.effectiveLoad(entry)
@@ -1114,6 +1147,15 @@ public final class CardioSessionModel {
     public var flexibilityExposureJSON: String?
     /// Number of pose holds completed in a guided class.
     public var posesCompleted: Int?
+    /// Swimming contract (nil on every other modality). Pool length ×
+    /// lengths is the distance source of truth for pool swims; /100 m pace
+    /// and SWOLF are derived from these, never stored. Additive-optional
+    /// for CloudKit.
+    public var poolLengthMeters: Double?
+    public var lengthsCompleted: Int?
+    public var totalStrokes: Int?
+    /// `SwimStrokeStyle` raw value.
+    public var strokeStyleRaw: String?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -1164,6 +1206,10 @@ public final class CardioSessionModel {
         yogaStyleRaw: String? = nil,
         flexibilityExposureJSON: String? = nil,
         posesCompleted: Int? = nil,
+        poolLengthMeters: Double? = nil,
+        lengthsCompleted: Int? = nil,
+        totalStrokes: Int? = nil,
+        strokeStyleRaw: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -1202,6 +1248,10 @@ public final class CardioSessionModel {
         self.yogaStyleRaw = yogaStyleRaw
         self.flexibilityExposureJSON = flexibilityExposureJSON
         self.posesCompleted = posesCompleted
+        self.poolLengthMeters = poolLengthMeters
+        self.lengthsCompleted = lengthsCompleted
+        self.totalStrokes = totalStrokes
+        self.strokeStyleRaw = strokeStyleRaw
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -1795,5 +1845,47 @@ public final class CoachingWeekOverrideModel {
     public var status: CoachingOverrideStatus? {
         get { CoachingOverrideStatus(rawValue: statusRaw) }
         set { statusRaw = newValue?.rawValue ?? "" }
+    }
+}
+
+/// A saved Insights Builder card: the user-authored SHAPE of a comparison —
+/// which metric ids, alignment, lag, filters, and chart — serialized as
+/// versioned `InsightRecipe` JSON. Founder-ruled CloudKit-eligible
+/// (2026-07-15): recipes are configuration, like routine names and plans; the
+/// observations behind them are fetched live on-device and are NEVER stored
+/// here. Keeping the recipe as a JSON payload means recipe evolution never
+/// needs a CloudKit schema migration (interval/yoga plan precedent).
+@Model
+public final class SavedInsightModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// Versioned `InsightRecipe` JSON. Optional for CloudKit; a nil or
+    /// undecodable payload renders as an editable "needs attention" card,
+    /// never a crash.
+    public var recipeJSON: String?
+    public var position: Int = 0
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String = "",
+        recipeJSON: String? = nil,
+        position: Int = 0,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.recipeJSON = recipeJSON
+        self.position = position
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }

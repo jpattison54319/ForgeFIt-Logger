@@ -105,6 +105,8 @@ struct DataExportFormatTests {
                     avgPowerWatts: nil, avgCadence: nil, resistanceLevel: nil,
                     inclinePercent: nil, elevationGainMeters: 12, intervalsAutoApplied: false,
                     yogaStyleRaw: nil, posesCompleted: nil,
+                    poolLengthMeters: nil, lengthsCompleted: nil, totalStrokes: nil,
+                    strokeStyleRaw: nil,
                     createdAt: Date(timeIntervalSince1970: 1_780_001_800),
                     updatedAt: Date(timeIntervalSince1970: 1_780_002_400),
                     deletedAt: nil, splits: [], routePoints: []
@@ -136,11 +138,56 @@ struct DataExportFormatTests {
         #expect(fields[16] == "102.5")
 
         let cardio = parse(String(lines[3]))
+        #expect(cardio.count == WorkoutCSVExport.header.count)
         #expect(cardio[9] == "cardio")
         #expect(cardio[10] == "Treadmill Run") // anchor exercise name
-        #expect(cardio[29] == "run")
-        #expect(cardio[30] == "1930")
-        #expect(cardio[37] == "162")           // cardio_avg_hr from appendix
+        #expect(cardio[col("modality")] == "run")
+        #expect(cardio[col("distance_m")] == "1930")
+        #expect(cardio[col("cardio_avg_hr")] == "162") // from appendix
+    }
+
+    /// Every machine readout and swim-contract column carries its session
+    /// value — these are training data, so they ride the row directly, not
+    /// the health appendix.
+    @Test func machineAndSwimColumnsCarryThroughWorkoutsCSV() throws {
+        var workout = sampleWorkout()
+        workout.cardioSessions = [
+            BackupCardioSession(
+                id: UUID(), workoutExerciseID: nil, modality: "swim",
+                startedAt: Date(timeIntervalSince1970: 1_780_001_800), liveStartedAt: nil,
+                endedAt: Date(timeIntervalSince1970: 1_780_003_600), sourceDevice: nil,
+                durationSeconds: 1800, distanceMeters: 1000, effort: 6,
+                avgPaceSecondsPerKm: nil, split500mSeconds: 118.5, strokeRate: 26,
+                avgPowerWatts: 190, avgCadence: 88, resistanceLevel: 7,
+                inclinePercent: 2.5, elevationGainMeters: nil, intervalsAutoApplied: false,
+                yogaStyleRaw: nil, posesCompleted: nil,
+                poolLengthMeters: 25, lengthsCompleted: 40, totalStrokes: 720,
+                strokeStyleRaw: "freestyle",
+                createdAt: Date(timeIntervalSince1970: 1_780_001_800),
+                updatedAt: Date(timeIntervalSince1970: 1_780_003_600),
+                deletedAt: nil, splits: [], routePoints: []
+            ),
+        ]
+        let csv = WorkoutCSVExport.csv(workouts: [workout], health: ExportHealthMetrics())
+        let lines = csv.split(separator: "\n", omittingEmptySubsequences: false)
+        let fields = parse(String(try #require(lines.first { $0.contains(",cardio,") })))
+
+        #expect(fields[col("split_500m_seconds")] == "118.5")
+        #expect(fields[col("avg_power_watts")] == "190")
+        #expect(fields[col("avg_cadence")] == "88")
+        #expect(fields[col("stroke_rate")] == "26")
+        #expect(fields[col("resistance_level")] == "7")
+        #expect(fields[col("incline_percent")] == "2.5")
+        #expect(fields[col("pool_length_m")] == "25")
+        #expect(fields[col("lengths_completed")] == "40")
+        #expect(fields[col("total_strokes")] == "720")
+        #expect(fields[col("stroke_style")] == "freestyle")
+        // No appendix entry: the health columns stay empty.
+        #expect(fields[col("cardio_avg_hr")].isEmpty)
+    }
+
+    private func col(_ name: String) -> Int {
+        WorkoutCSVExport.header.firstIndex(of: name)!
     }
 
     @Test func healthColumnsEmptyWithoutAppendixEntry() {

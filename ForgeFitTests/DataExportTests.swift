@@ -26,6 +26,18 @@ struct DataExportTests {
         session.distanceMeters = 2000
         session.endedAt = .now
         session.avgHR = Self.sentinelAvgHR
+        // Machine readouts + swim contract: training data, one of each kind.
+        session.split500mSeconds = 128.5
+        session.strokeRate = 26
+        session.avgPowerWatts = 185
+        session.avgCadence = 88
+        session.resistanceLevel = 7
+        session.inclinePercent = 2.5
+        session.elevationGainMeters = 42
+        session.poolLengthMeters = 25
+        session.lengthsCompleted = 40
+        session.totalStrokes = 720
+        session.strokeStyleRaw = "freestyle"
         let workout = WorkoutModel(userID: userID, exercises: [we], cardioSessions: [session])
         workout.title = "Push Day"
         workout.endedAt = .now
@@ -74,6 +86,23 @@ struct DataExportTests {
         let sessionID = try #require(workout.cardioSessions.first?.id.uuidString)
         #expect(file.healthMetrics.cardioSessions[sessionID]?.avgHR == Self.sentinelAvgHR)
 
+        // Machine readouts and pool metadata are training data: they ride
+        // the training log itself, not the appendix.
+        let exportedSession = try #require(
+            file.trainingLog.workouts.first { $0.id == workout.id }?.cardioSessions.first
+        )
+        #expect(exportedSession.split500mSeconds == 128.5)
+        #expect(exportedSession.strokeRate == 26)
+        #expect(exportedSession.avgPowerWatts == 185)
+        #expect(exportedSession.avgCadence == 88)
+        #expect(exportedSession.resistanceLevel == 7)
+        #expect(exportedSession.inclinePercent == 2.5)
+        #expect(exportedSession.elevationGainMeters == 42)
+        #expect(exportedSession.poolLengthMeters == 25)
+        #expect(exportedSession.lengthsCompleted == 40)
+        #expect(exportedSession.totalStrokes == 720)
+        #expect(exportedSession.strokeStyleRaw == "freestyle")
+
         // …and NEVER inside the reused backup schema: re-encode just the
         // trainingLog and prove the sentinel bytes aren't there.
         let trainingLogBytes = try BackupMapper.encode(file.trainingLog)
@@ -104,6 +133,7 @@ struct DataExportTests {
         #expect(!workoutsCSV.contains("Ghost Workout Tombstone"))   // tombstone dropped
         #expect(workoutsCSV.contains(",set,"))
         #expect(workoutsCSV.contains(",cardio,"))
+        #expect(workoutsCSV.contains("freestyle"))                  // swim contract column
 
         #expect(routinesCSV.hasPrefix(RoutineCSVExport.header.joined(separator: ",")))
         #expect(routinesCSV.contains("Strength Block,Meso 1,Push A"))

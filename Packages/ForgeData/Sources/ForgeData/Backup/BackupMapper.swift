@@ -134,6 +134,10 @@ public enum BackupMapper {
             intervalsAutoApplied: session.intervalsAutoApplied,
             yogaStyleRaw: session.yogaStyleRaw,
             posesCompleted: session.posesCompleted,
+            poolLengthMeters: session.poolLengthMeters,
+            lengthsCompleted: session.lengthsCompleted,
+            totalStrokes: session.totalStrokes,
+            strokeStyleRaw: session.strokeStyleRaw,
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             deletedAt: session.deletedAt,
@@ -289,6 +293,10 @@ public enum BackupMapper {
             session.intervalsAutoApplied = backupSession.intervalsAutoApplied
             session.yogaStyleRaw = backupSession.yogaStyleRaw
             session.posesCompleted = backupSession.posesCompleted
+            session.poolLengthMeters = backupSession.poolLengthMeters
+            session.lengthsCompleted = backupSession.lengthsCompleted
+            session.totalStrokes = backupSession.totalStrokes
+            session.strokeStyleRaw = backupSession.strokeStyleRaw
             session.createdAt = backupSession.createdAt
             session.updatedAt = backupSession.updatedAt
             session.deletedAt = backupSession.deletedAt

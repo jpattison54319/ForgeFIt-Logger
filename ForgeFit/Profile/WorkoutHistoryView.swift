@@ -402,13 +402,10 @@ struct WorkoutHistoryView: View {
     private var customRangeSheet: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             Text("Custom range").font(.rowValue).foregroundStyle(theme.textPrimary)
-            DatePicker("From", selection: $customStart, displayedComponents: .date)
-            DatePicker("To", selection: $customEnd, displayedComponents: .date)
-            Text("Whole days, in your current time zone. Reversed dates are swapped for you.")
-                .font(.system(size: 13)).foregroundStyle(theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            DatePicker("From", selection: $customStart, in: ...customEnd, displayedComponents: .date)
+            DatePicker("To", selection: $customEnd, in: customStart..., displayedComponents: .date)
             PrimaryButton(title: "Apply") {
-                query.date = .custom(start: min(customStart, customEnd), end: max(customStart, customEnd))
+                query.date = .custom(start: customStart, end: customEnd)
                 showCustomRange = false
             }
             SecondaryButton(title: "Cancel") { showCustomRange = false }

@@ -358,6 +358,14 @@ enum SleepMetricPresentation {
         return duration(minutes)
     }
 
+    /// Fraction of the personal sleep need met, for the tile's progress bar.
+    /// Nil when the night is excluded, untracked, or the need is unknown.
+    static func progress(for metric: RecoveryEngine.DailyHealthMetric?) -> Double? {
+        guard let metric, metric.sleepOverrideStatus != .notTracked,
+              let minutes = metric.sleepTotalMinutes, metric.sleepNeedMinutes > 0 else { return nil }
+        return min(1, max(0, Double(minutes) / Double(metric.sleepNeedMinutes)))
+    }
+
     static func caption(for metric: RecoveryEngine.DailyHealthMetric?) -> String {
         guard let metric else { return "Connect Apple Health" }
         if let status = metric.sleepOverrideStatus {

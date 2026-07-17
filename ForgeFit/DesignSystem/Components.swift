@@ -220,8 +220,10 @@ struct SegmentedPills<T: Hashable>: View {
                             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 9)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .glassEffect(
                         isSelected ? .regular.tint(theme.accent).interactive() : .regular.interactive(),
                         in: Capsule()
@@ -264,6 +266,9 @@ struct StatColumn: View {
     let value: String
     var valueColor: Color? = nil
     var alignment: HorizontalAlignment = .leading
+    /// Opt-in rolling-digit morph for values that change while visible (live
+    /// logger stats). Off by default: most columns render once per screen.
+    var animatesValue: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -281,6 +286,8 @@ struct StatColumn: View {
                 .foregroundStyle(valueColor ?? theme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(animatesValue ? .numericText() : .identity)
+                .animation(animatesValue ? Motion.stateChange : nil, value: value)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
         .accessibilityElement(children: .ignore)

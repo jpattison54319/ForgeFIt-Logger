@@ -47,7 +47,7 @@ struct RoutineDetailView: View {
                 }
 
                 if sortedExercises.isEmpty {
-                    EmptyStateCard(title: "No exercises", message: "Tap Edit Routine to add exercises.", systemImage: "dumbbell")
+                    EmptyStateCard(title: "No exercises", message: "Build this routine from your exercise library.", systemImage: "dumbbell")
                 } else {
                     ForEach(sortedExercises) { re in
                         RoutineExerciseSummary(
@@ -108,6 +108,7 @@ struct RoutineDetailView: View {
                         if let last = series.last {
                             Text(metric == .volume ? Fmt.volume(last.value) : "\(Int(last.value)) \(metric.rawValue.lowercased())")
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
+                                .contentTransition(.numericText())
                             Text(last.date.formatted(.dateTime.month(.abbreviated).day()))
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
                         } else {
@@ -119,7 +120,12 @@ struct RoutineDetailView: View {
                 }
 
                 if series.count >= 2 {
+                    // `.id(metric)` swaps the chart identity per metric so the
+                    // change reads as a crossfade, not a path morph between
+                    // unrelated series.
                     LineTrendChart(points: series)
+                        .id(metric)
+                        .transition(.opacity)
                 } else {
                     Text("Complete this routine a few times to chart your progress.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
@@ -128,6 +134,7 @@ struct RoutineDetailView: View {
 
                 SegmentedPills(options: TrainingAnalytics.Metric.allCases, title: { $0.rawValue }, selection: $metric)
             }
+            .animation(Motion.stateChange, value: metric)
         }
     }
 

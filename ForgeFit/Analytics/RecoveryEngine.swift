@@ -631,7 +631,7 @@ struct RecoveryEngine {
                 chips.append(ReasonChip(text: "Sleep data looks partial", tone: .neutral))
                 signals.append(Signal(name: "Sleep", systemImage: "bed.double.fill",
                                       value: "~\(minutesLabel(sleep))",
-                                      detail: "Only part of the night tracked — tap to correct", connected: false))
+                                      detail: "Only part of the night tracked", connected: false))
             } else if let sleep = current.sleepTotalMinutes {
                 availableParts += 1
                 confidenceParts += 1

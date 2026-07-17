@@ -60,6 +60,12 @@ If you use the ForgeFit watch app, workout data syncs directly between your
 watch and iPhone using Apple's encrypted device-to-device channel
 (WatchConnectivity). It does not pass through any server.
 
+## Bluetooth heart-rate monitors
+
+If you pair a Bluetooth heart-rate monitor, its readings are used live during
+your workout and stored with the session on your device, like any other
+workout metric. The pairing is remembered only on that device.
+
 ## Data export
 
 Settings → Export data creates JSON or CSV files of your workouts and routines
@@ -84,4 +90,4 @@ stored or synced. Any changes will be documented here first.
 
 ## Contact
 
-Questions? Contact: [ADD SUPPORT EMAIL BEFORE PUBLISHING]
+Questions? Contact the developer through the app's App Store listing.

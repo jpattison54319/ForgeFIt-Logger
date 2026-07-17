@@ -29,6 +29,7 @@ enum AccountResetService {
     }
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
+        try deleteAll(SavedInsightModel.self, in: context)
         try deleteAll(CoachingWeekOverrideModel.self, in: context)
         try deleteAll(CoachedProgramModel.self, in: context)
         try deleteAll(CoachingProfileModel.self, in: context)

@@ -310,7 +310,7 @@ struct WatchExercisesPage: View {
         switch state {
         case .running: "Recording…"
         case .completed: "Completed"
-        default: "Tap to start"
+        default: "Ready"
         }
     }
 
@@ -330,7 +330,8 @@ struct WatchExercisesPage: View {
 }
 
 /// One exercise's sets: tap a row to check it off (mirrors to the phone
-/// instantly). Weight × reps are shown as logged on the phone.
+/// instantly); the trailing pencil (or a long-press, as a shortcut) edits
+/// weight × reps. Values are shown as logged on the phone.
 struct WatchSetListView: View {
     let store: WatchStore
     let exerciseID: UUID
@@ -350,41 +351,55 @@ struct WatchSetListView: View {
         List {
             if let exercise {
                 ForEach(exercise.sets) { set in
-                    Button {
-                        store.toggleSet(set, in: exercise)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(set.label.isEmpty ? "–" : set.label)
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
-                                .frame(width: 26, alignment: .leading)
-                            Text(setDescription(set))
-                                .font(.system(size: 15, weight: .semibold))
-                                .monospacedDigit()
-                            Spacer()
-                            Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18))
-                                .foregroundStyle(set.completed ? WTheme.success : .secondary)
+                    HStack(spacing: 6) {
+                        Button {
+                            store.toggleSet(set, in: exercise)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(set.label.isEmpty ? "–" : set.label)
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
+                                    .frame(width: 26, alignment: .leading)
+                                Text(setDescription(set))
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                                Spacer()
+                                Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(set.completed ? WTheme.success : .secondary)
+                            }
                         }
-                    }
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        .buttonStyle(.plain)
+                        // Long-press stays as a shortcut — the pencil is the
+                        // discoverable path.
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                                editingSet = set
+                            }
+                        )
+                        // Double-tap (watch hand gesture) completes the NEXT
+                        // uncompleted set — mid-set, hands on the bar, no screen
+                        // touch needed (T3-5).
+                        .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
+                        Button {
                             editingSet = set
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(WTheme.accent)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
                         }
-                    )
-                    // Double-tap (watch hand gesture) completes the NEXT
-                    // uncompleted set — mid-set, hands on the bar, no screen
-                    // touch needed (T3-5).
-                    .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit weight and reps")
+                    }
                     .listRowBackground(
                         (set.completed ? WTheme.success.opacity(0.12) : WTheme.surface)
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                     )
                 }
-                Text("Long-press a set to edit weight & reps")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
             }
         }
         .navigationTitle(exercise?.name ?? "Sets")
@@ -400,7 +415,7 @@ struct WatchSetListView: View {
         let weight = set.weight.map { "\(WFmt.weight($0))\(unit)" }
         let reps = set.reps.map { "× \($0)" }
         let parts = [weight, reps].compactMap { $0 }
-        return parts.isEmpty ? "Tap to log" : parts.joined(separator: " ")
+        return parts.isEmpty ? "—" : parts.joined(separator: " ")
     }
 }
 

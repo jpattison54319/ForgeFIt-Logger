@@ -9,6 +9,7 @@ struct RoutineEditorView: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
@@ -341,19 +342,21 @@ struct RoutineEditorView: View {
     }
 
     private func add(_ exercise: ExerciseLibraryModel) {
-        let rowExercise = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
-        let re = RoutineExerciseModel(
-            userID: ForgeFitDemo.userID,
-            exerciseID: rowExercise.id,
-            position: routine.exercises.count
-        )
-        modelContext.insert(re)
-        re.sets = defaultTargetSets(for: rowExercise)
-        if exercise.isYoga {
-            re.yogaFlowJSON = YogaFlowPlan.fromSelectedPoses([exercise])?.encodedJSON()
+        withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
+            let rowExercise = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
+            let re = RoutineExerciseModel(
+                userID: ForgeFitDemo.userID,
+                exerciseID: rowExercise.id,
+                position: routine.exercises.count
+            )
+            modelContext.insert(re)
+            re.sets = defaultTargetSets(for: rowExercise)
+            if exercise.isYoga {
+                re.yogaFlowJSON = YogaFlowPlan.fromSelectedPoses([exercise])?.encodedJSON()
+            }
+            routine.exercises.append(re)
+            save()
         }
-        routine.exercises.append(re)
-        save()
     }
 
     /// The starter target rows an exercise gets when added: one rep set for
@@ -375,9 +378,11 @@ struct RoutineEditorView: View {
     }
 
     private func remove(_ re: RoutineExerciseModel) {
-        modelContext.delete(re)
-        for (i, e) in sortedExercises.filter({ $0.id != re.id }).enumerated() { e.position = i }
-        save()
+        withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+            modelContext.delete(re)
+            for (i, e) in sortedExercises.filter({ $0.id != re.id }).enumerated() { e.position = i }
+            save()
+        }
     }
 
     private func save() {
@@ -727,7 +732,7 @@ private struct ExerciseEditRow: View {
             return "Choose poses or a class"
         }
         if let hold = exercise?.defaultHoldSeconds {
-            return "Single pose · \(hold)s hold — tap to build a flow"
+            return "Single pose · \(hold)s hold"
         }
         return "Build a flow"
     }
@@ -790,12 +795,15 @@ private struct ExerciseEditRow: View {
     private func cardioGoalLabel(_ plan: IntervalPlan?) -> String {
         if let plan, plan.hasSteps {
             let workCount = plan.steps.count { $0.kind == .work }
-            return "Intervals: \(workCount)× · \(Fmt.durationShort(plan.totalSeconds)) total"
+            let tail = plan.hasDistanceSteps
+                ? "\(IntervalPlan.metricDistance(plan.totalDistanceMeters)) of reps"
+                : "\(Fmt.durationShort(plan.totalSeconds)) total"
+            return "Intervals: \(workCount)× · \(tail)"
         }
-        if let zone = plan?.hrZoneTarget {
-            return "Zone \(zone) lock"
+        if let plan, plan.isMeaningful {
+            return plan.displaySummary
         }
-        return "Add zone lock or intervals"
+        return "Add goal, zone lock, or intervals"
     }
 
     private func addSet(type: SetType) {
@@ -1164,10 +1172,21 @@ private struct CardioDurationTargetRow: View {
                 get: { set.targetDurationSeconds.map { $0 / 60 } },
                 set: { set.targetDurationSeconds = $0.map { $0 * 60 } }
             ))
+            .accessibilityIdentifier("cardio-target-minutes")
             Text("min")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
-                .frame(width: 36, alignment: .leading)
+            // Duration and distance are peer goals — either, both, or
+            // neither. Distance starts the session with a live goal ring,
+            // never a pre-filled logged distance.
+            OptionalDecimalField(placeholder: "Distance", value: Binding(
+                get: { set.targetDistanceMeters.map { Fmt.distanceUnit.distance(fromMeters: $0) } },
+                set: { set.targetDistanceMeters = $0.map { Fmt.distanceUnit.meters(fromDistance: $0) } }
+            ))
+            .accessibilityIdentifier("cardio-target-distance")
+            Text(Fmt.distanceUnit.abbreviation)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
         }
     }
 }
@@ -1221,6 +1240,51 @@ struct OptionalIntField: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Decimal twin of `OptionalIntField` on the focus-aware draft pattern —
+/// a reformat-per-keystroke binding eats the trailing "." of "2.5"
+/// mid-typing (the weight-field rule).
+struct OptionalDecimalField: View {
+    @Environment(\.theme) private var theme
+    let placeholder: String
+    @Binding var value: Double?
+    var onChange: () -> Void = {}
+    @State private var draft = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $draft)
+            .keyboardType(.decimalPad)
+            .font(.bodyStrong)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(theme.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(theme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .focused($isFocused)
+            .onAppear { draft = Self.text(for: value) }
+            .onChange(of: draft) { _, newDraft in
+                guard isFocused else { return }
+                value = Double(newDraft.replacingOccurrences(of: ",", with: "."))
+                onChange()
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { draft = Self.text(for: value) }
+            }
+            .onChange(of: value) { _, newValue in
+                guard !isFocused else { return }
+                draft = Self.text(for: newValue)
+            }
+    }
+
+    private static func text(for value: Double?) -> String {
+        guard let value else { return "" }
+        return value == value.rounded()
+            ? String(Int(value))
+            : String(format: "%.2f", value).replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
     }
 }
 

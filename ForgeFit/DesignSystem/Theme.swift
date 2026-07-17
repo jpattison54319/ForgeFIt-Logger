@@ -203,6 +203,52 @@ enum Space {
     static let tabBarClearance: CGFloat = 96
 }
 
+// MARK: - Motion
+
+/// Motion tokens — the app's animation voice, one tier per job. Pick a token
+/// instead of an inline curve so state feedback times identically on every
+/// screen. (The staged Liquid Glass choreography in `GlassDivisionMenu` /
+/// `QuickIncrementFan` keeps its own bespoke springs by design.)
+///
+/// Reduce Motion: pure value morphs (numeric text rolls, color/fill changes,
+/// opacity crossfades) run untouched; anything that moves, scales, bounces,
+/// or staggers must swap to `Motion.reduced` or an opacity transition — the
+/// transition helpers below do this given the environment's
+/// `accessibilityReduceMotion` flag.
+enum Motion {
+    /// Immediate feedback on a tap or a per-second value tick.
+    static let tap: Animation = .easeOut(duration: 0.15)
+    /// A value or state changing in place. Matches the logger's set-completion
+    /// timing (`.snappy(0.28)`) so existing and new feedback speak together.
+    static let stateChange: Animation = .snappy(duration: 0.28)
+    /// A view arriving or departing (cards, strips, floating buttons).
+    static let entrance: Animation = .spring(duration: 0.35)
+    /// One-shot reward moments (XP fills, level-ups). Rare by design.
+    static let reward: Animation = .easeOut(duration: 0.6)
+    /// Short crossfade substituted for any token when Reduce Motion is on.
+    static let reduced: Animation = .easeOut(duration: 0.15)
+
+    /// Rise-from-bottom entrance; collapses to a fade under Reduce Motion.
+    static func riseIn(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+    }
+
+    /// Directional slide for paged content (calendar months); fades under
+    /// Reduce Motion.
+    static func slide(from edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
+    }
+
+    /// Gentle scale-and-fade entrance; collapses to a fade under Reduce Motion.
+    static func scaleIn(
+        _ scale: CGFloat = 0.9,
+        anchor: UnitPoint = .center,
+        reduceMotion: Bool
+    ) -> AnyTransition {
+        reduceMotion ? .opacity : .scale(scale: scale, anchor: anchor).combined(with: .opacity)
+    }
+}
+
 // MARK: - Typography
 
 /// The type ramp is anchored to system text styles so every token scales

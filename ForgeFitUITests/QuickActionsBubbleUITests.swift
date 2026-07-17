@@ -135,6 +135,50 @@ final class QuickActionsBubbleUITests: XCTestCase {
         XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected the collapsed trigger after closing the editor.")
     }
 
+    /// Customization has a visible path in the open fan; long-press remains a
+    /// shortcut, not knowledge the interface requires from the user.
+    @MainActor
+    func testVisibleEditActionOpensEditor() throws {
+        let app = launchApp()
+
+        let trigger = button(app, "quick-actions-trigger")
+        XCTAssertTrue(trigger.waitForExistence(timeout: 5))
+        let triggerMidX = trigger.frame.midX
+        trigger.tap()
+
+        let edit = button(app, "quick-actions-edit")
+        XCTAssertTrue(edit.waitForExistence(timeout: 3), "Expected a visible Edit action in the open fan.")
+        let dismiss = button(app, "quick-actions-dismiss")
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 3))
+        XCTAssertEqual(
+            dismiss.frame.midX,
+            triggerMidX,
+            accuracy: 1.5,
+            "The fan must remain centered over the original quick-actions trigger."
+        )
+        for actionID in ["quick-action-empty", "quick-action-bodyweight", "quick-action-cardio-run"] {
+            let action = button(app, actionID)
+            XCTAssertTrue(action.waitForExistence(timeout: 3))
+            XCTAssertEqual(
+                action.frame.midX,
+                triggerMidX,
+                accuracy: 1.5,
+                "Every morphed action must remain directly above the original trigger."
+            )
+        }
+        XCTAssertLessThan(edit.frame.maxX, dismiss.frame.minX, "The pencil belongs to the left of the root control.")
+        XCTAssertEqual(edit.frame.midY, dismiss.frame.midY, accuracy: 1.5)
+        // `.labelStyle(.iconOnly)` hides the word visually while XCTest still
+        // exposes the Label's text to assistive technologies.
+        XCTAssertEqual(edit.label, "Edit quick actions")
+        tapWhenHittable(edit)
+
+        XCTAssertTrue(button(app, "quick-actions-editor-done").waitForExistence(timeout: 3),
+                      "Expected the editor from the visible Edit action.")
+        XCTAssertFalse(app.staticTexts["Hold to edit"].exists,
+                       "Customization should not depend on instructional gesture copy.")
+    }
+
     /// Inline pool add inside the always-editing List: tap a pool row, see it
     /// join the current actions, and find its bubble in the live fan after
     /// dismissing — the full customization loop.

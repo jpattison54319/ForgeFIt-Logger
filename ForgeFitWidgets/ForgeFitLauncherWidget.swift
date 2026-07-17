@@ -260,7 +260,7 @@ private struct ForgeFitLauncherView: View {
     }
 
     private var restText: String {
-        guard let restEndsAt = snapshot?.restEndsAt else { return "Tap to open ForgeFit" }
+        guard let restEndsAt = snapshot?.restEndsAt else { return "Workout in progress" }
         if restEndsAt > Date() { return "Rest timer running" }
         return "Rest complete"
     }

@@ -9,12 +9,16 @@ import SwiftUI
 struct WorkoutCalendarView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
 
     private let calendar = Calendar.current
     @State private var displayedMonth = WorkoutCalendarSupport.monthStart(containing: Date(), calendar: .current)
     @State private var selectedDay = WorkoutCalendarSupport.dayKey(for: Date(), calendar: .current)
+    /// Which edge the incoming month slides from — set before each month
+    /// change so paging direction matches the button/jump that caused it.
+    @State private var monthSlideEdge: Edge = .trailing
     @State private var groupMemo = Memo<String, [Date: [WorkoutModel]]>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
@@ -70,7 +74,8 @@ struct WorkoutCalendarView: View {
 
     private func monthStepButton(systemImage: String, byMonths: Int) -> some View {
         Button {
-            withAnimation(.spring(duration: 0.25)) {
+            monthSlideEdge = byMonths > 0 ? .trailing : .leading
+            withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
                 if let next = calendar.date(byAdding: .month, value: byMonths, to: displayedMonth) {
                     displayedMonth = WorkoutCalendarSupport.monthStart(containing: next, calendar: calendar)
                 }
@@ -87,7 +92,8 @@ struct WorkoutCalendarView: View {
     }
 
     private func jumpToToday() {
-        withAnimation(.spring(duration: 0.25)) {
+        monthSlideEdge = displayedMonth < Date() ? .trailing : .leading
+        withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
             displayedMonth = WorkoutCalendarSupport.monthStart(containing: Date(), calendar: calendar)
             selectedDay = WorkoutCalendarSupport.dayKey(for: Date(), calendar: calendar)
         }
@@ -109,15 +115,27 @@ struct WorkoutCalendarView: View {
     private var monthGrid: some View {
         let cells = WorkoutCalendarSupport.gridDays(forMonthContaining: displayedMonth, calendar: calendar)
         let columns = [GridItem](repeating: GridItem(.flexible(), spacing: 0), count: 7)
-        return LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, day in
-                if let day {
-                    dayCell(day)
-                } else {
-                    Color.clear.frame(height: 58)
+        let exitEdge: Edge = monthSlideEdge == .trailing ? .leading : .trailing
+        // ZStack + `.id(displayedMonth)` so the outgoing and incoming months
+        // overlap in the same slot and page directionally (the universal
+        // calendar metaphor); Reduce Motion collapses both to a crossfade.
+        return ZStack {
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(Array(cells.enumerated()), id: \.offset) { _, day in
+                    if let day {
+                        dayCell(day)
+                    } else {
+                        Color.clear.frame(height: 58)
+                    }
                 }
             }
+            .id(displayedMonth)
+            .transition(.asymmetric(
+                insertion: Motion.slide(from: monthSlideEdge, reduceMotion: reduceMotion),
+                removal: Motion.slide(from: exitEdge, reduceMotion: reduceMotion)
+            ))
         }
+        .clipped()
     }
 
     private func dayCell(_ day: Date) -> some View {

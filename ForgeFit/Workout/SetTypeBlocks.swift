@@ -207,17 +207,14 @@ struct SetBlockView: View {
             // completing them.
             completeButton
 
-            Menu {
-                ForEach(SetType.selectable, id: \.self) { type in
-                    Button {
+            ScrollSafeMenu(sections: [
+                SetType.selectable.map { type in
+                    ScrollSafeMenuItem(title: SetTypeStyle.of(type).label, isChecked: set.setType == type) {
                         onSetType(type)
-                    } label: {
-                        Label(SetTypeStyle.of(type).label, systemImage: set.setType == type ? "checkmark" : "")
                     }
-                }
-                Divider()
-                Button("Delete Set", systemImage: "trash", role: .destructive, action: onDelete)
-            } label: {
+                },
+                [ScrollSafeMenuItem(title: "Delete Set", systemImage: "trash", isDestructive: true, action: onDelete)],
+            ]) {
                 HStack(spacing: 5) {
                     Text(style.badge)
                         .font(.system(size: 13, weight: .heavy))

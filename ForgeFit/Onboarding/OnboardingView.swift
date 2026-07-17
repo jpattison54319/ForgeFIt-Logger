@@ -9,6 +9,8 @@ import SwiftUI
 struct OnboardingView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var featuresRevealed = false
     @Binding var isPresented: Bool
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
     @AppStorage("weightUnitRaw") private var weightUnitRaw = WeightUnit.lb.rawValue
@@ -58,9 +60,9 @@ struct OnboardingView: View {
                         .foregroundStyle(theme.textSecondary)
 
                     VStack(alignment: .leading, spacing: Space.lg) {
-                        feature("dumbbell.fill", theme.accent, "Log strength & cardio", "Advanced set types, Strava-style cardio, smart rest timers.")
-                        feature("applewatch", theme.secondaryAccent, "Live Apple Watch sync", "Start anywhere, log from the wrist, live heart rate.")
-                        feature("waveform.path.ecg", theme.success, "Readiness scoring", "HRV, sleep & training load tell you when to push or back off.")
+                        feature(0, "dumbbell.fill", theme.accent, "Log strength & cardio", "Advanced set types, Strava-style cardio, smart rest timers.")
+                        feature(1, "applewatch", theme.secondaryAccent, "Live Apple Watch sync", "Start anywhere, log from the wrist, live heart rate.")
+                        feature(2, "waveform.path.ecg", theme.success, "Readiness scoring", "HRV, sleep & training load tell you when to push or back off.")
                     }
 
                     HStack {
@@ -183,6 +185,7 @@ struct OnboardingView: View {
             WorkoutHistoryImportView()
         }
         .onAppear {
+            featuresRevealed = true
             focus = TrainingFocus.stored
             // Pre-select the focus's starter program so doing nothing still
             // gets you a plan; the row stays deselectable and a deliberate
@@ -216,12 +219,13 @@ struct OnboardingView: View {
             .padding(.vertical, 10)
             .background(isSelected ? theme.accent.opacity(0.14) : theme.surface)
             .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .animation(Motion.tap, value: isSelected)
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("\(option.title)\(isSelected ? ", selected" : "")")
     }
 
-    private func feature(_ icon: String, _ tint: Color, _ title: String, _ detail: String) -> some View {
+    private func feature(_ index: Int, _ icon: String, _ tint: Color, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: Space.md) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .semibold))
@@ -232,6 +236,13 @@ struct OnboardingView: View {
                 Text(detail).font(.system(size: 13)).foregroundStyle(theme.textSecondary)
             }
         }
+        // First-run-only cascade; Reduce Motion keeps a single quick fade.
+        .opacity(featuresRevealed ? 1 : 0)
+        .offset(y: featuresRevealed || reduceMotion ? 0 : 10)
+        .animation(
+            reduceMotion ? Motion.reduced : Motion.entrance.delay(Double(index) * 0.08),
+            value: featuresRevealed
+        )
     }
 
     private func starterProgramButton(_ program: RoutineProgramTemplate) -> some View {
@@ -246,6 +257,8 @@ struct OnboardingView: View {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(isSelected ? theme.success : theme.textTertiary)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: reduceMotion ? false : isSelected)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(program.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Text("\(program.level.capitalized) · \(program.structureSummary)")
@@ -260,6 +273,7 @@ struct OnboardingView: View {
             .padding(Space.md)
             .background(isSelected ? theme.accent.opacity(0.14) : theme.surface)
             .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .animation(Motion.tap, value: isSelected)
         }
         .buttonStyle(PressableButtonStyle())
     }

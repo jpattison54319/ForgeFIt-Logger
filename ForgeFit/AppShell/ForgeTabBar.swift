@@ -8,6 +8,7 @@ import SwiftUI
 /// animates into place using matched geometry.
 struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selection: AppTab
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
@@ -53,9 +54,11 @@ struct ForgeTabBar: View {
                         .frame(minWidth: 16, minHeight: 16)
                         .background(theme.danger, in: Capsule())
                         .offset(x: 8, y: -7)
+                        .transition(Motion.scaleIn(0.4, reduceMotion: reduceMotion))
                         .accessibilityLabel("\(badgeCount) imported exercises need review")
                 }
             }
+            .animation(Motion.stateChange, value: badgeCount)
             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
             .padding(.vertical, 6)
             .padding(.horizontal, Space.sm)
@@ -145,6 +148,8 @@ struct MiniWorkoutBar: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(theme.textSecondary)
                                     .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                    .animation(Motion.tap, value: elapsed)
                             }
                         }
                         Text(subtitle)

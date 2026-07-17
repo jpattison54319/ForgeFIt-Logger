@@ -4,11 +4,12 @@ import SwiftData
 import SwiftUI
 
 /// Full-screen editor for the floating quick-action bubble: reorder, remove,
-/// and add from the defined pool — one surface, reached only by long-pressing
-/// the bubble (collapsed bolt or expanded ✕). The presenting cover supplies
-/// the NavigationStack and Done button; this view declares neither.
+/// and add from the defined pool. The presenting cover supplies the
+/// NavigationStack and Done button; this view declares neither.
 struct QuickActionsEditorView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @Environment(AppState.self) private var appState
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
 
     /// Held in FAN-VISUAL order — row 1 is the fan's TOP bubble, the last row
@@ -25,13 +26,6 @@ struct QuickActionsEditorView: View {
 
     var body: some View {
         List {
-            Section {
-                Text("These shortcuts fan out of the floating button on every tab. The list mirrors the fan: the top row is the top bubble, and the bottom row sits closest to the button.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                    .themedListRow()
-            }
-
             Section {
                 ForEach(actions) { action in
                     actionRow(action)
@@ -54,8 +48,6 @@ struct QuickActionsEditorView: View {
             }
 
             poolSections
-
-            previewSection
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -78,12 +70,9 @@ struct QuickActionsEditorView: View {
 
     private var currentSectionFooter: String {
         if actions.count <= 1 {
-            return "Keep at least one action."
+            return "1 of \(AppQuickActionStore.maxCount) selected · At least one required"
         }
-        if atMax {
-            return "\(AppQuickActionStore.maxCount) of \(AppQuickActionStore.maxCount) — remove one to add another. The cap keeps the fan reachable under your thumb."
-        }
-        return "\(actions.count) of \(AppQuickActionStore.maxCount) · drag to reorder."
+        return "\(actions.count) of \(AppQuickActionStore.maxCount) selected"
     }
 
     private func loadOnce() {
@@ -155,10 +144,17 @@ struct QuickActionsEditorView: View {
 
         Section {
             if liveRoutines.isEmpty {
-                Text("No routines yet. Create them in the Workout tab and they'll appear here.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
+                Button {
+                    appState.selectedTab = .workout
+                    dismiss()
+                } label: {
+                    Label("Create a routine", systemImage: "plus.circle.fill")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.accent)
+                }
+                    .buttonStyle(.plain)
                     .themedListRow()
+                    .accessibilityIdentifier("quick-actions-create-routine")
             } else {
                 ForEach(liveRoutines) { routine in
                     poolRow(
@@ -210,40 +206,6 @@ struct QuickActionsEditorView: View {
         .disabled(isAdded || atMax)
         .themedListRow()
         .accessibilityIdentifier("quick-actions-pool-\(action.id.replacingOccurrences(of: ":", with: "-"))")
-    }
-
-    /// Non-interactive mini-fan mirroring the live order: the list's first
-    /// action renders at the bottom, budding directly off the trigger.
-    private var previewSection: some View {
-        Section {
-            HStack {
-                Spacer()
-                VStack(spacing: 8) {
-                    ForEach(actions) { action in
-                        Image(systemName: icon(for: action))
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(tint(for: action))
-                            .frame(width: 30, height: 30)
-                            .background(tint(for: action).opacity(0.14))
-                            .clipShape(Circle())
-                    }
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(theme.accent)
-                        .frame(width: 36, height: 36)
-                        .background(theme.surfaceElevated)
-                        .clipShape(Circle())
-                }
-                Spacer()
-            }
-            .padding(.vertical, Space.sm)
-            .themedListRow()
-            .accessibilityHidden(true)
-        } footer: {
-            Text("Bottom bubble sits closest to the button.")
-                .font(.system(size: 12))
-                .foregroundStyle(theme.textTertiary)
-        }
     }
 
     private func title(for action: AppQuickAction) -> String {

@@ -88,13 +88,18 @@ extension ScreenScaffold where Trailing == EmptyView {
 /// react to) the keyboard height independently, through this modifier.
 struct KeyboardAdaptiveBottomInset: ViewModifier {
     @State private var keyboardHeight: CGFloat = 0
+    /// Tracks the keyboard's own animation duration from each notification —
+    /// a fixed guess drifts from the real slide on some devices and under
+    /// accessibility settings, leaving the inset visibly out of step.
+    @State private var keyboardAnimation: Animation = .easeOut(duration: 0.25)
 
     func body(content: Content) -> some View {
         content
             .padding(.bottom, keyboardHeight)
-            .animation(.easeOut(duration: 0.25), value: keyboardHeight)
+            .animation(keyboardAnimation, value: keyboardHeight)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
                 guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                syncAnimation(from: note)
                 // Height of the keyboard (+ any input accessory, e.g. a
                 // `ToolbarItemGroup(placement: .keyboard)` "Done" button)
                 // actually overlapping the screen — 0 once it's off-screen,
@@ -102,9 +107,16 @@ struct KeyboardAdaptiveBottomInset: ViewModifier {
                 let screenHeight = UIScreen.main.bounds.height
                 keyboardHeight = max(0, screenHeight - frame.origin.y)
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+                syncAnimation(from: note)
                 keyboardHeight = 0
             }
+    }
+
+    private func syncAnimation(from note: Notification) {
+        guard let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
+              duration > 0 else { return }
+        keyboardAnimation = .easeOut(duration: duration)
     }
 }
 

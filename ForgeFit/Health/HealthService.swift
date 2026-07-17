@@ -569,6 +569,21 @@ final class HealthService {
     }
 
     /// Nearest body-mass sample (kg) within ±`toleranceDays` of a date —
+    /// Ranged body-mass series for the Insights Builder — same store, same
+    /// samples the bodyweight cache uses, explicit window.
+    func bodyMassSeries(days: Int) async -> [(date: Date, kilograms: Double)] {
+        #if canImport(HealthKit)
+        let end = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -days, to: end) ?? end
+        let samples = await quantitySamples(.bodyMass, from: start, to: end)
+        return samples
+            .map { (date: $0.endDate, kilograms: $0.quantity.doubleValue(for: .gramUnit(with: .kilo))) }
+            .sorted { $0.date < $1.date }
+        #else
+        return []
+        #endif
+    }
+
     /// used by backup restore to refill `bodyweightKg` on bodyweight sets.
     func bodyMassKg(near date: Date, toleranceDays: Int = 7) async -> Double? {
         #if canImport(HealthKit)

@@ -76,6 +76,17 @@ struct DailyStrainEngineTests {
         #expect(lowDailyTarget < lowTrendTarget)
     }
 
+    @Test func statusIsFullyDeterminedByScoreAndTarget() {
+        // Home's same-day cached tile stores only score + target and rebuilds
+        // status through this derivation — it must cover every band.
+        typealias Report = DailyStrainEngine.Report
+        #expect(Report.status(score: nil, targetRange: nil) == .building)
+        #expect(Report.status(score: 4.0, targetRange: nil) == .targetBuilding)
+        #expect(Report.status(score: 3.9, targetRange: 4.0...6.0) == .belowTarget)
+        #expect(Report.status(score: 5.0, targetRange: 4.0...6.0) == .inTarget)
+        #expect(Report.status(score: 6.1, targetRange: 4.0...6.0) == .aboveTarget)
+    }
+
     @Test func perfectRecoveryCannotRaiseTargetMoreThanTwentyPercentAboveNorm() throws {
         let report = DailyStrainEngine(
             workouts: [],

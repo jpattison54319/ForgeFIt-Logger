@@ -201,7 +201,7 @@ struct YogaExerciseCard: View {
                 let filled = session.avgHR != nil || session.activeEnergyKcal != nil
                 Image(systemName: filled ? "checkmark.seal.fill" : "square.and.pencil")
                     .font(.system(size: 12)).foregroundStyle(filled ? theme.success : theme.textTertiary)
-                Text(filled ? "Auto-filled from Apple Health" : "No Health data for this session — tap Edit")
+                Text(filled ? "Auto-filled from Apple Health" : "No Health data for this session")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
                 Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
@@ -588,7 +588,7 @@ struct YogaRunnerStrip: View {
             } else if runner.isFinished {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(theme.success)
-                    Text("Flow complete — tap Complete when you're ready.")
+                    Text("Flow complete")
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 }
             }

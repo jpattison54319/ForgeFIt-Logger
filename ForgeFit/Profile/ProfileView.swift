@@ -13,6 +13,7 @@ private struct ProfileStats {
 struct ProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
@@ -71,6 +72,7 @@ struct ProfileView: View {
                 identityCard
                 if reviewCount > 0 {
                     importedExerciseReviewCard
+                        .transition(Motion.scaleIn(0.98, reduceMotion: reduceMotion))
                 }
                 activityCard
 
@@ -104,6 +106,9 @@ struct ProfileView: View {
                     }
                 }
             }
+            // Drives the review card's insert/remove transition; keyed so it
+            // only fires when the card actually appears or clears.
+            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: reviewCount > 0)
             .navigationDestination(for: ProfileRoute.self) { route in
                 switch route {
                 case .statistics: StatisticsView(workouts: workouts, exercises: exercises)
@@ -315,7 +320,9 @@ struct ProfileView: View {
 /// identically to your own.
 struct LevelBadge: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let level: Int
+    @State private var pop = false
 
     var body: some View {
         Text("Level \(level)")
@@ -325,7 +332,21 @@ struct LevelBadge: View {
             .padding(.vertical, 5)
             .background(theme.accent)
             .clipShape(Capsule())
+            .contentTransition(.numericText(value: Double(level)))
+            .animation(Motion.stateChange, value: level)
+            .scaleEffect(pop ? 1.12 : 1)
             .accessibilityLabel("Level \(level)")
+            .onChange(of: level) { old, new in
+                // Level-ups only (never on downgrades from a data reset), and
+                // never as a scale pulse under Reduce Motion — the digit roll
+                // above still marks the change.
+                guard new > old, !reduceMotion else { return }
+                withAnimation(Motion.stateChange) {
+                    pop = true
+                } completion: {
+                    withAnimation(Motion.stateChange) { pop = false }
+                }
+            }
     }
 }
 
@@ -355,10 +376,14 @@ struct XPProgressBar: View {
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+                    .contentTransition(.numericText(value: Double(progress.xpIntoLevel)))
+                // Fills only when XP actually changes while visible — no
+                // replayed fill-from-zero theater on every Profile visit.
                 ProgressView(value: progress.fraction)
                     .tint(theme.accent)
                     .background(theme.surfaceHighlight)
                     .clipShape(Capsule())
+                    .animation(Motion.reward, value: progress.fraction)
             }
             ZStack {
                 Image(systemName: "shield")

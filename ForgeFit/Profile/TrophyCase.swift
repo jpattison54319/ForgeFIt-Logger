@@ -113,19 +113,9 @@ struct TrophyCaseCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.lg) {
-                HStack {
-                    Text("\(earnedCount) of \(trophies.count) earned")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textSecondary)
-                    Spacer()
-                    HStack(spacing: Space.xs) {
-                        Text("Swipe")
-                        Image(systemName: "arrow.left.and.right")
-                    }
+                Text("\(earnedCount) of \(trophies.count) earned")
                     .font(.tag)
-                    .foregroundStyle(theme.textTertiary)
-                    .accessibilityHidden(true)
-                }
+                    .foregroundStyle(theme.textSecondary)
 
                 ScrollView(.horizontal) {
                     HStack(spacing: Space.md) {

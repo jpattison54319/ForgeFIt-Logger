@@ -124,7 +124,14 @@ struct CoachCornerView: View {
         .interactiveDismissDisabled(false)
         .task(id: activeProgram?.id) { refreshWeeklyReview() }
         .sheet(isPresented: $showSetup) {
-            CoachingSetupView()
+            CoachingSetupView(onViewWorkout: {
+                showSetup = false
+                appState.selectedTab = .workout
+                Task { @MainActor in
+                    await Task.yield()
+                    dismiss()
+                }
+            })
         }
         .sheet(item: $editPlanTarget) { program in
             EditCoachedPlanSheet(program: program, programName: programName(program))

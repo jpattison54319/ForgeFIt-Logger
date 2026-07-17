@@ -35,6 +35,11 @@ final class HealthMetricsStore {
     /// Connect doesn't sync it) — the recovery screen explains the gap.
     private(set) var hrvGapDetected = false
     private(set) var lastRefreshed: Date?
+    /// In-flight HealthKit re-queries. A count rather than a flag because a
+    /// pull-to-refresh can overlap the foreground refresh; Home keeps showing
+    /// the current numbers with a subtle activity indicator while this is > 0.
+    private(set) var activeRefreshCount = 0
+    var isRefreshing: Bool { activeRefreshCount > 0 }
 
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
@@ -68,6 +73,8 @@ final class HealthMetricsStore {
     }
 
     private func performRefresh() async {
+        activeRefreshCount += 1
+        defer { activeRefreshCount -= 1 }
         async let daily = HealthService.shared.dailyMetrics()
         async let extras = HealthService.shared.todaySignals()
         async let activity = HealthService.shared.dailyActivityMetrics()
@@ -105,6 +112,14 @@ final class HealthMetricsStore {
     }
 
     #if DEBUG
+    /// UI automation: blocks every HealthKit refresh WITHOUT stamping
+    /// `lastRefreshed`, freezing the app in its pre-refresh state so the
+    /// cold-launch dashboard paths (loader vs. same-day cache) can be
+    /// asserted deterministically.
+    func suppressRefreshForTesting() {
+        demoSeeded = true
+    }
+
     /// Injects a synthetic 20-night history plus a flagged partial-wear last
     /// night, so the Home sleep-integrity affordance can be seen and UI-tested
     /// without a paired watch or HealthKit data. Debug/automation only.

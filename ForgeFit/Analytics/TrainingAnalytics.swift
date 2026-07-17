@@ -152,6 +152,21 @@ struct TrainingAnalytics {
             .sorted { $0.sets > $1.sets }
     }
 
+    /// Muscle set buckets for one workout including taxonomy-parent rollups —
+    /// Insights' per-muscle metrics read parents ("back") and exact children
+    /// ("lats") from the same dictionary. Same per-set math as `muscleVolume`.
+    func muscleVolumeInsightBuckets(for workout: WorkoutModel) -> [String: Double] {
+        let byID = exerciseByID
+        var entries: [(set: SetEntry, exercise: ExerciseInfo)] = []
+        for we in workout.exercises {
+            guard let ex = byID[we.exerciseID] else { continue }
+            for set in we.sets where set.completedAt != nil {
+                entries.append((set.domainEntry, ex.domainInfo))
+            }
+        }
+        return MuscleVolume.volumeWithParentRollups(entries)
+    }
+
     /// Fractional-set volume by muscle for a single workout's completed working
     /// sets, biggest contributor first. Powers the "muscles worked" rollup on a
     /// logged workout.

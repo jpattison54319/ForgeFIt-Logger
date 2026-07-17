@@ -20,6 +20,7 @@ struct SwipeToDeleteRow<Content: View>: View {
 
     @State private var offset: CGFloat = 0
     @State private var width: CGFloat = 1
+    @State private var deleteHapticTrigger = 0
 
     init(
         isOpen: Bool,
@@ -65,6 +66,8 @@ struct SwipeToDeleteRow<Content: View>: View {
                 .simultaneousGesture(swipe)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .sensoryFeedback(.impact(weight: .light), trigger: isOpen) { old, new in !old && new }
+        .sensoryFeedback(.impact(weight: .medium), trigger: deleteHapticTrigger)
         .onChange(of: isOpen) { _, open in
             if !open, offset != 0 {
                 withAnimation(.snappy(duration: 0.22)) { offset = 0 }
@@ -83,11 +86,20 @@ struct SwipeToDeleteRow<Content: View>: View {
     private var swipe: some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
-                // Horizontal-dominant, leftward drags only — vertical stays with
-                // the scroll view, taps stay with the row's controls.
+                // Horizontal-dominant drags only — vertical stays with the
+                // scroll view, taps stay with the row's controls.
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
                 let base: CGFloat = isOpen ? -revealWidth : 0
-                offset = min(0, max(-width, base + value.translation.width))
+                let raw = base + value.translation.width
+                if raw > 0 {
+                    // Rightward has no tray: elastic give instead of a hard
+                    // wall, so the row answers the finger and teaches the
+                    // boundary. Leftward stays 1:1 — reveal → commit are
+                    // meaningful zones and must track the finger directly.
+                    offset = pow(raw, 0.7)
+                } else {
+                    offset = max(-width, raw)
+                }
             }
             .onEnded { value in
                 let base: CGFloat = isOpen ? -revealWidth : 0
@@ -105,6 +117,7 @@ struct SwipeToDeleteRow<Content: View>: View {
     }
 
     private func deleteWithAnimation() {
+        deleteHapticTrigger += 1
         withAnimation(.snappy(duration: 0.22)) {
             offset = -width
         } completion: {

@@ -65,8 +65,11 @@ public enum WorkoutCSVExport {
         "added_weight_kg", "assistance_weight_kg", "implement_weight_kg",
         "is_unilateral", "side2_reps", "completed_at",
         "modality", "distance_m", "cardio_duration_seconds", "effort",
-        "avg_pace_seconds_per_km", "avg_power_watts", "avg_cadence",
-        "elevation_gain_m", "cardio_avg_hr", "cardio_max_hr", "cardio_kcal",
+        "avg_pace_seconds_per_km", "split_500m_seconds", "avg_power_watts",
+        "avg_cadence", "stroke_rate", "resistance_level", "incline_percent",
+        "elevation_gain_m", "pool_length_m", "lengths_completed",
+        "total_strokes", "stroke_style",
+        "cardio_avg_hr", "cardio_max_hr", "cardio_kcal",
     ]
 
     public static func csv(workouts: [BackupWorkout], health: ExportHealthMetrics) -> String {
@@ -114,7 +117,7 @@ public enum WorkoutCSVExport {
                         CSVWriter.bool(set.isUnilateral),
                         CSVWriter.number(set.side2Reps),
                         CSVWriter.date(set.completedAt),
-                    ] + Array(repeating: "", count: 11))
+                    ] + Array(repeating: "", count: 19))
                 }
             }
 
@@ -133,9 +136,17 @@ public enum WorkoutCSVExport {
                     CSVWriter.number(session.durationSeconds),
                     CSVWriter.number(session.effort),
                     CSVWriter.number(session.avgPaceSecondsPerKm),
+                    CSVWriter.number(session.split500mSeconds),
                     CSVWriter.number(session.avgPowerWatts),
                     CSVWriter.number(session.avgCadence),
+                    CSVWriter.number(session.strokeRate),
+                    CSVWriter.number(session.resistanceLevel),
+                    CSVWriter.number(session.inclinePercent),
                     CSVWriter.number(session.elevationGainMeters),
+                    CSVWriter.number(session.poolLengthMeters),
+                    CSVWriter.number(session.lengthsCompleted),
+                    CSVWriter.number(session.totalStrokes),
+                    session.strokeStyleRaw ?? "",
                     CSVWriter.number(sessionHealth?.avgHR),
                     CSVWriter.number(sessionHealth?.maxHR),
                     CSVWriter.number(sessionHealth?.activeEnergyKcal),

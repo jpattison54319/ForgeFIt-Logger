@@ -5,9 +5,9 @@ import SwiftUI
 
 /// The floating quick-action trigger above the tab bar on every tab: tapping
 /// it fans the user's configured shortcuts out of a cell-division morph;
-/// long-pressing opens the editor. Which actions appear — and their order,
-/// nearest the trigger first — is the `AppQuickActionStore` preference, edited
-/// only by long-pressing the main button (collapsed bolt or expanded ✕).
+/// the open fan exposes its editor, with long-press retained as a shortcut.
+/// Which actions appear — and their order, nearest the trigger first — is the
+/// `AppQuickActionStore` preference.
 struct QuickActionsBubble: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
@@ -63,12 +63,14 @@ struct QuickActionsBubble: View {
             // relay keeps the same frosted look while every child follows a
             // deterministic parent-to-child path.
             usesStableMaterialRelay: true,
-            dismissCaption: "Hold to edit",
             triggerAccessibilityLabel: "Quick actions",
-            triggerAccessibilityHint: "Shortcuts to start a workout or log your weight. Long press to customize.",
+            triggerAccessibilityHint: "Opens workout shortcuts.",
             triggerAccessibilityID: "quick-actions-trigger",
-            dismissAccessibilityHint: "Long press to customize.",
+            dismissAccessibilityHint: "Closes quick actions.",
             dismissAccessibilityID: "quick-actions-dismiss",
+            dismissAccessoryLabel: "Edit quick actions",
+            dismissAccessoryAccessibilityID: "quick-actions-edit",
+            onDismissAccessory: onOpenEditor,
             onExpandedChange: { expanded in
                 expandedMirror = expanded
                 onExpandedChange(expanded)

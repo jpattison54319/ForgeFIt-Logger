@@ -9,6 +9,7 @@ struct ExercisePickerView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
 
     /// When true the picker returns exactly one exercise (used by "Replace").
@@ -173,8 +174,10 @@ struct ExercisePickerView: View {
                     }
                     .padding(.horizontal, Space.lg)
                     .padding(.bottom, Space.sm)
+                    .transition(Motion.riseIn(reduceMotion: reduceMotion))
                 }
             }
+            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: selected.isEmpty)
             .navigationTitle("Add Exercise")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
@@ -389,6 +392,7 @@ struct ExercisePickerView: View {
 
 private struct ExerciseRowLabel: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let exercise: ExerciseLibraryModel
     let selected: Bool
     let onSelect: () -> Void
@@ -424,6 +428,8 @@ private struct ExerciseRowLabel: View {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 22))
                         .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.bounce, value: reduceMotion ? false : selected)
                 }
             }
             .buttonStyle(.plain)
@@ -442,6 +448,7 @@ private struct ExerciseRowLabel: View {
         .padding(Space.md)
         .background(selected ? theme.accentSoft : theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .animation(Motion.tap, value: selected)
     }
 
     /// "Sanskrit name · hold 30s" — Sanskrit from the bundled catalog, so
@@ -476,6 +483,7 @@ struct FilterChip: View {
             active ? .regular.tint(theme.accent.opacity(0.5)).interactive() : .regular.interactive(),
             in: Capsule()
         )
+        .animation(Motion.tap, value: active)
     }
 }
 

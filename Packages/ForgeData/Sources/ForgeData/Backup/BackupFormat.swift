@@ -16,6 +16,9 @@ import Foundation
 /// they overlap, so `WorkoutHistoryImportParser.parseForgeFitJSON` can read
 /// a backup file as a degraded fallback (JSONDecoder ignores unknown keys).
 public struct ForgeFitBackupFile: Codable, Sendable {
+    /// Version policy: additive optional fields do NOT bump this — older
+    /// files decode them as nil, and older apps ignore unknown keys. Bump
+    /// only for breaking changes (a key renamed, retyped, or re-scoped).
     public static let currentSchemaVersion = 1
 
     public var schemaVersion: Int
@@ -171,6 +174,14 @@ public struct BackupCardioSession: Codable, Sendable {
     public var intervalsAutoApplied: Bool
     public var yogaStyleRaw: String?
     public var posesCompleted: Int?
+    /// Swimming contract (nil on every other modality). Pool metadata and
+    /// stroke counts are machine/user readouts — training data, not health.
+    /// Additive-optional: absent in pre-swim backups, decodes as nil.
+    public var poolLengthMeters: Double?
+    public var lengthsCompleted: Int?
+    public var totalStrokes: Int?
+    /// `SwimStrokeStyle` raw value.
+    public var strokeStyleRaw: String?
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?

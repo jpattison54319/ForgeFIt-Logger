@@ -296,19 +296,20 @@ struct RestDurationMenu<Label: View>: View {
     @ViewBuilder let label: () -> Label
 
     var body: some View {
-        Menu {
-            if allowsOff {
-                Button { onPick(0) } label: {
-                    SwiftUI.Label("Off", systemImage: selected == 0 ? "checkmark" : "")
-                }
-            }
-            ForEach(options, id: \.self) { seconds in
-                Button { onPick(seconds) } label: {
-                    SwiftUI.Label(Fmt.restTimer(seconds), systemImage: selected == seconds ? "checkmark" : "")
-                }
-            }
-        } label: {
-            label()
+        // ScrollSafeMenu, not Menu: these chips sit on the workout scroll
+        // surface, and a Menu label claims the touch, freezing scrolls that
+        // start on it.
+        ScrollSafeMenu(items: items, label: label)
+    }
+
+    private var items: [ScrollSafeMenuItem] {
+        var items: [ScrollSafeMenuItem] = []
+        if allowsOff {
+            items.append(ScrollSafeMenuItem(title: "Off", isChecked: selected == 0) { onPick(0) })
         }
+        items += options.map { seconds in
+            ScrollSafeMenuItem(title: Fmt.restTimer(seconds), isChecked: selected == seconds) { onPick(seconds) }
+        }
+        return items
     }
 }

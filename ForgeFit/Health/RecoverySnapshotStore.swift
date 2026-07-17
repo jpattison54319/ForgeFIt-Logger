@@ -3,6 +3,36 @@ import Foundation
 import Observation
 import SwiftData
 
+/// Home's dashboard exactly as last rendered from live data — the four metric
+/// tiles plus the recommendation hero. Cached with the day's snapshot so
+/// reopening the app later the SAME day paints real numbers instantly while
+/// HealthKit re-queries in the background. Strictly same-day: a new day shows
+/// the loader until its own data lands, never an older day's numbers.
+///
+/// Values are stored as rendered (strings included) so the optimistic paint
+/// can never drift from what the engines actually showed.
+struct HomeDashboardCache: Codable, Equatable {
+    // Recovery tile + recommendation hero.
+    var recoveryDisplayScore: Double
+    var baselineReady: Bool
+    var actionRaw: String
+    var recommendation: String
+    var reasonTexts: [String]
+    // Sleep tile.
+    var sleepValue: String
+    var sleepCaption: String
+    var sleepProgress: Double?
+    /// The night was flagged partial-wear and not yet corrected — the tile
+    /// keeps its caution tint.
+    var sleepLooksPartial: Bool
+    // Health tile. Strain needs no fields here: the tile rebuilds from the
+    // day's `strain`/target on `RecoverySnapshot` itself.
+    var healthHeadline: String
+    var healthCaption: String
+    var healthEvaluatedCount: Int
+    var healthOutsideRangeCount: Int
+}
+
 /// One day's recovery and exertion reading, captured for the calendar.
 struct RecoverySnapshot: Codable, Equatable {
     /// That day's ACUTE daily-readiness score, 0...1 — the pure daily number,
@@ -19,6 +49,10 @@ struct RecoverySnapshot: Codable, Equatable {
     /// the exact guidance the user saw, even as today's baseline evolves.
     var strainTargetLower: Double? = nil
     var strainTargetUpper: Double? = nil
+    /// Same-day Home dashboard restore payload. Only today's is ever read;
+    /// never backfilled, and the calendar ignores it. Optional with a default
+    /// so snapshots persisted before it existed decode unchanged.
+    var dashboard: HomeDashboardCache? = nil
 
     var strainTargetRange: ClosedRange<Double>? {
         guard let strainTargetLower, let strainTargetUpper,
@@ -70,7 +104,8 @@ final class RecoverySnapshotStore {
         daily: Double?,
         trend: Double?,
         strain: Double? = nil,
-        strainTarget: ClosedRange<Double>? = nil
+        strainTarget: ClosedRange<Double>? = nil,
+        dashboard: HomeDashboardCache? = nil
     ) {
         let key = calendar.startOfDay(for: Date())
         var snapshot = snapshots[key] ?? RecoverySnapshot(daily: nil, trend: nil)
@@ -83,6 +118,11 @@ final class RecoverySnapshotStore {
             snapshot.strainTargetLower = strainTarget.lowerBound
             snapshot.strainTargetUpper = strainTarget.upperBound
         }
+        // The dashboard cache is "Home as last rendered from live data":
+        // replaced wholesale when the caller has a live render, kept when it
+        // doesn't (a pre-refresh pass must not clobber the morning's render
+        // with a "building" placeholder).
+        if let dashboard { snapshot.dashboard = dashboard }
         guard snapshot.hasData else { return }
         guard snapshots[key] != snapshot else { return }   // no redundant writes
         snapshots[key] = snapshot
@@ -177,6 +217,42 @@ final class RecoverySnapshotStore {
         snapshots = [:]
         UserDefaults.standard.removeObject(forKey: backfillKey)
         persist()
+    }
+
+    /// UI automation: today already has a captured render, so a cold launch
+    /// must paint these numbers instead of the loader.
+    func seedTodayDashboardDemo() {
+        set(Self.demoDaySnapshot(), for: Date())
+    }
+
+    /// UI automation: ONLY yesterday has a captured render. First open of a
+    /// new day must show the loader — these values may never appear.
+    func seedYesterdayDashboardDemo() {
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) else { return }
+        set(Self.demoDaySnapshot(), for: yesterday)
+    }
+
+    private static func demoDaySnapshot() -> RecoverySnapshot {
+        RecoverySnapshot(
+            daily: 0.82,
+            trend: 0.64,
+            strain: 5.1,
+            strainTargetLower: 4.6,
+            strainTargetUpper: 5.6,
+            dashboard: HomeDashboardCache(
+                recoveryDisplayScore: 0.82,
+                baselineReady: true,
+                actionRaw: RecoveryEngine.Action.push.rawValue,
+                recommendation: "Green light. Push intensity or volume today.",
+                reasonTexts: ["HRV above baseline", "Sleep need met"],
+                sleepValue: "7h 12m",
+                sleepCaption: "Sleep need met",
+                sleepProgress: 0.9,
+                sleepLooksPartial: false,
+                healthHeadline: "All in range",
+                healthCaption: "4 health signals checked",
+                healthEvaluatedCount: 4,
+                healthOutsideRangeCount: 0))
     }
 
     func seedDemo(days: Int = 40) {

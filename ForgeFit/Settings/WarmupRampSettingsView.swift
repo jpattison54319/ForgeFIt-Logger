@@ -39,7 +39,7 @@ struct WarmupRampSettingsView: View {
 
     private var explainerCard: some View {
         Card {
-            Text("Tap **Add Warm-up Ramp** on any exercise to insert these sets before your working sets. Each warm-up's weight is a percentage of your first working set — filled in once that weight is known — and its reps are fixed here.")
+            Text("Warm-up weights use your first working set. Reps use the configured values.")
                 .font(.system(size: 13))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

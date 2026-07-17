@@ -161,10 +161,18 @@ final class WatchLink: NSObject {
             // one mirrors into the same step fields the watch already renders.
             let intervalRunner = IntervalRunnerHub.shared.runner
             let yogaRunner = YogaFlowRunnerHub.shared.runner
-            let stepName = intervalRunner?.currentStep?.label
+            // Distance steps have no wall-clock end: the wrist shows the
+            // step + its distance target instead of a countdown.
+            let stepName: String? = {
+                guard let step = intervalRunner?.currentStep else { return nil }
+                if step.isDistanceBased, let meters = step.distanceMeters {
+                    return "\(step.label) · \(IntervalPlan.metricDistance(meters))"
+                }
+                return step.label
+            }()
                 ?? yogaRunner?.currentStep?.displayName
             let stepEndsAt: Date? = intervalRunner?.currentStep != nil
-                ? intervalRunner?.stepEndsAt
+                ? (intervalRunner?.currentStep?.isDistanceBased == true ? nil : intervalRunner?.stepEndsAt)
                 : ((yogaRunner?.currentStep != nil && yogaRunner?.isPaused == false) ? yogaRunner?.stepEndsAt : nil)
             let stepKind = intervalRunner?.currentStep?.kind.rawValue
                 ?? (yogaRunner?.currentStep != nil ? "pose" : nil)
@@ -269,12 +277,15 @@ final class WatchLink: NSObject {
             let style = SetTypeStyle.of(set.setType)
             if style.numbered { workingNumber += 1 }
             let label = style.numbered ? "\(workingNumber)\(style.badge)" : style.badge
+            // Mode-routed: for bodyweight-family sets the number lives in
+            // addedWeight/assistanceWeight, not `weight` — reading the raw
+            // field showed "—" on the wrist for values the phone displayed.
             return WatchSetSnapshot(
                 id: set.id,
                 label: label,
-                weight: set.weight.map { unit.displayValue(fromKilograms: $0) },
+                weight: set.modeWeight.map { unit.displayValue(fromKilograms: $0) },
                 unitSuffix: unit.suffix,
-                weightKg: set.weight,
+                weightKg: set.modeWeight,
                 reps: set.reps,
                 completed: set.completedAt != nil
             )
@@ -332,7 +343,9 @@ final class WatchLink: NSObject {
 
         case .updateSet(let setID, let weightKg, let reps):
             guard let set = fetchSet(setID, in: context) else { return }
-            if let weightKg { set.weight = weightKg }
+            // Same mode routing as the phone's set row — a wrist edit on an
+            // assisted/added set must land in that mode's field, not `weight`.
+            if let weightKg { set.setModeWeight(weightKg) }
             if let reps { set.reps = reps }
             set.recomputeDerivedMetrics()
             active?.recomputeTotalVolume()

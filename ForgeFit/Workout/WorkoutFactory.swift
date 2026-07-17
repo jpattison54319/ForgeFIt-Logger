@@ -79,6 +79,13 @@ enum WorkoutFactory {
                 }
                 // Cardio and yoga exercises log as sessions, not set rows.
                 let isSessionBased = exercise?.isCardio == true || exercise?.isYoga == true
+                // The set must carry the exercise's weight mode, and the
+                // routine target must land in that mode's field — a target
+                // seeded into `weight` on a bodyweight-family set is invisible
+                // to the input row and, worse, an `.external` default makes
+                // tonnage treat the raw number as the lifted load (assistance
+                // × reps for assisted work) instead of the effective load.
+                let weightMode = exercise?.defaultWeightMode ?? .external
                 let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
@@ -92,15 +99,18 @@ enum WorkoutFactory {
                             userID: ForgeFitDemo.userID,
                             position: target.position,
                             setType: target.setType,
+                            weightMode: weightMode,
                             // Block types never prefill reps: myo minis log
                             // what the lifter achieves live, and cluster reps
                             // mirror the logged segments. Plans ride the
                             // planned* fields as ghost targets instead.
                             reps: target.setType.isBlockType ? nil : target.targetRepsLow,
-                            weight: target.targetWeight,
+                            weight: weightMode == .external ? target.targetWeight : nil,
                             rpe: effort.rpe,
                             rir: effort.rir,
                             durationSeconds: target.targetDurationSeconds,
+                            addedWeight: weightMode == .bodyweightAdded ? target.targetWeight : nil,
+                            assistanceWeight: weightMode == .bodyweightAssisted ? target.targetWeight : nil,
                             sourceRoutineSetID: target.id,
                             plannedMiniSetCount: target.setType == .myoRep ? target.plannedMiniSetCount : nil,
                             plannedMiniRepsJSON: target.setType == .cluster ? target.plannedMiniRepsJSON : nil
@@ -138,6 +148,16 @@ enum WorkoutFactory {
                 } else if let exercise, exercise.isCardio {
                     let target = routineExercise.sets.sorted { $0.position < $1.position }.first
                     let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
+                    // A routine distance target starts the session as a live
+                    // goal — never a pre-filled logged distance (planned is
+                    // not achieved). An explicit goal in the plan wins.
+                    if let meters = target?.targetDistanceMeters, meters > 0 {
+                        var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON) ?? IntervalPlan(steps: [])
+                        if plan.goal == nil {
+                            plan.goal = .init(kind: .distance, value: meters)
+                            workoutExercise.intervalPlanJSON = plan.encodedJSON()
+                        }
+                    }
                     cardioSessions.append(CardioSessionModel(
                         userID: ForgeFitDemo.userID,
                         workoutExerciseID: workoutExercise.id,

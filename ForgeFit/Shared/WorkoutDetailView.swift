@@ -64,7 +64,7 @@ private struct IntervalSplitsEditor: View {
                         saveError = modelContext.saveReportingFailure()
                     }
                 } footer: {
-                    Text("Rename a lap or swipe to delete. Reverting from the workout restores plain laps.")
+                    Text("Reverting restores the original laps.")
                 }
             }
             .navigationTitle("Edit intervals")
@@ -216,7 +216,7 @@ struct WorkoutDetailView: View {
                 workout: workout,
                 exercises: exercises,
                 setupNotes: [],
-                history: history,
+                injectedHistory: history,
                 mode: .historicalEdit
             )
         }
@@ -626,7 +626,7 @@ struct WorkoutDetailView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Detected \(workCount) interval\(workCount == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
-                Text("Auto-segmented from your effort — edit or revert to plain laps.")
+                Text("Auto-segmented from your effort — Revert restores plain laps.")
                     .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

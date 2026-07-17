@@ -87,6 +87,10 @@ import Testing
         session.intervalsAutoApplied = true
         session.yogaStyleRaw = nil
         session.posesCompleted = nil
+        session.poolLengthMeters = 25
+        session.lengthsCompleted = 40
+        session.totalStrokes = 720
+        session.strokeStyleRaw = "freestyle"
         // HEALTH SENTINELS
         session.hkWorkoutUUID = UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000002")
         session.activeEnergyKcal = 52399.9
@@ -155,6 +159,7 @@ import Testing
                     "avgPaceSecondsPerKm", "split500mSeconds", "strokeRate", "avgPowerWatts",
                     "avgCadence", "resistanceLevel", "inclinePercent", "elevationGainMeters",
                     "intervalsAutoApplied", "yogaStyleRaw", "posesCompleted",
+                    "poolLengthMeters", "lengthsCompleted", "totalStrokes", "strokeStyleRaw",
                     "createdAt", "updatedAt", "deletedAt", "splits", "routePoints"],
         "split": ["id", "index", "distanceMeters", "durationSeconds", "paceSecondsPerKm",
                   "elevationGainMeters", "label", "autoDetected", "startedAt", "endedAt"],
@@ -277,7 +282,17 @@ import Testing
         #expect(session.distanceMeters == originalSession.distanceMeters)
         #expect(session.effort == originalSession.effort)
         #expect(session.avgPaceSecondsPerKm == originalSession.avgPaceSecondsPerKm)
+        #expect(session.split500mSeconds == originalSession.split500mSeconds)
         #expect(session.strokeRate == originalSession.strokeRate)
+        #expect(session.avgPowerWatts == originalSession.avgPowerWatts)
+        #expect(session.avgCadence == originalSession.avgCadence)
+        #expect(session.resistanceLevel == originalSession.resistanceLevel)
+        #expect(session.inclinePercent == originalSession.inclinePercent)
+        #expect(session.elevationGainMeters == originalSession.elevationGainMeters)
+        #expect(session.poolLengthMeters == originalSession.poolLengthMeters)
+        #expect(session.lengthsCompleted == originalSession.lengthsCompleted)
+        #expect(session.totalStrokes == originalSession.totalStrokes)
+        #expect(session.strokeStyleRaw == originalSession.strokeStyleRaw)
         #expect(session.intervalsAutoApplied == originalSession.intervalsAutoApplied)
         #expect(session.avgHR == nil)
         #expect(session.tss == nil)
@@ -289,6 +304,30 @@ import Testing
         #expect(restored.points.count == 1)
         // 6-decimal rounding: within ~11 cm of the original coordinate.
         #expect(abs(restored.points[0].latitude - (-36.8484597123)) < 0.000001)
+    }
+
+    /// Swim fields are additive within schema v1: a backup written before
+    /// they existed must keep decoding, with the new fields nil. This is the
+    /// test that lets `currentSchemaVersion` stay at 1.
+    @Test func preSwimV1BackupDecodesWithNilSwimFields() throws {
+        let json = """
+        {"schemaVersion":1,"exportedAt":"2026-01-05T10:00:00Z",
+         "userID":"11111111-1111-1111-1111-111111111111","preferences":{},"importBatches":[],
+         "workouts":[{"id":"22222222-2222-2222-2222-222222222222","startedAt":"2026-01-05T09:00:00Z",
+           "createdAt":"2026-01-05T09:00:00Z","updatedAt":"2026-01-05T10:00:00Z","exercises":[],
+           "cardioSessions":[{"id":"33333333-3333-3333-3333-333333333333","modality":"row",
+             "startedAt":"2026-01-05T09:00:00Z","split500mSeconds":118.5,"strokeRate":26,
+             "intervalsAutoApplied":false,"createdAt":"2026-01-05T09:00:00Z",
+             "updatedAt":"2026-01-05T10:00:00Z","splits":[],"routePoints":[]}]}]}
+        """
+        let decoded = try BackupMapper.decode(Data(json.utf8))
+        let session = try #require(decoded.workouts.first?.cardioSessions.first)
+        #expect(session.split500mSeconds == 118.5)
+        #expect(session.strokeRate == 26)
+        #expect(session.poolLengthMeters == nil)
+        #expect(session.lengthsCompleted == nil)
+        #expect(session.totalStrokes == nil)
+        #expect(session.strokeStyleRaw == nil)
     }
 
     @MainActor

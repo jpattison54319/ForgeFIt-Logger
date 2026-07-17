@@ -11,6 +11,7 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AppState.self) private var appState
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var healthMetrics = HealthMetricsStore.shared
     @State private var showSettings = false
@@ -133,6 +134,48 @@ struct HomeView: View {
     private var hasReadinessSignal: Bool {
         workouts.contains { $0.endedAt != nil && $0.deletedAt == nil }
             || !healthMetrics.metrics.isEmpty
+            || todayDashboardCache != nil
+    }
+
+    /// Today's cached Home render, if this day already produced one. Strictly
+    /// keyed to the current calendar day — right after midnight there is no
+    /// cache and the dashboard shows its loader, because a new day's scores
+    /// don't exist yet and yesterday's must never stand in for them.
+    private var todayDashboardCache: (RecoverySnapshot, HomeDashboardCache)? {
+        guard let snapshot = RecoverySnapshotStore.shared.snapshot(for: Date()),
+              let cache = snapshot.dashboard else { return nil }
+        return (snapshot, cache)
+    }
+
+    /// Live once this launch's HealthKit refresh has landed; otherwise today's
+    /// cached render when one exists, otherwise the loading state.
+    private var dashboardSource: HomeDashboardSource {
+        if healthMetrics.lastRefreshed != nil { return .live }
+        if let (snapshot, cache) = todayDashboardCache { return .cached(snapshot, cache) }
+        return .loading
+    }
+
+    /// The dashboard as currently rendered, for the same-day cache. Callers
+    /// must hold the live-refresh gate (see the recording `.task`): before the
+    /// first refresh lands the engines run on empty health data, and caching
+    /// that render would clobber the morning's real one with placeholders.
+    private func liveDashboardCache(report: RecoveryEngine.Report) -> HomeDashboardCache {
+        let sleep = latestHealthMetric
+        let health = healthAssessment
+        return HomeDashboardCache(
+            recoveryDisplayScore: report.displayScore,
+            baselineReady: report.baselineReady,
+            actionRaw: report.action.rawValue,
+            recommendation: report.recommendation,
+            reasonTexts: report.reasonChips.prefix(2).map(\.text),
+            sleepValue: SleepMetricPresentation.value(for: sleep),
+            sleepCaption: SleepMetricPresentation.caption(for: sleep),
+            sleepProgress: SleepMetricPresentation.progress(for: sleep),
+            sleepLooksPartial: sleep?.sleepLikelyPartial == true && sleep?.sleepUserCorrected == false,
+            healthHeadline: health.headline,
+            healthCaption: health.caption,
+            healthEvaluatedCount: health.evaluatedCount,
+            healthOutsideRangeCount: health.outsideRangeCount)
     }
 
     // MARK: - Smart next-workout suggestion
@@ -192,9 +235,13 @@ struct HomeView: View {
                     }
 
                     if hasReadinessSignal {
-                        RecoveryHeroCard(report: recovery)
-                            .accessibilityIdentifier("home-guidance")
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                        RecoveryHeroCard(
+                            report: recovery,
+                            source: dashboardSource,
+                            isRefreshing: healthMetrics.isRefreshing
+                        )
+                        .accessibilityIdentifier("home-guidance")
+                        .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
                         readinessEmptyState
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
@@ -205,7 +252,8 @@ struct HomeView: View {
                         strain: dailyStrain,
                         sleep: latestHealthMetric,
                         health: healthAssessment,
-                        isLoading: healthMetrics.lastRefreshed == nil
+                        source: dashboardSource,
+                        isRefreshing: healthMetrics.isRefreshing
                     )
                     .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
 
@@ -238,9 +286,11 @@ struct HomeView: View {
                     if let suggestion {
                         suggestionCard(suggestion.routine, reason: suggestion.reason)
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            .transition(.opacity)
                     } else {
                         explorePromptCard
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            .transition(.opacity)
                     }
                     quickStart
 
@@ -257,6 +307,10 @@ struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Crossfades the suggestion ↔ explore-prompt swap (each carries
+                // `.transition(.opacity)`); scoped by key so it only fires when
+                // the branch actually flips.
+                .animation(Motion.stateChange, value: suggestion == nil)
                 .background {
                     if quickStartEditing {
                         Color.black.opacity(0.001)
@@ -285,23 +339,37 @@ struct HomeView: View {
             // Pull down to re-query Apple Health and recompute readiness.
             .refreshable { await AppRefresh.run(in: modelContext) }
             // Capture today's recovery for the calendar (keyed on the health
-            // fingerprint so it fires when metrics land), and backfill history
+            // fingerprint so it fires when metrics land, and on the check-in
+            // tags so a committed check-in re-records), and backfill history
             // once. Store the ACUTE daily and the trend separately — never
             // displayScore, which falls back to the trend when the acute isn't
             // in yet. Today is overwritten so it tracks Home's live number.
             // On-device only.
-            .task(id: "\(AnalyticsFingerprint.withHealth(workouts))|\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)") {
+            .task(id: "\(AnalyticsFingerprint.withHealth(workouts))|\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)|\(todayCheckinTags.joined(separator: ","))") {
+                // Record only after this launch's HealthKit refresh has landed.
+                // Pre-refresh the engines run on workouts alone: recovery comes
+                // back nil (harmless), but strain comes back a real 0.0 — zero
+                // training load, no movement data yet — and a non-nil zero
+                // would stomp the day's cached strain on every cold launch.
+                guard healthMetrics.lastRefreshed != nil else { return }
                 let report = recovery
                 let strain = dailyStrain
                 RecoverySnapshotStore.shared.recordToday(
                     daily: report.recovery.daily.state.value,
                     trend: report.recovery.systemic.state.value,
                     strain: strain.score,
-                    strainTarget: strain.targetRange)
+                    strainTarget: strain.targetRange,
+                    dashboard: liveDashboardCache(report: report))
                 RecoverySnapshotStore.shared.backfillIfNeeded(
                     workouts: workouts,
                     exercises: exercises,
                     activityMetrics: healthMetrics.activityMetrics,
+                    in: modelContext)
+                // Bodyweight-family sets completed before a body mass was
+                // known compute an effective load of zero; heal them whenever
+                // fresh health data lands.
+                WeightModeBackfill.fillMissingBodyweight(
+                    bodyweightSeries: healthMetrics.bodyweightSeries,
                     in: modelContext)
             }
             .fullScreenCover(item: $presentedWrappedReport) { report in
@@ -405,11 +473,7 @@ struct HomeView: View {
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Find your program").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Browse ready-made training programs, or start below.")
-                            .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
-                    }
+                    Text("Find your program").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
                 }
@@ -597,13 +661,16 @@ struct HomeView: View {
                             toggleCheckinTag(tag.id)
                         } label: {
                             HStack(spacing: 5) {
-                                Image(systemName: tag.icon).font(.system(size: 11, weight: .semibold))
+                                Image(systemName: tag.icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .symbolEffect(.bounce, value: reduceMotion ? false : on)
                                 Text(tag.label).font(.system(size: 12, weight: .semibold))
                             }
                             .foregroundStyle(on ? .white : theme.textSecondary)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(Capsule().fill(on ? theme.accent : theme.surfaceElevated))
+                            .animation(Motion.tap, value: on)
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
@@ -614,9 +681,10 @@ struct HomeView: View {
         }
     }
 
-    /// Toggle is optimistic: it updates the draft (instant capsule fill) and
-    /// debounces the persist so rapid multi-tag tapping neither writes to disk
-    /// nor re-runs RecoveryEngine per tap.
+    /// Toggle is optimistic: it updates the draft immediately (the capsule
+    /// repaints from the draft, never waiting on the persist) and debounces
+    /// the persist so rapid multi-tag tapping neither writes to disk nor
+    /// re-runs RecoveryEngine per tap.
     private func toggleCheckinTag(_ tag: String) {
         var tags = effectiveCheckinTags
         if let index = tags.firstIndex(of: tag) {
@@ -864,14 +932,17 @@ struct HomeView: View {
                     .buttonStyle(PressableButtonStyle())
                 }
             }
-            if quickStartEditing {
-                Button("Done") {
+            Button(quickStartEditing ? "Done" : "Edit", systemImage: quickStartEditing ? "checkmark" : "pencil") {
+                if quickStartEditing {
                     dismissQuickStartEdit()
+                } else {
+                    withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
                 }
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(theme.accent)
-                .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(theme.accent)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityIdentifier("home-quick-start-edit")
         }
     }
 
@@ -1298,12 +1369,10 @@ private struct QuickStartAddSheet: View {
 /// score exploration; this block answers only "what should I do today?"
 struct RecoveryHeroCard: View {
     @Environment(\.theme) private var theme
-    @State private var healthMetrics = HealthMetricsStore.shared
     @State private var isExpanded = true
     let report: RecoveryEngine.Report
-
-    private var isLoading: Bool { healthMetrics.lastRefreshed == nil }
-    private var isBuilding: Bool { !report.baselineReady }
+    let source: HomeDashboardSource
+    let isRefreshing: Bool
 
     var body: some View {
         Card {
@@ -1313,6 +1382,11 @@ struct RecoveryHeroCard: View {
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                     Spacer(minLength: Space.sm)
+                    if isRefreshing, source != .loading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(theme.textTertiary)
+                    }
                     Button {
                         withAnimation(.snappy(duration: 0.24)) {
                             isExpanded.toggle()
@@ -1341,7 +1415,8 @@ struct RecoveryHeroCard: View {
 
     private var guidance: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if isLoading {
+            switch source {
+            case .loading:
                 HStack(spacing: Space.sm) {
                     ProgressView()
                         .controlSize(.small)
@@ -1350,35 +1425,64 @@ struct RecoveryHeroCard: View {
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                 }
-            } else if isBuilding {
-                Text("Building your baseline")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.textPrimary)
-                Text("Keep logging and wearing your watch to unlock daily guidance.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: report.action.systemImage)
-                        .font(.system(size: 12, weight: .bold))
-                    Text(report.action.title)
-                        .font(.system(size: 14, weight: .bold))
+            case .cached(_, let cache):
+                if cache.baselineReady, let action = RecoveryEngine.Action(rawValue: cache.actionRaw) {
+                    recommendationBody(
+                        action: action,
+                        recommendation: cache.recommendation,
+                        reasons: cache.reasonTexts)
+                } else {
+                    buildingBody
                 }
-                .foregroundStyle(report.action.tint(in: theme))
-                Text(report.recommendation)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(3)
-                let reasons = report.reasonChips.prefix(2).map(\.text).joined(separator: "  |  ")
-                if !reasons.isEmpty {
-                    Text(reasons)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(2)
+            case .live:
+                if report.baselineReady {
+                    recommendationBody(
+                        action: report.action,
+                        recommendation: report.recommendation,
+                        reasons: report.reasonChips.prefix(2).map(\.text))
+                } else {
+                    buildingBody
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var buildingBody: some View {
+        Group {
+            Text("Building your baseline")
+                .font(.bodyStrong)
+                .foregroundStyle(theme.textPrimary)
+            Text("Keep logging and wearing your watch to unlock daily guidance.")
+                .font(.system(size: 13))
+                .foregroundStyle(theme.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func recommendationBody(
+        action: RecoveryEngine.Action,
+        recommendation: String,
+        reasons: [String]
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: action.systemImage)
+                .font(.system(size: 12, weight: .bold))
+            Text(action.title)
+                .font(.system(size: 14, weight: .bold))
+        }
+        .foregroundStyle(action.tint(in: theme))
+        Text(recommendation)
+            .font(.system(size: 13))
+            .foregroundStyle(theme.textPrimary)
+            .lineLimit(3)
+        let joined = reasons.joined(separator: "  |  ")
+        if !joined.isEmpty {
+            Text(joined)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(2)
+        }
     }
 }
 

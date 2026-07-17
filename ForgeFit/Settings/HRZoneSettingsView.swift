@@ -15,6 +15,7 @@ struct HRZoneSettingsView: View {
     @State private var appleSyncError: String?
     @State private var syncingAppleHealth = false
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
+    @AppStorage("paceVoiceCues") private var paceVoiceCues = true
 
     private var healthAge: Int? { HealthService.shared.biologicalAge() }
 
@@ -139,7 +140,16 @@ struct HRZoneSettingsView: View {
                         }
                     }
                     .tint(theme.accent)
-                    Text("Set a target zone from any cardio exercise before you start it.")
+                    Toggle(isOn: $paceVoiceCues) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Pace cues").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                            Text("Speak “ahead of pace” / “behind pace” when a pace band is set. Needs GPS or Apple Watch distance.")
+                                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .tint(theme.accent)
+                    Text("Set a target zone or pace band from any cardio exercise before you start it.")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                 }
             }
@@ -219,7 +229,7 @@ struct HRZoneSettingsView: View {
             if showAdvanced {
                 Card {
                     VStack(alignment: .leading, spacing: Space.sm) {
-                        Text("Edit each split as either percent or exact BPM. Both controls stay in sync.")
+                        Text("Percent and BPM are two views of the same boundary — they stay in sync.")
                             .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(0..<4, id: \.self) { index in

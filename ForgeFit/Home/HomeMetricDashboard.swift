@@ -1,5 +1,19 @@
 import SwiftUI
 
+/// What backs the Home dashboard right now.
+///
+/// - `live`: this launch's HealthKit refresh has landed; the engine reports
+///   drive everything.
+/// - `cached`: cold launch, refresh still in flight, but TODAY already has a
+///   recorded render — paint those numbers instantly instead of a loader.
+/// - `loading`: first open of the day (or first launch ever). A new day never
+///   shows an older day's numbers, so there is nothing honest to paint yet.
+enum HomeDashboardSource: Equatable {
+    case loading
+    case cached(RecoverySnapshot, HomeDashboardCache)
+    case live
+}
+
 struct HomeMetricGrid: View {
     @Environment(\.theme) private var theme
 
@@ -7,7 +21,11 @@ struct HomeMetricGrid: View {
     let strain: DailyStrainEngine.Report
     let sleep: RecoveryEngine.DailyHealthMetric?
     let health: HealthRangeAssessment
-    let isLoading: Bool
+    let source: HomeDashboardSource
+    /// A HealthKit re-query is in flight (cold launch, foreground, or pull to
+    /// refresh): every tile keeps its current numbers and shows a small
+    /// activity indicator instead of blanking.
+    let isRefreshing: Bool
 
     private let columns = [
         GridItem(.flexible(), spacing: Space.md),
@@ -44,78 +62,119 @@ struct HomeMetricGrid: View {
     }
 
     private var recoveryTile: some View {
-        if isLoading {
+        let score: Double
+        let baselineReady: Bool
+        let actionTitle: String
+        switch source {
+        case .loading:
             return loadingTile(title: "Recovery", systemImage: "heart.text.square.fill")
+        case .cached(_, let cache):
+            score = cache.recoveryDisplayScore
+            baselineReady = cache.baselineReady
+            actionTitle = RecoveryEngine.Action(rawValue: cache.actionRaw)?.title ?? ""
+        case .live:
+            score = recovery.displayScore
+            baselineReady = recovery.baselineReady
+            actionTitle = recovery.action.title
         }
-        let isBuilding = !recovery.baselineReady
-        let value = isBuilding ? "Building" : "\(Int((recovery.displayScore * 100).rounded()))"
-        let suffix = isBuilding ? nil : "%"
-        let caption = isBuilding ? "Personal baseline in progress" : recovery.action.title
+        let isBuilding = !baselineReady
         return HomeMetricTile(
             title: "Recovery",
             systemImage: "heart.text.square.fill",
-            value: value,
-            suffix: suffix,
-            caption: caption,
-            tint: isBuilding ? theme.textTertiary : theme.readinessColor(recovery.displayScore),
-            progress: isBuilding ? nil : recovery.displayScore
+            value: isBuilding ? "Building" : "\(Int((score * 100).rounded()))",
+            suffix: isBuilding ? nil : "%",
+            caption: isBuilding ? "Personal baseline in progress" : actionTitle,
+            tint: isBuilding ? theme.textTertiary : theme.readinessColor(score),
+            progress: isBuilding ? nil : score,
+            isRefreshing: isRefreshing
         )
     }
 
     private var sleepTile: some View {
-        if isLoading {
+        let value: String
+        let caption: String
+        let progress: Double?
+        let looksPartial: Bool
+        switch source {
+        case .loading:
             return loadingTile(title: "Sleep", systemImage: "moon.zzz.fill")
+        case .cached(_, let cache):
+            value = cache.sleepValue
+            caption = cache.sleepCaption
+            progress = cache.sleepProgress
+            looksPartial = cache.sleepLooksPartial
+        case .live:
+            value = SleepMetricPresentation.value(for: sleep)
+            caption = SleepMetricPresentation.caption(for: sleep)
+            progress = SleepMetricPresentation.progress(for: sleep)
+            looksPartial = sleep?.sleepLikelyPartial == true && sleep?.sleepUserCorrected == false
         }
-        let progress: Double? = {
-            guard let sleep, sleep.sleepOverrideStatus != .notTracked,
-                  let minutes = sleep.sleepTotalMinutes, sleep.sleepNeedMinutes > 0 else { return nil }
-            return min(1, max(0, Double(minutes) / Double(sleep.sleepNeedMinutes)))
-        }()
-        let tint = sleep?.sleepLikelyPartial == true && sleep?.sleepUserCorrected == false
-            ? theme.warmup : theme.zone2
         return HomeMetricTile(
             title: "Sleep",
             systemImage: "moon.zzz.fill",
-            value: SleepMetricPresentation.value(for: sleep),
-            caption: SleepMetricPresentation.caption(for: sleep),
-            tint: tint,
-            progress: progress
+            value: value,
+            caption: caption,
+            tint: looksPartial ? theme.warmup : theme.zone2,
+            progress: progress,
+            isRefreshing: isRefreshing
         )
     }
 
     private var strainTile: some View {
-        if isLoading {
+        let score: Double?
+        let target: ClosedRange<Double>?
+        switch source {
+        case .loading:
             return loadingTile(title: "Strain", systemImage: "flame.fill")
+        case .cached(let snapshot, _):
+            score = snapshot.strain
+            target = snapshot.strainTargetRange
+        case .live:
+            score = strain.score
+            target = strain.targetRange
         }
-        let value = strain.score?.formatted(.number.precision(.fractionLength(1))) ?? "Building"
-        let suffix = strain.score == nil ? nil : "/10"
+        let status = DailyStrainEngine.Report.status(score: score, targetRange: target)
         return HomeMetricTile(
             title: "Strain",
             systemImage: "flame.fill",
-            value: value,
-            suffix: suffix,
-            caption: strainCaption,
-            tint: strain.status == .aboveTarget ? theme.warmup : theme.secondaryAccent,
-            progress: strain.score.map { min(1, max(0, $0 / 10)) }
+            value: score?.formatted(.number.precision(.fractionLength(1))) ?? "Building",
+            suffix: score == nil ? nil : "/10",
+            caption: strainCaption(score: score, target: target, status: status),
+            tint: status == .aboveTarget ? theme.warmup : theme.secondaryAccent,
+            progress: score.map { min(1, max(0, $0 / 10)) },
+            isRefreshing: isRefreshing
         )
     }
 
     private var healthTile: some View {
-        if isLoading {
+        let headline: String
+        let caption: String
+        let evaluated: Int
+        let outside: Int
+        switch source {
+        case .loading:
             return loadingTile(title: "Health", systemImage: "waveform.path.ecg.rectangle.fill")
+        case .cached(_, let cache):
+            headline = cache.healthHeadline
+            caption = cache.healthCaption
+            evaluated = cache.healthEvaluatedCount
+            outside = cache.healthOutsideRangeCount
+        case .live:
+            headline = health.headline
+            caption = health.caption
+            evaluated = health.evaluatedCount
+            outside = health.outsideRangeCount
         }
-        let tint = health.evaluatedCount == 0
-            ? theme.textTertiary
-            : health.outsideRangeCount > 0 ? theme.recoveryLow : theme.success
         return HomeMetricTile(
             title: "Health",
             systemImage: "waveform.path.ecg.rectangle.fill",
-            value: health.headline,
-            caption: health.caption,
-            tint: tint,
-            progress: health.evaluatedCount > 0
-                ? Double(health.evaluatedCount - health.outsideRangeCount) / Double(health.evaluatedCount)
-                : nil
+            value: headline,
+            caption: caption,
+            tint: evaluated == 0
+                ? theme.textTertiary
+                : outside > 0 ? theme.recoveryLow : theme.success,
+            progress: evaluated > 0 ? Double(evaluated - outside) / Double(evaluated) : nil,
+            isRefreshing: isRefreshing
         )
     }
 
@@ -130,13 +189,17 @@ struct HomeMetricGrid: View {
         )
     }
 
-    private var strainCaption: String {
-        guard let score = strain.score else { return "7 days builds your target" }
-        switch strain.status {
+    private func strainCaption(
+        score: Double?,
+        target: ClosedRange<Double>?,
+        status: DailyStrainEngine.Report.Status
+    ) -> String {
+        guard let score else { return "7 days builds your target" }
+        switch status {
         case .building: return "Building movement baseline"
         case .targetBuilding: return "Recovery target building"
         case .belowTarget:
-            guard let lower = strain.targetRange?.lowerBound else { return "Below today's target" }
+            guard let lower = target?.lowerBound else { return "Below today's target" }
             return "\(max(0, lower - score).formatted(.number.precision(.fractionLength(1)))) to target"
         case .inTarget: return "Today's target reached"
         case .aboveTarget: return "Above today's target"
@@ -155,6 +218,9 @@ private struct HomeMetricTile: View {
     let tint: Color
     var progress: Double? = nil
     var isLoading = false
+    /// Fresh data is being fetched behind the numbers currently shown —
+    /// distinct from `isLoading`, which means there is nothing to show yet.
+    var isRefreshing = false
 
     var body: some View {
         Card(padding: Space.md) {
@@ -168,6 +234,11 @@ private struct HomeMetricTile: View {
                         .foregroundStyle(theme.textSecondary)
                         .textCase(.uppercase)
                     Spacer(minLength: 0)
+                    if isRefreshing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(theme.textTertiary)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(theme.textTertiary)
@@ -184,6 +255,8 @@ private struct HomeMetricTile: View {
                         .foregroundStyle(tint)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        .contentTransition(.numericText())
+                        .animation(Motion.stateChange, value: value)
                     if let suffix {
                         Text(suffix)
                             .font(.system(size: 12, weight: .bold))
@@ -207,6 +280,7 @@ private struct HomeMetricTile: View {
                                 .frame(width: max(5, proxy.size.width * min(1, max(0, progress))))
                         }
                     }
+                    .animation(Motion.stateChange, value: progress)
                 }
                 .frame(height: 5)
             }
@@ -214,7 +288,7 @@ private struct HomeMetricTile: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(value)\(suffix.map { " \($0)" } ?? ""), \(caption)")
+        .accessibilityLabel("\(title), \(value)\(suffix.map { " \($0)" } ?? ""), \(caption)\(isRefreshing ? ", updating" : "")")
         .accessibilityHint("Opens \(title) details")
     }
 }
@@ -277,6 +351,8 @@ struct TrainingLoadGauge: View {
                 Text(label)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
+                    .contentTransition(.opacity)
+                    .animation(Motion.stateChange, value: label)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -299,6 +375,8 @@ struct TrainingLoadGauge: View {
                             .position(x: baselineX, y: proxy.size.height / 2)
                     }
                 }
+                .animation(Motion.stateChange, value: comparison.ratio)
+                .animation(Motion.stateChange, value: comparison.baselineDaysAvailable)
             }
             .frame(height: 6)
 

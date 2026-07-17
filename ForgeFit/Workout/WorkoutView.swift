@@ -197,7 +197,7 @@ struct WorkoutHomeView: View {
                 if activeRoutines.isEmpty && folders.isEmpty {
                     EmptyStateCard(
                         title: "No routines yet",
-                        message: "Create a routine, or make a folder and drag routines into it.",
+                        message: "Build your first routine or organize plans in folders.",
                         systemImage: "list.bullet.rectangle"
                     )
                 }

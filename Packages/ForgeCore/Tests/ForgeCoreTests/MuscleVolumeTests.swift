@@ -29,6 +29,36 @@ final class MuscleVolumeTests: XCTestCase {
         XCTAssertTrue(MuscleVolume.fractionalSets(for: set, exercise: benchPress).isEmpty)
     }
 
+    // Parent rollups: a row crediting lats AND middle back is ONE back set;
+    // exact child buckets stay untouched; direct parent tags join the same
+    // bucket; non-hierarchy muscles get no rollup.
+    func testParentRollupCountsMultiMemberSetsOnce() {
+        let tBarRow = ExerciseInfo(
+            name: "T-Bar Row",
+            primaryMuscles: ["lats", "middle_back"],
+            secondaryMuscles: ["biceps"]
+        )
+        let buckets = MuscleVolume.volumeWithParentRollups([
+            (set: SetEntry(reps: 8, weight: 60), exercise: tBarRow),
+        ])
+        XCTAssertEqual(buckets["back"] ?? 0, 1.0, accuracy: tol)          // not 2.0
+        XCTAssertEqual(buckets["lats"] ?? 0, 1.0, accuracy: tol)
+        XCTAssertEqual(buckets["middle back"] ?? 0, 1.0, accuracy: tol)
+        XCTAssertEqual(buckets["biceps"] ?? 0, 0.5, accuracy: tol)
+        XCTAssertNil(buckets["shoulders"])
+
+        // Secondary-only membership rolls up at secondary weight, and a
+        // direct parent tag shares the bucket.
+        let shrug = ExerciseInfo(name: "Shrug", primaryMuscles: ["traps"], secondaryMuscles: [])
+        let directBack = ExerciseInfo(name: "Back Machine", primaryMuscles: ["back"], secondaryMuscles: [])
+        let combined = MuscleVolume.volumeWithParentRollups([
+            (set: SetEntry(reps: 10, weight: 80), exercise: shrug),
+            (set: SetEntry(reps: 10, weight: 90), exercise: directBack),
+        ])
+        XCTAssertEqual(combined["back"] ?? 0, 2.0, accuracy: tol)
+        XCTAssertEqual(combined["traps"] ?? 0, 1.0, accuracy: tol)
+    }
+
     // A muscle listed as both primary and secondary counts once, as primary.
     func testNoDoubleCounting() {
         let ex = ExerciseInfo(

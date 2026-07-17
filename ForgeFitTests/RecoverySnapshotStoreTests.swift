@@ -92,6 +92,75 @@ struct RecoverySnapshotStoreTests {
         #expect(store.snapshot(for: d2)?.daily == nil)
         #expect(store.snapshot(for: d2)?.trend == 0.60)
     }
+
+    // MARK: - Same-day dashboard cache
+
+    private func demoDashboard(recommendation: String = "Green light — push today.") -> HomeDashboardCache {
+        HomeDashboardCache(
+            recoveryDisplayScore: 0.82,
+            baselineReady: true,
+            actionRaw: "push",
+            recommendation: recommendation,
+            reasonTexts: ["HRV above baseline"],
+            sleepValue: "7h 12m",
+            sleepCaption: "Sleep need met",
+            sleepProgress: 0.9,
+            sleepLooksPartial: false,
+            healthHeadline: "All in range",
+            healthCaption: "4 health signals checked",
+            healthEvaluatedCount: 4,
+            healthOutsideRangeCount: 0)
+    }
+
+    @Test func dashboardRidesAlongWithTodaysScores() {
+        let store = freshStore()
+        store.recordToday(daily: 0.82, trend: 0.64, dashboard: demoDashboard())
+        #expect(store.snapshot(for: Date())?.dashboard == demoDashboard())
+    }
+
+    @Test func aRecordWithoutALiveRenderKeepsTheMorningsDashboard() {
+        // A cold launch records scores before its HealthKit refresh has landed
+        // (dashboard nil); that pass must not clobber the same day's earlier
+        // real render with nothing.
+        let store = freshStore()
+        store.recordToday(daily: 0.82, trend: 0.64, dashboard: demoDashboard())
+        store.recordToday(daily: 0.82, trend: 0.64, dashboard: nil)
+        #expect(store.snapshot(for: Date())?.dashboard == demoDashboard())
+    }
+
+    @Test func aNewRenderReplacesTheDashboardWholesale() {
+        let store = freshStore()
+        store.recordToday(daily: 0.82, trend: 0.64, dashboard: demoDashboard())
+        var updated = demoDashboard(recommendation: "Ease off — short night.")
+        updated.reasonTexts = []
+        store.recordToday(daily: 0.71, trend: 0.64, dashboard: updated)
+        let stored = store.snapshot(for: Date())?.dashboard
+        #expect(stored?.recommendation == "Ease off — short night.")
+        #expect(stored?.reasonTexts.isEmpty == true)
+    }
+
+    @Test func aScorelessDayStoresNoDashboard() {
+        // No score for the day → Home keeps showing its loader; a dashboard
+        // cache alone must not create a calendar day out of nothing.
+        let store = freshStore()
+        store.recordToday(daily: nil, trend: nil, strain: nil, dashboard: demoDashboard())
+        #expect(store.snapshot(for: Date()) == nil)
+    }
+
+    @Test func dashboardSurvivesPersistenceRoundTrip() {
+        let store = freshStore()
+        store.recordToday(daily: 0.82, trend: 0.64, dashboard: demoDashboard())
+        let reloaded = RecoverySnapshotStore()   // re-reads UserDefaults
+        #expect(reloaded.snapshot(for: Date())?.dashboard == demoDashboard())
+        store.removeAllForTesting()
+    }
+
+    @Test func snapshotsPersistedBeforeTheDashboardExistedStillDecode() throws {
+        let data = Data(#"{"daily":0.81,"trend":0.67,"strain":5.2}"#.utf8)
+        let snapshot = try JSONDecoder().decode(RecoverySnapshot.self, from: data)
+        #expect(snapshot.daily == 0.81)
+        #expect(snapshot.dashboard == nil)
+    }
 }
 
 /// The recovery colour scale that both the calendar rings and the summary card

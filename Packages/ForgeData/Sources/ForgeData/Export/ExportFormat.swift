@@ -13,6 +13,9 @@ import Foundation
 /// - `routines`: the plan layer (folders as macro/meso cycles, routines,
 ///   per-set targets), which the backup omits because CloudKit syncs it.
 public struct ForgeFitExportFile: Codable, Sendable {
+    /// Version policy matches the backup's: additive optional fields do NOT
+    /// bump this — older files decode them as nil, and older apps ignore
+    /// unknown keys. Bump only for breaking changes.
     public static let currentExportVersion = 1
 
     public var exportVersion: Int
@@ -81,6 +84,10 @@ public struct ExportWorkoutHealth: Codable, Sendable {
     }
 }
 
+/// HR-derived and Apple-Health-sourced values only. Machine readouts and
+/// pool metadata (pace/split, power, cadence, stroke rate/counts, resistance,
+/// incline, elevation, pool length/lengths, stroke style) are training data:
+/// they live on `BackupCardioSession` inside `trainingLog`, never here.
 public struct ExportCardioSessionHealth: Codable, Sendable {
     public var avgHR: Int?
     public var maxHR: Int?

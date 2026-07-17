@@ -60,6 +60,10 @@ watch destinations often fail to resolve.
 
 ## Writing code
 
+- Before creating, editing, or reviewing any UI/UX, read
+  `.agents/skills/self-evident-ui/SKILL.md` completely and apply it. This is a
+  required design invariant: interaction mechanics must be communicated by
+  visible, familiar affordances rather than instructional copy or diagrams.
 - New Swift files under a target's folder compile automatically
   (file-system-synchronized groups). Never edit `project.pbxproj` to add files.
 - New tests use Swift Testing (`import Testing`, `@Test`, `#expect`), not

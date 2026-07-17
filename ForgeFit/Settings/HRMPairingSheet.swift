@@ -74,7 +74,7 @@ struct HRMPairingSheet: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(theme.warmup)
-                        Text("Couldn't connect — make sure the monitor is broadcasting, then tap it to try again.")
+                        Text("Couldn't connect — make sure the monitor is broadcasting.")
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

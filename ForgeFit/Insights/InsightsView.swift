@@ -10,6 +10,9 @@ struct InsightsView: View {
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    /// Local rollout flag for the Insights Builder (registered in
+    /// AppPreferenceKeys.localOnly); defaults ON for the founder's build.
+    @AppStorage("insightsBuilderEnabled") private var insightsBuilderEnabled = true
 
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var range: TimeChartRange = .twelveWeeks
@@ -29,6 +32,13 @@ struct InsightsView: View {
 
         NavigationStack {
             ScreenScaffold("Insights") {
+                if insightsBuilderEnabled {
+                    NavigationLink(value: InsightsRoute.myInsights) {
+                        MyInsightsEntryCard()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("insight-my-insights-entry")
+                }
                 trendCard(analytics: analytics, fingerprint: fingerprint)
 
                 if !muscleRows.isEmpty {
@@ -79,6 +89,8 @@ struct InsightsView: View {
                     ExerciseDetailView(exerciseID: exerciseID, workouts: workouts, exercises: exercises)
                 case .records:
                     RecordsListView(records: records, workouts: workouts, exercises: exercises)
+                case .myInsights:
+                    MyInsightsView(workouts: workouts, exercises: exercises)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -127,6 +139,7 @@ struct InsightsView: View {
 private enum InsightsRoute: Hashable {
     case exercise(UUID)
     case records
+    case myInsights
 }
 
 private enum InsightsInfoTopic: Identifiable {

@@ -145,18 +145,19 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// Tint of the trigger's glass (nil = neutral/clear glass).
     var triggerTint: Color? = nil
     var dismissSystemImage: String = "xmark"
-    /// Optional quiet caption drawn beside the expanded dismiss control (its
-    /// trailing edge `labelGap` left of the control) — e.g. "Hold to edit" to
-    /// teach the long-press right where it applies. Below the control is not
-    /// an option for `.up` fans: that space belongs to whatever the fan is
-    /// anchored above. Rendered only when `showsLabels` is on.
-    var dismissCaption: String? = nil
     var triggerAccessibilityLabel: String = "More options"
     var triggerAccessibilityHint: String = ""
     var triggerAccessibilityID: String? = nil
     var dismissAccessibilityLabel: String = "Dismiss"
     var dismissAccessibilityHint: String = ""
     var dismissAccessibilityID: String? = nil
+    /// Optional explicit action beside the expanded dismiss control. This is
+    /// useful when a long-press shortcut also needs a visible, discoverable
+    /// path without consuming another fan slot.
+    var dismissAccessoryLabel: String? = nil
+    var dismissAccessorySystemImage: String = "pencil"
+    var dismissAccessoryAccessibilityID: String? = nil
+    var onDismissAccessory: (() -> Void)? = nil
     /// Optional action for the collapsed bubble. When nil, tapping expands the
     /// menu as usual. This lets a destructive choice retract to one persistent
     /// Undo bubble without mounting a second control beside the trigger.
@@ -256,11 +257,11 @@ struct GlassDivisionMenu<Trigger: View>: View {
             ? AnyLayout(HStackLayout(spacing: gap))
             : AnyLayout(VStackLayout(spacing: gap))
         return layout {
-            if !direction.triggerAtEnd { dismissBubble }
+            if !direction.triggerAtEnd { dismissControls }
             ForEach(orderedChildren, id: \.item.id) { entry in
                 childBubble(entry.item, birthIndex: entry.index)
             }
-            if direction.triggerAtEnd { dismissBubble }
+            if direction.triggerAtEnd { dismissControls }
         }
         // Reserve the label band so no ancestor clips the captions and content
         // below keeps its distance. Uniform padding can't disturb per-item
@@ -434,6 +435,62 @@ struct GlassDivisionMenu<Trigger: View>: View {
 
     // MARK: Trigger + dismiss (share glassEffectID so they morph, not cross-fade)
 
+    private var dismissControls: some View {
+        HStack(spacing: Space.sm) {
+            if let dismissAccessoryLabel, let onDismissAccessory {
+                Button {
+                    // Let the owner commit any presentation state before this
+                    // subtree begins retracting. Replacing the fan first can
+                    // drop a sheet/cover requested from the same release.
+                    onDismissAccessory()
+                    collapse()
+                } label: {
+                    dismissAccessoryFace(
+                        label: dismissAccessoryLabel,
+                        systemImage: dismissAccessorySystemImage
+                    )
+                }
+                .buttonStyle(PressableButtonStyle())
+                .allowsHitTesting(childrenShown)
+                .accessibilityIdentifier(dismissAccessoryAccessibilityID ?? "")
+                .accessibilityLabel(dismissAccessoryLabel)
+                .opacity(childrenShown ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: childrenShown)
+            }
+            dismissBubble
+        }
+        // The accessory belongs beside the root; it must not redefine the
+        // root's morph axis. Align this composite child by the dismiss bubble's
+        // center rather than the HStack's center so every vertical fan bubble
+        // stays directly above the original trigger.
+        .alignmentGuide(HorizontalAlignment.center) { dimensions in
+            dimensions.width - triggerSize / 2
+        }
+    }
+
+    @ViewBuilder
+    private func dismissAccessoryFace(label: String, systemImage: String) -> some View {
+        let content = Label(label, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(theme.textPrimary)
+            .frame(width: triggerSize, height: triggerSize)
+            .contentShape(Circle())
+
+        if usesStableMaterialRelay {
+            content.background {
+                Circle()
+                    .fill(.thinMaterial)
+                    .overlay {
+                        Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.75)
+                    }
+                    .shadow(color: Color.black.opacity(0.16), radius: 8, y: 3)
+            }
+        } else {
+            content.glassEffect(.regular.interactive(), in: Circle())
+        }
+    }
+
     private func bubbleGlass(for item: GlassDivisionItem) -> Glass {
         bubbleGlassTintOpacity > 0
             ? .regular.tint(item.tint.opacity(bubbleGlassTintOpacity)).interactive()
@@ -516,6 +573,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         guard let onTriggerLongPress else { return }
         suppressNextTriggerTap = true
         onTriggerLongPress()
+        if expanded { collapse() }
         // Self-heal: if the surface the hook presents cancels the touch, the
         // Button's action never consumes the flag — clear it so the next
         // plain tap still works.
@@ -551,15 +609,6 @@ struct GlassDivisionMenu<Trigger: View>: View {
         .accessibilityLabel(dismissAccessibilityLabel)
         .accessibilityHint(dismissAccessibilityHint)
         .accessibilityIdentifier(dismissAccessibilityID ?? "")
-        // Quiet gesture hint beside the control. `.background` draws behind
-        // the glass and takes no layout space; trailing alignment + the fixed
-        // offset pins the caption's trailing edge `labelGap` left of the
-        // control's leading edge regardless of text width.
-        .background(alignment: .trailing) {
-            if let dismissCaption, showsLabels {
-                dismissCaptionView(dismissCaption)
-            }
-        }
 
         if onTriggerLongPress != nil {
             button.simultaneousGesture(
@@ -570,28 +619,6 @@ struct GlassDivisionMenu<Trigger: View>: View {
         } else {
             button
         }
-    }
-
-    /// Styled like a child caption, but always present while the fan is open
-    /// (it labels the control's hold gesture, not a spawned action).
-    private func dismissCaptionView(_ text: String) -> some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(theme.textSecondary)
-            .lineLimit(1)
-            .fixedSize()
-            .opacity(childrenShown ? 1 : 0)
-            .animation(
-                childrenShown
-                    ? .easeOut(duration: 0.15).delay(
-                        reduceMotion ? 0.10 : (usesStableMaterialRelay ? 0.11 : 0.30)
-                    )
-                    : .easeIn(duration: 0.08),
-                value: childrenShown
-            )
-            .offset(x: -(triggerSize + labelGap))
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 
     // MARK: Actions

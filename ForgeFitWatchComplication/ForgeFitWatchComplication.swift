@@ -78,7 +78,7 @@ struct ForgeFitComplicationView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     } else if let score = snapshot?.readinessScore {
                         Text("\(score)% ready").font(.headline)
-                        Text(snapshot?.readinessAction ?? "Tap to train")
+                        Text(snapshot?.readinessAction ?? "Today's readiness")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     } else {
                         Text("ForgeFit").font(.headline)

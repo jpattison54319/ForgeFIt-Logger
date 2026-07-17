@@ -355,7 +355,7 @@ struct AICoachChatView: View {
         _messages = State(initialValue: [
             CoachChatMessage(
                 role: .coach,
-                text: "Hey — I’ve got your training pulled up: readiness, recent sessions, what’s recovered and what isn’t. Ask me anything, or tap a question below to get going."
+                text: "Hey — I’ve got your readiness, recent sessions, and recovery pulled up. Ask me anything."
             )
         ])
     }

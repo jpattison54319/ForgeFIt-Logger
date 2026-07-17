@@ -49,8 +49,6 @@ struct ReminderSettingsCard: View {
                     Image(systemName: "bell.slash.fill").foregroundStyle(theme.textTertiary)
                     Text("Notifications are off").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
-                Text("Turn them on in Settings to get workout reminders and locked-phone rest alerts.")
-                    .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                 SecondaryButton(title: "Open Settings", systemImage: "arrow.up.right") {
                     scheduler.openSystemSettings()
                 }
@@ -86,19 +84,17 @@ struct ReminderSettingsCard: View {
                         .contentShape(Rectangle().inset(by: -2))
                     }
                 }
-                if !weekdays.isEmpty {
-                    DatePicker("Remind me at", selection: $time, displayedComponents: .hourAndMinute)
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                        .tint(theme.accent)
-                        .onChange(of: time) { _, newValue in
-                            let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-                            scheduler.reminderMinutes = (components.hour ?? 17) * 60 + (components.minute ?? 30)
-                        }
-                } else {
-                    Text("Pick the days you plan to train.")
-                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
-                }
+                DatePicker("Remind me at", selection: $time, displayedComponents: .hourAndMinute)
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.accent)
+                    .disabled(weekdays.isEmpty)
+                    .opacity(weekdays.isEmpty ? 0.45 : 1)
+                    .accessibilityHint(weekdays.isEmpty ? "Choose at least one training day first" : "")
+                    .onChange(of: time) { _, newValue in
+                        let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                        scheduler.reminderMinutes = (components.hour ?? 17) * 60 + (components.minute ?? 30)
+                    }
             }
         }
         Card {

@@ -39,6 +39,7 @@ enum AppPreferenceKeys {
         "paceAnnouncementsEnabled",
         "intervalSoundCues",
         "zoneVoiceCues",
+        "paceVoiceCues",
         "yogaVoiceCues",
         "yogaVoiceID",
         "yogaVoiceRate",
@@ -49,6 +50,7 @@ enum AppPreferenceKeys {
 
     static let localOnly: [String] = [
         "initialTab",
+        "insightsBuilderEnabled",
         "autoStartRoutine",
         "openSettings",
         LaunchSeedPolicy.defaultsKey,

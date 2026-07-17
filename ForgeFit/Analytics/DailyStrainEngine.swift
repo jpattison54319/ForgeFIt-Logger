@@ -52,6 +52,17 @@ struct DailyStrainEngine {
             guard let score, let target = targetMidpoint, target > 0 else { return nil }
             return min(1, max(0, score / target))
         }
+
+        /// Status is fully determined by the score and target. This is the
+        /// single derivation — the engine and Home's same-day cached tile
+        /// (which stores only score + target) both resolve through it.
+        static func status(score: Double?, targetRange: ClosedRange<Double>?) -> Status {
+            guard let score else { return .building }
+            guard let targetRange else { return .targetBuilding }
+            if score < targetRange.lowerBound { return .belowTarget }
+            if score > targetRange.upperBound { return .aboveTarget }
+            return .inTarget
+        }
     }
 
     let workouts: [WorkoutModel]
@@ -112,13 +123,7 @@ struct DailyStrainEngine {
 
         let score = combinedRatio.map(Self.score(forLoadRatio:))
         let targetRange = score == nil ? nil : strainTargetRange()
-        let status: Report.Status = {
-            guard let score else { return .building }
-            guard let targetRange else { return .targetBuilding }
-            if score < targetRange.lowerBound { return .belowTarget }
-            if score > targetRange.upperBound { return .aboveTarget }
-            return .inTarget
-        }()
+        let status = Report.status(score: score, targetRange: targetRange)
 
         let workoutMinutes = completedWorkouts
             .filter { calendar.isDate($0.startedAt, inSameDayAs: today) }

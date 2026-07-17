@@ -43,14 +43,26 @@ struct PlateCalculatorView: View {
                     if let solution {
                         loadoutCard(solution)
                     }
-                    Text("Plate sizes and counts are editable in Settings → Plates & Bars.")
-                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    NavigationLink {
+                        PlatesAndBarsDetailView()
+                    } label: {
+                        Card {
+                            Label("Edit plates & bar", systemImage: "slider.horizontal.3")
+                                .font(.bodyStrong)
+                                .foregroundStyle(theme.accent)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .buttonStyle(PressableButtonStyle())
                 }
                 .padding(Space.lg)
             }
             .background(theme.background)
             .navigationTitle("Plate Calculator")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                inventory = PlateInventoryStore.load(unit: displayUnit)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }

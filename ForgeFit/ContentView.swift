@@ -54,6 +54,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var themeManager: ThemeManager
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
@@ -164,11 +165,13 @@ struct ContentView: View {
             .task { await social.bootstrap() }
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
+                // No `injectedHistory:` — the logger snapshots history itself,
+                // so the per-save re-fetch of `workouts` never hands the
+                // logger a new array identity mid-session.
                 ActiveWorkoutLoggerView(
                     workout: activeWorkout,
                     exercises: exercises,
                     setupNotes: setupNotes,
-                    history: workouts,
                     onMinimize: { appState.showingLogger = false },
                     onFinished: { publishFinishedWorkout($0) }
                 )
@@ -280,6 +283,7 @@ struct ContentView: View {
                     }
                 }
         }
+        .environment(appState)
         .environment(\.theme, activeTheme)
         .preferredColorScheme(resolvedColorScheme)
     }
@@ -325,9 +329,12 @@ struct ContentView: View {
             VStack(spacing: Space.sm) {
                 // The quick-action bubble and the mini bar never coexist: an
                 // active workout owns the band above the tab bar, and most
-                // bubble actions are workout starts anyway.
+                // bubble actions are workout starts anyway. The two hand over
+                // (workout start/finish) with a keyed swap animation so one
+                // floating element doesn't hard-cut into the other.
                 if activeWorkout == nil {
                     quickActionsBubbleRow
+                        .transition(Motion.scaleIn(0.8, anchor: .bottomTrailing, reduceMotion: reduceMotion))
                 }
                 if let activeWorkout {
                     MiniWorkoutBar(
@@ -337,9 +344,11 @@ struct ContentView: View {
                         onDiscard: { workoutPendingDiscard = activeWorkout }
                     )
                     .padding(.horizontal, Space.lg)
+                    .transition(Motion.riseIn(reduceMotion: reduceMotion))
                 }
                 ForgeTabBar(selection: $appState.selectedTab)
             }
+            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: activeWorkout == nil)
             .padding(.bottom, Space.sm)
             // Scoped to just this bottom-bar layer (not the whole `appShell`
             // ZStack): SwiftUI's default keyboard avoidance would otherwise
@@ -381,12 +390,12 @@ struct ContentView: View {
             collapseSignal: quickActionsCollapseSignal,
             reloadToken: quickActionsReloadToken,
             onExpandedChange: { expanded in
-                withAnimation(.easeInOut(duration: 0.2)) { quickActionsExpanded = expanded }
+                // Scrim keeps pace with the fan: eased in alongside the fan's
+                // ~0.5 s bouncy birth, dropped fast to match its quick
+                // retraction springs.
+                withAnimation(expanded ? Motion.entrance : Motion.tap) { quickActionsExpanded = expanded }
             },
             onOpenEditor: {
-                // Long-press works expanded too — retract the fan behind the
-                // incoming editor so dismissal never lands on a stale fan.
-                quickActionsCollapseSignal += 1
                 showQuickActionsEditor = true
             },
             onLogBodyweight: { showLogWeightSheet = true }
@@ -454,9 +463,13 @@ struct ContentView: View {
     }
 
     private func handleRestTimerChange(_ _: Date?) {
-        WatchLink.shared.publishState()
+        // The watch publish is NOT repeated here: RestTimerController's
+        // onStateChange hook (wired in WatchLink.configure) already pushes a
+        // forced publish on every start/adjust/skip/end. Publishing here too
+        // doubled the SwiftData-fetch + WCSession-serialize cost on the main
+        // thread at exactly the moments a lifter starts scrolling.
         // Structural change (start/skip/replace, not a per-second tick):
-        // both surfaces carry restEndsAt, so push both immediately.
+        // the phone-local surfaces still update immediately.
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
         updateWidgetSnapshot()
     }
@@ -718,6 +731,19 @@ struct ContentView: View {
             || ProcessInfo.processInfo.environment["FORGEFIT_RECOVERY_DEMO"] == "1" {
             RecoverySnapshotStore.shared.seedDemo()
         }
+        // Cold-launch dashboard automation: freeze the pre-refresh state, then
+        // stage the snapshot store so the same-day-cache and first-open-of-day
+        // paths render deterministically.
+        if ProcessInfo.processInfo.arguments.contains("--suppress-health-refresh") {
+            HealthMetricsStore.shared.suppressRefreshForTesting()
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-home-dashboard-cache") {
+            RecoverySnapshotStore.shared.seedTodayDashboardDemo()
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-yesterday-dashboard-cache") {
+            RecoverySnapshotStore.shared.removeAllForTesting()
+            RecoverySnapshotStore.shared.seedYesterdayDashboardDemo()
+        }
         #endif
 
         // F10: a 7+ day lapse arms Home's welcome-back card — measured BEFORE
@@ -773,6 +799,7 @@ struct ContentView: View {
         #endif
         await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
         SetTypeRetirementBackfill.run(in: modelContext)
+        WeightModeBackfill.convertIfNeeded(in: modelContext)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
@@ -1023,8 +1050,18 @@ struct ContentView: View {
 
             if i % 4 == 3 {
                 let isYoga = i % 12 == 11
+                // Live-logged cardio always carries an exercise row with the
+                // session linked to it; the fixture mirrors that so history
+                // editing renders the cardio card. Treadmill = no GPS, no
+                // distance — the "add the machine's distance later" case.
+                let cardioRow = isYoga ? nil : WorkoutExerciseModel(
+                    userID: userID,
+                    exerciseID: GlobalExerciseLibrary.treadmillRunID,
+                    position: 0
+                )
                 let session = CardioSessionModel(
                     userID: userID,
+                    workoutExerciseID: cardioRow?.id,
                     modality: isYoga ? CardioSessionModel.yogaModality : CardioKind.run.rawValue,
                     startedAt: start,
                     endedAt: start.addingTimeInterval(2_100),
@@ -1037,6 +1074,7 @@ struct ContentView: View {
                     title: isYoga ? "Yoga Flow #\(sessionNumber)" : "Morning Run #\(sessionNumber)",
                     startedAt: start,
                     endedAt: start.addingTimeInterval(2_100),
+                    exercises: cardioRow.map { [$0] } ?? [],
                     cardioSessions: [session]
                 )
             } else {
@@ -1119,6 +1157,7 @@ struct ContentView: View {
         appState.showingLogger = false
         appState.pendingWorkoutStart = nil
         quickActionsReloadToken += 1
+        InsightDataCoordinator.shared.invalidate()
         cleanedOnboardingSlate = false
         lastHealthWorkoutImportAt = nil
         showOnboarding = true

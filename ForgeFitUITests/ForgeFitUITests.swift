@@ -91,6 +91,21 @@ final class ForgeFitUITests: XCTestCase {
     }
 
     @MainActor
+    func testHomeQuickStartsHaveVisibleEditControl() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-homeQuickStartActions.v1", ""]
+        app.launch()
+
+        let edit = app.buttons["home-quick-start-edit"].firstMatch
+        scrollUntilHittable(edit, in: app)
+        XCTAssertTrue(edit.isHittable, "Expected a visible way to edit Home quick starts.")
+        edit.tap()
+
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 3),
+                      "Expected Home quick starts to enter edit mode.")
+    }
+
+    @MainActor
     func testQuickCardioCanBeSavedToRecents() throws {
         let app = XCUIApplication()
         // --reset-store only wipes SwiftData (AccountResetService); it does not

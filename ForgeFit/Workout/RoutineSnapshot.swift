@@ -19,6 +19,7 @@ struct RoutineSnapshot: Equatable {
         let targetRPE: Double?
         let targetRIR: Int?
         let targetDurationSeconds: Int?
+        let targetDistanceMeters: Double?
         let plannedMiniSetCount: Int?
         let plannedMiniRepsJSON: String?
 
@@ -32,6 +33,7 @@ struct RoutineSnapshot: Equatable {
             targetRPE = set.targetRPE
             targetRIR = set.targetRIR
             targetDurationSeconds = set.targetDurationSeconds
+            targetDistanceMeters = set.targetDistanceMeters
             plannedMiniSetCount = set.plannedMiniSetCount
             plannedMiniRepsJSON = set.plannedMiniRepsJSON
         }
@@ -139,6 +141,7 @@ struct RoutineSnapshot: Equatable {
             model.targetRPE = snapshot.targetRPE
             model.targetRIR = snapshot.targetRIR
             model.targetDurationSeconds = snapshot.targetDurationSeconds
+            model.targetDistanceMeters = snapshot.targetDistanceMeters
             model.plannedMiniSetCount = snapshot.plannedMiniSetCount
             model.plannedMiniRepsJSON = snapshot.plannedMiniRepsJSON
             restored.append(model)

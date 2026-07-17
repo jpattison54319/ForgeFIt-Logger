@@ -58,26 +58,77 @@ nonisolated enum CardioKind: String, CaseIterable {
     var metricLabels: [String] {
         var labels = ["Time", "Heart rate", "Effort"]
         if usesDistance { labels.append("Distance") }
-        labels.append(usesPace ? "Pace" : "Speed")
+        labels.append(usesSplit500 ? "Split /500m" : (usesPace ? "Pace" : "Speed"))
         if usesElevation { labels.append("Elevation") }
         if usesIncline { labels.append("Incline") }
         if usesPower { labels.append("Power") }
         if usesStrokeRate { labels.append("Stroke rate") }
-        if usesCadence { labels.append("Cadence") }
+        if usesCadence { labels.append(cadenceFieldLabel) }
+        if usesFloors { labels.append("Floors") }
+        if usesStepCount { labels.append(stepCountLabel) }
+        if usesResistance { labels.append("Resistance") }
+        if usesSwimContract { labels.append(contentsOf: ["Pool length", "Lengths", "Strokes"]) }
         return labels
     }
 
     // Which metrics this modality surfaces.
-    var usesDistance: Bool { self != .other }
+    /// Stair machines and jump rope have no meaningful distance — their
+    /// consoles speak floors and jumps; storage keeps any legacy value.
+    var usesDistance: Bool { ![.other, .stair, .jumpRope].contains(self) }
     var usesPace: Bool { [.run, .trailRun, .walk, .row, .swim].contains(self) }   // pace vs speed
     var usesElevation: Bool { [.run, .trailRun, .walk, .cycle].contains(self) }
-    var usesIncline: Bool { [.run, .walk, .stair].contains(self) }
-    var usesPower: Bool { [.cycle, .row].contains(self) }
+    var usesIncline: Bool { [.run, .walk, .stair, .elliptical].contains(self) }
+    var usesPower: Bool { [.cycle, .row, .run, .trailRun].contains(self) }
     var usesStrokeRate: Bool { self == .row }
-    var usesCadence: Bool { [.run, .trailRun, .walk, .cycle].contains(self) }
+    var usesCadence: Bool { [.run, .trailRun, .walk, .cycle, .elliptical, .jumpRope].contains(self) }
+    /// Machine level/resistance — stair, bike, and elliptical consoles all
+    /// expose one; the number is the machine's own scale, so no unit.
+    var usesResistance: Bool { [.stair, .cycle, .elliptical].contains(self) }
+    /// Stair machines count floors; floors/min is the derived climb rate.
+    var usesFloors: Bool { self == .stair }
+    /// Step-counted modalities: stairs count steps, ellipticals strides,
+    /// jump rope jumps — same storage (`totalSteps`), different vocabulary.
+    var usesStepCount: Bool { [.stair, .elliptical, .jumpRope].contains(self) }
+    /// Rowing headlines the /500 m split — the erg's native pace language.
+    var usesSplit500: Bool { self == .row }
+    /// Pool swims carry the pool contract: length, lengths, strokes, stroke
+    /// style; distance and SWOLF derive from it.
+    var usesSwimContract: Bool { self == .swim }
     /// Pool swims are always measured in fixed meters, regardless of the user's
     /// km/mi preference; every other modality follows the user's distance unit.
     var usesFixedMeters: Bool { self == .swim }
+
+    /// The cadence input's vocabulary per modality — a cyclist pedals rpm,
+    /// an elliptical counts strides, a rope counts jumps.
+    var cadenceFieldLabel: String {
+        switch self {
+        case .elliptical: "Strides/min"
+        case .jumpRope: "Jumps/min"
+        default: "Cadence"
+        }
+    }
+
+    var cadenceUnit: String {
+        switch self {
+        case .cycle: "rpm"
+        case .elliptical, .jumpRope: "/min"
+        default: "spm"
+        }
+    }
+
+    var stepCountLabel: String {
+        switch self {
+        case .elliptical: "Strides"
+        case .jumpRope: "Jumps"
+        default: "Steps"
+        }
+    }
+
+    /// Title for the headline pace/speed read-out slot.
+    var paceHeadline: String {
+        if usesSplit500 { return "Split" }
+        return usesPace ? "Pace" : "Speed"
+    }
 
     static func infer(name: String, equipment: String?) -> CardioKind {
         let n = name.lowercased()
@@ -139,6 +190,10 @@ enum CardioMetrics {
     /// swims render per-100m regardless of the preference.
     static func paceString(distanceMeters: Double?, durationSeconds: Int?, kind: CardioKind = .run, unit: DistanceUnit = Fmt.distanceUnit) -> String {
         guard let secPerKm = paceSecPerKm(distanceMeters: distanceMeters, durationSeconds: durationSeconds) else { return "—" }
+        if kind.usesSplit500 {
+            let s = secPerKm / 2   // per-500m for rowing
+            return String(format: "%d:%02d /500m", Int(s) / 60, Int(s) % 60)
+        }
         if kind.usesFixedMeters {
             let s = secPerKm / 10   // per-100m for swims
             return String(format: "%d:%02d /100m", Int(s) / 60, Int(s) % 60)
@@ -194,6 +249,29 @@ enum CardioMetrics {
 
     static func measuredZoneSecondsArray(seriesJSON: String?) -> [Int]? {
         CardioSampleSeries.decode(from: seriesJSON).flatMap(measuredZoneSecondsArray(series:))
+    }
+
+    /// Rowing split headline: derive /500 m from real distance + time, and
+    /// only fall back to the erg's own stored readout when the piece has no
+    /// distance yet. "—" over a guess when neither exists.
+    static func rowingSplitString(distanceMeters: Double?, durationSeconds: Int?, storedSplitSeconds: Double?) -> String {
+        let derived = CardioDerivations.split500Seconds(distanceMeters: distanceMeters, durationSeconds: durationSeconds)
+        guard let text = CardioDerivations.splitString(seconds: derived ?? storedSplitSeconds) else { return "—" }
+        return "\(text) /500m"
+    }
+}
+
+extension IntervalPlan {
+    /// User-facing goal summary in display units: goal + zone + pace band
+    /// composed the way the goal rows show them. Core's `structureSummary`
+    /// stays unit-neutral; this is the app-side, Fmt-aware voice of it.
+    var displaySummary: String {
+        var text = structureSummary(distance: { Fmt.cardioDistance($0, kind: .run) })
+        if !hasSteps, let band = target, band.isMeaningful {
+            let bandText = IntervalTargetFormatting.text(for: band)
+            text = text == "Open" ? bandText : "\(text) · \(bandText)"
+        }
+        return text
     }
 }
 

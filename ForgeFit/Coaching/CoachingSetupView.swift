@@ -62,12 +62,16 @@ struct CoachingSetupView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
 
     /// Phase 4 hook: called when the lifter chooses "Build my own routine
     /// instead" from the honest none-match state. Nil (the default) just
     /// dismisses the sheet — the caller wires real navigation once the
     /// routine-builder entry point exists.
     var onBuildOwnRoutine: (() -> Void)?
+    /// Lets a presenting Coach's Corner dismiss both stacked sheets before
+    /// switching tabs. Standalone presentations fall back to local dismissal.
+    var onViewWorkout: (() -> Void)?
 
     @State private var focus: TrainingFocus = .mixed
     @State private var goal: CoachGoalOption = .generalFitness
@@ -144,9 +148,6 @@ struct CoachingSetupView: View {
                 Text("Let's build your plan")
                     .font(.screenTitle)
                     .foregroundStyle(theme.textPrimary)
-                Text("A few questions so the coach can recommend the right program.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.textSecondary)
             }
 
             formGroup(title: "What do you train?") {
@@ -401,7 +402,7 @@ struct CoachingSetupView: View {
                         Text("\(sessionsPerWeek)x per week")
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Pick from your existing guided flows each session.")
+                        Text("Any guided flow")
                             .font(.system(size: 12))
                             .foregroundStyle(theme.textSecondary)
                     }
@@ -453,12 +454,17 @@ struct CoachingSetupView: View {
             Text("Plan activated")
                 .font(.screenTitle)
                 .foregroundStyle(theme.textPrimary)
-            Text("Your coach is now tracking this plan. You can find it in Workout.")
+            Text("Your coach is now tracking this plan.")
                 .font(.system(size: 14))
                 .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
-            PrimaryButton(title: "Done", systemImage: "checkmark") {
-                dismiss()
+            PrimaryButton(title: "View in Workout", systemImage: "dumbbell.fill") {
+                if let onViewWorkout {
+                    onViewWorkout()
+                } else {
+                    appState.selectedTab = .workout
+                    dismiss()
+                }
             }
         }
         .padding(.horizontal, Space.xl)
@@ -470,4 +476,5 @@ struct CoachingSetupView: View {
     CoachingSetupView()
         .modelContainer(for: ForgeDataSchema.models, inMemory: true)
         .environment(\.theme, .sageDark)
+        .environment(AppState())
 }
