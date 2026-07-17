@@ -30,7 +30,7 @@ enum NextRoutineSuggestion {
         now: Date = Date()
     ) -> Result? {
         let active = routines
-            .filter { $0.deletedAt == nil && !$0.exercises.isEmpty }
+            .filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }
             .sorted { $0.position < $1.position }
         guard !active.isEmpty else { return nil }
 

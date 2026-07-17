@@ -40,10 +40,8 @@ struct WorkoutHistoryImportTests {
     }
 
     @Test func commitCreatesCompletedWorkoutsAndSkipsDuplicateReimport() async throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let bench = ExerciseLibraryModel(name: "Bench Press", primaryMuscles: ["chest"], equipment: "barbell")
         context.insert(bench)
         try context.save()
@@ -70,10 +68,8 @@ struct WorkoutHistoryImportTests {
     }
 
     @Test func importCreatesClassifiedCustomStrengthExercise() async throws {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
 
         let csv = """
         title,start_time,end_time,exercise_title,set_index,set_type,weight_lbs,reps

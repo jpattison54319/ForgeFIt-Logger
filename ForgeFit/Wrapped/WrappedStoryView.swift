@@ -71,7 +71,7 @@ struct WrappedStoryView: View {
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
-                    CircleIconButton(systemImage: "xmark") { dismiss() }
+                    CircleIconButton(systemImage: "xmark", label: "Close") { dismiss() }
                         .accessibilityLabel("Close report")
                 }
             }

@@ -21,10 +21,20 @@ enum AccountResetService {
         try ExerciseSeedRepository.seedGlobalLibrary(in: context)
         ExerciseCatalog.seed(into: context)
         try context.save()
+        // The privacy policy promises reset also removes the iCloud Drive
+        // backup. Best-effort — offline just means the files outlive the
+        // reset until the user deletes them in Files.
+        Task { await BackupExporter.shared.deleteAllBackups() }
         NotificationCenter.default.post(name: .forgeFitAccountResetDidComplete, object: nil)
     }
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
+        try deleteAll(SavedInsightModel.self, in: context)
+        try deleteAll(CoachingWeekOverrideModel.self, in: context)
+        try deleteAll(CoachedProgramModel.self, in: context)
+        try deleteAll(CoachingProfileModel.self, in: context)
+        try deleteAll(ProgressionSuggestionModel.self, in: context)
+        try deleteAll(DailyCheckinModel.self, in: context)
         try deleteAll(CardioRoutePointModel.self, in: context)
         try deleteAll(CardioSplitModel.self, in: context)
         try deleteAll(CardioSessionModel.self, in: context)
@@ -58,7 +68,7 @@ enum AccountResetService {
         RestTimerController.shared.skip()
         IntervalRunnerHub.shared.stop()
         YogaFlowRunnerHub.shared.stop()
-        WatchLink.shared.clearLiveMetrics()
+        LiveMetricsHub.shared.endSession()
         WatchLink.shared.sendCommand(.discardWorkout)
         WatchLink.shared.publishState()
         ForgeFitWidgetSnapshotStore.save(ForgeFitWidgetSnapshot(mode: .idle))
@@ -77,27 +87,16 @@ enum AccountResetService {
     }
 
     private static func clearAppDefaults() {
+        // The canonical key lists live in AppPreferenceKeys, shared with the
+        // iCloud backup exporter — one list, so reset and backup can't drift.
+        // (Clearing the seed stamp makes the next launch re-run the full
+        // catalog seed against the freshly-reset store.)
         let defaults = UserDefaults.standard
-        [
-            "didOnboard",
-            "initialTab",
-            "autoStartRoutine",
-            "openSettings",
-            "activeMacroFolderID",
-            "activeMesoFolderID",
-            ThemeManager.modeDefaultsKey,
-            "profileDisplayName",
-            "liveSyncEnabled",
-            "healthWriteEnabled",
-            "weightUnitRaw",
-            "distanceUnitRaw",
-            "showRPEInLogger",
-            "reminderWeekdays",
-            "reminderMinutes",
-            "streakNudgeEnabled",
-            PlateInventoryStore.key(for: .lb),
-            PlateInventoryStore.key(for: .kg)
-        ].forEach(defaults.removeObject(forKey:))
+        AppPreferenceKeys.allResettable.forEach(defaults.removeObject(forKey:))
+        // HR-zone config lives in the app-group suite (health-derived —
+        // never backed up, but reset must still clear it).
+        UserDefaults(suiteName: ForgeFitWidgetSnapshotStore.suiteName)?
+            .removeObject(forKey: HRZoneConfigStore.key)
         Fmt.unit = .lb
         Fmt.distanceUnit = .km
     }

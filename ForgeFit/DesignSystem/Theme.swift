@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Theme
 
@@ -200,18 +203,85 @@ enum Space {
     static let tabBarClearance: CGFloat = 96
 }
 
+// MARK: - Motion
+
+/// Motion tokens — the app's animation voice, one tier per job. Pick a token
+/// instead of an inline curve so state feedback times identically on every
+/// screen. (The staged Liquid Glass choreography in `GlassDivisionMenu` /
+/// `QuickIncrementFan` keeps its own bespoke springs by design.)
+///
+/// Reduce Motion: pure value morphs (numeric text rolls, color/fill changes,
+/// opacity crossfades) run untouched; anything that moves, scales, bounces,
+/// or staggers must swap to `Motion.reduced` or an opacity transition — the
+/// transition helpers below do this given the environment's
+/// `accessibilityReduceMotion` flag.
+enum Motion {
+    /// Immediate feedback on a tap or a per-second value tick.
+    static let tap: Animation = .easeOut(duration: 0.15)
+    /// A value or state changing in place. Matches the logger's set-completion
+    /// timing (`.snappy(0.28)`) so existing and new feedback speak together.
+    static let stateChange: Animation = .snappy(duration: 0.28)
+    /// A view arriving or departing (cards, strips, floating buttons).
+    static let entrance: Animation = .spring(duration: 0.35)
+    /// One-shot reward moments (XP fills, level-ups). Rare by design.
+    static let reward: Animation = .easeOut(duration: 0.6)
+    /// Short crossfade substituted for any token when Reduce Motion is on.
+    static let reduced: Animation = .easeOut(duration: 0.15)
+
+    /// Rise-from-bottom entrance; collapses to a fade under Reduce Motion.
+    static func riseIn(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+    }
+
+    /// Directional slide for paged content (calendar months); fades under
+    /// Reduce Motion.
+    static func slide(from edge: Edge, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
+    }
+
+    /// Gentle scale-and-fade entrance; collapses to a fade under Reduce Motion.
+    static func scaleIn(
+        _ scale: CGFloat = 0.9,
+        anchor: UnitPoint = .center,
+        reduceMotion: Bool
+    ) -> AnyTransition {
+        reduceMotion ? .opacity : .scale(scale: scale, anchor: anchor).combined(with: .opacity)
+    }
+}
+
 // MARK: - Typography
 
+/// The type ramp is anchored to system text styles so every token scales
+/// with the user's Text Size setting (Dynamic Type). Each anchor's DEFAULT
+/// size equals the token's original fixed point size, so nothing shifts at
+/// the standard (Large) setting. The app root clamps growth at
+/// `.accessibility1` (see ForgeFitApp) so dense fixed-frame surfaces stay
+/// usable — raise the ceiling only after auditing those layouts.
 extension Font {
-    static let screenTitle = Font.system(size: 34, weight: .bold, design: .default)
-    static let sectionTitle = Font.system(size: 22, weight: .bold)
-    static let cardTitle = Font.system(size: 20, weight: .semibold)
-    static let metricValue = Font.system(size: 30, weight: .bold)
-    static let statValue = Font.system(size: 22, weight: .semibold)
-    static let bodyStrong = Font.system(size: 16, weight: .semibold)
-    static let rowValue = Font.system(size: 17, weight: .semibold)
-    static let label = Font.system(size: 13, weight: .medium)
-    static let tag = Font.system(size: 12, weight: .semibold)
+    static let screenTitle = Font.system(.largeTitle, design: .default, weight: .bold)   // 34
+    static let sectionTitle = Font.system(.title2, weight: .bold)                        // 22
+    static let cardTitle = Font.system(.title3, weight: .semibold)                       // 20
+    static let statValue = Font.system(.title2, weight: .semibold)                       // 22
+    static let bodyStrong = Font.system(.callout, weight: .semibold)                     // 16
+    static let rowValue = Font.system(.body, weight: .semibold)                          // 17
+    static let label = Font.system(.footnote, weight: .medium)                           // 13
+    static let tag = Font.system(.caption, weight: .semibold)                            // 12
+
+    /// 30 pt sits between `.title` (28) and `.largeTitle` (34), so it scales
+    /// through UIFontMetrics against `.title1` instead of a style anchor. The
+    /// growth cap mirrors the app-wide `.accessibility1` clamp — UIFontMetrics
+    /// reads UIKit's content size directly and would otherwise ignore it.
+    @MainActor
+    static var metricValue: Font {
+        #if os(iOS)
+        let capped = min(UIApplication.shared.preferredContentSizeCategory, .accessibilityMedium)
+        let size = UIFontMetrics(forTextStyle: .title1)
+            .scaledValue(for: 30, compatibleWith: UITraitCollection(preferredContentSizeCategory: capped))
+        return Font.system(size: size, weight: .bold)
+        #else
+        return Font.system(size: 30, weight: .bold)
+        #endif
+    }
 }
 
 // MARK: - Color hex helper

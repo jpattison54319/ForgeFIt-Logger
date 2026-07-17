@@ -50,6 +50,8 @@ struct WatchSyncTests {
             ),
             routines: [WatchRoutineSummary(id: routineID, name: "Push", exerciseCount: 4)],
             readiness: 82,
+            readinessAction: "Train as planned",
+            readinessDetail: "Train as planned.",
             unitSuffix: "lb",
             updatedAt: updatedAt
         )
@@ -60,6 +62,7 @@ struct WatchSyncTests {
         #expect(decoded == original)
         #expect(decoded.workout?.completedSets == 1)
         #expect(decoded.workout?.totalSets == 1)
+        #expect(decoded.readinessAction == "Train as planned")
     }
 
     @Test func watchCommandsRoundTripAllPayloadShapes() throws {
@@ -158,6 +161,53 @@ struct WatchSyncTests {
     }
 }
 
+// MARK: - Live-metrics fallback channel (watch → phone, screen-off HR sync)
+
+extension WatchSyncTests {
+    /// `WatchWire.liveMetricsKey` carries the same `.liveMetrics` payload as
+    /// `commandKey`, just through `updateApplicationContext` instead of
+    /// `sendMessage`/`transferUserInfo` — it must be a distinct key (so a
+    /// receiver can tell the two channels apart in one delegate callback) but
+    /// decode with the exact same `WatchCommand` codec.
+    @Test func liveMetricsKeyIsDistinctFromCommandAndContextKeys() {
+        #expect(WatchWire.liveMetricsKey != WatchWire.commandKey)
+        #expect(WatchWire.liveMetricsKey != WatchWire.contextKey)
+    }
+
+    @Test func liveMetricsPayloadRoundTripsUnderTheFallbackKey() throws {
+        let metrics = WatchLiveMetrics(
+            heartRate: 158,
+            avgHR: 149,
+            maxHR: 171,
+            activeEnergyKcal: 410.2,
+            distanceMeters: 3021.5,
+            hrZoneSeconds: [5, 40, 90, 30, 0],
+            asOf: Date(timeIntervalSince1970: 1_800_000_900)
+        )
+        let data = try #require(WatchWire.encode(WatchCommand.liveMetrics(metrics)))
+
+        // Simulate the application-context payload dictionary a receiver sees
+        // in `session(_:didReceiveApplicationContext:)`.
+        let payload: [String: Any] = [WatchWire.liveMetricsKey: data]
+
+        let roundTripped = try #require(payload[WatchWire.liveMetricsKey] as? Data)
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: roundTripped))
+        guard case .liveMetrics(let decodedMetrics) = decoded else {
+            Issue.record("expected .liveMetrics case")
+            return
+        }
+        #expect(decodedMetrics == metrics)
+    }
+
+    @Test func liveHeartRateExpiresInsteadOfPresentingAFrozenReading() {
+        let sampledAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let metrics = WatchLiveMetrics(heartRate: 158, asOf: sampledAt)
+
+        #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(14)) == 158)
+        #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(16)) == nil)
+    }
+}
+
 // MARK: - Yoga mirroring
 
 extension WatchSyncTests {
@@ -205,5 +255,49 @@ extension WatchSyncTests {
         let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
         #expect(decoded.workout?.isYogaWorkout == nil)
         #expect(decoded.workout?.exercises.first?.isYoga == nil)
+    }
+
+    @Test func olderContextWithoutVerdictFieldsStillDecodes() throws {
+        let legacyJSON = """
+        {"workout":null,"routines":[],"readiness":75,"unitSuffix":"lb","updatedAt":0}
+        """
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: Data(legacyJSON.utf8)))
+
+        #expect(decoded.readiness == 75)
+        #expect(decoded.readinessAction == nil)
+        #expect(decoded.readinessDetail == nil)
+    }
+}
+
+// MARK: - Rest-timer mirroring (incl. block micro-rests)
+
+extension WatchSyncTests {
+    @Test func snapshotRoundTripsMicroRestFlag() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 0),
+            restEndsAt: Date(timeIntervalSinceReferenceDate: 15),
+            restTotalSeconds: 15,
+            restIsMicro: true
+        )
+        let data = try #require(WatchWire.encode(WatchAppContext(workout: snapshot)))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        #expect(decoded.workout?.restIsMicro == true)
+        #expect(decoded.workout?.restTotalSeconds == 15)
+    }
+
+    /// A full rest — or an older snapshot — leaves `restIsMicro` nil while the
+    /// countdown itself still mirrors.
+    @Test func fullRestLeavesMicroFlagNil() throws {
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 0),
+            restEndsAt: Date(timeIntervalSinceReferenceDate: 120),
+            restTotalSeconds: 120
+        )
+        let data = try #require(WatchWire.encode(WatchAppContext(workout: snapshot)))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        #expect(decoded.workout?.restIsMicro == nil)
+        #expect(decoded.workout?.restEndsAt != nil)
     }
 }

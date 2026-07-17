@@ -10,13 +10,6 @@ import Testing
 @MainActor
 struct YogaWorkoutPipelineTests {
 
-    private func makeContainer() throws -> (ModelContainer, ModelContext) {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        let container = try ModelContainer(for: schema, configurations: [configuration])
-        return (container, container.mainContext)
-    }
-
     private func makePose(name: String = "Pigeon Pose", hold: Int = 60, unilateral: Bool = true) -> ExerciseLibraryModel {
         let pose = ExerciseLibraryModel(name: name, modalityRaw: "yoga", defaultHoldSeconds: hold)
         pose.isUnilateral = unilateral
@@ -26,7 +19,7 @@ struct YogaWorkoutPipelineTests {
     // MARK: - Factory
 
     @Test func routineStartCreatesYogaSessionNotSets() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose()
         context.insert(pose)
 
@@ -55,7 +48,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func routineStartSynthesizesFlowForBarePose() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Child's Pose", hold: 45, unilateral: false)
         context.insert(pose)
 
@@ -75,8 +68,29 @@ struct YogaWorkoutPipelineTests {
         _ = container
     }
 
-    @Test func startYogaQuickStartAnchorsOnFirstPose() throws {
-        let (container, context) = try makeContainer()
+    @Test func routineStartKeepsYogaSessionUnconfiguredUntilBuilt() throws {
+        let (container, context) = try TestStore.make()
+        let sessionExercise = YogaPoseCatalog.sessionExercise(in: context)
+
+        let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "Choose Later")
+        routine.exercises = [RoutineExerciseModel(userID: ForgeFitDemo.userID, exerciseID: sessionExercise.id)]
+        context.insert(routine)
+        try context.save()
+
+        let workout = WorkoutFactory.start(routine: routine, exercises: [sessionExercise], in: context)
+
+        let we = try #require(workout.exercises.first)
+        #expect(we.exerciseID == YogaPoseCatalog.sessionExerciseID)
+        #expect(we.sets.isEmpty)
+        #expect(we.yogaFlowJSON == nil)
+        let session = try #require(workout.cardioSessions.first)
+        #expect(session.isYogaSession)
+        #expect(session.durationSeconds == nil)
+        _ = container
+    }
+
+    @Test func startYogaQuickStartAnchorsOnSessionCard() throws {
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Downward-Facing Dog", hold: 30, unilateral: false)
         context.insert(pose)
         try context.save()
@@ -85,7 +99,7 @@ struct YogaWorkoutPipelineTests {
         let workout = WorkoutFactory.startYoga(flow: flow, named: "Morning Flow", exercises: [pose], in: context)
 
         #expect(workout.title == "Morning Flow")
-        #expect(workout.exercises.first?.exerciseID == pose.id)
+        #expect(workout.exercises.first?.exerciseID == YogaPoseCatalog.sessionExerciseID)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
         #expect(session.yogaStyleRaw == "vinyasa")
@@ -93,7 +107,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func runnerHubResumesAtFirstIncompletePoseSplit() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let first = makePose(name: "Forward Fold", hold: 30, unilateral: false)
         let second = makePose(name: "Low Lunge", hold: 30, unilateral: false)
         context.insert(first)
@@ -131,7 +145,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func strengthRoutineStartIsUnchangedByYogaBranch() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let bench = ExerciseLibraryModel(name: "Bench Press")
         context.insert(bench)
 
@@ -150,7 +164,7 @@ struct YogaWorkoutPipelineTests {
     }
 
     @Test func finishWorkoutCompletesManualYogaAndStampsExposure() throws {
-        let (container, context) = try makeContainer()
+        let (container, context) = try TestStore.make()
         let pose = makePose(name: "Butterfly", hold: 120, unilateral: false)
         pose.primaryMuscles = ["adductors"]
         context.insert(pose)
@@ -166,6 +180,9 @@ struct YogaWorkoutPipelineTests {
             workoutExerciseID: workoutExercise.id,
             modality: CardioSessionModel.yogaModality,
             startedAt: Date.now.addingTimeInterval(-600),
+            // A deliberate manual log carries the editor's source marker —
+            // an untouched planned block (no marker) is skipped at finish.
+            sourceDevice: CardioSessionModel.yogaManualSource,
             durationSeconds: 300,
             yogaStyleRaw: YogaStyle.yin.rawValue
         )
@@ -186,6 +203,62 @@ struct YogaWorkoutPipelineTests {
         #expect(session.durationSeconds == 300)
         let exposure = FlexibilityAnalytics.decodeExposure(session.flexibilityExposureJSON)
         #expect(exposure["adductors"] == 300)
+        _ = container
+    }
+
+    @Test func finishWorkoutSkipsUntouchedYogaBlock() throws {
+        let (container, context) = try TestStore.make()
+        let pose = makePose(name: "Sphinx", hold: 60, unilateral: false)
+        context.insert(pose)
+
+        // A completed lift gives the workout real substance, so finish()
+        // completes it rather than discarding it as empty. That's the case
+        // that exercises the skip logic below: a mixed session (lifts + a yoga
+        // cool-down) where the yoga block was never practiced must land in
+        // history with the block left untouched — not auto-logged at its
+        // planned length with phantom flexibility credit.
+        let completedLift = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            position: 0,
+            sets: [SetModel(userID: ForgeFitDemo.userID, position: 0, reps: 8, weight: 100, completedAt: .now)]
+        )
+
+        let plan = YogaFlowPlan.singlePose(from: pose)
+        let workoutExercise = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: pose.id,
+            position: 1,
+            yogaFlowJSON: plan.encodedJSON()
+        )
+        // Factory-shaped session: plan duration as target, never started,
+        // never manually edited.
+        let session = CardioSessionModel(
+            userID: ForgeFitDemo.userID,
+            workoutExerciseID: workoutExercise.id,
+            modality: CardioSessionModel.yogaModality,
+            startedAt: Date.now.addingTimeInterval(-600),
+            durationSeconds: plan.totalSeconds,
+            yogaStyleRaw: plan.styleRaw
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Lift, then skipped yoga",
+            startedAt: Date.now.addingTimeInterval(-600),
+            exercises: [completedLift, workoutExercise],
+            cardioSessions: [session]
+        )
+        context.insert(workout)
+        try context.save()
+
+        WorkoutFinisher.finish(workout, in: context)
+
+        // The lift's substance completes the workout — it isn't discarded.
+        #expect(workout.endedAt != nil)
+        #expect(workout.deletedAt == nil)
+        // The un-practiced block stays incomplete: no exposure, no pose count.
+        #expect(session.endedAt == nil)
+        #expect(session.flexibilityExposureJSON == nil)
         _ = container
     }
 

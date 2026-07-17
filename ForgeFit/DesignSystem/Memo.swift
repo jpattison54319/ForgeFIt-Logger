@@ -45,6 +45,13 @@ final class MemoTable<Key: Hashable, Value> {
 /// O(workouts) with no per-set work: counts, the newest `updatedAt`, and the
 /// stored per-workout volume rollup together move whenever a workout is
 /// added, finished, deleted, edited, or a set completion changes its volume.
+///
+/// IN-PROGRESS workouts contribute only to the `live` count — never their
+/// `updatedAt` or volume. Every memo consumer computes over COMPLETED
+/// workouts, and folding the active session in meant each mid-workout save
+/// (which stamps `updatedAt`/`totalVolume`) invalidated every kept-resident
+/// tab's memo behind the logger — a full history-wide analytics recompute per
+/// logged set. Finishing still invalidates: `ended` changes.
 enum AnalyticsFingerprint {
     static func of(_ workouts: [WorkoutModel]) -> String {
         var live = 0
@@ -53,7 +60,8 @@ enum AnalyticsFingerprint {
         var volumeSum = 0.0
         for workout in workouts where workout.deletedAt == nil {
             live += 1
-            if workout.endedAt != nil { ended += 1 }
+            guard workout.endedAt != nil else { continue }
+            ended += 1
             if workout.updatedAt > latestUpdate { latestUpdate = workout.updatedAt }
             volumeSum += workout.totalVolume ?? 0
         }
@@ -64,8 +72,9 @@ enum AnalyticsFingerprint {
     /// refreshes — required for anything feeding `RecoveryEngine`.
     @MainActor
     static func withHealth(_ workouts: [WorkoutModel]) -> String {
-        let metrics = HealthMetricsStore.shared.metrics
+        let store = HealthMetricsStore.shared
+        let metrics = store.metrics
         let latestMetric = metrics.last?.date.timeIntervalSince1970 ?? 0
-        return of(workouts) + "|\(metrics.count)|\(latestMetric)"
+        return of(workouts) + "|\(metrics.count)|\(latestMetric)|\(store.metricsRevision)"
     }
 }

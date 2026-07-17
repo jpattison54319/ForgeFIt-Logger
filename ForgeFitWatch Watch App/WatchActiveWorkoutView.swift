@@ -19,8 +19,50 @@ struct WatchActiveWorkoutView: View {
                 .tag(2)
         }
         .tabViewStyle(.verticalPage)
+        .overlay(alignment: .top) {
+            // The rest countdown follows the athlete onto every page. The
+            // metrics page (0) has its own big headline, so the compact banner
+            // rides the logging + controls pages so you never have to swipe to
+            // find it.
+            if selection != 0 {
+                WatchRestBanner(workout: workout)
+            }
+        }
         .task {
-            store.ensureWorkoutSessionRunning()
+            await store.recoverOrStartWorkoutSession()
+        }
+    }
+}
+
+/// A compact, always-on rest countdown shown over the logging/controls pages.
+/// Display-only (never intercepts touches); the phone owns the timer.
+private struct WatchRestBanner: View {
+    let workout: WatchWorkoutSnapshot
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            if let endsAt = workout.restEndsAt, endsAt > context.date {
+                let remaining = max(0, Int(endsAt.timeIntervalSince(context.date).rounded(.up)))
+                let isMicro = workout.restIsMicro == true
+                let tint = isMicro ? WTheme.teal : WTheme.accent
+                HStack(spacing: 5) {
+                    Image(systemName: "timer").font(.system(size: 11, weight: .bold)).foregroundStyle(tint)
+                    Text(isMicro ? "MINI" : "REST").font(.system(size: 11, weight: .heavy)).foregroundStyle(tint)
+                    Spacer(minLength: 4)
+                    Text(WFmt.rest(remaining))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(tint)
+                        .contentTransition(.numericText(countsDown: true))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.4), lineWidth: 1))
+                .padding(.horizontal, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -35,6 +77,7 @@ struct WatchMetricsPage: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let heartRate = engine.liveHeartRate(at: context.date)
             VStack(alignment: .leading, spacing: 6) {
                 // Interval step, then rest countdown, take over the headline —
                 // whichever number the athlete needs right now.
@@ -46,7 +89,7 @@ struct WatchMetricsPage: View {
                         round: workout.intervalRound,
                         next: workout.intervalNextName)
                 } else if let restEndsAt = workout.restEndsAt, restEndsAt > context.date {
-                    restHeadline(endsAt: restEndsAt, now: context.date)
+                    restHeadline(endsAt: restEndsAt, now: context.date, isMicro: workout.restIsMicro == true)
                 } else {
                     Text(WFmt.elapsed(max(0, Int(context.date.timeIntervalSince(workout.startedAt)))))
                         .font(.system(size: 40, weight: .bold, design: .rounded))
@@ -58,8 +101,8 @@ struct WatchMetricsPage: View {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(WTheme.danger)
-                        .symbolEffect(.pulse, isActive: engine.heartRate != nil)
-                    Text(engine.heartRate.map(String.init) ?? "—")
+                        .symbolEffect(.pulse, isActive: heartRate != nil)
+                    Text(heartRate.map(String.init) ?? "—")
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                     Text("bpm").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -130,16 +173,18 @@ struct WatchMetricsPage: View {
         }
     }
 
-    private func restHeadline(endsAt: Date, now: Date) -> some View {
+    private func restHeadline(endsAt: Date, now: Date, isMicro: Bool) -> some View {
         let remaining = max(0, Int(endsAt.timeIntervalSince(now).rounded(.up)))
+        // Micro-rests (myo-rep / drop / cluster) read teal, matching the phone.
+        let tint = isMicro ? WTheme.teal : WTheme.accent
         return VStack(alignment: .leading, spacing: 0) {
-            Text("REST")
+            Text(isMicro ? "MINI-REST" : "REST")
                 .font(.system(size: 12, weight: .heavy))
-                .foregroundStyle(WTheme.accent)
+                .foregroundStyle(tint)
             Text(WFmt.rest(remaining))
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(WTheme.accent)
+                .foregroundStyle(tint)
                 .contentTransition(.numericText(countsDown: true))
         }
     }
@@ -185,21 +230,24 @@ struct WatchExercisesPage: View {
     }
 
     private var heartRateRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "heart.fill")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(WTheme.danger)
-                .symbolEffect(.pulse, isActive: engine.heartRate != nil)
-            Text(engine.heartRate.map { "\($0) bpm" } ?? "Starting HR…")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(engine.heartRate == nil ? .secondary : WTheme.danger)
-            Spacer()
-            if let avg = engine.avgHR {
-                Text("avg \(avg)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let heartRate = engine.liveHeartRate(at: context.date)
+            HStack(spacing: 8) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(WTheme.danger)
+                    .symbolEffect(.pulse, isActive: heartRate != nil)
+                Text(heartRate.map { "\($0) bpm" } ?? (engine.hasReceivedHeartRate ? "Reacquiring HR…" : "Starting HR…"))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .monospacedDigit()
+                    .foregroundStyle(heartRate == nil ? .secondary : WTheme.danger)
+                Spacer()
+                if let avg = engine.avgHR {
+                    Text("avg \(avg)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
             }
         }
         .listRowBackground(WTheme.surface)
@@ -262,7 +310,7 @@ struct WatchExercisesPage: View {
         switch state {
         case .running: "Recording…"
         case .completed: "Completed"
-        default: "Tap to start"
+        default: "Ready"
         }
     }
 
@@ -282,7 +330,8 @@ struct WatchExercisesPage: View {
 }
 
 /// One exercise's sets: tap a row to check it off (mirrors to the phone
-/// instantly). Weight × reps are shown as logged on the phone.
+/// instantly); the trailing pencil (or a long-press, as a shortcut) edits
+/// weight × reps. Values are shown as logged on the phone.
 struct WatchSetListView: View {
     let store: WatchStore
     let exerciseID: UUID
@@ -293,41 +342,64 @@ struct WatchSetListView: View {
         store.activeWorkout?.exercises.first { $0.id == exerciseID }
     }
 
+    /// The set the double-tap gesture targets.
+    private var firstUncompletedSetID: UUID? {
+        exercise?.sets.first { !$0.completed }?.id
+    }
+
     var body: some View {
         List {
             if let exercise {
                 ForEach(exercise.sets) { set in
-                    Button {
-                        store.toggleSet(set, in: exercise)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(set.label.isEmpty ? "–" : set.label)
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
-                                .frame(width: 26, alignment: .leading)
-                            Text(setDescription(set))
-                                .font(.system(size: 15, weight: .semibold))
-                                .monospacedDigit()
-                            Spacer()
-                            Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 18))
-                                .foregroundStyle(set.completed ? WTheme.success : .secondary)
+                    HStack(spacing: 6) {
+                        Button {
+                            store.toggleSet(set, in: exercise)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(set.label.isEmpty ? "–" : set.label)
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
+                                    .frame(width: 26, alignment: .leading)
+                                Text(setDescription(set))
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                                Spacer()
+                                Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(set.completed ? WTheme.success : .secondary)
+                            }
                         }
-                    }
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        .buttonStyle(.plain)
+                        // Long-press stays as a shortcut — the pencil is the
+                        // discoverable path.
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                                editingSet = set
+                            }
+                        )
+                        // Double-tap (watch hand gesture) completes the NEXT
+                        // uncompleted set — mid-set, hands on the bar, no screen
+                        // touch needed (T3-5).
+                        .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
+                        Button {
                             editingSet = set
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(WTheme.accent)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
                         }
-                    )
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit weight and reps")
+                    }
                     .listRowBackground(
                         (set.completed ? WTheme.success.opacity(0.12) : WTheme.surface)
                             .clipShape(RoundedRectangle(cornerRadius: 9))
                     )
                 }
-                Text("Long-press a set to edit weight & reps")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
             }
         }
         .navigationTitle(exercise?.name ?? "Sets")
@@ -343,7 +415,7 @@ struct WatchSetListView: View {
         let weight = set.weight.map { "\(WFmt.weight($0))\(unit)" }
         let reps = set.reps.map { "× \($0)" }
         let parts = [weight, reps].compactMap { $0 }
-        return parts.isEmpty ? "Tap to log" : parts.joined(separator: " ")
+        return parts.isEmpty ? "—" : parts.joined(separator: " ")
     }
 }
 
@@ -381,6 +453,9 @@ struct WatchControlsPage: View {
         .confirmationDialog("Discard workout?", isPresented: $confirmDiscard) {
             Button("Discard", role: .destructive) { store.discardWorkout() }
             Button("Cancel", role: .cancel) {}
+        } message: {
+            // Same stakes-warning the phone shows — discard is irreversible.
+            Text("All logged sets from this session will be lost.")
         }
     }
 }

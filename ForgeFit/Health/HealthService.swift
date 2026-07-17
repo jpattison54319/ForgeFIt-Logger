@@ -13,6 +13,16 @@ struct CardioSnapshot {
     var hasData: Bool { avgHR != nil || activeEnergyKcal != nil || distanceMeters != nil }
 }
 
+/// One calendar day's cumulative movement from Apple Health. This is an
+/// in-memory input to daily strain only; it is never written to SwiftData,
+/// CloudKit, or backup payloads.
+struct DailyActivityMetric: Equatable, Sendable {
+    var date: Date
+    var steps: Double?
+    var exerciseMinutes: Double?
+    var activeEnergyKcal: Double?
+}
+
 /// Reads and writes cardiovascular / workout data with Apple Health & Fitness
 /// (populated by Apple Watch or any connected source). Reading auto-fills cardio
 /// metrics for a segment's time window; writing saves finished workouts back to
@@ -73,9 +83,16 @@ final class HealthService {
 
     private var shareTypes: Set<HKSampleType> {
         var t: Set<HKSampleType> = [HKObjectType.workoutType()]
-        for id: HKQuantityTypeIdentifier in [.activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .bodyMass] {
+        // heartRate: BLE-monitor readings captured during a workout are
+        // written back so window queries and analytics see them like any
+        // other source.
+        for id: HKQuantityTypeIdentifier in [.activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .bodyMass, .heartRate] {
             if let type = HKQuantityType.quantityType(forIdentifier: id) { t.insert(type) }
         }
+        // Effort write-back (T3-6): the 1–10 score Fitness shows on the
+        // workout card, derived from logged RPE — the number Apple's rings
+        // guess at, ForgeFit actually knows.
+        if let effort = HKQuantityType.quantityType(forIdentifier: .workoutEffortScore) { t.insert(effort) }
         return t
     }
     #endif
@@ -130,6 +147,41 @@ final class HealthService {
         #endif
     }
 
+    /// Most recent Apple Health resting heart-rate sample.
+    func latestRestingHR() async -> Int? {
+        #if canImport(HealthKit)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        return await latestQuantity(.restingHeartRate, unit: unit).map { Int($0.rounded()) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// Most recent Apple Watch walking heart-rate average sample, useful as a
+    /// fallback when resting HR has not been written yet.
+    func latestWalkingAverageHR() async -> Int? {
+        #if canImport(HealthKit)
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        return await latestQuantity(.walkingHeartRateAverage, unit: unit).map { Int($0.rounded()) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// Highest heart rate observed recently. This is not a formal max-HR test,
+    /// but it is better than an age estimate when the user has workout data.
+    func recentPeakHeartRate(days: Int = 90) async -> Int? {
+        #if canImport(HealthKit)
+        guard isAvailable,
+              let start = Calendar.current.date(byAdding: .day, value: -max(1, days), to: Date()) else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: [])
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        return await stat(.heartRate, .discreteMax, predicate, unit: unit).map { Int($0.rounded()) }
+        #else
+        return nil
+        #endif
+    }
+
     // MARK: - Reading (auto-fill)
 
     func importSnapshot(from start: Date, to end: Date, modality: CardioKind) async -> CardioSnapshot {
@@ -179,9 +231,8 @@ final class HealthService {
 
     // MARK: - Daily recovery metrics (feeds RecoveryEngine)
 
-    /// Per-day HRV / resting HR / sleep for the last `days` days — the series
-    /// RecoveryEngine baselines against (60-day HRV/RHR baselines, 14-day
-    /// sleep debt).
+    /// Per-day recovery and vital-sign readings for the last `days` days — the
+    /// series RecoveryEngine and Health personal ranges baseline against.
     func dailyMetrics(days: Int = 60) async -> [RecoveryEngine.DailyHealthMetric] {
         #if canImport(HealthKit)
         guard isAvailable else { return [] }
@@ -191,6 +242,8 @@ final class HealthService {
 
         async let hrvSamplesAsync = quantitySamples(.heartRateVariabilitySDNN, from: start, to: end)
         async let rhrSamplesAsync = quantitySamples(.restingHeartRate, from: start, to: end)
+        async let respiratorySamplesAsync = quantitySamples(.respiratoryRate, from: start, to: end)
+        async let oxygenSamplesAsync = quantitySamples(.oxygenSaturation, from: start, to: end)
         async let sleepSamplesAsync = sleepSamples(from: start, to: end)
 
         let msUnit = HKUnit.secondUnit(with: .milli)
@@ -198,7 +251,10 @@ final class HealthService {
 
         let hrvSamples = await hrvSamplesAsync
         let rhrSamples = await rhrSamplesAsync
-        let sleepSegments = await sleepSamplesAsync
+        let respiratorySamples = await respiratorySamplesAsync
+        let oxygenSamples = await oxygenSamplesAsync
+        let allSleepSegments = await sleepSamplesAsync
+        let sleepSegments = allSleepSegments.filter(isAsleep)
 
         // Nocturnal window: restrict HRV to sleep and derive sleeping HR — the
         // validated overnight measurement window (Plews 2013, Buchheit 2014),
@@ -214,6 +270,14 @@ final class HealthService {
             hr: nocturnalHR
         )
 
+        func readinessDay(for sample: HKQuantitySample) -> Date {
+            let midpoint = sample.startDate.addingTimeInterval(sample.endDate.timeIntervalSince(sample.startDate) / 2)
+            if let window = windows.first(where: { midpoint >= $0.start && midpoint <= $0.end }) {
+                return window.day
+            }
+            return calendar.startOfDay(for: sample.endDate)
+        }
+
         // Bucket by calendar day. Sleep is attributed to the day it ENDED
         // (last night's sleep belongs to today's readiness). All-day HRV / RHR
         // remain as fallbacks when the nocturnal window is empty.
@@ -225,23 +289,73 @@ final class HealthService {
         for sample in rhrSamples {
             rhrByDay[calendar.startOfDay(for: sample.endDate), default: []].append(sample.quantity.doubleValue(for: bpmUnit))
         }
+        var respiratoryByDay: [Date: [Double]] = [:]
+        for sample in respiratorySamples {
+            respiratoryByDay[readinessDay(for: sample), default: []]
+                .append(sample.quantity.doubleValue(for: bpmUnit))
+        }
+        var oxygenByDay: [Date: [Double]] = [:]
+        for sample in oxygenSamples {
+            oxygenByDay[readinessDay(for: sample), default: []]
+                .append(sample.quantity.doubleValue(for: .percent()) * 100)
+        }
         var sleepByDay: [Date: Int] = [:]
         for sample in sleepSegments {
             sleepByDay[calendar.startOfDay(for: sample.endDate), default: 0]
                 += Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
         }
+        // Stage breakdown (deep / REM / awake-in-bed). Sources that write
+        // unstaged "asleep" samples leave these empty and the metric's stage
+        // fields stay nil — total minutes drive the score either way.
+        var deepByDay: [Date: Int] = [:]
+        var remByDay: [Date: Int] = [:]
+        var awakeByDay: [Date: Int] = [:]
+        for sample in allSleepSegments {
+            let day = calendar.startOfDay(for: sample.endDate)
+            let minutes = Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
+            switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
+            case .asleepDeep: deepByDay[day, default: 0] += minutes
+            case .asleepREM: remByDay[day, default: 0] += minutes
+            case .awake: awakeByDay[day, default: 0] += minutes
+            default: break
+            }
+        }
 
-        let allDays = Set(hrvByDay.keys).union(rhrByDay.keys).union(sleepByDay.keys).union(nightly.keys)
+        // Merged sleep-window bounds per readiness day (min start, max end over
+        // the night's windows) — the bed/wake anchors integrity detection reads.
+        var windowBoundsByDay: [Date: (start: Date, end: Date)] = [:]
+        for window in windows {
+            if let existing = windowBoundsByDay[window.day] {
+                windowBoundsByDay[window.day] = (min(existing.start, window.start), max(existing.end, window.end))
+            } else {
+                windowBoundsByDay[window.day] = (window.start, window.end)
+            }
+        }
+
+        let allDays = Set(hrvByDay.keys)
+            .union(rhrByDay.keys)
+            .union(respiratoryByDay.keys)
+            .union(oxygenByDay.keys)
+            .union(sleepByDay.keys)
+            .union(nightly.keys)
         return allDays.sorted().map { day in
             RecoveryEngine.DailyHealthMetric(
                 date: day,
                 hrvSDNN: hrvByDay[day].map { $0.reduce(0, +) / Double($0.count) },
                 restingHR: rhrByDay[day].map { Int(($0.reduce(0, +) / Double($0.count)).rounded()) },
+                respiratoryRate: respiratoryByDay[day].map { $0.reduce(0, +) / Double($0.count) },
+                oxygenSaturationPercent: oxygenByDay[day].map { $0.reduce(0, +) / Double($0.count) },
                 sleepTotalMinutes: sleepByDay[day],
                 source: "healthkit",
                 hrvSampleCount: hrvByDay[day]?.count,
                 nocturnalHRV: nightly[day]?.hrv,
-                sleepingHR: nightly[day]?.sleepingHR
+                sleepingHR: nightly[day]?.sleepingHR,
+                sleepingHRSampleCount: nightly[day]?.sleepingHRSampleCount,
+                sleepStart: windowBoundsByDay[day]?.start,
+                sleepEnd: windowBoundsByDay[day]?.end,
+                sleepDeepMinutes: deepByDay[day],
+                sleepREMMinutes: remByDay[day],
+                sleepAwakeMinutes: awakeByDay[day]
             )
         }
         #else
@@ -249,7 +363,77 @@ final class HealthService {
         #endif
     }
 
+    /// Calendar-day movement for the rolling strain baseline. Statistics
+    /// queries are used instead of summing raw samples so HealthKit resolves
+    /// overlapping sources (for example, iPhone plus Apple Watch) correctly.
+    func dailyActivityMetrics(days: Int = 90) async -> [DailyActivityMetric] {
+        #if canImport(HealthKit)
+        guard isAvailable else { return [] }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let start = calendar.date(byAdding: .day, value: -max(1, days), to: today),
+              let end = calendar.date(byAdding: .day, value: 1, to: today) else { return [] }
+
+        async let steps = cumulativeDailyValues(
+            .stepCount, from: start, to: end, unit: .count(), calendar: calendar)
+        async let exercise = cumulativeDailyValues(
+            .appleExerciseTime, from: start, to: end, unit: .minute(), calendar: calendar)
+        async let energy = cumulativeDailyValues(
+            .activeEnergyBurned, from: start, to: end, unit: .kilocalorie(), calendar: calendar)
+
+        let (stepsByDay, exerciseByDay, energyByDay) = await (steps, exercise, energy)
+        guard !stepsByDay.isEmpty || !exerciseByDay.isEmpty || !energyByDay.isEmpty else { return [] }
+        var output: [DailyActivityMetric] = []
+        var day = start
+        while day <= today {
+            output.append(DailyActivityMetric(
+                date: day,
+                steps: stepsByDay[day],
+                exerciseMinutes: exerciseByDay[day],
+                activeEnergyKcal: energyByDay[day]
+            ))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return output
+        #else
+        return []
+        #endif
+    }
+
     #if canImport(HealthKit)
+    private func cumulativeDailyValues(
+        _ id: HKQuantityTypeIdentifier,
+        from start: Date,
+        to end: Date,
+        unit: HKUnit,
+        calendar: Calendar
+    ) async -> [Date: Double] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return [:] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        var interval = DateComponents()
+        interval.day = 1
+
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type,
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum,
+                anchorDate: start,
+                intervalComponents: interval
+            )
+            query.initialResultsHandler = { _, collection, _ in
+                var values: [Date: Double] = [:]
+                collection?.enumerateStatistics(from: start, to: end) { statistics, _ in
+                    guard let sum = statistics.sumQuantity() else { return }
+                    values[calendar.startOfDay(for: statistics.startDate)] = sum.doubleValue(for: unit)
+                }
+                continuation.resume(returning: values)
+            }
+            self.store.execute(query)
+        }
+    }
+
     /// Heart-rate samples that fall within the given sleep windows, fetched in a
     /// single query (OR of per-window predicates) so sleeping HR costs one
     /// round-trip rather than one per night.
@@ -341,22 +525,105 @@ final class HealthService {
         }
     }
 
-    /// Asleep-stage sleep samples only (excludes in-bed and awake time).
+    /// Every sleep-analysis sample in the window — asleep stages, awake, and
+    /// in-bed. Callers that only want time asleep filter with `isAsleep`.
     private func sleepSamples(from start: Date, to end: Date) async -> [HKCategorySample] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         return await withCheckedContinuation { cont in
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
                                       sortDescriptors: nil) { _, samples, _ in
-                let asleep = (samples as? [HKCategorySample])?.filter {
-                    HKCategoryValueSleepAnalysis.allAsleepValues.contains(HKCategoryValueSleepAnalysis(rawValue: $0.value) ?? .inBed)
-                } ?? []
-                cont.resume(returning: asleep)
+                cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
             }
             store.execute(query)
         }
     }
+
+    private func isAsleep(_ sample: HKCategorySample) -> Bool {
+        HKCategoryValueSleepAnalysis.allAsleepValues.contains(
+            HKCategoryValueSleepAnalysis(rawValue: sample.value) ?? .inBed
+        )
+    }
     #endif
+
+    /// True when a Garmin (synced through Garmin Connect) is supplying sleep
+    /// to Apple Health but no HRV samples exist in the window. Garmin Connect
+    /// doesn't sync HRV, so these users run readiness on sleeping HR + sleep;
+    /// the recovery screen explains the gap instead of silently scoring less.
+    func detectGarminHRVGap(days: Int = 7) async -> Bool {
+        #if canImport(HealthKit)
+        guard isAvailable else { return false }
+        let end = Date()
+        guard let start = Calendar.current.date(byAdding: .day, value: -days, to: end) else { return false }
+        let hrv = await quantitySamples(.heartRateVariabilitySDNN, from: start, to: end)
+        guard hrv.isEmpty else { return false }
+        let sleep = await sleepSamples(from: start, to: end)
+        return sleep.contains {
+            let source = $0.sourceRevision.source
+            return source.bundleIdentifier.lowercased().contains("garmin")
+                || source.name.lowercased().contains("garmin")
+        }
+        #else
+        return false
+        #endif
+    }
+
+    /// Nearest body-mass sample (kg) within ±`toleranceDays` of a date —
+    /// Ranged body-mass series for the Insights Builder — same store, same
+    /// samples the bodyweight cache uses, explicit window.
+    func bodyMassSeries(days: Int) async -> [(date: Date, kilograms: Double)] {
+        #if canImport(HealthKit)
+        let end = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -days, to: end) ?? end
+        let samples = await quantitySamples(.bodyMass, from: start, to: end)
+        return samples
+            .map { (date: $0.endDate, kilograms: $0.quantity.doubleValue(for: .gramUnit(with: .kilo))) }
+            .sorted { $0.date < $1.date }
+        #else
+        return []
+        #endif
+    }
+
+    /// used by backup restore to refill `bodyweightKg` on bodyweight sets.
+    func bodyMassKg(near date: Date, toleranceDays: Int = 7) async -> Double? {
+        #if canImport(HealthKit)
+        guard isAvailable,
+              let start = Calendar.current.date(byAdding: .day, value: -toleranceDays, to: date),
+              let end = Calendar.current.date(byAdding: .day, value: toleranceDays, to: date) else { return nil }
+        let unit = HKUnit.gramUnit(with: .kilo)
+        let samples = await quantitySamples(.bodyMass, from: start, to: end)
+        return samples
+            .min { abs($0.endDate.timeIntervalSince(date)) < abs($1.endDate.timeIntervalSince(date)) }?
+            .quantity.doubleValue(for: unit)
+        #else
+        return nil
+        #endif
+    }
+
+    /// The HKWorkout whose window matches (±tolerance) — lets restore
+    /// re-link `hkWorkoutUUID` so the Health importer's strong dedup key
+    /// works again on the new device.
+    func workoutUUID(matchingStart start: Date, end: Date, tolerance: TimeInterval = 120) async -> UUID? {
+        #if canImport(HealthKit)
+        guard isAvailable,
+              let windowStart = Calendar.current.date(byAdding: .second, value: -Int(tolerance), to: start),
+              let windowEnd = Calendar.current.date(byAdding: .second, value: Int(tolerance), to: end) else { return nil }
+        let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: windowEnd, options: [])
+        let workouts: [HKWorkout] = await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate,
+                                      limit: 10, sortDescriptors: nil) { _, samples, _ in
+                cont.resume(returning: (samples as? [HKWorkout]) ?? [])
+            }
+            store.execute(query)
+        }
+        return workouts.first {
+            abs($0.startDate.timeIntervalSince(start)) <= tolerance
+                && abs($0.endDate.timeIntervalSince(end)) <= tolerance
+        }?.uuid
+        #else
+        return nil
+        #endif
+    }
 
     /// Body-mass history in kilograms — powers the Measures screen and
     /// bodyweight-mode volume math. Display units are applied at the UI edge.
@@ -377,13 +644,14 @@ final class HealthService {
 
     // MARK: - Writing (save workout to Health)
 
-    func saveWorkout(from start: Date, to end: Date, isCardio: Bool, isYoga: Bool = false, modality: CardioKind?, energyKcal: Double?, distanceMeters: Double?) async {
+    func saveWorkout(from start: Date, to end: Date, isCardio: Bool, isYoga: Bool = false, modality: CardioKind?, energyKcal: Double?, distanceMeters: Double?, effortScore: Double? = nil) async {
         #if canImport(HealthKit)
         guard isConnected, end > start else { return }
         let config = HKWorkoutConfiguration()
         // Yoga wins over the cardio flag: yoga sessions ride the cardio
         // session model, and Apple Health renders `.yoga` natively.
         config.activityType = isYoga ? .yoga : (isCardio ? (modality?.hkActivityType ?? .other) : .traditionalStrengthTraining)
+        config.locationType = modality?.supportsOutdoorRoute == true ? .outdoor : .indoor
         let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
         do {
             try await builder.beginCollection(at: start)
@@ -398,10 +666,50 @@ final class HealthService {
             }
             if !samples.isEmpty { try await builder.addSamples(samples) }
             try await builder.endCollection(at: end)
-            _ = try await builder.finishWorkout()
+            let saved = try await builder.finishWorkout()
+            // T3-6: relate the logged effort (1–10, from session RPE) to the
+            // workout so Fitness/Smart Stack show ForgeFit's real number
+            // instead of Apple's estimate. Best-effort like the rest.
+            if let saved,
+               let effortScore,
+               let effortType = HKQuantityType.quantityType(forIdentifier: .workoutEffortScore) {
+                let clamped = min(10, max(1, effortScore.rounded()))
+                let sample = HKQuantitySample(
+                    type: effortType,
+                    quantity: HKQuantity(unit: .appleEffortScore(), doubleValue: clamped),
+                    start: start,
+                    end: end
+                )
+                _ = try? await store.relateWorkoutEffortSample(sample, with: saved, activity: nil)
+            }
         } catch {
             // Non-fatal: writing is best-effort.
         }
+        #endif
+    }
+
+    /// Write heart-rate readings captured from a BLE monitor during a workout.
+    /// Downsampled to one sample per 5 s to keep write volume sane; tagged so
+    /// ForgeFit's samples are identifiable next to watch/Garmin-synced data.
+    func saveHeartRateSamples(_ samples: [(date: Date, bpm: Int)]) async {
+        #if canImport(HealthKit)
+        guard isAvailable, !samples.isEmpty,
+              let type = HKQuantityType.quantityType(forIdentifier: .heartRate),
+              store.authorizationStatus(for: type) == .sharingAuthorized else { return }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        var hkSamples: [HKQuantitySample] = []
+        var lastWritten = Date.distantPast
+        for sample in samples.sorted(by: { $0.date < $1.date }) where sample.date.timeIntervalSince(lastWritten) >= 5 {
+            lastWritten = sample.date
+            hkSamples.append(HKQuantitySample(
+                type: type,
+                quantity: HKQuantity(unit: unit, doubleValue: Double(sample.bpm)),
+                start: sample.date,
+                end: sample.date,
+                metadata: [HKMetadataKeyWasUserEntered: false, "ForgeFitSource": "bluetooth-hrm"]
+            ))
+        }
+        try? await store.save(hkSamples)
         #endif
     }
 
@@ -432,6 +740,19 @@ final class HealthService {
     }
 
     #if canImport(HealthKit)
+    private func latestQuantity(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
+        guard isAvailable,
+              let type = HKQuantityType.quantityType(forIdentifier: id) else { return nil }
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return await withCheckedContinuation { cont in
+            let query = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+                let value = (samples as? [HKQuantitySample])?.first?.quantity.doubleValue(for: unit)
+                cont.resume(returning: value)
+            }
+            store.execute(query)
+        }
+    }
+
     private func stat(_ id: HKQuantityTypeIdentifier, _ option: HKStatisticsOptions, _ predicate: NSPredicate, unit: HKUnit) async -> Double? {
         guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return nil }
         return await withCheckedContinuation { cont in

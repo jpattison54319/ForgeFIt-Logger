@@ -5,6 +5,7 @@ import ForgeData
 import SwiftData
 import SwiftUI
 #if canImport(UIKit)
+import ImageIO
 import UIKit
 #endif
 
@@ -56,20 +57,58 @@ enum ExerciseCatalog {
     #if canImport(UIKit)
     private static let thumbnailCache = NSCache<NSString, UIImage>()
 
+    /// Full-resolution decode for the exercise DETAIL card (two one-off
+    /// images — a sync decode is fine there). Row thumbnails must NOT use
+    /// this: see `cachedThumbnail`/`primeThumbnail`.
     static func localThumbnail(path: String?) -> UIImage? {
         guard let name = thumbnailResourceName(path: path) else { return nil }
         if let cached = thumbnailCache.object(forKey: name as NSString) { return cached }
-        guard let url = Bundle.main.url(forResource: name, withExtension: "jpg", subdirectory: "ExerciseThumbnails")
-                ?? Bundle.main.url(forResource: name, withExtension: "jpg"),
+        guard let url = thumbnailURL(named: name),
               let image = UIImage(contentsOfFile: url.path) else { return nil }
         thumbnailCache.setObject(image, forKey: name as NSString)
         return image
+    }
+
+    /// Cache-only lookup for row thumbnails — never decodes. First-scroll
+    /// decoding of the full-res JPEGs on the main thread was a per-row hitch;
+    /// rows render a placeholder and call `primeThumbnail` instead.
+    static func cachedThumbnail(path: String?) -> UIImage? {
+        guard let name = thumbnailResourceName(path: path) else { return nil }
+        return thumbnailCache.object(forKey: ("thumb:" + name) as NSString)
+    }
+
+    /// Decode + downsample off-main via ImageIO (rows render at ≤46 pt, so a
+    /// full-res decode wasted CPU and memory), then prime the cache. Cached
+    /// under a separate key from `localThumbnail` so the detail card never
+    /// receives a downsampled image.
+    static func primeThumbnail(path: String?, maxPixelSize: CGFloat = 46 * 3) async -> UIImage? {
+        guard let name = thumbnailResourceName(path: path) else { return nil }
+        let key = ("thumb:" + name) as NSString
+        if let cached = thumbnailCache.object(forKey: key) { return cached }
+        guard let url = thumbnailURL(named: name) else { return nil }
+        let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return UIImage(cgImage: cg)
+        }.value
+        if let image { thumbnailCache.setObject(image, forKey: key) }
+        return image
+    }
+
+    private static func thumbnailURL(named name: String) -> URL? {
+        Bundle.main.url(forResource: name, withExtension: "jpg", subdirectory: "ExerciseThumbnails")
+            ?? Bundle.main.url(forResource: name, withExtension: "jpg")
     }
     #endif
 
     /// Stable UUID derived from the exercise slug so re-seeding is idempotent and
     /// IDs are consistent across installs.
-    static func deterministicID(for slug: String) -> UUID {
+    nonisolated static func deterministicID(for slug: String) -> UUID {
         let digest = SHA256.hash(data: Data(slug.utf8))
         var bytes = Array(digest.prefix(16))
         bytes[6] = (bytes[6] & 0x0F) | 0x50  // version marker
@@ -271,19 +310,29 @@ struct ExerciseThumbnail: View {
     let exercise: ExerciseLibraryModel
     var size: CGFloat = 46
 
+    #if canImport(UIKit)
+    /// Primed asynchronously — rows show the icon placeholder for a frame or
+    /// two on first scroll instead of decoding JPEGs on the main thread.
+    @State private var loadedThumbnail: UIImage?
+    #endif
+
     var body: some View {
         ZStack {
             if exercise.isYoga {
                 yogaArt
             } else {
                 #if canImport(UIKit)
-                if let image = ExerciseCatalog.localThumbnail(path: exercise.mediaSlug) {
+                if let image = ExerciseCatalog.cachedThumbnail(path: exercise.mediaSlug) ?? loadedThumbnail {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                     .background(Color(white: 0.96))
                 } else {
                     fallback
+                        .task(id: exercise.mediaSlug) {
+                            guard let primed = await ExerciseCatalog.primeThumbnail(path: exercise.mediaSlug) else { return }
+                            withAnimation(.easeIn(duration: 0.15)) { loadedThumbnail = primed }
+                        }
                 }
                 #else
                 fallback
@@ -294,8 +343,8 @@ struct ExerciseThumbnail: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
     }
 
-    /// Pose line-art: a bundled template asset (`yoga_<slug>`, tintable) when
-    /// present, else the pose's SF Symbol stand-in from the catalog.
+    /// Pose photo for the selected instructor, with authored line art as the
+    /// instantaneous loading and custom-pose fallback.
     private var yogaArt: some View {
         ZStack {
             theme.surfaceElevated
@@ -311,51 +360,4 @@ struct ExerciseThumbnail: View {
                 .foregroundStyle(theme.accent)
         }
     }
-}
-
-/// The pose illustration used across rows, cards, and the guided player:
-/// prefers a bundled line-art template asset named `yoga_<slug>` (theme
-/// tinted), falling back to the catalog's SF Symbol. Custom poses (no
-/// catalog slug) always use the generic symbol.
-struct YogaPoseArt: View {
-    @Environment(\.theme) private var theme
-    let exercise: ExerciseLibraryModel?
-    var slug: String?
-    var size: CGFloat = 46
-
-    init(exercise: ExerciseLibraryModel?, size: CGFloat = 46) {
-        self.exercise = exercise
-        self.slug = exercise.flatMap(YogaPoseCatalog.slug(for:))
-        self.size = size
-    }
-
-    init(slug: String?, size: CGFloat = 46) {
-        self.exercise = nil
-        self.slug = slug
-        self.size = size
-    }
-
-    var body: some View {
-        Group {
-            if let slug, let uiImage = Self.asset(for: slug) {
-                Image(uiImage: uiImage)
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-            } else {
-                Image(systemName: YogaPoseCatalog.pose(forSlug: slug)?.symbol ?? "figure.yoga")
-                    .font(.system(size: size * 0.72, weight: .medium))
-            }
-        }
-        .foregroundStyle(theme.accent)
-    }
-
-    #if canImport(UIKit)
-    private static func asset(for slug: String) -> UIImage? {
-        UIImage(named: "yoga_" + slug.replacingOccurrences(of: "-", with: "_"))
-    }
-    #else
-    private static func asset(for slug: String) -> UIImage? { nil }
-    #endif
 }

@@ -56,4 +56,39 @@ public enum MuscleVolume {
         }
         return totals
     }
+
+    /// `weeklyVolume` buckets PLUS taxonomy-parent rollups. Child buckets
+    /// stay exact ("lats"); each parent bucket ("back") counts every set
+    /// once at its strongest member weight — a row crediting lats and middle
+    /// back is one back set, not two. Exercises tagged with the parent
+    /// directly land in the same bucket.
+    public static func volumeWithParentRollups(
+        _ entries: [(set: SetEntry, exercise: ExerciseInfo)]
+    ) -> [String: Double] {
+        var totals = weeklyVolume(entries)
+        var parents: [String: Double] = [:]
+        for entry in entries {
+            let setCount = VolumeMath.effectiveSetCount(entry.set)
+            guard setCount > 0 else { continue }
+            // Strongest membership per parent for THIS set (primary beats
+            // secondary), so multi-member hits never double-count.
+            var best: [String: Double] = [:]
+            for (muscles, weight) in [
+                (entry.exercise.secondaryMuscles, secondaryWeight),
+                (entry.exercise.primaryMuscles, primaryWeight),
+            ] {
+                for raw in muscles {
+                    let canonical = MuscleTaxonomy.canonical(raw)
+                    let parent = MuscleTaxonomy.parentByChild[canonical] ?? canonical
+                    guard MuscleTaxonomy.children[parent] != nil else { continue }
+                    best[parent] = max(best[parent] ?? 0, weight)
+                }
+            }
+            for (parent, weight) in best {
+                parents[parent, default: 0] += weight * setCount
+            }
+        }
+        for (parent, value) in parents { totals[parent] = value }
+        return totals
+    }
 }

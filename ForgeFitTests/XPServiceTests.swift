@@ -75,8 +75,8 @@ struct XPServiceTests {
     }
 
     @Test func awardingIsIdempotent() throws {
-        let container = try inMemoryContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let workout = strengthWorkout(minutes: 45, completedSets: 4)
         context.insert(workout)
         try context.save()
@@ -92,8 +92,8 @@ struct XPServiceTests {
     }
 
     @Test func importedHistoryDoesNotAwardXP() throws {
-        let container = try inMemoryContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let workout = strengthWorkout(minutes: 45, completedSets: 4)
         workout.externalSource = "hevy"
         context.insert(workout)
@@ -105,12 +105,6 @@ struct XPServiceTests {
         #expect(award.amount == 0)
         #expect(try context.fetch(FetchDescriptor<WorkoutXPEventModel>()).isEmpty)
         #expect(try context.fetch(FetchDescriptor<UserProgressModel>()).isEmpty)
-    }
-
-    private func inMemoryContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
     }
 
     private func strengthWorkout(minutes: Int, completedSets: Int) -> WorkoutModel {

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The Settings card for workout reminders: explicit permission flow, weekday
-/// + time scheduling, and the streak-protection toggle.
+/// The Settings card for workout reminders: explicit permission flow plus
+/// weekday and time scheduling.
 struct ReminderSettingsCard: View {
     @Environment(\.theme) private var theme
     @State private var scheduler = NotificationScheduler.shared
@@ -10,7 +10,7 @@ struct ReminderSettingsCard: View {
         let minutes = NotificationScheduler.shared.reminderMinutes
         return Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
     }()
-    @State private var streakNudge = NotificationScheduler.shared.streakNudgeEnabled
+    @State private var morningReadiness = NotificationScheduler.shared.morningReadinessEnabled
 
     private static let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"] // 1...7 Sun–Sat
 
@@ -32,7 +32,7 @@ struct ReminderSettingsCard: View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 Text("Workout reminders").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                Text("Get a nudge on training days, a heads-up when a streak is at risk, and rest-timer alerts while your phone is locked.")
+                Text("Get a nudge on training days and rest-timer alerts while your phone is locked.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 PrimaryButton(title: "Enable Notifications", systemImage: "bell.fill") {
@@ -49,8 +49,6 @@ struct ReminderSettingsCard: View {
                     Image(systemName: "bell.slash.fill").foregroundStyle(theme.textTertiary)
                     Text("Notifications are off").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
-                Text("Turn them on in Settings to get workout reminders and locked-phone rest alerts.")
-                    .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                 SecondaryButton(title: "Open Settings", systemImage: "arrow.up.right") {
                     scheduler.openSystemSettings()
                 }
@@ -86,32 +84,31 @@ struct ReminderSettingsCard: View {
                         .contentShape(Rectangle().inset(by: -2))
                     }
                 }
-                if !weekdays.isEmpty {
-                    DatePicker("Remind me at", selection: $time, displayedComponents: .hourAndMinute)
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                        .tint(theme.accent)
-                        .onChange(of: time) { _, newValue in
-                            let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-                            scheduler.reminderMinutes = (components.hour ?? 17) * 60 + (components.minute ?? 30)
-                        }
-                } else {
-                    Text("Pick the days you plan to train.")
-                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
-                }
+                DatePicker("Remind me at", selection: $time, displayedComponents: .hourAndMinute)
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.accent)
+                    .disabled(weekdays.isEmpty)
+                    .opacity(weekdays.isEmpty ? 0.45 : 1)
+                    .accessibilityHint(weekdays.isEmpty ? "Choose at least one training day first" : "")
+                    .onChange(of: time) { _, newValue in
+                        let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                        scheduler.reminderMinutes = (components.hour ?? 17) * 60 + (components.minute ?? 30)
+                    }
             }
         }
         Card {
-            Toggle(isOn: $streakNudge) {
+            Toggle(isOn: $morningReadiness) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Protect my streak").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Text("An evening heads-up (7 PM) when today would break an active streak.")
+                    Text("Morning readiness").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Text("Your score and the day's call (7 AM), computed from last night's sleep and HRV.")
                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 }
             }
             .tint(theme.accent)
-            .onChange(of: streakNudge) { _, newValue in
-                scheduler.streakNudgeEnabled = newValue
+            .onChange(of: morningReadiness) { _, newValue in
+                scheduler.morningReadinessEnabled = newValue
+                if newValue { ReadinessDelivery.shared.refreshMorningNotification() }
             }
         }
     }

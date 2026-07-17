@@ -21,7 +21,15 @@ struct ExerciseAnimationView: View {
         ZStack {
             Color(white: 0.96)
             #if canImport(UIKit)
-            if let startImage {
+            if exercise.isYoga {
+                ViewThatFits {
+                    YogaPoseArt(exercise: exercise, size: 320)
+                    YogaPoseArt(exercise: exercise, size: 280)
+                    YogaPoseArt(exercise: exercise, size: 240)
+                    YogaPoseArt(exercise: exercise, size: 200)
+                }
+                .padding(10)
+            } else if let startImage {
                 Image(uiImage: startImage)
                     .resizable()
                     .scaledToFit()
@@ -40,7 +48,7 @@ struct ExerciseAnimationView: View {
             fallback
             #endif
 
-            if isPaused {
+            if isPaused && !exercise.isYoga {
                 Image(systemName: "pause.fill")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(.white)
@@ -49,7 +57,7 @@ struct ExerciseAnimationView: View {
                     .clipShape(Circle())
             }
         }
-        .aspectRatio(4 / 3, contentMode: .fit)
+        .aspectRatio(exercise.isYoga ? 1 : 4 / 3, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -58,12 +66,12 @@ struct ExerciseAnimationView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             #if canImport(UIKit)
-            if endImage != nil { isPaused.toggle() }
+            if !exercise.isYoga, endImage != nil { isPaused.toggle() }
             #endif
         }
         .task {
             #if canImport(UIKit)
-            guard endImage != nil else { return }
+            guard !exercise.isYoga, endImage != nil else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(0.9))
                 guard !Task.isCancelled, !isPaused else { continue }
@@ -73,8 +81,8 @@ struct ExerciseAnimationView: View {
             }
             #endif
         }
-        .accessibilityLabel("Exercise demonstration")
-        .accessibilityHint("Tap to pause or resume")
+        .accessibilityLabel(exercise.isYoga ? "\(exercise.name) pose demonstration" : "Exercise demonstration")
+        .accessibilityHint(exercise.isYoga ? "Use the instructor control below to change the model" : "Tap to pause or resume")
     }
 
     private var fallback: some View {
@@ -106,6 +114,10 @@ struct ExerciseInfoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             ExerciseAnimationView(exercise: exercise)
+
+            if exercise.isYoga {
+                YogaInstructorPicker()
+            }
 
             if !chips.isEmpty {
                 WrappingChips(chips: chips)

@@ -335,6 +335,21 @@ final class YogaFlowRunner {
         #endif
     }
 
+    /// The wall-clock schedule of every remaining pose transition: at each
+    /// hold's end, the notification names the pose that begins. Used to
+    /// pre-schedule the locked-phone backstop when the app backgrounds.
+    func upcomingTransitions() -> [(label: String, fireAt: Date)] {
+        guard !isPaused, !isFinished, currentIndex < steps.count else { return [] }
+        var entries: [(label: String, fireAt: Date)] = []
+        var boundary = stepEndsAt
+        for index in (currentIndex + 1)..<steps.count {
+            entries.append((label: steps[index].displayName, fireAt: boundary))
+            boundary = boundary.addingTimeInterval(TimeInterval(steps[index].seconds))
+        }
+        entries.append((label: "Practice complete", fireAt: boundary))
+        return entries
+    }
+
     /// Backstop for a backgrounded app whose audio was killed: a
     /// time-sensitive notification names the next pose.
     private func scheduleBackstopNotification() {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Self-Evident UI"
+  short_description: "Design intuitive interfaces without instruction copy"
+  default_prompt: "Use $self-evident-ui to create or audit this interface for intuitive affordances and unnecessary explanation."

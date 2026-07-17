@@ -113,4 +113,84 @@ final class ForgeDataRoundTripTests: XCTestCase {
 
         XCTAssertEqual(reloaded.totalVolume ?? 0, 2_010, accuracy: 0.0001)
     }
+
+    func testCoachingModelsRoundTripThroughSwiftData() throws {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+
+        let userID = UUID()
+        let folderID = UUID()
+        let exerciseID = UUID()
+
+        let profile = CoachingProfileModel(
+            userID: userID,
+            focusRaw: CoachingFocus.strength.rawValue,
+            goalRaw: "build-muscle",
+            experienceRaw: CoachingExperience.intermediate.rawValue,
+            sessionsPerWeek: 4,
+            sessionMinutes: 45,
+            preferredCardioRaw: "run"
+        )
+        profile.equipment = ["barbell", "bands"]
+
+        let programID = UUID()
+        let program = CoachedProgramModel(
+            id: programID,
+            userID: userID,
+            folderID: folderID,
+            catalogProgramID: "hybrid-engine",
+            startDate: Date(timeIntervalSince1970: 1_800_000_000),
+            weeks: 8,
+            weeklySessionTarget: 4,
+            isActive: true
+        )
+
+        let override = CoachingWeekOverrideModel(
+            userID: userID,
+            programID: programID,
+            exerciseID: exerciseID,
+            weekStart: Date(timeIntervalSince1970: 1_800_000_000),
+            reason: "Bench press under target 2 sessions running"
+        )
+        override.kind = .progressionHold
+        override.status = .active
+
+        context.insert(profile)
+        context.insert(program)
+        context.insert(override)
+        try context.save()
+
+        let reloadContext = ModelContext(container)
+
+        let reloadedProfile = try XCTUnwrap(
+            try reloadContext.fetch(FetchDescriptor<CoachingProfileModel>()).first
+        )
+        XCTAssertEqual(reloadedProfile.focus, .strength)
+        XCTAssertEqual(reloadedProfile.experience, .intermediate)
+        XCTAssertEqual(reloadedProfile.sessionsPerWeek, 4)
+        XCTAssertEqual(reloadedProfile.sessionMinutes, 45)
+        XCTAssertEqual(reloadedProfile.equipment, ["barbell", "bands"])
+        XCTAssertEqual(reloadedProfile.preferredCardioRaw, "run")
+
+        let programDescriptor = FetchDescriptor<CoachedProgramModel>(
+            predicate: #Predicate { $0.id == programID }
+        )
+        let reloadedProgram = try XCTUnwrap(reloadContext.fetch(programDescriptor).first)
+        XCTAssertEqual(reloadedProgram.folderID, folderID)
+        XCTAssertEqual(reloadedProgram.catalogProgramID, "hybrid-engine")
+        XCTAssertFalse(reloadedProgram.isAttachedPlan)
+        XCTAssertEqual(reloadedProgram.weeks, 8)
+        XCTAssertTrue(reloadedProgram.isActive)
+
+        let reloadedOverride = try XCTUnwrap(
+            try reloadContext.fetch(FetchDescriptor<CoachingWeekOverrideModel>()).first
+        )
+        XCTAssertEqual(reloadedOverride.programID, programID)
+        XCTAssertEqual(reloadedOverride.exerciseID, exerciseID)
+        XCTAssertEqual(reloadedOverride.kind, .progressionHold)
+        XCTAssertEqual(reloadedOverride.status, .active)
+        XCTAssertEqual(reloadedOverride.reason, "Bench press under target 2 sessions running")
+    }
 }

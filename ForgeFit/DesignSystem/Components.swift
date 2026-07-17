@@ -82,9 +82,12 @@ struct SecondaryButton: View {
 }
 
 /// Circular icon button used in nav headers, rendered as interactive
-/// Liquid Glass.
+/// Liquid Glass. `label` is REQUIRED: icon-only buttons are invisible to
+/// VoiceOver without one (the fallback reads the SF Symbol name — "chevron
+/// left" says nothing about what the button does).
 struct CircleIconButton: View {
     let systemImage: String
+    let label: String
     var tint: Color? = nil
     let action: () -> Void
 
@@ -99,6 +102,31 @@ struct CircleIconButton: View {
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
+    }
+}
+
+/// Navigation counterpart to `CircleIconButton`. Keeping the same 44 pt glass
+/// treatment makes header destinations and header actions feel identical while
+/// still participating in a `NavigationStack`'s typed route system.
+struct CircleIconNavigationLink<Value: Hashable>: View {
+    let systemImage: String
+    let label: String
+    let value: Value
+    var tint: Color? = nil
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        NavigationLink(value: value) {
+            Image(systemName: systemImage)
+                .font(.bodyStrong)
+                .foregroundStyle(tint ?? theme.textPrimary)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
     }
 }
 
@@ -192,14 +220,40 @@ struct SegmentedPills<T: Hashable>: View {
                             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 9)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .glassEffect(
                         isSelected ? .regular.tint(theme.accent).interactive() : .regular.interactive(),
                         in: Capsule()
                     )
                 }
             }
+        }
+    }
+}
+
+// MARK: - Exercise / pose name
+
+/// DESIGN RULE — exercise and yoga-pose names are content, not controls:
+/// the name always renders in primary (white) text, and ONLY the trailing
+/// disclosure chevron is sage (`theme.accent`), signalling "tap for details".
+/// Never tint the name itself with accent colors. This is just the visual —
+/// wrap it in a Button or NavigationLink at the call site.
+struct ExerciseNameLabel: View {
+    @Environment(\.theme) private var theme
+    let name: String
+    var font: Font = .bodyStrong
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(name)
+                .font(font)
+                .foregroundStyle(theme.textPrimary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(theme.accent)
         }
     }
 }
@@ -212,6 +266,9 @@ struct StatColumn: View {
     let value: String
     var valueColor: Color? = nil
     var alignment: HorizontalAlignment = .leading
+    /// Opt-in rolling-digit morph for values that change while visible (live
+    /// logger stats). Off by default: most columns render once per screen.
+    var animatesValue: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -229,6 +286,8 @@ struct StatColumn: View {
                 .foregroundStyle(valueColor ?? theme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(animatesValue ? .numericText() : .identity)
+                .animation(animatesValue ? Motion.stateChange : nil, value: value)
         }
         .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
         .accessibilityElement(children: .ignore)

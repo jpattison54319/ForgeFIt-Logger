@@ -18,12 +18,23 @@ enum CardioSeriesService {
         let end = session.endedAt ?? Date()
         guard end > start else { return }
 
-        let series = await buildSeries(start: start, end: end, routePoints: session.routePoints)
+        // Capture BLE monitor readings up front — the hub's buffer is
+        // session-scoped and may be dropped before this async work resumes.
+        let bleSamples = LiveMetricsHub.shared.bleSamples(from: start, to: end)
+        let series = await buildSeries(start: start, end: end, routePoints: session.routePoints, extraHRSamples: bleSamples)
         guard !series.isEmpty else { return }
         session.sampleSeriesJSON = series.encodedJSON()
+        // Real time-in-zone from the series replaces the avg-HR estimate that
+        // completion stamped as a provisional value — this is what lets the
+        // zone bar honestly say "Measured". Sparse HR keeps the estimate.
+        if let measured = CardioMetrics.measuredZoneSecondsArray(series: series) {
+            session.hrZoneSeconds = measured
+        }
         session.updatedAt = Date()
 
-        if !hadManualIntervalPlan, !session.intervalsAutoApplied,
+        // A yoga class's HR ebb and flow is not interval training — the series
+        // is kept (zones, HR chart) but never chopped into work/recover laps.
+        if !hadManualIntervalPlan, !session.isYogaSession, !session.intervalsAutoApplied,
            let segments = CardioSampleSeries.detectIntervals(in: series),
            segments.contains(where: { $0.kind == .work }) {
             applyDetectedIntervals(segments, to: session, series: series, start: start, in: context)
@@ -33,11 +44,19 @@ enum CardioSeriesService {
 
     // MARK: - Series assembly
 
-    static func buildSeries(start: Date, end: Date, routePoints: [CardioRoutePointModel]) async -> CardioSampleSeries {
+    static func buildSeries(
+        start: Date,
+        end: Date,
+        routePoints: [CardioRoutePointModel],
+        extraHRSamples: [LiveHRAggregator.HRSample] = []
+    ) async -> CardioSampleSeries {
         let duration = max(0, Int(end.timeIntervalSince(start)))
         guard duration > 0 else { return CardioSampleSeries() }
 
-        let hr = await HealthService.shared.heartRateSamples(from: start, to: end)
+        // HealthKit samples plus live BLE-monitor readings (not in HealthKit
+        // yet mid-workout); overlaps blend out in the bucket averages.
+        let hkSamples = await HealthService.shared.heartRateSamples(from: start, to: end)
+        let hr = (hkSamples + extraHRSamples.map { (date: $0.date, bpm: $0.bpm) })
             .map { (t: Int($0.date.timeIntervalSince(start)), bpm: $0.bpm) }
             .filter { $0.t >= 0 && $0.t <= duration }
 
@@ -53,28 +72,59 @@ enum CardioSeriesService {
             }
         }
 
-        let step = 10
+        return CardioSampleSeries(samples: assemble(hr: hr, cumulative: cumulative, duration: duration))
+    }
+
+    /// Pure single-pass bucketing. The old per-bucket `filter` was
+    /// O(buckets × samples) on the main actor — a 3 h run (~1 sample/5 s)
+    /// meant ~2.3 M comparisons at finish. Sorting once and sweeping two
+    /// monotonic cursors (HR window + route segment) makes it
+    /// O(n log n + buckets).
+    nonisolated static func assemble(
+        hr: [(t: Int, bpm: Int)],
+        cumulative: [(t: Int, m: Double)],
+        duration: Int,
+        step: Int = 10
+    ) -> [CardioSampleSeries.Sample] {
+        let sortedHR = hr.sorted { $0.t < $1.t }
         var samples: [CardioSampleSeries.Sample] = []
+        var lower = 0          // first HR sample with t >= current bucket start
+        var routeIndex = 0     // route segment cursor (buckets ascend in t)
         for t in stride(from: 0, through: duration, by: step) {
-            let bucket = hr.filter { $0.t >= t - step / 2 && $0.t < t + step / 2 }
-            let bpm = bucket.isEmpty ? nil : Int((bucket.map { Double($0.bpm) }.reduce(0, +) / Double(bucket.count)).rounded())
-            let meters = interpolate(cumulative, at: t)
+            let bucketStart = t - step / 2
+            let bucketEnd = t + step / 2   // exclusive, matching the old filter
+            while lower < sortedHR.count, sortedHR[lower].t < bucketStart { lower += 1 }
+            var upper = lower
+            var sum = 0
+            while upper < sortedHR.count, sortedHR[upper].t < bucketEnd {
+                sum += sortedHR[upper].bpm
+                upper += 1
+            }
+            let count = upper - lower
+            let bpm = count == 0 ? nil : Int((Double(sum) / Double(count)).rounded())
+            let meters = interpolate(cumulative, at: t, movingForwardFrom: &routeIndex)
             if bpm != nil || meters != nil {
                 samples.append(.init(t: t, hr: bpm, meters: meters))
             }
         }
-        return CardioSampleSeries(samples: samples)
+        return samples
     }
 
-    private static func interpolate(_ points: [(t: Int, m: Double)], at t: Int) -> Double? {
+    /// Linear interpolation with a forward-only segment cursor — callers
+    /// query ascending `t`, so the scan never restarts from the front.
+    private nonisolated static func interpolate(
+        _ points: [(t: Int, m: Double)],
+        at t: Int,
+        movingForwardFrom index: inout Int
+    ) -> Double? {
         guard let first = points.first, let last = points.last else { return nil }
         if t <= first.t { return first.m }
         if t >= last.t { return last.m }
-        for (a, b) in zip(points, points.dropFirst()) where t >= a.t && t <= b.t {
-            guard b.t > a.t else { return a.m }
-            return a.m + (b.m - a.m) * (Double(t - a.t) / Double(b.t - a.t))
-        }
-        return last.m
+        while index + 1 < points.count, points[index + 1].t < t { index += 1 }
+        let a = points[index]
+        let b = points[index + 1]
+        guard b.t > a.t else { return a.m }
+        return a.m + (b.m - a.m) * (Double(t - a.t) / Double(b.t - a.t))
     }
 
     // MARK: - Applying / reverting detected intervals

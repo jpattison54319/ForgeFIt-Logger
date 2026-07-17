@@ -145,9 +145,6 @@ struct WrappedBuilder {
         if let active = mostActiveMonth(of: inYear) {
             pages.append(.mostActiveMonth(active))
         }
-        if let streak = longestStreak(in: inYear) {
-            pages.append(.longestStreak(streak))
-        }
         // Favorite exercise across the year.
         if let favorite = topExercise(of: inYear) {
             pages.append(.signatureExercise(favorite))
@@ -322,8 +319,7 @@ struct WrappedBuilder {
             avgRPEFirstHalf: avgRPE(firstHalf),
             avgRPESecondHalf: avgRPE(secondHalf),
             readinessFirstHalf: avgReadiness(firstHalf),
-            readinessSecondHalf: avgReadiness(secondHalf),
-            longestStreakDays: longestStreakLength(in: month)
+            readinessSecondHalf: avgReadiness(secondHalf)
         )
     }
 
@@ -468,32 +464,6 @@ struct WrappedBuilder {
         return .init(monthName: best.key.formatted(dateStyle.month(.wide)), workouts: best.value)
     }
 
-    private func longestStreakRun(in period: [WorkoutModel]) -> (length: Int, end: Date)? {
-        let days = Set(period.map { calendar.startOfDay(for: $0.startedAt) }).sorted()
-        guard !days.isEmpty else { return nil }
-        var best = (length: 1, end: days[0])
-        var run = 1
-        for index in 1..<days.count {
-            if let expected = calendar.date(byAdding: .day, value: 1, to: days[index - 1]),
-               calendar.isDate(days[index], inSameDayAs: expected) {
-                run += 1
-            } else {
-                run = 1
-            }
-            if run > best.length { best = (run, days[index]) }
-        }
-        return best
-    }
-
-    private func longestStreakLength(in period: [WorkoutModel]) -> Int {
-        longestStreakRun(in: period)?.length ?? 0
-    }
-
-    private func longestStreak(in period: [WorkoutModel]) -> WrappedPage.LongestStreak? {
-        guard let best = longestStreakRun(in: period), best.length >= 3 else { return nil }
-        return .init(days: best.length, endedLabel: "ended \(best.end.formatted(dateStyle.month(.abbreviated).day()))")
-    }
-
     private func topExercise(of period: [WorkoutModel]) -> WrappedPage.SignatureExercise? {
         let byID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var sets: [UUID: Double] = [:]
@@ -545,9 +515,6 @@ struct WrappedBuilder {
         if activeDays >= 150 { badges.append("Everyday Athlete — 150+ active days") }
         if totalVolume >= 500_000 { badges.append("Half-Million Club — 500k kg lifted") }
         else if totalVolume >= 100_000 { badges.append("Heavy Hauler — 100k kg lifted") }
-        if let streak = longestStreak(in: inYear), streak.days >= 7 {
-            badges.append("Streak Master — \(streak.days) days straight")
-        }
         let cardioMinutes = inYear.flatMap(\.cardioSessions).reduce(0) { $0 + ($1.durationSeconds ?? 0) } / 60
         if cardioMinutes >= 3_000 { badges.append("Engine Room — 50+ cardio hours") }
         return badges

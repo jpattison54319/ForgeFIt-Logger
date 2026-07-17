@@ -47,7 +47,7 @@ struct RoutineDetailView: View {
                 }
 
                 if sortedExercises.isEmpty {
-                    EmptyStateCard(title: "No exercises", message: "Tap Edit Routine to add exercises.", systemImage: "dumbbell")
+                    EmptyStateCard(title: "No exercises", message: "Build this routine from your exercise library.", systemImage: "dumbbell")
                 } else {
                     ForEach(sortedExercises) { re in
                         RoutineExerciseSummary(
@@ -77,30 +77,24 @@ struct RoutineDetailView: View {
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left") { dismiss() }
+            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
             Spacer()
             Text("Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.sm) {
-                Button { shareRoutine() } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 38, height: 38)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Share routine")
+                // Same 44 pt glass treatment as the back button — this header
+                // used to mix three different circular-button styles.
+                CircleIconButton(systemImage: "square.and.arrow.up", label: "Share routine") { shareRoutine() }
                 Menu {
                     Button("Edit Routine", systemImage: "pencil") { editing = true }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
-                        .frame(width: 38, height: 38)
-                        .background(theme.surfaceElevated)
-                        .clipShape(Circle())
+                        .frame(width: 44, height: 44)
                 }
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("Routine options")
             }
         }
         .padding(.top, Space.sm)
@@ -114,6 +108,7 @@ struct RoutineDetailView: View {
                         if let last = series.last {
                             Text(metric == .volume ? Fmt.volume(last.value) : "\(Int(last.value)) \(metric.rawValue.lowercased())")
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
+                                .contentTransition(.numericText())
                             Text(last.date.formatted(.dateTime.month(.abbreviated).day()))
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
                         } else {
@@ -125,7 +120,12 @@ struct RoutineDetailView: View {
                 }
 
                 if series.count >= 2 {
+                    // `.id(metric)` swaps the chart identity per metric so the
+                    // change reads as a crossfade, not a path morph between
+                    // unrelated series.
                     LineTrendChart(points: series)
+                        .id(metric)
+                        .transition(.opacity)
                 } else {
                     Text("Complete this routine a few times to chart your progress.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
@@ -134,6 +134,7 @@ struct RoutineDetailView: View {
 
                 SegmentedPills(options: TrainingAnalytics.Metric.allCases, title: { $0.rawValue }, selection: $metric)
             }
+            .animation(Motion.stateChange, value: metric)
         }
     }
 
@@ -177,21 +178,12 @@ private struct RoutineExerciseSummary: View {
                     VStack(alignment: .leading, spacing: 6) {
                         if let exercise {
                             NavigationLink(value: exercise.id) {
-                                HStack(spacing: 4) {
-                                    // Matches the live-workout exercise header:
-                                    // white name, sage chevron only.
-                                    Text(exercise.name)
-                                        .font(.bodyStrong)
-                                        .foregroundStyle(theme.textPrimary)
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(theme.accent)
-                                }
+                                ExerciseNameLabel(name: exercise.name)
                             }
                             .buttonStyle(.plain)
                         } else {
                             Text("Exercise")
-                                .font(.bodyStrong).foregroundStyle(theme.accent)
+                                .font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         }
                         if let equipment = exercise?.equipment {
                             Tag(text: equipment.capitalized)
@@ -273,7 +265,13 @@ private struct RoutineExerciseSummary: View {
     }
 
     private var restText: String {
-        let seconds = SetType.working.defaultRestSeconds ?? 120
+        // Derive from the exercise's actual sets — a hardcoded "2:00" showed
+        // a specific number that nothing configured. First working set wins;
+        // an exercise of only specialty sets falls back to its first set.
+        let type = sortedSets.first { $0.setType == .working }?.setType
+            ?? sortedSets.first?.setType
+            ?? .working
+        let seconds = type.defaultRestSeconds ?? 120
         return seconds == 0 ? "Off" : Fmt.restTimer(seconds)
     }
 
@@ -307,11 +305,23 @@ private struct RoutineExerciseSummary: View {
     }
 
     private func repsText(_ set: RoutineSetModel) -> String {
+        // Structured plans summarize their shape, not a rep range.
+        switch set.setType {
+        case .myoRep:
+            if let minis = set.plannedMiniSetCount { return "activation + \(minis) minis" }
+        case .cluster:
+            let plan = set.plannedMiniReps
+            if !plan.isEmpty { return plan.map(String.init).joined(separator: "+") }
+        case .amrap:
+            if let seconds = set.targetDurationSeconds { return "max reps in \(seconds)s" }
+        default:
+            break
+        }
         switch (set.targetRepsLow, set.targetRepsHigh) {
-        case let (lo?, hi?) where lo != hi: "\(lo)–\(hi)"
-        case let (lo?, _): "\(lo)"
-        case let (_, hi?): "\(hi)"
-        default: "—"
+        case let (lo?, hi?) where lo != hi: return "\(lo)–\(hi)"
+        case let (lo?, _): return "\(lo)"
+        case let (_, hi?): return "\(hi)"
+        default: return "—"
         }
     }
 }

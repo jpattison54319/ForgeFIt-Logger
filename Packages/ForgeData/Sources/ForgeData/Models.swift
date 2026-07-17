@@ -3,7 +3,13 @@ import ForgeCore
 import SwiftData
 
 public enum ForgeDataSchema {
-    public static var models: [any PersistentModel.Type] {
+    /// The CloudKit-synced PLANNING layer. NOTHING in this list may ever
+    /// carry Apple Health data — App Store Guideline 5.1.3(ii) forbids
+    /// storing personal health information in iCloud. Models here hold only
+    /// user-authored training plans, catalog content, and gamification
+    /// state. Adding a model with health-derived fields to this list is a
+    /// policy violation, not a style choice.
+    public static var planModels: [any PersistentModel.Type] {
         [
             ExerciseLibraryModel.self,
             ExerciseAliasModel.self,
@@ -12,19 +18,39 @@ public enum ForgeDataSchema {
             RoutineModel.self,
             RoutineExerciseModel.self,
             RoutineSetModel.self,
+            UserProgressModel.self,
+            WorkoutXPEventModel.self,
+            IntervalPresetModel.self,
+            YogaFlowModel.self,
+            CoachingProfileModel.self,
+            CoachedProgramModel.self,
+            CoachingWeekOverrideModel.self,
+            SavedInsightModel.self
+        ]
+    }
+
+    /// The LOCAL-ONLY training log. These models may contain Health-derived
+    /// fields (heart rate, energy, zones, readiness, body weight, check-ins),
+    /// so they never sync to CloudKit. Cross-device continuity comes from
+    /// the sanitized iCloud Drive backup (health fields stripped by type)
+    /// plus re-enrichment from the user's own Apple Health store.
+    public static var logModels: [any PersistentModel.Type] {
+        [
             WorkoutModel.self,
             WorkoutExerciseModel.self,
             SetModel.self,
             WorkoutImportBatchModel.self,
-            UserProgressModel.self,
-            WorkoutXPEventModel.self,
             CardioSessionModel.self,
             CardioRoutePointModel.self,
             CardioSplitModel.self,
             WrappedReportModel.self,
-            IntervalPresetModel.self,
-            YogaFlowModel.self
+            ProgressionSuggestionModel.self,
+            DailyCheckinModel.self
         ]
+    }
+
+    public static var models: [any PersistentModel.Type] {
+        planModels + logModels
     }
 }
 
@@ -43,6 +69,13 @@ public final class RoutineFolderModel {
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
+    /// Hidden-but-kept, distinct from `deletedAt`: an archived folder vanishes
+    /// from every active surface yet keeps its structure (children stay
+    /// linked) so restoring it rebuilds the cycle intact. A whole archived
+    /// subtree shares ONE timestamp — that identity is what "restore the
+    /// folder" uses to bring back exactly what was archived with it.
+    /// Additive-optional for CloudKit.
+    public var archivedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -52,7 +85,8 @@ public final class RoutineFolderModel {
         parentID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        deletedAt: Date? = nil
+        deletedAt: Date? = nil,
+        archivedAt: Date? = nil
     ) {
         self.id = id
         self.userID = userID
@@ -62,6 +96,7 @@ public final class RoutineFolderModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+        self.archivedAt = archivedAt
     }
 }
 
@@ -301,6 +336,11 @@ public final class RoutineModel {
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
+    /// Hidden-but-kept, distinct from `deletedAt`: hidden from every active
+    /// surface (lists, Home, watch, quick actions) but restorable. Carries the
+    /// owning folder's stamp when archived as part of a folder — see
+    /// `RoutineFolderModel.archivedAt`. Additive-optional for CloudKit.
+    public var archivedAt: Date?
     // CloudKit requires relationships to be optional; the optional storage is
     // private and the public face stays non-optional. `originalName` keeps
     // existing local stores migrating in place.
@@ -322,6 +362,7 @@ public final class RoutineModel {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
+        archivedAt: Date? = nil,
         exercises: [RoutineExerciseModel] = []
     ) {
         self.id = id
@@ -334,6 +375,7 @@ public final class RoutineModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+        self.archivedAt = archivedAt
         self.exercises = exercises
     }
 }
@@ -346,6 +388,9 @@ public final class RoutineExerciseModel {
     public var position: Int = 0
     public var supersetGroup: Int?
     public var progressionRuleID: UUID?
+    /// JSON-encoded `ProgressionRule` (ForgeCore); nil = the double-progression
+    /// default. Additive-optional for CloudKit.
+    public var progressionRuleJSON: String?
     public var notes: String?
     /// Structured cardio interval template (JSON-encoded `IntervalPlan`),
     /// nil for strength or steady-state cardio. Additive-optional.
@@ -404,6 +449,17 @@ public final class RoutineSetModel {
     public var targetRPE: Double?
     public var targetRIR: Int?
     public var targetDurationSeconds: Int?
+    /// Cardio distance target in meters — the peer of `targetDurationSeconds`
+    /// for distance-planned efforts ("row 2000 m"). Plan-store synced; a
+    /// planned distance is training intent, not health data.
+    public var targetDistanceMeters: Double?
+    /// Myo-reps plan: how many mini-sets to perform after the activation set.
+    /// Reps are deliberately NOT planned — myo minis log whatever the lifter
+    /// achieves live.
+    public var plannedMiniSetCount: Int?
+    /// Cluster plan: goal reps for each segment, JSON-encoded `[Int]` — a
+    /// cluster is one set broken into mini-sets, so rep goals matter.
+    public var plannedMiniRepsJSON: String?
     public var createdAt: Date = Date()
     public var routineExercise: RoutineExerciseModel?
 
@@ -418,6 +474,9 @@ public final class RoutineSetModel {
         targetRPE: Double? = nil,
         targetRIR: Int? = nil,
         targetDurationSeconds: Int? = nil,
+        targetDistanceMeters: Double? = nil,
+        plannedMiniSetCount: Int? = nil,
+        plannedMiniRepsJSON: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -430,12 +489,30 @@ public final class RoutineSetModel {
         self.targetRPE = targetRPE
         self.targetRIR = targetRIR
         self.targetDurationSeconds = targetDurationSeconds
+        self.targetDistanceMeters = targetDistanceMeters
+        self.plannedMiniSetCount = plannedMiniSetCount
+        self.plannedMiniRepsJSON = plannedMiniRepsJSON
         self.createdAt = createdAt
     }
 
     public var setType: SetType {
         get { SetType(rawValue: setTypeRaw) ?? .working }
         set { setTypeRaw = newValue.rawValue }
+    }
+
+    /// Decoded view of `plannedMiniRepsJSON` (cluster segment rep goals).
+    public var plannedMiniReps: [Int] {
+        get {
+            guard let plannedMiniRepsJSON, let data = plannedMiniRepsJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([Int].self, from: data)) ?? []
+        }
+        set {
+            if newValue.isEmpty {
+                plannedMiniRepsJSON = nil
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                plannedMiniRepsJSON = String(data: data, encoding: .utf8)
+            }
+        }
     }
 }
 
@@ -768,6 +845,13 @@ public final class SetModel {
     /// behavior (nothing changes for old data).
     public var side2Reps: Int?
     public var side2MiniRepsJSON: String?
+    /// Myo-reps plan carried from the routine: how many mini-sets were
+    /// planned after the activation. Renders as ghost pill slots to fill
+    /// live; never prefills reps.
+    public var plannedMiniSetCount: Int?
+    /// Cluster plan carried from the routine: goal reps per segment,
+    /// JSON-encoded `[Int]`. Ghost pills show the goals; tapping one logs it.
+    public var plannedMiniRepsJSON: String?
     public var effectiveLoad: Double?
     public var totalVolume: Double?
     public var estimated1RM: Double?
@@ -799,6 +883,8 @@ public final class SetModel {
         isPaused: Bool = false,
         machineSettingsJSON: String? = nil,
         sourceRoutineSetID: UUID? = nil,
+        plannedMiniSetCount: Int? = nil,
+        plannedMiniRepsJSON: String? = nil,
         completedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -825,6 +911,8 @@ public final class SetModel {
         self.isPaused = isPaused
         self.machineSettingsJSON = machineSettingsJSON
         self.sourceRoutineSetID = sourceRoutineSetID
+        self.plannedMiniSetCount = plannedMiniSetCount
+        self.plannedMiniRepsJSON = plannedMiniRepsJSON
         self.completedAt = completedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -904,6 +992,13 @@ public final class SetModel {
         )
     }
 
+    /// Decoded view of `plannedMiniRepsJSON` (cluster segment rep goals from
+    /// the routine plan). Read-only in the logger; goals aren't achievements.
+    public var plannedMiniReps: [Int] {
+        guard let plannedMiniRepsJSON, let data = plannedMiniRepsJSON.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([Int].self, from: data)) ?? []
+    }
+
     /// Decoded view of `miniRepsJSON`. Setting recomputes derived metrics.
     public var miniReps: [Int] {
         get {
@@ -941,6 +1036,32 @@ public final class SetModel {
     /// inferred by doubling side 1.
     public var hasSide2Data: Bool {
         side2Reps != nil || side2MiniRepsJSON != nil
+    }
+
+    /// The weight input means a different stored field per mode: external
+    /// load, weight added to bodyweight, or assistance subtracted from
+    /// bodyweight. Every read/write of "the set's weight number" must route
+    /// through this accessor so inputs, "previous" ghosts, watch sync, and
+    /// the volume math (`VolumeMath.effectiveLoad`) agree on the same field —
+    /// writing a non-external set's value into `weight` silently computes
+    /// tonnage as if the raw number were an external load.
+    public var modeWeight: Double? {
+        switch weightMode {
+        case .external: weight
+        case .bodyweightAdded: addedWeight
+        case .bodyweightAssisted: assistanceWeight
+        case .bodyweight: nil
+        }
+    }
+
+    public func setModeWeight(_ value: Double?) {
+        switch weightMode {
+        case .external: weight = value
+        case .bodyweightAdded: addedWeight = value
+        case .bodyweightAssisted: assistanceWeight = value
+        case .bodyweight: break
+        }
+        recomputeDerivedMetrics()
     }
 
     public func recomputeDerivedMetrics() {
@@ -1026,6 +1147,15 @@ public final class CardioSessionModel {
     public var flexibilityExposureJSON: String?
     /// Number of pose holds completed in a guided class.
     public var posesCompleted: Int?
+    /// Swimming contract (nil on every other modality). Pool length ×
+    /// lengths is the distance source of truth for pool swims; /100 m pace
+    /// and SWOLF are derived from these, never stored. Additive-optional
+    /// for CloudKit.
+    public var poolLengthMeters: Double?
+    public var lengthsCompleted: Int?
+    public var totalStrokes: Int?
+    /// `SwimStrokeStyle` raw value.
+    public var strokeStyleRaw: String?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -1076,6 +1206,10 @@ public final class CardioSessionModel {
         yogaStyleRaw: String? = nil,
         flexibilityExposureJSON: String? = nil,
         posesCompleted: Int? = nil,
+        poolLengthMeters: Double? = nil,
+        lengthsCompleted: Int? = nil,
+        totalStrokes: Int? = nil,
+        strokeStyleRaw: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -1114,6 +1248,10 @@ public final class CardioSessionModel {
         self.yogaStyleRaw = yogaStyleRaw
         self.flexibilityExposureJSON = flexibilityExposureJSON
         self.posesCompleted = posesCompleted
+        self.poolLengthMeters = poolLengthMeters
+        self.lengthsCompleted = lengthsCompleted
+        self.totalStrokes = totalStrokes
+        self.strokeStyleRaw = strokeStyleRaw
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -1132,6 +1270,9 @@ public final class CardioSessionModel {
 
     /// The `modality` string marking a yoga session (vs a `CardioKind` raw).
     public static let yogaModality = "yoga"
+    /// `sourceDevice` marker for a deliberate unguided (manual) yoga log —
+    /// distinguishes it from an untouched planned session at finish time.
+    public static let yogaManualSource = "iphone-yoga-manual"
 }
 
 @Model
@@ -1331,6 +1472,57 @@ public final class IntervalPresetModel {
     }
 }
 
+/// One offered next-session target ("Bench 110 → 115 lb — hit 12 ≥ target 10")
+/// and what the lifter did with it. Mirrors the progression_recommendations
+/// design in docs/02-schema.sql; status resolves at workout save (accepted /
+/// edited / rejected) and powers the suggestion-interaction metric.
+@Model
+public final class ProgressionSuggestionModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var exerciseID: UUID = UUID()
+    /// The workout this suggestion was offered in.
+    public var workoutID: UUID = UUID()
+    public var workoutExerciseID: UUID = UUID()
+    /// ProgressionSuggestion.Kind raw value (increase/hold/addReps).
+    public var kindRaw: String = ""
+    public var suggestedWeightKg: Double?
+    public var suggestedRepsLow: Int?
+    public var suggestedRepsHigh: Int?
+    public var rationale: String = ""
+    /// pending → accepted / edited / rejected.
+    public var statusRaw: String = "pending"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        exerciseID: UUID,
+        workoutID: UUID,
+        workoutExerciseID: UUID,
+        kindRaw: String,
+        suggestedWeightKg: Double? = nil,
+        suggestedRepsLow: Int? = nil,
+        suggestedRepsHigh: Int? = nil,
+        rationale: String = "",
+        statusRaw: String = "pending"
+    ) {
+        self.id = id
+        self.userID = userID
+        self.exerciseID = exerciseID
+        self.workoutID = workoutID
+        self.workoutExerciseID = workoutExerciseID
+        self.kindRaw = kindRaw
+        self.suggestedWeightKg = suggestedWeightKg
+        self.suggestedRepsLow = suggestedRepsLow
+        self.suggestedRepsHigh = suggestedRepsHigh
+        self.rationale = rationale
+        self.statusRaw = statusRaw
+    }
+}
+
 /// A user-saved yoga flow (guided pose sequence), named for reuse from the
 /// flow browser and the routine editor. The sequence is frozen into
 /// `planJSON` (a JSON-encoded `YogaFlowPlan`, the same shape stored on
@@ -1375,4 +1567,325 @@ public final class YogaFlowModel {
     }
 
     public var plan: YogaFlowPlan? { YogaFlowPlan.decode(from: planJSON) }
+}
+
+/// One-tap morning check-in: subjective context tags (slept badly, sore,
+/// stressed, alcohol, sick) for a calendar day. Kept as context beside the
+/// biometric readiness — shown as reason chips today, correlated in Insights
+/// once enough history accumulates. One row per day (query-before-insert;
+/// CloudKit forbids unique constraints).
+@Model
+public final class DailyCheckinModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// Start-of-day for the day being described.
+    public var date: Date = Date()
+    /// Comma-joined tag identifiers (e.g. "slept-badly,sore").
+    public var tagsRaw: String = ""
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public var tags: [String] {
+        get { tagsRaw.isEmpty ? [] : tagsRaw.components(separatedBy: ",") }
+        set { tagsRaw = newValue.joined(separator: ",") }
+    }
+
+    public init(id: UUID = UUID(), userID: UUID, date: Date, tags: [String] = []) {
+        self.id = id
+        self.userID = userID
+        self.date = date
+        self.tagsRaw = tags.joined(separator: ",")
+    }
+}
+
+// MARK: - Coach's Corner (Phase 1)
+//
+// The models below hold ONLY user-authored coaching preferences and plan
+// bookkeeping — training focus, goals, program cadence, and performance-
+// derived weekly overrides. Nothing here may ever carry Apple Health data
+// (readiness, HRV, sleep, heart rate, etc.); that's the same 5.1.3(ii) rule
+// that governs the rest of `ForgeDataSchema.planModels`, which is where
+// these three are registered.
+
+/// Mirrors the app's `TrainingFocus` (ForgeFit/Shared/TrainingFocus.swift)
+/// raw values exactly. ForgeData can't depend on the app target, so this is
+/// a parallel enum kept in lockstep by convention rather than a shared
+/// type — the raw string is what's actually persisted and synced, and both
+/// sides agree on it.
+public enum CoachingFocus: String, Codable, CaseIterable, Sendable {
+    case strength, cardio, yoga, mixed
+}
+
+public enum CoachingExperience: String, Codable, CaseIterable, Sendable {
+    case beginner, intermediate, advanced
+}
+
+/// The user's non-health coaching preferences, captured during the coaching
+/// setup flow: training focus, goal, experience, weekly cadence, and
+/// equipment access. Drives program selection and the AI coach's default
+/// framing. One row per user (query-before-insert; CloudKit forbids unique
+/// constraints).
+@Model
+public final class CoachingProfileModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// `CoachingFocus` raw value. Empty string is the CloudKit-required
+    /// default only — the setup flow always writes a real value before the
+    /// row is saved.
+    public var focusRaw: String = ""
+    /// App-defined goal identifier (e.g. "build-muscle", "lose-fat",
+    /// "general-fitness"). Deliberately not enumerated here so the app's
+    /// goal picker can evolve independently of the data layer.
+    public var goalRaw: String = ""
+    /// `CoachingExperience` raw value.
+    public var experienceRaw: String = ""
+    public var sessionsPerWeek: Int = 3
+    public var sessionMinutes: Int = 60
+    /// JSON-encoded `[String]` of equipment the user has access to (e.g.
+    /// ["barbell", "dumbbell", "bands"]). Nil = not asked yet / no
+    /// constraint recorded. Additive-optional for CloudKit.
+    public var equipmentJSON: String?
+    /// Raw value mirroring the app's `CardioKind` (ForgeFit/Cardio/CardioMetrics.swift)
+    /// for the cardio modality the user prefers when a program needs to
+    /// pick one on their behalf. Nil = no preference recorded.
+    public var preferredCardioRaw: String?
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        focusRaw: String,
+        goalRaw: String,
+        experienceRaw: String,
+        sessionsPerWeek: Int = 3,
+        sessionMinutes: Int = 60,
+        equipmentJSON: String? = nil,
+        preferredCardioRaw: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.userID = userID
+        self.focusRaw = focusRaw
+        self.goalRaw = goalRaw
+        self.experienceRaw = experienceRaw
+        self.sessionsPerWeek = sessionsPerWeek
+        self.sessionMinutes = sessionMinutes
+        self.equipmentJSON = equipmentJSON
+        self.preferredCardioRaw = preferredCardioRaw
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public var focus: CoachingFocus? {
+        get { CoachingFocus(rawValue: focusRaw) }
+        set { focusRaw = newValue?.rawValue ?? "" }
+    }
+
+    public var experience: CoachingExperience? {
+        get { CoachingExperience(rawValue: experienceRaw) }
+        set { experienceRaw = newValue?.rawValue ?? "" }
+    }
+
+    /// Decoded view of `equipmentJSON`.
+    public var equipment: [String] {
+        get {
+            guard let equipmentJSON, let data = equipmentJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        set {
+            if newValue.isEmpty {
+                equipmentJSON = nil
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                equipmentJSON = String(data: data, encoding: .utf8)
+            }
+        }
+    }
+}
+
+/// Links a coached plan to the mesocycle folder it manages. Either wraps a
+/// catalog program import (`catalogProgramID` set) or simply "owns" a
+/// folder the user already built by hand (`catalogProgramID == ""`), so the
+/// weekly-review pipeline knows which folders are coach-managed without
+/// tagging `RoutineFolderModel` itself.
+@Model
+public final class CoachedProgramModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// The `RoutineFolderModel` this program owns. Nil = not yet attached
+    /// (e.g. mid-setup, before the user picks or creates a folder).
+    public var folderID: UUID?
+    /// Catalog program identifier the folder was generated from. Empty
+    /// string = the user attached their own existing folder rather than
+    /// importing a catalog program.
+    public var catalogProgramID: String = ""
+    public var startDate: Date = Date()
+    /// Total weeks in the program. 0 = open-ended (attached plans with no
+    /// fixed length).
+    public var weeks: Int = 0
+    public var weeklySessionTarget: Int = 3
+    public var isActive: Bool = false
+    /// Monday anchor of the last weekly review the coach completed for this
+    /// program. Nil = never reviewed.
+    public var lastReviewedWeekAnchor: Date?
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        folderID: UUID? = nil,
+        catalogProgramID: String = "",
+        startDate: Date,
+        weeks: Int = 0,
+        weeklySessionTarget: Int = 3,
+        isActive: Bool = false,
+        lastReviewedWeekAnchor: Date? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.folderID = folderID
+        self.catalogProgramID = catalogProgramID
+        self.startDate = startDate
+        self.weeks = weeks
+        self.weeklySessionTarget = weeklySessionTarget
+        self.isActive = isActive
+        self.lastReviewedWeekAnchor = lastReviewedWeekAnchor
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    /// True when this program owns a user-attached folder rather than an
+    /// imported catalog program.
+    public var isAttachedPlan: Bool { catalogProgramID.isEmpty }
+}
+
+public enum CoachingOverrideKind: String, Codable, CaseIterable, Sendable {
+    case progressionHold, deloadWeek, carryForward
+}
+
+public enum CoachingOverrideStatus: String, Codable, CaseIterable, Sendable {
+    case proposed, active, cancelled
+}
+
+/// A time-bounded weekly coaching override — e.g. holding progression on an
+/// exercise, calling a deload week, or carrying forward last week's targets
+/// — scoped to a single Monday-anchored week.
+///
+/// PRIVACY INVARIANT: `reason` may only ever contain performance/schedule-
+/// derived text (e.g. "Bench press under target 2 sessions running").
+/// It must NEVER contain readiness/HRV/sleep/health-derived reasoning —
+/// this model syncs via CloudKit, and Guideline 5.1.3(ii) forbids storing
+/// Apple Health data there.
+///
+/// Expiry is derived, not stored: an override is expired once "today" has
+/// passed the week described by `weekStart` — there is no separate expired
+/// status.
+@Model
+public final class CoachingWeekOverrideModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var programID: UUID?
+    /// `CoachingOverrideKind` raw value. Empty string is the CloudKit-
+    /// required default; a real row always has one of the enum's cases.
+    public var kindRaw: String = ""
+    /// For `.progressionHold`: the `ExerciseLibraryModel` the hold applies
+    /// to. Nil for overrides that aren't exercise-scoped.
+    public var exerciseID: UUID?
+    public var routineID: UUID?
+    /// Monday anchor of the week this override applies to.
+    public var weekStart: Date = Date()
+    /// `CoachingOverrideStatus` raw value. Empty string is the CloudKit-
+    /// required default; a real row always has one of the enum's cases.
+    public var statusRaw: String = ""
+    /// Performance/schedule-derived explanation only — see the privacy
+    /// invariant on the type doc comment above.
+    public var reason: String = ""
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        programID: UUID? = nil,
+        kindRaw: String = "",
+        exerciseID: UUID? = nil,
+        routineID: UUID? = nil,
+        weekStart: Date,
+        statusRaw: String = "",
+        reason: String = "",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.userID = userID
+        self.programID = programID
+        self.kindRaw = kindRaw
+        self.exerciseID = exerciseID
+        self.routineID = routineID
+        self.weekStart = weekStart
+        self.statusRaw = statusRaw
+        self.reason = reason
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public var kind: CoachingOverrideKind? {
+        get { CoachingOverrideKind(rawValue: kindRaw) }
+        set { kindRaw = newValue?.rawValue ?? "" }
+    }
+
+    public var status: CoachingOverrideStatus? {
+        get { CoachingOverrideStatus(rawValue: statusRaw) }
+        set { statusRaw = newValue?.rawValue ?? "" }
+    }
+}
+
+/// A saved Insights Builder card: the user-authored SHAPE of a comparison —
+/// which metric ids, alignment, lag, filters, and chart — serialized as
+/// versioned `InsightRecipe` JSON. Founder-ruled CloudKit-eligible
+/// (2026-07-15): recipes are configuration, like routine names and plans; the
+/// observations behind them are fetched live on-device and are NEVER stored
+/// here. Keeping the recipe as a JSON payload means recipe evolution never
+/// needs a CloudKit schema migration (interval/yoga plan precedent).
+@Model
+public final class SavedInsightModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    /// Versioned `InsightRecipe` JSON. Optional for CloudKit; a nil or
+    /// undecodable payload renders as an editable "needs attention" card,
+    /// never a crash.
+    public var recipeJSON: String?
+    public var position: Int = 0
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String = "",
+        recipeJSON: String? = nil,
+        position: Int = 0,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.recipeJSON = recipeJSON
+        self.position = position
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
 }

@@ -6,6 +6,14 @@ import Foundation
 public enum SetType: String, Codable, CaseIterable, Sendable {
     case warmup, working, drop, restPause, backoff, amrap, myoRep, cluster
 
+    /// The types offered in set-type pickers. `restPause` is retired — it is
+    /// indistinguishable from myo-reps in practice, so new sets can't choose
+    /// it. The case stays in the enum so legacy synced data still decodes;
+    /// a launch backfill converts stored rest-pause sets to myo-reps.
+    public static var selectable: [SetType] {
+        allCases.filter { $0 != .restPause }
+    }
+
     /// Whether a set of this type contributes to *working* volume (set-count
     /// volume per muscle and tonnage). Warm-up sets do not count toward volume.
     public var countsAsWorkingVolume: Bool {

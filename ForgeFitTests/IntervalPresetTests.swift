@@ -7,18 +7,9 @@ import Testing
 
 @MainActor
 struct IntervalPresetTests {
-    /// Returns the CONTAINER (not just a context): a ModelContext holds its
-    /// container weakly, so keeping only `container.mainContext` alive lets the
-    /// container deallocate and the first fetch crashes inside SwiftData.
-    private func makeContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
-    }
-
     @Test func presetRoundTripsPlanThroughStore() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
 
         let plan = IntervalPlan.build(
             warmupSeconds: 300, repeats: 6, workSeconds: 60, recoverSeconds: 90,
@@ -36,8 +27,8 @@ struct IntervalPresetTests {
     }
 
     @Test func softDeleteHidesPresetFromActiveQuery() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
 
         let keep = IntervalPresetModel(userID: ForgeFitDemo.userID, name: "Keep", planJSON: "{}")
         let drop = IntervalPresetModel(userID: ForgeFitDemo.userID, name: "Drop", planJSON: "{}")
@@ -57,8 +48,8 @@ struct IntervalPresetTests {
     }
 
     @Test func deleteAllLocalModelsRemovesPresets() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
 
         context.insert(IntervalPresetModel(userID: ForgeFitDemo.userID, name: "Wipe me", planJSON: "{}"))
         try context.save()

@@ -8,22 +8,21 @@ import ForgeData
 ///
 /// The model, with its literature anchors:
 ///
-/// **Systemic** — a weighted blend of four components (weights renormalize
+/// **Systemic** — a weighted blend of three components (weights renormalize
 /// over whatever data exists):
-///  - HRV (35%): 7-day rolling average compared against a 14–60 day baseline,
+///  - HRV (47%): 7-day rolling average compared against a 14–60 day baseline,
 ///    banded by the baseline's own variability. Rolling-average HRV tracks
 ///    training adaptation and fatigue better than single readings
 ///    (Plews et al. 2013, Sports Med; Buchheit 2014, Front Physiol).
-///  - Sleep (25%): last night vs need, plus 7-day accumulated debt. Sleep is
+///  - Sleep (35%): last night vs need, plus 7-day accumulated debt. Sleep is
 ///    the best-supported recovery behavior in athletes (Fullagar et al. 2015,
 ///    Sports Med).
-///  - Resting HR (15%): today vs baseline; a slower-moving corroborator of
+///  - Resting HR (18%): today vs baseline; a slower-moving corroborator of
 ///    autonomic status (Buchheit 2014).
-///  - Training-stress balance (25%): exponentially-weighted acute (7d) vs
-///    chronic (28d) load — EWMA outperforms rolling averages for workload
-///    monitoring (Williams et al. 2017, BJSM); flat weeks are penalized via
-///    Foster's monotony (Foster 1998, MSSE). Treated as a fatigue flag, not
-///    an injury predictor (Impellizzeri et al. 2020 critique acknowledged).
+/// Training-load comparisons are shown separately as descriptive context.
+/// They do not change recovery because acute:chronic ratios have conceptual
+/// and mathematical limitations that do not support an injury-risk or
+/// readiness prescription (Impellizzeri et al. 2020; Coyne et al. 2019).
 ///
 /// **Per muscle** — force capacity after a bout recovers roughly
 /// exponentially over 24–72 h, slower with more volume, closer proximity to
@@ -63,6 +62,22 @@ extension RecoveryEngine {
         let valueText: String
         /// Context, e.g. "7-day avg vs 48 ms baseline" or what data is needed.
         let detailText: String
+        /// Present only when the user resolved this specific value by hand.
+        let sleepOverrideStatus: SleepOverrideStatus?
+
+        init(
+            name: String,
+            state: ScoreState,
+            valueText: String,
+            detailText: String,
+            sleepOverrideStatus: SleepOverrideStatus? = nil
+        ) {
+            self.name = name
+            self.state = state
+            self.valueText = valueText
+            self.detailText = detailText
+            self.sleepOverrideStatus = sleepOverrideStatus
+        }
     }
 
     struct SystemicRecovery {
@@ -74,9 +89,8 @@ extension RecoveryEngine {
     /// The acute, today-only readiness score — nocturnal autonomic state plus
     /// last night's sleep, judged against the individual's own baseline. Built
     /// to move with the day (like Athlytic/WHOOP) so the headline number always
-    /// agrees with the guidance shown beside it. Training-load balance is
-    /// deliberately excluded here — it belongs to the chronic trend, not to
-    /// "how stressed is my body this morning".
+    /// agrees with the guidance shown beside it. Training load is deliberately
+    /// excluded from every recovery score and shown separately as context.
     struct DailyReadiness {
         var state: ScoreState
         var parts: [ScorePart]
@@ -137,25 +151,23 @@ extension RecoveryEngine {
 
     // MARK: - Systemic
 
-    /// Chronic-trend weights. Load balance is capped at 15% — EWMA-ACWR is a
-    /// training-management heuristic, not a recovery measure (Impellizzeri
-    /// 2020), so it flavors the trend without being able to mask autonomic or
-    /// sleep deterioration. HRV trend keeps the largest share (Plews 2013).
+    /// Chronic-trend weights. HRV keeps the largest share (Plews 2013).
+    /// Training load is deliberately absent: its comparison is useful context,
+    /// but a workload ratio is not a recovery measurement.
     private enum SystemicWeight {
-        static let hrv = 0.40, sleep = 0.30, rhr = 0.15, load = 0.15
+        static let hrv = 0.47, sleep = 0.35, rhr = 0.18
     }
 
     private func systemicRecovery() -> SystemicRecovery {
         let hrv = hrvPart()
         let sleep = sleepPart()
         let rhr = rhrPart()
-        let load = loadBalancePart()
-        let parts = [hrv, sleep, rhr, load]
+        let parts = [hrv, sleep, rhr]
 
         var weighted = 0.0
         var weightSum = 0.0
         for (part, weight) in [(hrv, SystemicWeight.hrv), (sleep, SystemicWeight.sleep),
-                               (rhr, SystemicWeight.rhr), (load, SystemicWeight.load)] {
+                               (rhr, SystemicWeight.rhr)] {
             if let value = part.state.value {
                 weighted += value * weight
                 weightSum += weight
@@ -165,9 +177,9 @@ extension RecoveryEngine {
         // Require at least one real component before claiming a score.
         guard weightSum >= 0.15 else {
             return SystemicRecovery(
-                state: .building("Log workouts or connect Apple Health to build this score."),
+                state: .building("Connect Apple Health to build this score."),
                 parts: parts,
-                guidance: "Systemic recovery blends HRV, sleep, resting heart rate, and training-load balance once data is available."
+                guidance: "Systemic recovery blends HRV, sleep, and resting heart rate once data is available."
             )
         }
 
@@ -177,10 +189,10 @@ extension RecoveryEngine {
 
     private func systemicGuidance(_ score: Double) -> String {
         switch score {
-        case 0.8...: "Trending recovered — adaptation is on track."
-        case 0.65..<0.8: "Stable trend — training load and recovery are in balance."
-        case 0.5..<0.65: "Trend softening — watch load and sleep over the next few days."
-        default: "Downward trend — accumulated fatigue; plan a lighter week or deload."
+        case 0.85...: "Strong recovery trend — adaptation is on track."
+        case 0.7..<0.85: "Stable recovery trend — your recent health signals are holding steady."
+        case 0.4..<0.7: "Recovery trend is softening — sleep or autonomic signals may be accumulating."
+        default: "Downward recovery trend — accumulated fatigue is building."
         }
     }
 
@@ -202,9 +214,31 @@ extension RecoveryEngine {
         for (part, weight) in [(hrv, DailyWeight.hrv), (hr, DailyWeight.sleepingHR), (sleep, DailyWeight.sleep)] {
             if let value = part.state.value { weighted += value * weight; weightSum += weight }
         }
-        guard weightSum >= 0.2 else {
+        // An acute "last night" score needs evidence a night happened: HRV
+        // (channel-pure — awake-only users' awake channel counts, it's all
+        // they have), sleep, or genuinely sleeping HR. Apple's daytime
+        // resting-HR estimate alone can't fabricate a night — before this
+        // gate, being up past midnight scored the new day from awake data
+        // and the score whipsawed until sleep synced.
+        //
+        // The gate only holds until mid-morning: before then, missing
+        // overnight data almost always means the night isn't in yet (still
+        // awake at 1am, or the watch hasn't synced). From mid-morning it
+        // means the night was missed, and the score degrades honestly to
+        // the daytime signals that exist (an elevated daytime resting HR
+        // must still flag on a watch-died day).
+        let hrMeasuredOvernight = sleepingHRAssessment().map { !$0.isDaytimeFallback } ?? false
+        let sleepExplicitlyExcluded = latestHealthMetric()?.sleepOverrideStatus == .notTracked
+        let overnightEvidence = hrv.state.value != nil || sleep.state.value != nil || sleepExplicitlyExcluded
+            || (hr.state.value != nil && hrMeasuredOvernight)
+        let nightStillPending = calendar.component(.hour, from: now) < 9
+        guard weightSum >= 0.2, overnightEvidence || !nightStillPending else {
+            let overnightHistory = usesNocturnalHRV
+                || baselineMetrics(days: 60).contains { $0.sleepTotalMinutes != nil }
             return DailyReadiness(
-                state: .building("Wear your watch overnight to capture last night's HRV, heart rate, and sleep."),
+                state: .building(overnightHistory
+                    ? "Waiting on last night's data — the score updates once your sleep syncs."
+                    : "Wear a watch to bed — Apple Watch, or a Garmin synced through Garmin Connect — to capture last night's HRV, heart rate, and sleep."),
                 parts: parts, flags: [],
                 guidance: "Daily readiness reads your nocturnal HRV, sleeping heart rate, and last night's sleep against your own baseline."
             )
@@ -224,32 +258,24 @@ extension RecoveryEngine {
     }
 
     private func dailyGuidance(_ score: Double, flags: [String]) -> String {
-        let base: String
-        switch score {
-        case 0.8...: base = "Recovered — full intensity is available today."
-        case 0.65..<0.8: base = "Solid — train as planned."
-        case 0.5..<0.65: base = "Partially recovered — keep volume moderate and stop short of failure."
-        default: base = "Under-recovered — favor Zone 2, mobility, or rest today."
+        let base = switch score {
+        case 0.85...: "Today’s overnight signals are exceptionally favorable."
+        case 0.7..<0.85: "Today’s overnight signals are within your ready range."
+        case 0.4..<0.7: "Today’s overnight signals show some recovery caution."
+        default: "Today’s overnight signals are below your ready range."
         }
-        // When the score is still green-ish but an acute flag is up, say so
-        // explicitly instead of a bare "train as planned" that ignores it —
-        // covers every flag the daily score can raise (HRV, sleeping HR,
-        // sleep), not just HRV, so the guidance never contradicts a visible
-        // flag chip.
-        guard score >= 0.6 else { return base }
+        guard !flags.isEmpty else { return base }
         let reasons = flags.compactMap(Self.acuteReasonClause)
         guard !reasons.isEmpty else { return base }
         let joined = reasons.count == 1
             ? reasons[0]
             : reasons.dropLast().joined(separator: ", ") + " and " + reasons.last!
         let sentence = joined.prefix(1).uppercased() + joined.dropFirst()
-        return "\(base) \(sentence), so hold back PR attempts."
+        return "\(base) \(sentence)."
     }
 
     /// User-facing clause per acute flag, phrased to read naturally alone or
-    /// joined with others ("X and Y, so hold back PR attempts"). Shared with
-    /// RecoveryEngine's interpretation() so both surfaces name every flag the
-    /// same way.
+    /// joined with others. Shared by the daily score and its evidence rows.
     static func acuteReasonClause(_ flag: String) -> String? {
         switch flag {
         case "HRV low today": return "HRV dipped below your normal range this morning"
@@ -264,7 +290,8 @@ extension RecoveryEngine {
     // exact thresholds that shaped each sub-score.
     private var acuteHRVBelowRange: Bool { acuteHRVAssessment()?.belowRange ?? false }
     private var lastNightSleepShort: Bool {
-        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else { return false }
+        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes,
+              current.sleepIsTrustworthy else { return false }
         return Double(sleep) / Double(personalizedSleepNeedMinutes()) < 0.85
     }
 
@@ -273,10 +300,15 @@ extension RecoveryEngine {
     /// Last night's nocturnal HRV vs a 14–60 day baseline, in ln space (HRV is
     /// log-normal; ln-HRV is the standard for baseline/SWC math — Plews 2013).
     private func acuteHRVAssessment() -> AcuteHRV? {
-        guard let current = latestHealthMetric(), let today = current.bestHRV, today > 0 else { return nil }
+        // Channel-pure via `acuteComparableHRV`: nocturnal readings against
+        // nocturnal nights only. An awake spot sample taken just past
+        // midnight must never stand in for a night that hasn't happened —
+        // it scored "awake at 1am" as a crashed HRV.
+        guard let current = latestHealthMetric(),
+              let today = acuteComparableHRV(for: current), today > 0 else { return nil }
         let baseline = baselineMetrics(days: 60)
-            .filter { calendarDaysBetween($0.date, and: now) >= 1 }   // exclude today only
-            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
+            .filter { calendarDaysBetween($0.date, and: now) >= 1 && !$0.sleepUserCorrected }
+            .compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }.map { log($0) }
         guard baseline.count >= 14 else { return nil }
         let lnToday = log(today)
         let mean = average(baseline) ?? lnToday
@@ -294,12 +326,29 @@ extension RecoveryEngine {
 
     private func acuteHRVPart() -> ScorePart {
         guard let assessment = acuteHRVAssessment() else {
-            let have = latestHealthMetric()?.bestHRV != nil
+            // A nocturnal user past midnight has a healthy baseline — the
+            // night just isn't in yet. Say that, not "baseline building".
+            if usesNocturnalHRV,
+               let latest = latestHealthMetric(),
+               acuteComparableHRV(for: latest) == nil {
+                let partial = latest.sleepLikelyPartial && !latest.sleepUserCorrected
+                return ScorePart(
+                    name: "HRV (today)",
+                    state: .building(partial
+                        ? "Overnight HRV excluded because sleep looks incomplete"
+                        : "Last night's HRV isn't in yet"),
+                    valueText: "—",
+                    detailText: partial
+                        ? "Confirm or correct the sleep record on Home"
+                        : "Updates when tonight's sleep syncs"
+                )
+            }
+            let todayValue = latestHealthMetric().flatMap { acuteComparableHRV(for: $0) }
             return ScorePart(
                 name: "HRV (today)",
-                state: .building(have ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
-                valueText: latestHealthMetric()?.bestHRV.map { "\(Int($0.rounded())) ms" } ?? "—",
-                detailText: have ? "Nocturnal HRV; baseline still forming" : "Wear your watch overnight to capture HRV"
+                state: .building(todayValue != nil ? "Baseline building — needs ~2 weeks of nights" : "No HRV from last night"),
+                valueText: todayValue.map { "\(Int($0.rounded())) ms" } ?? "—",
+                detailText: todayValue != nil ? "Nocturnal HRV; baseline still forming" : "Wear a watch overnight to capture HRV"
             )
         }
         return ScorePart(
@@ -334,9 +383,11 @@ extension RecoveryEngine {
     private func sleepingHRAssessment() -> SleepingHR? {
         guard let current = latestHealthMetric() else { return nil }
         let priorDays = baselineMetrics(days: 60)
-            .filter { calendarDaysBetween($0.date, and: now) >= 1 }
-        if let today = current.sleepingHR {
-            let baseline = priorDays.compactMap { $0.sleepingHR.map(Double.init) }
+            .filter { calendarDaysBetween($0.date, and: now) >= 1 && !$0.sleepUserCorrected }
+        if current.sleepIsTrustworthy, let today = current.sleepingHR {
+            let baseline = priorDays
+                .filter(\.sleepIsTrustworthy)
+                .compactMap { $0.sleepingHR.map(Double.init) }
             guard baseline.count >= 14 else { return nil }
             return assessRestingHR(today: today, baseline: baseline, isDaytimeFallback: false)
         }
@@ -361,10 +412,10 @@ extension RecoveryEngine {
         guard let assessment = sleepingHRAssessment() else {
             return ScorePart(name: "Sleeping HR", state: .building("No overnight heart rate yet"),
                              valueText: latestHealthMetric()?.bestRestingHR.map { "\($0) bpm" } ?? "—",
-                             detailText: "Wear your watch to bed to capture sleeping heart rate")
+                             detailText: "Wear a watch to bed to capture sleeping heart rate")
         }
         let comparison = "\(Int(assessment.baseline.rounded())) bpm baseline"
-        let suffix = assessment.isDaytimeFallback ? " (daytime — sleep not captured yet)" : ""
+        let suffix = assessment.isDaytimeFallback ? " (daytime — overnight sample unavailable)" : ""
         return ScorePart(
             name: assessment.isDaytimeFallback ? "Resting HR" : "Sleeping HR",
             state: .ready(assessment.score),
@@ -374,19 +425,48 @@ extension RecoveryEngine {
     }
 
     private func lastNightSleepPart() -> ScorePart {
-        guard let current = latestHealthMetric(), let sleep = current.sleepTotalMinutes else {
+        guard let current = latestHealthMetric() else {
             return ScorePart(name: "Sleep (last night)", state: .building("No sleep data from last night"),
-                             valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
+                             valueText: "—", detailText: "Wear a watch to bed or log sleep in Health")
+        }
+        if current.sleepOverrideStatus == .notTracked {
+            return ScorePart(
+                name: "Sleep (last night)",
+                state: .building("Excluded at your request"),
+                valueText: "—",
+                detailText: "This night is not used in readiness or sleep debt",
+                sleepOverrideStatus: .notTracked
+            )
+        }
+        guard let sleep = current.sleepTotalMinutes else {
+            return ScorePart(
+                name: "Sleep (last night)",
+                state: .building("No sleep duration is available"),
+                valueText: "—",
+                detailText: "Wear a watch to bed or log sleep in Health",
+                sleepOverrideStatus: current.sleepOverrideStatus
+            )
+        }
+        // A partial-wear fragment isn't scorable sleep — report it as an
+        // untrustworthy gap, not a low score (matches the daily engine).
+        guard current.sleepIsTrustworthy else {
+            return ScorePart(name: "Sleep (last night)", state: .building("Only part of the night tracked"),
+                             valueText: "~\((Double(sleep) / 60).formatted(.number.precision(.fractionLength(1)))) h",
+                             detailText: "Confirm or correct it on Home")
         }
         let need = personalizedSleepNeedMinutes()
         let ratio = Double(sleep) / Double(need)
         let score = ratio >= 0.95 ? 1.0 : max(0.3, 1.0 - (0.95 - ratio) * 2.0)
         let hours = Double(sleep) / 60
+        let needDetail = "Need \(String(format: "%.1f", Double(need) / 60)) h"
+        let detail = current.sleepOverrideStatus.map { "\($0.detailPrefix) · \(needDetail.lowercased())" }
+            ?? needDetail
         return ScorePart(
             name: "Sleep (last night)",
             state: .ready(min(1, max(0, score))),
             valueText: "\(hours.formatted(.number.precision(.fractionLength(1)))) h",
-            detailText: "Need \(String(format: "%.1f", Double(need) / 60)) h"
+            detailText: detail,
+            sleepOverrideStatus: current.sleepOverrideStatus
         )
     }
 
@@ -397,7 +477,11 @@ extension RecoveryEngine {
     /// quietly redefined as sufficient.
     func personalizedSleepNeedMinutes() -> Int {
         let base = max(300, latestHealthMetric()?.sleepNeedMinutes ?? 480)
-        let nights = baselineMetrics(days: 30).compactMap { $0.sleepTotalMinutes }.sorted()
+        // Only trustworthy nights set "normal" — a partial-wear fragment must
+        // not drag the personalized need down (baseline-contamination gotcha).
+        let nights = baselineMetrics(days: 30)
+            .filter(\.sleepIsTrustworthy)
+            .compactMap { $0.sleepTotalMinutes }.sorted()
         guard nights.count >= 10 else { return base }
         let p60 = nights[Int(Double(nights.count - 1) * 0.6)]
         return min(600, max(base, p60))   // cap at 10 h
@@ -408,19 +492,20 @@ extension RecoveryEngine {
     ///
     /// All math runs in ln space: HRV is log-normally distributed, and the
     /// baseline / SWC / z-score literature is built on lnRMSSD (Plews 2013).
-    /// Signals come via `bestHRV` — the nocturnal window when present, else
-    /// all-day RMSSD, else SDNN. HealthKit only exposes SDNN, whose absolute ms
+    /// Signals come via `acuteComparableHRV` — nocturnal readings for
+    /// nocturnal users, awake RMSSD/SDNN only for users with no overnight
+    /// history, never mixed. HealthKit only exposes SDNN, whose absolute ms
     /// differ from RMSSD, but ln-space z-scores against the *user's own*
     /// baseline are scale-free, so the same constants apply to either metric.
     private func hrvPart() -> ScorePart {
-        let recent = recentHealthMetrics(days: 7).compactMap { $0.bestHRV }.filter { $0 > 0 }
+        let recent = recentHealthMetrics(days: 7).compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }
         guard recent.count >= 4 else {
             return ScorePart(name: "HRV trend", state: .building("Needs \(4 - recent.count) more morning\(4 - recent.count == 1 ? "" : "s") of HRV"),
-                             valueText: "—", detailText: "Wear your watch overnight to capture HRV")
+                             valueText: "—", detailText: "Wear a watch overnight to capture HRV")
         }
         let baseline = baselineMetrics(days: 60)
-            .filter { calendarDaysBetween($0.date, and: now) > 7 }
-            .compactMap { $0.bestHRV }.filter { $0 > 0 }.map { log($0) }
+            .filter { calendarDaysBetween($0.date, and: now) > 7 && !$0.sleepUserCorrected }
+            .compactMap { acuteComparableHRV(for: $0) }.filter { $0 > 0 }.map { log($0) }
         guard baseline.count >= 14 else {
             return ScorePart(name: "HRV trend", state: .building("Baseline building — \(14 - baseline.count) more days"),
                              valueText: "\(Int((average(recent) ?? 0).rounded())) ms", detailText: "7-day average; baseline needs ~2 weeks more")
@@ -453,10 +538,10 @@ extension RecoveryEngine {
         let recent = recentHealthMetrics(days: 7).compactMap { $0.bestRestingHR.map(Double.init) }
         guard let avg7 = average(recent) else {
             return ScorePart(name: "Resting HR", state: .building("No recent resting heart rate"),
-                             valueText: "—", detailText: "Connect Apple Health or wear your watch")
+                             valueText: "—", detailText: "Connect Apple Health or wear a watch")
         }
         let baseline = baselineMetrics(days: 60)
-            .filter { calendarDaysBetween($0.date, and: now) > 7 }
+            .filter { calendarDaysBetween($0.date, and: now) > 7 && !$0.sleepUserCorrected }
             .compactMap { $0.bestRestingHR.map(Double.init) }
         guard baseline.count >= 14 else {
             return ScorePart(name: "Resting HR", state: .building("Baseline building — \(14 - baseline.count) more days"),
@@ -480,10 +565,12 @@ extension RecoveryEngine {
     /// double-penalized in both scores (dose-response: Fullagar 2015).
     private func sleepPart() -> ScorePart {
         let need = personalizedSleepNeedMinutes()
-        let nights = recentHealthMetrics(days: 7).compactMap { $0.sleepTotalMinutes }
+        // Partial-wear nights are holes, not short nights — excluded so the
+        // 7-day trend isn't dragged down by forgotten-watch fragments.
+        let nights = recentHealthMetrics(days: 7).filter(\.sleepIsTrustworthy).compactMap { $0.sleepTotalMinutes }
         guard nights.count >= 3 else {
             return ScorePart(name: "Sleep trend", state: .building("Needs \(3 - nights.count) more night\(3 - nights.count == 1 ? "" : "s") of sleep data"),
-                             valueText: "—", detailText: "Wear your watch to bed or log sleep in Health")
+                             valueText: "—", detailText: "Wear a watch to bed or log sleep in Health")
         }
         let avgMinutes = Double(nights.reduce(0, +)) / Double(nights.count)
         let ratio = avgMinutes / Double(need)
@@ -499,57 +586,6 @@ extension RecoveryEngine {
             detailText: debt > 1
                 ? "7-day debt \(debt.formatted(.number.precision(.fractionLength(1)))) h vs \(String(format: "%.1f", Double(need) / 60)) h need"
                 : "Meeting your \(String(format: "%.1f", Double(need) / 60)) h need"
-        )
-    }
-
-    /// EWMA acute (7d) vs chronic (28d) training-stress balance.
-    private func loadBalancePart() -> ScorePart {
-        let sessions = completed
-        guard let earliest = sessions.map(\.startedAt).min() else {
-            return ScorePart(name: "Load balance", state: .building("Log workouts to build this"),
-                             valueText: "—", detailText: "Training-stress balance needs a history")
-        }
-        let historyDays = calendarDaysBetween(earliest, and: now)
-        let recentCount = sessions.filter { calendarDaysBetween($0.startedAt, and: now) <= 28 }.count
-        guard historyDays >= 14, recentCount >= 4 else {
-            return ScorePart(name: "Load balance", state: .building("Needs ~2 more weeks of logging"),
-                             valueText: "—", detailText: "\(recentCount) session\(recentCount == 1 ? "" : "s") in the last 4 weeks")
-        }
-
-        let daily = dailyLoads(days: 56)              // index 0 = today
-        let lambdaAcute = 2.0 / (7 + 1)
-        let lambdaChronic = 2.0 / (28 + 1)
-        var acute = 0.0
-        var chronic = 0.0
-        for index in stride(from: daily.count - 1, through: 0, by: -1) {
-            acute = lambdaAcute * daily[index] + (1 - lambdaAcute) * acute
-            chronic = lambdaChronic * daily[index] + (1 - lambdaChronic) * chronic
-        }
-        guard chronic > 0.5 else {
-            return ScorePart(name: "Load balance", state: .building("Chronic baseline still near zero"),
-                             valueText: "—", detailText: "Keep logging sessions")
-        }
-        // Asymmetric by design: a spike pulls recovery down hard, but a tidy
-        // ratio only reads slightly-positive — ACWR is a fatigue flag, not a
-        // recovery credit (Impellizzeri 2020), so good load management can't
-        // paper over poor sleep or a sagging HRV trend.
-        let ratio = acute / chronic
-        var score: Double = switch ratio {
-        case ..<0.8: 0.85        // fresh / tapered
-        case ..<1.3: 0.80        // balanced — neutral, not a bonus
-        case ..<1.5: 0.60        // elevated
-        case ..<2.0: 0.60 - (ratio - 1.5) * 0.6   // 1.5→0.60 … 2.0→0.30
-        default: 0.25
-        }
-        if let monotonyValue = monotony(dailyLoads(days: 7)), monotonyValue > 2 {
-            score -= monotonyValue > 3 ? 0.15 : 0.08  // flat weeks accumulate strain (Foster 1998)
-        }
-        score = min(1, max(0, score))
-        return ScorePart(
-            name: "Load balance",
-            state: .ready(score),
-            valueText: ratio.formatted(.number.precision(.fractionLength(2))),
-            detailText: "7-day vs 28-day training stress (EWMA)"
         )
     }
 
@@ -803,16 +839,16 @@ extension RecoveryEngine {
         switch domain {
         case .severe:
             return score >= 0.8
-                ? "Recovered from recent intervals — another quality session is on the table."
-                : "High-intensity work suppresses the nervous system for 48–72 h. Zone 2 is fine; wait on the next hard interval day."
+                ? "Recent high-intensity work has largely cleared."
+                : "Recent high-intensity work is still contributing to local cardiovascular fatigue."
         case .threshold:
             return score >= 0.8
-                ? "Threshold work has cleared — train as planned."
-                : "Threshold sessions need about a day or two. Easy cardio today keeps the engine warm."
+                ? "Recent threshold work has largely cleared."
+                : "Recent threshold work remains a meaningful part of your recovery context."
         case .easy:
-            return "Low-intensity cardio clears within a day and can be done near-daily."
+            return "Recent cardio was low intensity and usually clears quickly."
         case nil:
-            return "No cardio in the last week — fully fresh on this front."
+            return "No cardio sessions were logged in the last week."
         }
     }
 

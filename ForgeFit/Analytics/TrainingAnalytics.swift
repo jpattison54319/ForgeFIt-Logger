@@ -20,23 +20,6 @@ struct TrainingAnalytics {
         workouts.filter { $0.endedAt != nil && $0.deletedAt == nil }
     }
 
-    /// Consecutive training days ending today or yesterday (a streak isn't
-    /// broken until a full day passes with no session). Powers the Profile
-    /// stat and the streak-protection nudge.
-    func currentStreak() -> Int {
-        let days = Set(completed.map { calendar.startOfDay(for: $0.startedAt) })
-        guard !days.isEmpty else { return 0 }
-        var streak = 0
-        var day = calendar.startOfDay(for: now)
-        // Allow the streak to count from today or yesterday.
-        if !days.contains(day) { day = calendar.date(byAdding: .day, value: -1, to: day)! }
-        while days.contains(day) {
-            streak += 1
-            day = calendar.date(byAdding: .day, value: -1, to: day)!
-        }
-        return streak
-    }
-
     /// True when a completed workout exists today.
     func trainedToday() -> Bool {
         let today = calendar.startOfDay(for: now)
@@ -53,6 +36,8 @@ struct TrainingAnalytics {
         var sets: Double
         var reps: Int
         var durationSeconds: Int
+        var hasStrength: Bool
+        var hasCardio: Bool
         var isCardio: Bool
         var avgHR: Int?
     }
@@ -61,20 +46,31 @@ struct TrainingAnalytics {
         let working = workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
         let volume = working.reduce(0) { $0 + ($1.totalVolume ?? 0) }
         let reps = working.reduce(0) { $0 + ($1.reps ?? 0) }
-        let duration: Int
+        let elapsedDuration: Int
         if let ended = workout.endedAt {
-            duration = max(0, Int(ended.timeIntervalSince(workout.startedAt)))
+            elapsedDuration = max(0, Int(ended.timeIntervalSince(workout.startedAt)))
         } else {
-            duration = 0
+            elapsedDuration = 0
         }
         let cardio = workout.cardioSessions.first
+        // `durationSeconds` is the whole workout's wall-clock duration. A
+        // cardio block inside a mixed workout is only one part of that window.
+        // Imported legacy cardio may lack a useful workout end time, so its
+        // block durations remain a fallback rather than overriding elapsed.
+        let duration = elapsedDuration > 0
+            ? elapsedDuration
+            : workout.cardioSessions.compactMap(\.durationSeconds).reduce(0, +)
+        let hasCardio = cardio != nil
+        let hasStrength = !working.isEmpty
         return Summary(
             date: workout.startedAt,
             volume: volume,
             sets: working.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) },
             reps: reps,
-            durationSeconds: cardio?.durationSeconds ?? duration,
-            isCardio: cardio != nil,
+            durationSeconds: duration,
+            hasStrength: hasStrength,
+            hasCardio: hasCardio,
+            isCardio: hasCardio && !hasStrength,
             avgHR: cardio?.avgHR
         )
     }
@@ -90,10 +86,8 @@ struct TrainingAnalytics {
     }
 
     func thisWeek() -> WeekTotals {
-        guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start else {
-            return WeekTotals(durationSeconds: 0, volume: 0, sets: 0, reps: 0, workoutCount: 0)
-        }
-        let inWeek = completed.filter { $0.startedAt >= weekStart }
+        let week = TrainingWeekSupport.interval(containing: now, calendar: calendar)
+        let inWeek = completed.filter { week.contains($0.startedAt) }
         let summaries = inWeek.map(summary(for:))
         return WeekTotals(
             durationSeconds: summaries.reduce(0) { $0 + $1.durationSeconds },
@@ -156,6 +150,21 @@ struct TrainingAnalytics {
         return totals
             .map { MuscleVolumeBars.Row(muscle: $0.key, sets: $0.value, target: 14) }
             .sorted { $0.sets > $1.sets }
+    }
+
+    /// Muscle set buckets for one workout including taxonomy-parent rollups —
+    /// Insights' per-muscle metrics read parents ("back") and exact children
+    /// ("lats") from the same dictionary. Same per-set math as `muscleVolume`.
+    func muscleVolumeInsightBuckets(for workout: WorkoutModel) -> [String: Double] {
+        let byID = exerciseByID
+        var entries: [(set: SetEntry, exercise: ExerciseInfo)] = []
+        for we in workout.exercises {
+            guard let ex = byID[we.exerciseID] else { continue }
+            for set in we.sets where set.completedAt != nil {
+                entries.append((set.domainEntry, ex.domainInfo))
+            }
+        }
+        return MuscleVolume.volumeWithParentRollups(entries)
     }
 
     /// Fractional-set volume by muscle for a single workout's completed working

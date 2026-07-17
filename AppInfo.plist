@@ -8,6 +8,8 @@
 	<string>ForgeFit writes completed workouts to Apple Health when you finish a session.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ForgeFit uses location during outdoor cardio workouts to save route maps and splits on this device.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>ForgeFit connects to heart rate monitors — like a Garmin watch broadcasting heart rate, or a chest strap — to show live heart rate during workouts.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>ForgeFit saves workout, routine, and training-cycle images to your photo library when you share them.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -18,7 +20,65 @@
 		     session is only ever active around an utterance (see
 		     YogaCueSpeaker) — never a silent keep-alive. -->
 		<string>audio</string>
+		<!-- bluetooth-central: keeps a connected heart-rate monitor (Garmin
+		     broadcast / chest strap) streaming while the phone is locked
+		     mid-workout. -->
+		<string>bluetooth-central</string>
+		<string>location</string>
 		<string>remote-notification</string>
+		<!-- fetch: the pre-dawn BGAppRefreshTask that recomputes readiness
+		     from overnight HealthKit data before the 7 AM notification. -->
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>org.xpetsllc.ForgeFit.readiness-refresh</string>
+	</array>
+	<!-- Files-app visibility for the sanitized training-log backup
+	     (iCloud Drive → ForgeFit). Note: iCloud re-reads this dictionary
+	     only on a CFBundleVersion bump. -->
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.org.xpetsllc.ForgeFit</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>ForgeFit</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.xpetsllc.ForgeFit.backup</string>
+			<key>UTTypeDescription</key>
+			<string>ForgeFit Backup</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>forgefitbackup</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.xpetsllc.ForgeFit</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>forgefit</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

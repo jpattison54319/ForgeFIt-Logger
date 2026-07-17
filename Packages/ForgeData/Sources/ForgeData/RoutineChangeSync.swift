@@ -363,9 +363,11 @@ public enum RoutineChangeSync {
 
     /// Maps a performed `SetModel` onto a `RoutineSetModel` target. Performed
     /// reps collapse to a single-value range (`low == high`), and performed
-    /// weight/rpe/duration carry through. Used only for newly added sets.
+    /// weight/rpe/duration carry through. Structured sets carry their shape:
+    /// the minis a lifter actually did become the plan (myo keeps the count,
+    /// cluster keeps the segment reps as goals). Used only for newly added sets.
     private static func routineTarget(from ws: SetModel, userID: UUID) -> RoutineSetModel {
-        RoutineSetModel(
+        let target = RoutineSetModel(
             userID: userID,
             position: ws.position,
             setType: ws.setType,
@@ -376,5 +378,15 @@ public enum RoutineChangeSync {
             targetRIR: ws.rir,
             targetDurationSeconds: ws.durationSeconds
         )
+        switch ws.setType {
+        case .myoRep:
+            let performed = ws.miniReps.count
+            target.plannedMiniSetCount = performed > 0 ? performed : ws.plannedMiniSetCount
+        case .cluster:
+            target.plannedMiniRepsJSON = ws.miniRepsJSON ?? ws.plannedMiniRepsJSON
+        default:
+            break
+        }
+        return target
     }
 }

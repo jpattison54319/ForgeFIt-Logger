@@ -6,15 +6,52 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 45,
-    "equipment": ["barbell", "dumbbell", "body only"],
-    "tags": ["full body", "beginner", "strength"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "body only"
+    ],
+    "tags": [
+      "full body",
+      "beginner",
+      "strength"
+    ],
     "description": "A simple whole-body session built around squat, push, pull, hinge, and trunk work.",
     "exercises": [
-      { "slug": "Barbell_Squat", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 7 },
-      { "slug": "Dumbbell_Bench_Press", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
-      { "slug": "One-Arm_Dumbbell_Row", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Romanian_Deadlift", "sets": 2, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
-      { "slug": "Plank", "sets": 2, "durationSeconds": 45, "rpe": 7 }
+      {
+        "slug": "Barbell_Squat",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 8,
+        "rpe": 7
+      },
+      {
+        "slug": "Dumbbell_Bench_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 7
+      },
+      {
+        "slug": "One-Arm_Dumbbell_Row",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Romanian_Deadlift",
+        "sets": 2,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 7
+      },
+      {
+        "slug": "Plank",
+        "sets": 2,
+        "durationSeconds": 45,
+        "rpe": 7
+      }
     ]
   },
   {
@@ -24,15 +61,52 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 45,
-    "equipment": ["barbell", "cable", "body only"],
-    "tags": ["full body", "beginner"],
+    "equipment": [
+      "barbell",
+      "cable",
+      "body only"
+    ],
+    "tags": [
+      "full body",
+      "beginner"
+    ],
     "description": "A second beginner full-body day with vertical push/pull and easy leg volume.",
     "exercises": [
-      { "slug": "Leg_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Barbell_Shoulder_Press", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 7 },
-      { "slug": "Wide-Grip_Lat_Pulldown", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Lying_Leg_Curls", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
-      { "slug": "3_4_Sit-Up", "sets": 2, "repsLow": 10, "repsHigh": 15, "rpe": 7 }
+      {
+        "slug": "Leg_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Barbell_Shoulder_Press",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 8,
+        "rpe": 7
+      },
+      {
+        "slug": "Wide-Grip_Lat_Pulldown",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Lying_Leg_Curls",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "3_4_Sit-Up",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "rpe": 7
+      }
     ]
   },
   {
@@ -42,15 +116,53 @@
     "level": "intermediate",
     "daysPerWeek": 4,
     "estimatedMinutes": 55,
-    "equipment": ["barbell", "dumbbell", "cable"],
-    "tags": ["upper lower", "upper body", "hypertrophy"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable"
+    ],
+    "tags": [
+      "upper lower",
+      "upper body",
+      "hypertrophy"
+    ],
     "description": "Horizontal-biased upper day: heavy pressing and rowing with vertical pull and shoulder volume.",
     "exercises": [
-      { "slug": "Barbell_Bench_Press_-_Medium_Grip", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Incline_Dumbbell_Press", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Wide-Grip_Lat_Pulldown", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Dumbbell_Shoulder_Press", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 8 }
+      {
+        "slug": "Barbell_Bench_Press_-_Medium_Grip",
+        "sets": 3,
+        "repsLow": 5,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Cable_Rows",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Incline_Dumbbell_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Wide-Grip_Lat_Pulldown",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Dumbbell_Shoulder_Press",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -60,15 +172,52 @@
     "level": "intermediate",
     "daysPerWeek": 4,
     "estimatedMinutes": 55,
-    "equipment": ["barbell", "machine"],
-    "tags": ["upper lower", "lower body", "strength"],
+    "equipment": [
+      "barbell",
+      "machine"
+    ],
+    "tags": [
+      "upper lower",
+      "lower body",
+      "strength"
+    ],
     "description": "Squat-led lower day with a hinge and quad/calf accessory work.",
     "exercises": [
-      { "slug": "Barbell_Squat", "sets": 4, "repsLow": 4, "repsHigh": 6, "rpe": 8 },
-      { "slug": "Romanian_Deadlift", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Leg_Press", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Leg_Extensions", "sets": 2, "repsLow": 12, "repsHigh": 15, "rpe": 8 },
-      { "slug": "Seated_Calf_Raise", "sets": 3, "repsLow": 10, "repsHigh": 15, "rpe": 8 }
+      {
+        "slug": "Barbell_Squat",
+        "sets": 4,
+        "repsLow": 4,
+        "repsHigh": 6,
+        "rpe": 8
+      },
+      {
+        "slug": "Romanian_Deadlift",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Leg_Press",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Leg_Extensions",
+        "sets": 2,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Calf_Raise",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -78,16 +227,60 @@
     "level": "intermediate",
     "daysPerWeek": 4,
     "estimatedMinutes": 55,
-    "equipment": ["barbell", "dumbbell", "cable"],
-    "tags": ["upper lower", "upper body", "hypertrophy"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable"
+    ],
+    "tags": [
+      "upper lower",
+      "upper body",
+      "hypertrophy"
+    ],
     "description": "Vertical-biased upper day: overhead pressing and pull-ups with rowing, rear-delt, and arm volume.",
     "exercises": [
-      { "slug": "Barbell_Shoulder_Press", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Pullups", "sets": 3, "repsLow": 6, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Dumbbell_Bench_Press", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Face_Pull", "sets": 2, "repsLow": 12, "repsHigh": 15, "rpe": 8 },
-      { "slug": "Barbell_Curl", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 8 }
+      {
+        "slug": "Barbell_Shoulder_Press",
+        "sets": 3,
+        "repsLow": 5,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Pullups",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Dumbbell_Bench_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Cable_Rows",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Face_Pull",
+        "sets": 2,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 8
+      },
+      {
+        "slug": "Barbell_Curl",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -97,15 +290,53 @@
     "level": "intermediate",
     "daysPerWeek": 4,
     "estimatedMinutes": 55,
-    "equipment": ["barbell", "dumbbell", "machine"],
-    "tags": ["upper lower", "lower body", "hypertrophy"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "machine"
+    ],
+    "tags": [
+      "upper lower",
+      "lower body",
+      "hypertrophy"
+    ],
     "description": "Hip-dominant lower day: front squat, hip thrust, lunges, and hamstring/calf accessories.",
     "exercises": [
-      { "slug": "Front_Barbell_Squat", "sets": 3, "repsLow": 6, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Barbell_Hip_Thrust", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Dumbbell_Lunges", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Seated_Leg_Curl", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Standing_Calf_Raises", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 8 }
+      {
+        "slug": "Front_Barbell_Squat",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Barbell_Hip_Thrust",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Dumbbell_Lunges",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Leg_Curl",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Standing_Calf_Raises",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -115,15 +346,52 @@
     "level": "intermediate",
     "daysPerWeek": 6,
     "estimatedMinutes": 50,
-    "equipment": ["barbell", "dumbbell", "cable"],
-    "tags": ["ppl", "push"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable"
+    ],
+    "tags": [
+      "ppl",
+      "push"
+    ],
     "description": "Chest, shoulders, and triceps with a moderate-volume hypertrophy bias.",
     "exercises": [
-      { "slug": "Barbell_Bench_Press_-_Medium_Grip", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Incline_Dumbbell_Press", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Dumbbell_Shoulder_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Side_Lateral_Raise", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 8 },
-      { "slug": "Triceps_Pushdown_-_Rope_Attachment", "sets": 3, "repsLow": 10, "repsHigh": 15, "rpe": 8 }
+      {
+        "slug": "Barbell_Bench_Press_-_Medium_Grip",
+        "sets": 3,
+        "repsLow": 5,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Incline_Dumbbell_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Dumbbell_Shoulder_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Side_Lateral_Raise",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 8
+      },
+      {
+        "slug": "Triceps_Pushdown_-_Rope_Attachment",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -133,15 +401,52 @@
     "level": "intermediate",
     "daysPerWeek": 6,
     "estimatedMinutes": 50,
-    "equipment": ["barbell", "dumbbell", "cable"],
-    "tags": ["ppl", "pull"],
+    "equipment": [
+      "barbell",
+      "dumbbell",
+      "cable"
+    ],
+    "tags": [
+      "ppl",
+      "pull"
+    ],
     "description": "Back and biceps with horizontal and vertical pulling.",
     "exercises": [
-      { "slug": "Barbell_Deadlift", "sets": 3, "repsLow": 3, "repsHigh": 5, "rpe": 8 },
-      { "slug": "Pullups", "sets": 3, "repsLow": 5, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 },
-      { "slug": "One-Arm_Dumbbell_Row", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Barbell_Curl", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 8 }
+      {
+        "slug": "Barbell_Deadlift",
+        "sets": 3,
+        "repsLow": 3,
+        "repsHigh": 5,
+        "rpe": 8
+      },
+      {
+        "slug": "Pullups",
+        "sets": 3,
+        "repsLow": 5,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Cable_Rows",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "One-Arm_Dumbbell_Row",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Barbell_Curl",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -151,15 +456,51 @@
     "level": "intermediate",
     "daysPerWeek": 6,
     "estimatedMinutes": 55,
-    "equipment": ["barbell", "machine"],
-    "tags": ["ppl", "legs"],
+    "equipment": [
+      "barbell",
+      "machine"
+    ],
+    "tags": [
+      "ppl",
+      "legs"
+    ],
     "description": "A leg day for quads, hamstrings, glutes, and calves.",
     "exercises": [
-      { "slug": "Barbell_Squat", "sets": 3, "repsLow": 5, "repsHigh": 8, "rpe": 8 },
-      { "slug": "Romanian_Deadlift", "sets": 3, "repsLow": 6, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Leg_Press", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Lying_Leg_Curls", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 8 },
-      { "slug": "Seated_Calf_Raise", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 8 }
+      {
+        "slug": "Barbell_Squat",
+        "sets": 3,
+        "repsLow": 5,
+        "repsHigh": 8,
+        "rpe": 8
+      },
+      {
+        "slug": "Romanian_Deadlift",
+        "sets": 3,
+        "repsLow": 6,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Leg_Press",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Lying_Leg_Curls",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Calf_Raise",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 8
+      }
     ]
   },
   {
@@ -169,15 +510,50 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 40,
-    "equipment": ["dumbbell"],
-    "tags": ["dumbbell only", "full body"],
+    "equipment": [
+      "dumbbell"
+    ],
+    "tags": [
+      "dumbbell only",
+      "full body"
+    ],
     "description": "A compact template for home or apartment gyms with dumbbells.",
     "exercises": [
-      { "slug": "Goblet_Squat", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Dumbbell_Bench_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "One-Arm_Dumbbell_Row", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Dumbbell_Lunges", "sets": 2, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
-      { "slug": "Dumbbell_Shoulder_Press", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 }
+      {
+        "slug": "Goblet_Squat",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Dumbbell_Bench_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "One-Arm_Dumbbell_Row",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Dumbbell_Lunges",
+        "sets": 2,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 7
+      },
+      {
+        "slug": "Dumbbell_Shoulder_Press",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      }
     ]
   },
   {
@@ -187,15 +563,59 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 40,
-    "equipment": ["dumbbell"],
-    "tags": ["dumbbell only", "full body"],
+    "equipment": [
+      "dumbbell"
+    ],
+    "tags": [
+      "dumbbell only",
+      "full body"
+    ],
     "description": "A second dumbbell day with step ups, a hinge, chest flyes, and direct arm work.",
     "exercises": [
-      { "slug": "Dumbbell_Step_Ups", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
-      { "slug": "Stiff-Legged_Dumbbell_Deadlift", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 7 },
-      { "slug": "Dumbbell_Flyes", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Hammer_Curls", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Standing_Dumbbell_Triceps_Extension", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 }
+      {
+        "slug": "Dumbbell_Step_Ups",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 7
+      },
+      {
+        "slug": "Stiff-Legged_Dumbbell_Deadlift",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 7
+      },
+      {
+        "slug": "Bent_Over_Two-Dumbbell_Row",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "durationSeconds": null,
+        "rpe": 7,
+        "supersetGroup": null
+      },
+      {
+        "slug": "Dumbbell_Flyes",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Hammer_Curls",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Standing_Dumbbell_Triceps_Extension",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      }
     ]
   },
   {
@@ -205,14 +625,55 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 30,
-    "equipment": ["body only"],
-    "tags": ["travel", "bodyweight"],
+    "equipment": [
+      "body only"
+    ],
+    "tags": [
+      "travel",
+      "bodyweight"
+    ],
     "description": "A no-equipment routine with simple supersets to keep sessions short.",
     "exercises": [
-      { "slug": "Bodyweight_Squat", "sets": 3, "repsLow": 12, "repsHigh": 20, "rpe": 7, "supersetGroup": 0 },
-      { "slug": "Incline_Push-Up", "sets": 3, "repsLow": 8, "repsHigh": 15, "rpe": 7, "supersetGroup": 0 },
-      { "slug": "Bodyweight_Walking_Lunge", "sets": 3, "repsLow": 10, "repsHigh": 16, "rpe": 7, "supersetGroup": 1 },
-      { "slug": "Plank", "sets": 3, "durationSeconds": 45, "rpe": 7, "supersetGroup": 1 }
+      {
+        "slug": "Bodyweight_Squat",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 20,
+        "rpe": 7,
+        "supersetGroup": 0
+      },
+      {
+        "slug": "Incline_Push-Up",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 15,
+        "rpe": 7,
+        "supersetGroup": 0
+      },
+      {
+        "slug": "Bodyweight_Walking_Lunge",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 16,
+        "rpe": 7,
+        "supersetGroup": 1
+      },
+      {
+        "slug": "Superman",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "durationSeconds": null,
+        "rpe": 7,
+        "supersetGroup": null
+      },
+      {
+        "slug": "Plank",
+        "sets": 3,
+        "durationSeconds": 45,
+        "rpe": 7,
+        "supersetGroup": 1
+      }
     ]
   },
   {
@@ -222,14 +683,44 @@
     "level": "intermediate",
     "daysPerWeek": 4,
     "estimatedMinutes": 60,
-    "equipment": ["barbell", "machine"],
-    "tags": ["hybrid", "zone 2", "strength"],
+    "equipment": [
+      "barbell",
+      "machine"
+    ],
+    "tags": [
+      "hybrid",
+      "zone 2",
+      "strength"
+    ],
     "description": "A strength block followed by low-intensity cardio for balanced conditioning.",
     "exercises": [
-      { "slug": "Barbell_Squat", "sets": 3, "repsLow": 4, "repsHigh": 6, "rpe": 8 },
-      { "slug": "Barbell_Bench_Press_-_Medium_Grip", "sets": 3, "repsLow": 4, "repsHigh": 6, "rpe": 8 },
-      { "slug": "Seated_Cable_Rows", "sets": 3, "repsLow": 8, "repsHigh": 10, "rpe": 8 },
-      { "slug": "Running_Treadmill", "sets": 1, "durationSeconds": 1800, "rpe": 4 }
+      {
+        "slug": "Barbell_Squat",
+        "sets": 3,
+        "repsLow": 4,
+        "repsHigh": 6,
+        "rpe": 8
+      },
+      {
+        "slug": "Barbell_Bench_Press_-_Medium_Grip",
+        "sets": 3,
+        "repsLow": 4,
+        "repsHigh": 6,
+        "rpe": 8
+      },
+      {
+        "slug": "Seated_Cable_Rows",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 10,
+        "rpe": 8
+      },
+      {
+        "slug": "Running_Treadmill",
+        "sets": 1,
+        "durationSeconds": 1800,
+        "rpe": 4
+      }
     ]
   },
   {
@@ -239,11 +730,22 @@
     "level": "beginner",
     "daysPerWeek": 3,
     "estimatedMinutes": 35,
-    "equipment": ["outdoor", "machine"],
-    "tags": ["cardio", "run walk"],
+    "equipment": [
+      "outdoor",
+      "machine"
+    ],
+    "tags": [
+      "cardio",
+      "run walk"
+    ],
     "description": "A low-pressure base-building plan for newer runners or return-to-run phases.",
     "exercises": [
-      { "slug": "Trail_Running_Walking", "sets": 1, "durationSeconds": 2100, "rpe": 4 }
+      {
+        "slug": "Trail_Running_Walking",
+        "sets": 1,
+        "durationSeconds": 2100,
+        "rpe": 4
+      }
     ]
   },
   {
@@ -253,15 +755,51 @@
     "level": "beginner",
     "daysPerWeek": 2,
     "estimatedMinutes": 40,
-    "equipment": ["machine", "cable"],
-    "tags": ["machine", "upper body"],
+    "equipment": [
+      "machine",
+      "cable"
+    ],
+    "tags": [
+      "machine",
+      "upper body"
+    ],
     "description": "A joint-friendly upper-body routine using machines and cables.",
     "exercises": [
-      { "slug": "Leverage_Chest_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Wide-Grip_Lat_Pulldown", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Leverage_Shoulder_Press", "sets": 3, "repsLow": 8, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Triceps_Pushdown", "sets": 2, "repsLow": 10, "repsHigh": 15, "rpe": 7 },
-      { "slug": "Barbell_Curl", "sets": 2, "repsLow": 10, "repsHigh": 12, "rpe": 7 }
+      {
+        "slug": "Leverage_Chest_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Wide-Grip_Lat_Pulldown",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Leverage_Shoulder_Press",
+        "sets": 3,
+        "repsLow": 8,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Triceps_Pushdown",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "rpe": 7
+      },
+      {
+        "slug": "Barbell_Curl",
+        "sets": 2,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      }
     ]
   },
   {
@@ -271,14 +809,52 @@
     "level": "beginner",
     "daysPerWeek": 2,
     "estimatedMinutes": 40,
-    "equipment": ["machine"],
-    "tags": ["machine", "lower body"],
+    "equipment": [
+      "machine"
+    ],
+    "tags": [
+      "machine",
+      "lower body"
+    ],
     "description": "A joint-friendly lower-body routine built entirely on machines.",
     "exercises": [
-      { "slug": "Leg_Press", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Lying_Leg_Curls", "sets": 3, "repsLow": 10, "repsHigh": 12, "rpe": 7 },
-      { "slug": "Leg_Extensions", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 7 },
-      { "slug": "Seated_Calf_Raise", "sets": 3, "repsLow": 12, "repsHigh": 15, "rpe": 7 }
+      {
+        "slug": "Leg_Press",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Hyperextensions_Back_Extensions",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 15,
+        "durationSeconds": null,
+        "rpe": 7,
+        "supersetGroup": null
+      },
+      {
+        "slug": "Lying_Leg_Curls",
+        "sets": 3,
+        "repsLow": 10,
+        "repsHigh": 12,
+        "rpe": 7
+      },
+      {
+        "slug": "Leg_Extensions",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 7
+      },
+      {
+        "slug": "Seated_Calf_Raise",
+        "sets": 3,
+        "repsLow": 12,
+        "repsHigh": 15,
+        "rpe": 7
+      }
     ]
   }
 ]

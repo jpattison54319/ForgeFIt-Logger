@@ -46,6 +46,22 @@ extension YogaStyle {
 }
 
 extension YogaFlowPlan {
+    /// Build a flow from yoga poses selected in the exercise picker. The
+    /// session anchor itself is just the container card, not a runnable pose.
+    static func fromSelectedPoses(_ exercises: [ExerciseLibraryModel], style: YogaStyle = .hatha) -> YogaFlowPlan? {
+        let poses = exercises.filter { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) }
+        guard !poses.isEmpty else { return nil }
+        return YogaFlowPlan(style: style, steps: poses.map { exercise in
+            PoseStep(
+                poseID: exercise.id,
+                poseSlug: YogaPoseCatalog.slug(for: exercise),
+                name: exercise.name,
+                holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                side: exercise.isUnilateral ? .bothSides : nil
+            )
+        })
+    }
+
     /// A single-pose flow synthesized from a library pose — what runs when the
     /// user adds one pose to a routine/workout without building a sequence.
     /// One-sided poses default to both sides so the practice stays balanced.
@@ -67,7 +83,7 @@ extension YogaFlowPlan {
         if let plan = YogaFlowPlan.decode(from: workoutExercise.yogaFlowJSON), plan.hasSteps {
             return plan
         }
-        guard let exercise, exercise.isYoga else { return nil }
+        guard let exercise, exercise.isYoga, !YogaPoseCatalog.isSessionExercise(exercise) else { return nil }
         return .singlePose(from: exercise)
     }
 }

@@ -26,8 +26,7 @@ struct ForgeFitWatch_Watch_AppApp: App {
                     // silently stopped just because the app was backgrounded
                     // or relaunched mid-workout.
                     if phase == .active {
-                        WatchWorkoutEngine.shared.recoverSessionIfNeeded()
-                        WatchStore.shared.ensureWorkoutSessionRunning()
+                        Task { await WatchStore.shared.recoverOrStartWorkoutSession() }
                     }
                 }
         }
@@ -42,6 +41,13 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
         Task { @MainActor in
             WatchStore.shared.activate()
             WatchStore.shared.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: workoutConfiguration))
+        }
+    }
+
+    func handleActiveWorkoutRecovery() {
+        Task { @MainActor in
+            WatchStore.shared.activate()
+            await WatchStore.shared.recoverOrStartWorkoutSession()
         }
     }
 }

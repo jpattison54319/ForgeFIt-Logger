@@ -9,6 +9,7 @@ struct ExercisePickerView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
 
     /// When true the picker returns exactly one exercise (used by "Replace").
@@ -16,6 +17,13 @@ struct ExercisePickerView: View {
     /// Pre-applies a modality filter (e.g. the yoga flow builder only offers
     /// poses). The user can still clear or change it.
     var presetModality: Modality?
+    /// Used by the flow builder: Yoga Session is the container card, not a
+    /// pose that can be added inside another flow.
+    var excludeYogaSession = false
+    /// Used when adding to a routine or live workout: individual yoga poses
+    /// only make sense inside a flow, so only the Yoga Session container is
+    /// offered. The flow is configured afterwards from the session card.
+    var excludeYogaPoses = false
     /// Exercises already in the routine/workout being added to — drives the
     /// muscle profile behind "Suggested".
     var context: [ExerciseLibraryModel] = []
@@ -32,6 +40,12 @@ struct ExercisePickerView: View {
     @State private var detailExercise: ExerciseLibraryModel?
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var suggestedMemo = Memo<String, [ExerciseLibraryModel]>()
+    /// Keyed by filter state only (NOT the query): the filtered base list and
+    /// its search snapshot are invariant per keystroke, and the snapshot init
+    /// re-normalizes every library name — rebuilding both on each keystroke
+    /// made typing lag scale with library size.
+    @State private var filteredBaseMemo = Memo<String, [ExerciseLibraryModel]>()
+    @State private var searchSnapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
 
     private var exerciseFingerprint: String {
         var liveCount = 0
@@ -60,14 +74,36 @@ struct ExercisePickerView: View {
 
     private var filtered: [ExerciseLibraryModel] {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = "\(exerciseFingerprint)|\(normalizedSearch.lowercased())|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")"
+        let filterKey = "\(exerciseFingerprint)|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")|\(excludeYogaSession)|\(excludeYogaPoses)"
+        let key = "\(filterKey)|\(normalizedSearch.lowercased())"
         return filteredMemo(key) {
+            let base = filteredBase(filterKey: filterKey)
+            guard !normalizedSearch.isEmpty else { return base }
+            // Snapshot construction normalizes every name (diacritic fold +
+            // char map) but is invariant to the query — build once per filter
+            // state; each keystroke then only pays for `.search`.
+            let snapshot = searchSnapshotMemo(filterKey) {
+                ExerciseLibrarySnapshot(
+                    exercises: base.map(\.domainInfo),
+                    aliases: GlobalExerciseLibrary.snapshot.aliases
+                )
+            }
+            let rankedIDs = snapshot.search(normalizedSearch, limit: base.count).map(\.exercise.id)
+            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            return rankedIDs.compactMap { byID[$0] }
+        }
+    }
+
+    private func filteredBase(filterKey: String) -> [ExerciseLibraryModel] {
+        filteredBaseMemo(filterKey) {
             // Dedupe by id while filtering: CloudKit can't enforce unique
             // constraints, and duplicate IDs in a ForEach corrupt LazyVStack
             // layout (rows collapse to zero height / spacing goes erratic).
             var seen = Set<UUID>()
-            let base = exercises.filter { ex in
+            return exercises.filter { ex in
                 guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
+                if excludeYogaSession, YogaPoseCatalog.isSessionExercise(ex) { return false }
+                if excludeYogaPoses, ex.isYoga, !YogaPoseCatalog.isSessionExercise(ex) { return false }
                 if let modalityFilter, ex.modality != modalityFilter { return false }
                 // Parent-aware: a "Shoulders" filter also finds exercises
                 // tagged with a sub-muscle like "rear delts" (and legacy
@@ -78,14 +114,6 @@ struct ExercisePickerView: View {
                 if let equipment, ex.equipment != equipment { return false }
                 return true
             }
-            guard !normalizedSearch.isEmpty else { return base }
-            let snapshot = ExerciseLibrarySnapshot(
-                exercises: base.map(\.domainInfo),
-                aliases: GlobalExerciseLibrary.snapshot.aliases
-            )
-            let rankedIDs = snapshot.search(normalizedSearch, limit: base.count).map(\.exercise.id)
-            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            return rankedIDs.compactMap { byID[$0] }
         }
     }
 
@@ -113,6 +141,7 @@ struct ExercisePickerView: View {
             var seen = Set<UUID>()
             let scored: [(ExerciseLibraryModel, Double)] = exercises.compactMap { ex in
                 guard ex.deletedAt == nil, !alreadyIn.contains(ex.id), seen.insert(ex.id).inserted else { return nil }
+                if excludeYogaPoses, ex.isYoga, !YogaPoseCatalog.isSessionExercise(ex) { return nil }
                 var score = 0.0
                 for m in ex.primaryMuscles { score += (muscleScore[m] ?? 0) }
                 for m in ex.secondaryMuscles { score += (muscleScore[m] ?? 0) * 0.4 }
@@ -145,8 +174,10 @@ struct ExercisePickerView: View {
                     }
                     .padding(.horizontal, Space.lg)
                     .padding(.bottom, Space.sm)
+                    .transition(Motion.riseIn(reduceMotion: reduceMotion))
                 }
             }
+            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: selected.isEmpty)
             .navigationTitle("Add Exercise")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
@@ -361,6 +392,7 @@ struct ExercisePickerView: View {
 
 private struct ExerciseRowLabel: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let exercise: ExerciseLibraryModel
     let selected: Bool
     let onSelect: () -> Void
@@ -396,6 +428,8 @@ private struct ExerciseRowLabel: View {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 22))
                         .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.bounce, value: reduceMotion ? false : selected)
                 }
             }
             .buttonStyle(.plain)
@@ -408,11 +442,13 @@ private struct ExerciseRowLabel: View {
                     .frame(width: 44, height: 44)   // HIG minimum touch target
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Exercise details")
+            .accessibilityLabel("Exercise details for \(exercise.name)")
+            .accessibilityIdentifier("exercise-info-\(exercise.name)")
         }
         .padding(Space.md)
         .background(selected ? theme.accentSoft : theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .animation(Motion.tap, value: selected)
     }
 
     /// "Sanskrit name · hold 30s" — Sanskrit from the bundled catalog, so
@@ -447,6 +483,7 @@ struct FilterChip: View {
             active ? .regular.tint(theme.accent.opacity(0.5)).interactive() : .regular.interactive(),
             in: Capsule()
         )
+        .animation(Motion.tap, value: active)
     }
 }
 
@@ -471,10 +508,10 @@ struct CreateExerciseView: View {
     @State private var secondaryMuscles: Set<String> = []
     @State private var equipment = "barbell"
     @State private var weightMode: WeightMode = .external
-    @State private var preferredUnit: WeightUnit = Fmt.unit
+    /// nil = no override — the exercise follows the app-wide unit.
+    @State private var preferredUnit: WeightUnit?
     @State private var modality: Modality = .strength
     @State private var isUnilateral = false
-    @State private var secondaryMusclesExpanded = false
     /// Explicit cardio modality; nil = auto-detect from name/equipment. Only
     /// meaningful while the Cardio mode is selected.
     @State private var cardioKindChoice: CardioKind?
@@ -539,7 +576,7 @@ struct CreateExerciseView: View {
             _secondaryMuscles = State(initialValue: Set(editing.secondaryMuscles))
             _equipment = State(initialValue: editing.equipment ?? "barbell")
             _weightMode = State(initialValue: editing.defaultWeightMode)
-            _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? "") ?? Fmt.unit)
+            _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? ""))
             _modality = State(initialValue: editing.modality)
             _isUnilateral = State(initialValue: editing.isUnilateral)
             _cardioKindChoice = State(initialValue: editing.cardioKindRaw.flatMap(CardioKind.init(rawValue:)))
@@ -582,6 +619,11 @@ struct CreateExerciseView: View {
                         VStack(alignment: .leading, spacing: Space.md) {
                             FieldLabel("Name")
                             DarkTextField(text: $name, placeholder: "e.g. Atlantis Leg Press")
+                                // Auto-capitalize each word so "atlantis leg press"
+                                // becomes "Atlantis Leg Press" as the user types —
+                                // exercise names are title-cased. Propagates through
+                                // the environment into DarkTextField's inner TextField.
+                                .textInputAutocapitalization(.words)
                                 .accessibilityIdentifier("create-exercise-name")
 
                             // Duplicate guard: fuzzy-match the library as the user
@@ -643,6 +685,13 @@ struct CreateExerciseView: View {
                 .padding(Space.lg)
                 .animation(.spring(duration: 0.25), value: modality)
             }
+            // Long form, several text fields (name, Sanskrit name) — without
+            // these two, the last field/row of the modality-specific card
+            // (e.g. "Weight unit" or "Sanskrit name") could be left stranded
+            // behind the keyboard with no way to scroll to it. Same shared
+            // fix as ScreenScaffold/RoutineEditorView.
+            .scrollDismissesKeyboard(.interactively)
+            .keyboardAdaptiveBottomInset()
             // Keep the equipment pick coherent with the type: snap to the new
             // discipline's default only when the current value belongs to the
             // OTHER discipline's primary set, so a deliberate edge-case pick
@@ -741,11 +790,12 @@ struct CreateExerciseView: View {
                     Text("Weight unit").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Picker("Weight unit", selection: $preferredUnit) {
-                        Text("lb").tag(WeightUnit.lb)
-                        Text("kg").tag(WeightUnit.kg)
+                        Text("Auto").tag(WeightUnit?.none)
+                        Text("lb").tag(WeightUnit?.some(.lb))
+                        Text("kg").tag(WeightUnit?.some(.kg))
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 120)
+                    .frame(width: 170)
                 }
             }
         }
@@ -847,6 +897,9 @@ struct CreateExerciseView: View {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     FieldLabel("Sanskrit name (optional)")
                     DarkTextField(text: $sanskritName, placeholder: "e.g. Balasana")
+                        // Sanskrit transliterations are title-cased too
+                        // ("Adho Mukha Svanasana"), so match the name field.
+                        .textInputAutocapitalization(.words)
                         .accessibilityIdentifier("yoga-sanskrit-name")
                     Text("Searchable alongside the English name.")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
@@ -857,72 +910,68 @@ struct CreateExerciseView: View {
 
     /// Multi-select secondary muscles — each counts as half a set toward that
     /// muscle's weekly volume.
+    /// Same drill-down menu as the primary picker, but multi-select: taps
+    /// toggle checkmarks without dismissing (menuActionDismissBehavior), and
+    /// the user closes the menu by tapping anywhere else when done.
     private var secondaryMuscleRow: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            Button {
-                withAnimation(.spring(duration: 0.25)) {
-                    secondaryMusclesExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: Space.sm) {
-                    Text("Secondary muscles").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Spacer()
+            HStack(spacing: Space.sm) {
+                Text("Secondary muscles").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                Spacer()
+                Menu {
+                    ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
+                        if entry.children.isEmpty {
+                            secondaryMuscleToggle(entry.group)
+                        } else {
+                            Menu(MuscleTaxonomy.displayName(entry.group)) {
+                                secondaryMuscleToggle(entry.group, label: "All \(MuscleTaxonomy.displayName(entry.group))")
+                                Divider()
+                                ForEach(entry.children, id: \.self) { child in
+                                    secondaryMuscleToggle(child)
+                                }
+                            }
+                        }
+                    }
+                    if !secondaryMuscles.isEmpty {
+                        Divider()
+                        Button(role: .destructive) {
+                            secondaryMuscles.removeAll()
+                        } label: {
+                            Label("Clear all", systemImage: "xmark.circle")
+                        }
+                    }
+                } label: {
                     Text(secondaryMuscles.isEmpty
                          ? "None"
                          : "\(secondaryMuscles.count) selected")
                         .font(.bodyStrong)
                         .foregroundStyle(secondaryMuscles.isEmpty ? theme.textTertiary : theme.accent)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(theme.textTertiary)
-                        .rotationEffect(.degrees(secondaryMusclesExpanded ? 180 : 0))
                 }
-                .contentShape(Rectangle())
+                .menuActionDismissBehavior(.disabled)
+                .accessibilityIdentifier("secondary-muscle-picker")
             }
-            .buttonStyle(.plain)
+            if !secondaryMuscles.isEmpty {
+                Text(secondaryMuscles.sorted().map(MuscleTaxonomy.displayName).joined(separator: " · "))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
             Text("Each secondary muscle counts as half a set toward weekly volume.")
                 .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+        }
+    }
 
-            if secondaryMusclesExpanded {
-                // Hierarchy order: each parent group followed by its
-                // sub-muscles, so Shoulders reads next to its delt heads.
-                let options = ExerciseCatalog.muscleHierarchy
-                    .flatMap { [$0.group] + $0.children }
-                    .filter { MuscleTaxonomy.canonical($0) != MuscleTaxonomy.canonical(primaryMuscle) }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: 8)], alignment: .leading, spacing: 8) {
-                    ForEach(options, id: \.self) { muscle in
-                        Button {
-                            toggleSecondaryMuscle(muscle)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: secondaryMuscles.contains(muscle) ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 15, weight: .semibold))
-                                Text(MuscleTaxonomy.displayName(muscle))
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.85)
-                                Spacer(minLength: 0)
-                            }
-                            .foregroundStyle(secondaryMuscles.contains(muscle) ? theme.accent : theme.textSecondary)
-                            .padding(.horizontal, 10)
-                            .frame(minHeight: 40)
-                            .background(secondaryMuscles.contains(muscle) ? theme.accentSoft : theme.surfaceElevated)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if !secondaryMuscles.isEmpty {
-                    Button(role: .destructive) {
-                        secondaryMuscles.removeAll()
-                    } label: {
-                        Label("Clear secondary muscles", systemImage: "xmark.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(theme.danger)
+    /// One toggleable menu row; the primary muscle is excluded so an exercise
+    /// can't count itself twice.
+    @ViewBuilder
+    private func secondaryMuscleToggle(_ muscle: String, label: String? = nil) -> some View {
+        if MuscleTaxonomy.canonical(muscle) != MuscleTaxonomy.canonical(primaryMuscle) {
+            Button {
+                toggleSecondaryMuscle(muscle)
+            } label: {
+                if secondaryMuscles.contains(muscle) {
+                    Label(label ?? MuscleTaxonomy.displayName(muscle), systemImage: "checkmark")
+                } else {
+                    Text(label ?? MuscleTaxonomy.displayName(muscle))
                 }
             }
         }
@@ -1020,7 +1069,7 @@ struct CreateExerciseView: View {
         exercise.secondaryMuscles = isCardio ? [] : secondaryMuscles.subtracting([primaryMuscle]).sorted()
         exercise.equipment = equipment
         exercise.defaultWeightMode = isCardio || isYoga ? .bodyweight : weightMode
-        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit.rawValue
+        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit?.rawValue
         exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
         // Yoga keeps laterality (one-sided poses run L/R in guided flows).
         exercise.isUnilateral = isCardio ? false : isUnilateral

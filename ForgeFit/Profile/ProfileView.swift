@@ -6,7 +6,6 @@ import SwiftUI
 private struct ProfileStats {
     var importedHealthWorkouts: Int
     var lifetimeHours: Int
-    var streak: Int
 }
 
 /// Hevy-style profile: identity + lifetime stats, a weekly activity chart with a
@@ -14,6 +13,7 @@ private struct ProfileStats {
 struct ProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
@@ -41,8 +41,7 @@ struct ProfileView: View {
             let totalSeconds = completed.reduce(0) { $0 + analytics.summary(for: $1).durationSeconds }
             return ProfileStats(
                 importedHealthWorkouts: completed.filter { $0.sourceDevice?.hasPrefix("healthkit") == true }.count,
-                lifetimeHours: totalSeconds / 3600,
-                streak: analytics.currentStreak()
+                lifetimeHours: totalSeconds / 3600
             )
         }
     }
@@ -51,22 +50,37 @@ struct ProfileView: View {
         XPService.progress(forTotalXP: progressRows.first { $0.userID == ForgeFitDemo.userID }?.totalXP ?? 0)
     }
 
+    @State private var trophiesMemo = Memo<String, [Trophy]>()
+
+    private var trophies: [Trophy] {
+        trophiesMemo(profileKey) {
+            TrophyCatalog.trophies(TrophyCatalog.inputs(
+                workouts: workouts,
+                exercises: exercises
+            ))
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScreenScaffold("Profile", trailing: {
                 HStack(spacing: Space.sm) {
-                    CircleIconButton(systemImage: "square.and.pencil") { showProfileEditor = true }
-                    CircleIconButton(systemImage: "gearshape") { showSettings = true }
+                    CircleIconButton(systemImage: "square.and.pencil", label: "Edit profile") { showProfileEditor = true }
+                    CircleIconButton(systemImage: "gearshape", label: "Settings") { showSettings = true }
                 }
             }) {
                 identityCard
                 if reviewCount > 0 {
                     importedExerciseReviewCard
+                        .transition(Motion.scaleIn(0.98, reduceMotion: reduceMotion))
                 }
                 activityCard
 
                 SectionHeader("Dashboard")
                 dashboardGrid
+
+                SectionHeader("Trophy case")
+                TrophyCaseCard(trophies: trophies)
 
                 SectionHeader("Workouts")
                 if completed.isEmpty {
@@ -92,6 +106,9 @@ struct ProfileView: View {
                     }
                 }
             }
+            // Drives the review card's insert/remove transition; keyed so it
+            // only fires when the card actually appears or clears.
+            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: reviewCount > 0)
             .navigationDestination(for: ProfileRoute.self) { route in
                 switch route {
                 case .statistics: StatisticsView(workouts: workouts, exercises: exercises)
@@ -99,8 +116,16 @@ struct ProfileView: View {
                 case .importedExerciseReview: ReviewImportedExercisesView(workouts: workouts)
                 case .measures: MeasuresView()
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
-                case .history: WorkoutHistoryListView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
+                case .community:
+                    SocialHubView(makeSnapshot: {
+                        SocialProfileComposer.snapshot(
+                            workouts: workouts,
+                            exercises: exercises,
+                            totalXP: progressRows.first { $0.userID == ForgeFitDemo.userID }?.totalXP ?? 0
+                        )
+                    })
                 case .workout(let id):
                     if let w = workouts.first(where: { $0.id == id }) {
                         WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
@@ -117,33 +142,84 @@ struct ProfileView: View {
 
     private var identityCard: some View {
         Card {
-            HStack(spacing: Space.lg) {
-                Circle().fill(theme.recoveryHigh.opacity(0.9))
-                    .frame(width: 64, height: 64)
-                    .overlay(Text(profileInitials).font(.system(size: 16, weight: .bold)).foregroundStyle(.white))
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    HStack(spacing: Space.sm) {
-                        Text(displayName.isEmpty ? "Athlete" : displayName)
-                            .font(.cardTitle)
-                            .foregroundStyle(theme.textPrimary)
-                        LevelBadge(level: xpProgress.level)
+            VStack(alignment: .leading, spacing: Space.lg) {
+                HStack(spacing: Space.lg) {
+                    avatarBadge
+                    VStack(alignment: .leading, spacing: Space.md) {
+                        HStack(spacing: Space.sm) {
+                            Text(displayName.isEmpty ? "Athlete" : displayName)
+                                .font(.sectionTitle)
+                                .foregroundStyle(theme.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            LevelBadge(level: xpProgress.level)
+                        }
+                        HStack(spacing: Space.sm) {
+                            statTile("flame.fill", "\(completed.count)", "Logged")
+                            statTile("clock.fill", "\(profileStats.lifetimeHours)", "Hours")
+                        }
                     }
-                    HStack(spacing: Space.xl) {
-                        miniStat("Logged", "\(completed.count)")
-                        miniStat("Hours", "\(profileStats.lifetimeHours)")
-                        miniStat("Streak", "\(profileStats.streak)d")
-                    }
-                    XPProgressBar(progress: xpProgress)
-                    if completed.count > 0 {
+                }
+                XPProgressBar(progress: xpProgress)
+                if completed.count > 0 {
+                    Divider().overlay(theme.separator)
+                    HStack(spacing: Space.md) {
+                        Image(systemName: "heart")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                            .frame(width: 36, height: 36)
+                            .background(theme.surfaceElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: Radius.tag))
+                            .accessibilityHidden(true)
                         Text(historyScopeText)
                             .font(.system(size: 12))
-                            .foregroundStyle(theme.textTertiary)
+                            .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer()
             }
         }
+    }
+
+    private var avatarBadge: some View {
+        ZStack {
+            Circle()
+                .stroke(theme.accent.opacity(0.28), lineWidth: 1.5)
+                .frame(width: 76, height: 76)
+            Circle()
+                .fill(theme.recoveryHigh.opacity(0.9))
+                .frame(width: 64, height: 64)
+                .shadow(color: theme.accent.opacity(0.35), radius: 10)
+            Text(profileInitials)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func statTile(_ icon: String, _ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: Space.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .accessibilityHidden(true)
+                Text(value)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Space.sm)
+        .padding(.horizontal, Space.xs)
+        .background(theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control))
+        .accessibilityElement(children: .combine)
     }
 
     private var profileInitials: String {
@@ -157,13 +233,6 @@ struct ProfileView: View {
             "Includes \(profileStats.importedHealthWorkouts) Apple Health imports from the last 60 days, plus workouts logged in ForgeFit."
         } else {
             "Completed workouts logged in ForgeFit."
-        }
-    }
-
-    private func miniStat(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 18, weight: .bold)).foregroundStyle(theme.textPrimary)
-            Text(label).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -239,14 +308,21 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dashboard-community")
         }
     }
 
 }
 
-private struct LevelBadge: View {
+/// Shared with the social profile screens so a friend's level renders
+/// identically to your own.
+struct LevelBadge: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let level: Int
+    @State private var pop = false
 
     var body: some View {
         Text("Level \(level)")
@@ -256,24 +332,71 @@ private struct LevelBadge: View {
             .padding(.vertical, 5)
             .background(theme.accent)
             .clipShape(Capsule())
+            .contentTransition(.numericText(value: Double(level)))
+            .animation(Motion.stateChange, value: level)
+            .scaleEffect(pop ? 1.12 : 1)
             .accessibilityLabel("Level \(level)")
+            .onChange(of: level) { old, new in
+                // Level-ups only (never on downgrades from a data reset), and
+                // never as a scale pulse under Reduce Motion — the digit roll
+                // above still marks the change.
+                guard new > old, !reduceMotion else { return }
+                withAnimation(Motion.stateChange) {
+                    pop = true
+                } completion: {
+                    withAnimation(Motion.stateChange) { pop = false }
+                }
+            }
     }
 }
 
-private struct XPProgressBar: View {
+/// Shared with the social profile screens (a friend's XP bar renders from
+/// their published `totalXP`).
+struct XPProgressBar: View {
     @Environment(\.theme) private var theme
     let progress: XPService.Progress
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ProgressView(value: progress.fraction)
-                .tint(theme.accent)
-                .background(theme.surfaceElevated)
-                .clipShape(Capsule())
-            Text("\(progress.xpIntoLevel) / \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
-                .font(.tag)
-                .foregroundStyle(theme.textSecondary)
+        HStack(spacing: Space.md) {
+            ZStack {
+                Image(systemName: "hexagon.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(theme.accentSoft)
+                Image(systemName: "hexagon")
+                    .font(.system(size: 44, weight: .medium))
+                    .foregroundStyle(theme.accent)
+                Text("XP")
+                    .font(.system(size: 13, weight: .heavy))
+                    .foregroundStyle(theme.textPrimary)
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                (Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent)
+                    + Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary)
+                    + Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))
+                    .font(.system(size: 16, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .contentTransition(.numericText(value: Double(progress.xpIntoLevel)))
+                // Fills only when XP actually changes while visible — no
+                // replayed fill-from-zero theater on every Profile visit.
+                ProgressView(value: progress.fraction)
+                    .tint(theme.accent)
+                    .background(theme.surfaceHighlight)
+                    .clipShape(Capsule())
+                    .animation(Motion.reward, value: progress.fraction)
+            }
+            ZStack {
+                Image(systemName: "shield")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                Text("\(progress.level + 1)")
+                    .font(.tag)
+                    .foregroundStyle(theme.textSecondary)
+            }
         }
+        .padding(Space.md)
+        .background(theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(progress.xpIntoLevel) of \(progress.xpNeededForNextLevel) XP to Level \(progress.level + 1)")
     }
@@ -318,7 +441,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, community
     case workout(UUID)
 }
 
@@ -384,11 +507,11 @@ struct ExercisesListView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
                 Spacer()
                 Text("Exercises").font(.rowValue).foregroundStyle(theme.textPrimary)
                 Spacer()
-                CircleIconButton(systemImage: "plus") { showCreate = true }
+                CircleIconButton(systemImage: "plus", label: "Create exercise") { showCreate = true }
             }
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
@@ -454,7 +577,9 @@ struct ExercisesListView: View {
                                         .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
                                 }
                                 Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(theme.accent)
                             }
                             .padding(Space.md)
                             .background(theme.surface)
@@ -487,8 +612,6 @@ struct MeasuresView: View {
     @Environment(\.theme) private var theme
     @State private var health = HealthMetricsStore.shared
     @State private var showLogWeight = false
-    @State private var weightDraft = ""
-    @State private var savingWeight = false
     @State private var bodyweightRange: TimeChartRange = .oneYear
 
     var body: some View {
@@ -498,7 +621,6 @@ struct MeasuresView: View {
                 series.map { MetricPoint(date: $0.date, value: Fmt.unit.displayValue(fromKilograms: $0.value)) }
             )
             PrimaryButton(title: "Log Weight", systemImage: "plus") {
-                weightDraft = series.last.map { Fmt.load($0.value) } ?? ""
                 showLogWeight = true
             }
             if let latest = series.last {
@@ -553,100 +675,7 @@ struct MeasuresView: View {
         }
         .onAppear { health.refresh() }
         .sheet(isPresented: $showLogWeight) {
-            logWeightSheet
-        }
-    }
-
-    private var logWeightSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                FieldLabel("Weight")
-                HStack(spacing: Space.sm) {
-                    DarkTextField(text: $weightDraft, placeholder: "180")
-                        .keyboardType(.decimalPad)
-                    Text(Fmt.unit.suffix)
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textSecondary)
-                }
-                Text("ForgeFit writes this weigh-in to Apple Health so your other health apps can use the same source of truth.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                Spacer()
-            }
-            .padding(Space.lg)
-            .background(theme.background)
-            .navigationTitle("Log Weight")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showLogWeight = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(savingWeight ? "Saving..." : "Save") { saveWeight() }
-                        .font(.bodyStrong)
-                        .disabled(savingWeight || Fmt.loadKilograms(from: weightDraft) == nil)
-                }
-            }
-        }
-    }
-
-    private func saveWeight() {
-        guard let kilograms = Fmt.loadKilograms(from: weightDraft) else { return }
-        savingWeight = true
-        Task {
-            let saved = await HealthService.shared.logBodyMass(kilograms: kilograms)
-            await MainActor.run {
-                savingWeight = false
-                if saved {
-                    showLogWeight = false
-                    health.refresh(force: true)
-                }
-            }
-        }
-    }
-}
-
-/// The classic month-grouped history list — still the "See all workouts"
-/// destination at the end of the Profile feed.
-struct WorkoutHistoryListView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
-    let workouts: [WorkoutModel]
-    let exercises: [ExerciseLibraryModel]
-
-    @State private var monthMemo = Memo<String, [(month: String, items: [WorkoutModel])]>()
-
-    private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var byMonth: [(month: String, items: [WorkoutModel])] {
-        monthMemo(AnalyticsFingerprint.of(workouts)) {
-            let completed = analytics.completed
-            var order: [String] = []
-            var map: [String: [WorkoutModel]] = [:]
-            for w in completed {
-                let key = w.startedAt.formatted(.dateTime.month(.wide).year())
-                if map[key] == nil { order.append(key); map[key] = [] }
-                map[key]?.append(w)
-            }
-            return order.map { ($0, map[$0] ?? []) }
-        }
-    }
-
-    var body: some View {
-        DashboardScaffold(title: "History", dismiss: dismiss) {
-            ForEach(byMonth, id: \.month) { group in
-                Text(group.month).font(.bodyStrong).foregroundStyle(theme.textSecondary)
-                ForEach(group.items) { workout in
-                    NavigationLink(value: workout.id) {
-                        WorkoutFeedRow(workout: workout, analytics: analytics)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .navigationDestination(for: UUID.self) { id in
-            if let w = workouts.first(where: { $0.id == id }) {
-                WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
-            }
+            LogWeightSheet()
         }
     }
 }
@@ -656,26 +685,47 @@ struct DashboardScaffold<Content: View>: View {
     @Environment(\.theme) private var theme
     let title: String
     let dismiss: DismissAction
+    /// Opt-in lazy body: long lists (e.g. the full workout History) pass `true`
+    /// so only on-screen rows are built and their per-row summaries computed,
+    /// instead of instantiating the whole history up front. Defaults to `false`
+    /// so every existing dashboard sub-screen is unchanged.
+    var lazy: Bool = false
     @ViewBuilder var content: Content
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
-                    Spacer()
-                    Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    Color.clear.frame(width: 38, height: 38)
-                }
-                .padding(.top, Space.sm)
-                content
-            }
-            .padding(.horizontal, Space.lg)
-            .padding(.bottom, Space.tabBarClearance)
+            stack
+                .padding(.horizontal, Space.lg)
+                .padding(.bottom, Space.tabBarClearance)
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+    }
+
+    @ViewBuilder
+    private var stack: some View {
+        if lazy {
+            LazyVStack(alignment: .leading, spacing: Space.lg) {
+                header
+                content
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                header
+                content
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+            Spacer()
+            Text(title).font(.rowValue).foregroundStyle(theme.textPrimary)
+            Spacer()
+            Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
+        }
+        .padding(.top, Space.sm)
     }
 }

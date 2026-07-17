@@ -151,22 +151,50 @@ struct RecoveryScoresTests {
         #expect(hrvPart?.state.value == nil)
     }
 
-    @Test func loadBalancePartRequiresTrainingHistory() {
+    @Test func trainingLoadIsNotPartOfTheSystemicRecoveryScore() {
         let bench = exercise("Bench Press", muscles: ["chest"])
         let single = strengthWorkout(startedAt: now.addingTimeInterval(-24 * 3600), exercise: bench, sets: 4, rpe: 8)
 
         let report = RecoveryEngine(workouts: [single], exercises: [bench], now: now).report()
-        let loadPart = report.recovery.systemic.parts.first { $0.name == "Load balance" }
-
-        #expect(loadPart?.state.value == nil)
+        #expect(!report.recovery.systemic.parts.contains { $0.name == "Load balance" })
 
         // Six weeks of steady training → the part becomes a real score.
         let history = (0..<12).map { index in
             strengthWorkout(startedAt: now.addingTimeInterval(-Double(2 + index * 3) * 86_400), exercise: bench, sets: 4, rpe: 8)
         }
         let seasoned = RecoveryEngine(workouts: history, exercises: [bench], now: now).report()
-        let seasonedPart = seasoned.recovery.systemic.parts.first { $0.name == "Load balance" }
-        #expect(seasonedPart?.state.value != nil)
+        #expect(!seasoned.recovery.systemic.parts.contains { $0.name == "Load balance" })
+    }
+
+    @Test func partialNightDoesNotScoreFragmentedOvernightBiometrics() throws {
+        let history = (1...20).map { day in
+            RecoveryEngine.DailyHealthMetric(
+                date: now.addingTimeInterval(-Double(day) * 86_400),
+                hrvSDNN: 60,
+                restingHR: 58,
+                sleepTotalMinutes: 480,
+                nocturnalHRV: 65,
+                sleepingHR: 52
+            )
+        }
+        var partial = RecoveryEngine.DailyHealthMetric(
+            date: now,
+            hrvSDNN: 60,
+            restingHR: 58,
+            sleepTotalMinutes: 120,
+            nocturnalHRV: 90,
+            sleepingHR: 42
+        )
+        partial.integrityFlags.insert(SleepIntegrity.Flag.partialWear)
+
+        let report = RecoveryEngine(workouts: [], healthMetrics: history + [partial], now: now).report()
+        let hrv = try #require(report.recovery.daily.parts.first { $0.name == "HRV (today)" })
+        let restingHR = try #require(report.recovery.daily.parts.first { $0.name == "Resting HR" })
+
+        #expect(hrv.state.value == nil)
+        #expect(hrv.valueText == "—")
+        #expect(restingHR.valueText == "58 bpm")
+        #expect(!report.recovery.daily.parts.contains { $0.name == "Sleeping HR" && $0.valueText == "42 bpm" })
     }
 
     // MARK: - Confidence reflects data completeness
@@ -214,10 +242,9 @@ struct RecoveryScoresTests {
     // MARK: - Score/action consistency (green ring must never say "Deload")
 
     @Test func actionAgreesWithTheDisplayedScore() {
-        // Engineer the old failure: daily identical training for 4 weeks
-        // (monotony) plus a monster session today (load spike + trained
-        // today) crushed the legacy composite, while healthy biometrics keep
-        // the systemic score green.
+        // Daily identical training plus a monster session today used to crush
+        // the legacy composite, while healthy biometrics kept the displayed
+        // systemic score green.
         let bench = exercise("Bench Press", muscles: ["chest"])
         var workouts = (1...28).map { day in
             strengthWorkout(startedAt: now.addingTimeInterval(-Double(day) * 86_400), exercise: bench, sets: 3, rpe: 7)
@@ -233,9 +260,9 @@ struct RecoveryScoresTests {
         #expect(report.action != .deloadRecover)
     }
 
-    @Test func deloadStillFiresWhenTheDisplayedScoreIsActuallyLow() {
-        // No biometrics at all → systemic is building → the legacy composite
-        // IS the displayed score, and a giant spike should still deload.
+    @Test func recentLoadAloneCannotTriggerADeload() {
+        // No biometrics and no baseline: session size is descriptive context,
+        // not evidence that recovery is low.
         let spike = WorkoutModel(
             userID: userID,
             title: "Run",
@@ -255,8 +282,8 @@ struct RecoveryScoresTests {
 
         let report = RecoveryEngine(workouts: [spike], now: now).report()
 
-        #expect(report.displayScore < 0.45)
-        #expect(report.action == .deloadRecover)
+        #expect(report.trainingLoad.state == .building)
+        #expect(report.action != .deloadRecover)
     }
 
     // MARK: - Fixtures

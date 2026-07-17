@@ -10,6 +10,9 @@ struct InsightsView: View {
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    /// Local rollout flag for the Insights Builder (registered in
+    /// AppPreferenceKeys.localOnly); defaults ON for the founder's build.
+    @AppStorage("insightsBuilderEnabled") private var insightsBuilderEnabled = true
 
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var range: TimeChartRange = .twelveWeeks
@@ -29,6 +32,13 @@ struct InsightsView: View {
 
         NavigationStack {
             ScreenScaffold("Insights") {
+                if insightsBuilderEnabled {
+                    NavigationLink(value: InsightsRoute.myInsights) {
+                        MyInsightsEntryCard()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("insight-my-insights-entry")
+                }
                 trendCard(analytics: analytics, fingerprint: fingerprint)
 
                 if !muscleRows.isEmpty {
@@ -79,6 +89,8 @@ struct InsightsView: View {
                     ExerciseDetailView(exerciseID: exerciseID, workouts: workouts, exercises: exercises)
                 case .records:
                     RecordsListView(records: records, workouts: workouts, exercises: exercises)
+                case .myInsights:
+                    MyInsightsView(workouts: workouts, exercises: exercises)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -127,6 +139,7 @@ struct InsightsView: View {
 private enum InsightsRoute: Hashable {
     case exercise(UUID)
     case records
+    case myInsights
 }
 
 private enum InsightsInfoTopic: Identifiable {
@@ -143,7 +156,7 @@ private enum InsightsInfoTopic: Identifiable {
     var body: String {
         switch self {
         case .estimated1RM:
-            "Estimated 1RM turns a hard set into an estimated max. It is best for spotting strength trends, not for forcing max attempts."
+            "Estimates your one-rep max from hard sets. Best for spotting strength trends over time."
         case .muscleVolume:
             "Muscle volume counts hard sets by the muscles they train. The target line is a coaching landmark, not a rule every week must hit."
         }
@@ -160,7 +173,7 @@ private struct InsightsInfoSheet: View {
             HStack {
                 Text(topic.title).font(.cardTitle).foregroundStyle(theme.textPrimary)
                 Spacer()
-                CircleIconButton(systemImage: "xmark") { dismiss() }
+                CircleIconButton(systemImage: "xmark", label: "Close") { dismiss() }
             }
             Text(topic.body)
                 .font(.system(size: 15))
@@ -201,7 +214,11 @@ private struct RecordRow: View {
                 Spacer()
                 Text(Fmt.loadUnit(record.best1RM, unit: exercise?.effectiveWeightUnit ?? Fmt.unit))
                     .font(.statValue).foregroundStyle(theme.textPrimary)
-                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
+                // Exercise detail disclosure: white names stay content color;
+                // only the chevron signals tappable (design rule).
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.accent)
             }
         }
     }
@@ -219,11 +236,11 @@ private struct RecordsListView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
                     Spacer()
                     Text("Records").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Color.clear.frame(width: 38, height: 38)
+                    Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
                 }
                 .padding(.top, Space.sm)
 
@@ -313,19 +330,22 @@ struct ExerciseDetailView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 HStack {
-                    CircleIconButton(systemImage: "chevron.left") { dismiss() }
+                    CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+                        .accessibilityLabel("Back to exercise picker")
+                        .accessibilityIdentifier("exercise-detail-back")
                     Spacer()
                     Text("Exercise").font(.rowValue).foregroundStyle(theme.textPrimary)
                     Spacer()
                     if exercise != nil {
-                        CircleIconButton(systemImage: "square.and.pencil") { showingEdit = true }
+                        CircleIconButton(systemImage: "square.and.pencil", label: "Edit exercise") { showingEdit = true }
                     } else {
-                        Color.clear.frame(width: 38, height: 38)
+                        Color.clear.frame(width: 44, height: 44)   // mirror the 44 pt leading button so the title centers
                     }
                 }
                 .padding(.top, Space.sm)
 
                 Text(name).font(.screenTitle).foregroundStyle(theme.textPrimary)
+                    .accessibilityIdentifier("exercise-detail-title-\(name)")
 
                 if let exercise {
                     ExerciseInfoCard(exercise: exercise)
@@ -500,9 +520,12 @@ private struct ExerciseUnitSettingsCard: View {
     @Environment(\.theme) private var theme
     @Bindable var exercise: ExerciseLibraryModel
 
-    private var unitBinding: Binding<WeightUnit> {
+    /// nil = Auto: the exercise follows the app-wide unit from Settings.
+    /// Surfacing the nil state matters — a stamped unit stays frozen when the
+    /// user later changes their global unit, which reads as a bug mid-workout.
+    private var unitBinding: Binding<WeightUnit?> {
         Binding(
-            get: { exercise.effectiveWeightUnit },
+            get: { exercise.preferredWeightUnit },
             set: { newValue in
                 exercise.preferredWeightUnit = newValue
                 exercise.updatedAt = Date()
@@ -521,11 +544,12 @@ private struct ExerciseUnitSettingsCard: View {
                 }
                 Spacer()
                 Picker("Exercise unit", selection: unitBinding) {
-                    Text("lb").tag(WeightUnit.lb)
-                    Text("kg").tag(WeightUnit.kg)
+                    Text("Auto").tag(WeightUnit?.none)
+                    Text("lb").tag(WeightUnit?.some(.lb))
+                    Text("kg").tag(WeightUnit?.some(.kg))
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 120)
+                .frame(width: 170)
             }
         }
     }

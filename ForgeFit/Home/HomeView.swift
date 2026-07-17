@@ -11,14 +11,21 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AppState.self) private var appState
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var healthMetrics = HealthMetricsStore.shared
     @State private var showSettings = false
+    // Coach surfaces remain implemented and testable, but are intentionally
+    // dormant while the Home header uses its more useful calendar shortcut.
     @State private var showCoach = false
+    @State private var showCoachChat = false
     @State private var showExploreLibrary = false
     @State private var quickStartEditing = false
     @State private var draggedQuickStartAction: HomeQuickStartAction?
     @State private var showQuickStartAdd = false
     @State private var editingRoutine: RoutineModel?
     @State private var presentedWrappedReport: WrappedReportModel?
+    @State private var reviewRequest: CoachReviewRequest?
 
     /// New (unopened) Wrapped reports — drives the "Report Available" card,
     /// which disappears the moment the story is opened (viewedAt set).
@@ -26,6 +33,21 @@ struct HomeView: View {
         filter: #Predicate<WrappedReportModel> { $0.viewedAt == nil && $0.deletedAt == nil },
         sort: \WrappedReportModel.generatedAt, order: .reverse
     ) private var unviewedWrappedReports: [WrappedReportModel]
+    @Query private var checkins: [DailyCheckinModel]
+    /// This week's Coach's Corner weekly-review overrides — only used to
+    /// check whether a deload week is currently active, so
+    /// `CoachAdjustments.effectivePlan` can resolve it against today's
+    /// readiness call without ever stacking two reductions.
+    @Query private var weekOverrides: [CoachingWeekOverrideModel]
+
+    private var weeklyDeloadActive: Bool {
+        let anchor = CoachWeeklyReview.weekAnchor(for: Date())
+        return weekOverrides.contains {
+            $0.statusRaw == CoachingOverrideStatus.active.rawValue
+                && $0.kindRaw == CoachingOverrideKind.deloadWeek.rawValue
+                && $0.weekStart == anchor
+        }
+    }
 
     let workouts: [WorkoutModel]
     let routines: [RoutineModel]
@@ -35,20 +57,67 @@ struct HomeView: View {
     // Recovery reports are full-history passes — memoized so the always-alive
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
+    @State private var connectingHealth = false
+    // Keeps the check-in strip visible while the user is mid-selection —
+    // without it the row would vanish on the first tap. Resets when Home
+    // reloads, so an answered check-in stays collapsed on later visits.
+    @State private var checkinStripEngaged = false
+    // Optimistic overlay for the mood strip: the tap updates this instantly so
+    // the capsule fills on touch, decoupled from the debounced model write and
+    // the RecoveryEngine recompute (which stays keyed on the persisted tags, so
+    // it runs once per commit rather than once per tap). Cleared only when the
+    // @Query reflects the write, to avoid a one-frame flicker to the old value.
+    @State private var checkinDraft: [String]?
+    @State private var checkinCommitTask: Task<Void, Never>?
     @State private var recoveryMemo = Memo<String, RecoveryEngine.Report>()
-    @State private var targetRecoveryMemo = Memo<String, RecoveryEngine.Report>()
+    @State private var strainMemo = Memo<String, DailyStrainEngine.Report>()
+    @State private var targetRecoveryMemo = Memo<String, RoutineDoseContext>()
     @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
+    private var todayCheckin: DailyCheckinModel? {
+        checkins
+            .filter { $0.deletedAt == nil && Calendar.current.isDate($0.date, inSameDayAs: Date()) }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+    private var todayCheckinTags: [String] { todayCheckin?.tags ?? [] }
+    /// What the mood strip draws: the optimistic draft while a tap is pending,
+    /// otherwise the persisted tags. Only the chip fill reads this — the memo
+    /// keys deliberately stay on `todayCheckinTags` so the engine recompute
+    /// waits for the debounced commit instead of firing on every tap.
+    private var effectiveCheckinTags: [String] { checkinDraft ?? todayCheckinTags }
+
     private var recovery: RecoveryEngine.Report {
-        recoveryMemo(AnalyticsFingerprint.withHealth(workouts)) {
-            RecoveryEngine(workouts: workouts, exercises: exercises, healthMetrics: HealthMetricsStore.shared.metrics).report()
+        recoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(todayCheckinTags.joined(separator: ","))") {
+            RecoveryEngine(
+                workouts: workouts,
+                exercises: exercises,
+                healthMetrics: healthMetrics.metrics,
+                supplementalSignals: healthMetrics.extraSignals,
+                todayCheckinTags: todayCheckinTags
+            ).report()
         }
     }
-    private var exerciseByID: [UUID: ExerciseLibraryModel] {
-        Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    private var dailyStrain: DailyStrainEngine.Report {
+        let recovery = recovery
+        let refresh = healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0
+        let daily = recovery.recovery.daily.state.value ?? -1
+        let trend = recovery.recovery.systemic.state.value ?? -1
+        return strainMemo("\(AnalyticsFingerprint.of(workouts))|\(refresh)|\(daily)|\(trend)") {
+            DailyStrainEngine(
+                workouts: workouts,
+                activityMetrics: healthMetrics.activityMetrics,
+                dailyReadiness: recovery.recovery.daily.state.value,
+                trendRecovery: recovery.recovery.systemic.state.value
+            ).report()
+        }
     }
-
+    private var latestHealthMetric: RecoveryEngine.DailyHealthMetric? {
+        healthMetrics.metrics.max { $0.date < $1.date }
+    }
+    private var healthAssessment: HealthRangeAssessment {
+        .make(metrics: healthMetrics.metrics)
+    }
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
         return switch hour {
@@ -64,7 +133,49 @@ struct HomeView: View {
 
     private var hasReadinessSignal: Bool {
         workouts.contains { $0.endedAt != nil && $0.deletedAt == nil }
-            || !HealthMetricsStore.shared.metrics.isEmpty
+            || !healthMetrics.metrics.isEmpty
+            || todayDashboardCache != nil
+    }
+
+    /// Today's cached Home render, if this day already produced one. Strictly
+    /// keyed to the current calendar day — right after midnight there is no
+    /// cache and the dashboard shows its loader, because a new day's scores
+    /// don't exist yet and yesterday's must never stand in for them.
+    private var todayDashboardCache: (RecoverySnapshot, HomeDashboardCache)? {
+        guard let snapshot = RecoverySnapshotStore.shared.snapshot(for: Date()),
+              let cache = snapshot.dashboard else { return nil }
+        return (snapshot, cache)
+    }
+
+    /// Live once this launch's HealthKit refresh has landed; otherwise today's
+    /// cached render when one exists, otherwise the loading state.
+    private var dashboardSource: HomeDashboardSource {
+        if healthMetrics.lastRefreshed != nil { return .live }
+        if let (snapshot, cache) = todayDashboardCache { return .cached(snapshot, cache) }
+        return .loading
+    }
+
+    /// The dashboard as currently rendered, for the same-day cache. Callers
+    /// must hold the live-refresh gate (see the recording `.task`): before the
+    /// first refresh lands the engines run on empty health data, and caching
+    /// that render would clobber the morning's real one with placeholders.
+    private func liveDashboardCache(report: RecoveryEngine.Report) -> HomeDashboardCache {
+        let sleep = latestHealthMetric
+        let health = healthAssessment
+        return HomeDashboardCache(
+            recoveryDisplayScore: report.displayScore,
+            baselineReady: report.baselineReady,
+            actionRaw: report.action.rawValue,
+            recommendation: report.recommendation,
+            reasonTexts: report.reasonChips.prefix(2).map(\.text),
+            sleepValue: SleepMetricPresentation.value(for: sleep),
+            sleepCaption: SleepMetricPresentation.caption(for: sleep),
+            sleepProgress: SleepMetricPresentation.progress(for: sleep),
+            sleepLooksPartial: sleep?.sleepLikelyPartial == true && sleep?.sleepUserCorrected == false,
+            healthHeadline: health.headline,
+            healthCaption: health.caption,
+            healthEvaluatedCount: health.evaluatedCount,
+            healthOutsideRangeCount: health.outsideRangeCount)
     }
 
     // MARK: - Smart next-workout suggestion
@@ -80,7 +191,7 @@ struct HomeView: View {
     /// The active folder plus its whole subtree, so an active macrocycle picks
     /// up routines inside its mesocycle subfolders too.
     private func folderSubtree(rootID: UUID) -> Set<UUID> {
-        let live = allFolders.filter { $0.deletedAt == nil }
+        let live = allFolders.filter { $0.deletedAt == nil && $0.archivedAt == nil }
         var result: Set<UUID> = [rootID]
         var queue = [rootID]
         while let next = queue.popLast() {
@@ -108,19 +219,55 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScreenScaffold(greeting, subtitle: Date().formatted(.dateTime.weekday(.wide).month().day()), trailing: {
-                CircleIconButton(systemImage: "sparkles") { showCoach = true }
-                    .accessibilityLabel("Open coach")
-            }) {
-                VStack(alignment: .leading, spacing: Space.xl) {
+            ScreenScaffold(
+                greeting,
+                subtitle: Date().formatted(.dateTime.weekday(.wide).month().day()),
+                titleFont: .system(.title, design: .default, weight: .bold),
+                trailing: {
+                    CircleIconNavigationLink(systemImage: "calendar", label: "Open calendar", value: HomeRoute.calendar)
+                        .accessibilityIdentifier("home-calendar")
+                }
+            ) {
+                VStack(alignment: .leading, spacing: Space.lg) {
+                    if welcomeBackGapDays >= 7, !trainedToday {
+                        welcomeBackCard
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
                     if hasReadinessSignal {
-                        NavigationLink(value: HomeRoute.recovery) {
-                            RecoveryHeroCard(report: recovery)
-                        }
-                        .buttonStyle(.plain)
+                        RecoveryHeroCard(
+                            report: recovery,
+                            source: dashboardSource,
+                            isRefreshing: healthMetrics.isRefreshing
+                        )
+                        .accessibilityIdentifier("home-guidance")
                         .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
                         readinessEmptyState
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
+                    HomeMetricGrid(
+                        recovery: recovery,
+                        strain: dailyStrain,
+                        sleep: latestHealthMetric,
+                        health: healthAssessment,
+                        source: dashboardSource,
+                        isRefreshing: healthMetrics.isRefreshing
+                    )
+                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+
+                    // A night flagged as partial-wear capture: offer a one-tap
+                    // correction so a data gap never reads as lost sleep.
+                    if let sleepAlert = healthMetrics.partialSleepAlert {
+                        SleepIntegrityCard(alert: sleepAlert) {
+                            recoveryMemo = Memo<String, RecoveryEngine.Report>()
+                        }
+                        .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    }
+
+                    if showsCheckinStrip {
+                        morningCheckinStrip
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
@@ -132,10 +279,18 @@ struct HomeView: View {
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
-                    SectionHeader("Jump back in")
+                    // "Jump back in" only when there is something to jump back
+                    // into — a brand-new user gets "Get started" and a route
+                    // into the program library instead of a dangling header.
+                    SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
                     if let suggestion {
                         suggestionCard(suggestion.routine, reason: suggestion.reason)
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            .transition(.opacity)
+                    } else {
+                        explorePromptCard
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            .transition(.opacity)
                     }
                     quickStart
 
@@ -152,6 +307,10 @@ struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Crossfades the suggestion ↔ explore-prompt swap (each carries
+                // `.transition(.opacity)`); scoped by key so it only fires when
+                // the branch actually flips.
+                .animation(Motion.stateChange, value: suggestion == nil)
                 .background {
                     if quickStartEditing {
                         Color.black.opacity(0.001)
@@ -164,6 +323,10 @@ struct HomeView: View {
             .navigationDestination(for: HomeRoute.self) { route in
                 switch route {
                 case .recovery: RecoveryDetailView(workouts: workouts, exercises: exercises)
+                case .sleep: SleepDetailView(metrics: healthMetrics.metrics)
+                case .strain: StrainDetailView(report: dailyStrain)
+                case .health: HealthDetailView(report: recovery, metrics: healthMetrics.metrics)
+                case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
                 }
             }
             .navigationDestination(for: WorkoutModel.self) { workout in
@@ -175,18 +338,63 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             // Pull down to re-query Apple Health and recompute readiness.
             .refreshable { await AppRefresh.run(in: modelContext) }
+            // Capture today's recovery for the calendar (keyed on the health
+            // fingerprint so it fires when metrics land, and on the check-in
+            // tags so a committed check-in re-records), and backfill history
+            // once. Store the ACUTE daily and the trend separately — never
+            // displayScore, which falls back to the trend when the acute isn't
+            // in yet. Today is overwritten so it tracks Home's live number.
+            // On-device only.
+            .task(id: "\(AnalyticsFingerprint.withHealth(workouts))|\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)|\(todayCheckinTags.joined(separator: ","))") {
+                // Record only after this launch's HealthKit refresh has landed.
+                // Pre-refresh the engines run on workouts alone: recovery comes
+                // back nil (harmless), but strain comes back a real 0.0 — zero
+                // training load, no movement data yet — and a non-nil zero
+                // would stomp the day's cached strain on every cold launch.
+                guard healthMetrics.lastRefreshed != nil else { return }
+                let report = recovery
+                let strain = dailyStrain
+                RecoverySnapshotStore.shared.recordToday(
+                    daily: report.recovery.daily.state.value,
+                    trend: report.recovery.systemic.state.value,
+                    strain: strain.score,
+                    strainTarget: strain.targetRange,
+                    dashboard: liveDashboardCache(report: report))
+                RecoverySnapshotStore.shared.backfillIfNeeded(
+                    workouts: workouts,
+                    exercises: exercises,
+                    activityMetrics: healthMetrics.activityMetrics,
+                    in: modelContext)
+                // Bodyweight-family sets completed before a body mass was
+                // known compute an effective load of zero; heal them whenever
+                // fresh health data lands.
+                WeightModeBackfill.fillMissingBodyweight(
+                    bodyweightSeries: healthMetrics.bodyweightSeries,
+                    in: modelContext)
+            }
             .fullScreenCover(item: $presentedWrappedReport) { report in
                 WrappedStoryView(report: report)
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showCoach) {
-                AICoachChatView(
-                    context: AICoachContext.build(
-                        workouts: workouts,
-                        routines: routines,
-                        exercises: exercises,
-                        recovery: recovery
-                    )
+                CoachCornerView(
+                    workouts: workouts,
+                    routines: routines,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    recovery: recovery,
+                    suggestion: suggestion
+                )
+            }
+            .sheet(isPresented: $showCoachChat) { coachChatSheet }
+            .sheet(item: $reviewRequest) { request in
+                CoachAdjustmentReviewView(
+                    plan: request.plan,
+                    routine: request.routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    reasons: recovery.reasonChips.prefix(3).map(\.text),
+                    sourceLabel: request.sourceLabel
                 )
             }
             .sheet(isPresented: $showQuickStartAdd) {
@@ -207,7 +415,24 @@ struct HomeView: View {
             // production).
             .onAppear {
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
+                #if DEBUG
+                // UI automation keeps exercising the dormant coach surfaces
+                // without exposing a production Home entry point.
+                if UserDefaults.standard.bool(forKey: "openCoachCorner") { showCoach = true }
+                if UserDefaults.standard.bool(forKey: "openCoachChat") { showCoachChat = true }
+                #endif
             }
+            // Drop the optimistic overlay only once the persisted tags catch up,
+            // so the mood capsules never flash back to the pre-commit state.
+            .onChange(of: todayCheckinTags) { _, newTags in
+                if checkinDraft == newTags { checkinDraft = nil }
+            }
+            // Never lose a pending check-in: flush before the app suspends or the
+            // screen goes away (the 400 ms debounce may not have fired yet).
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { commitCheckinDraft() }
+            }
+            .onDisappear { commitCheckinDraft() }
             .sheet(isPresented: $showExploreLibrary) {
                 let templates = RoutineTemplateCatalog.validTemplates(from: RoutineTemplateCatalog.load(), exercises: exercises)
                 RoutineLibraryView(
@@ -231,7 +456,30 @@ struct HomeView: View {
     }
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
+        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
+    }
+
+    /// Shown in place of "Up next" when no routine exists yet — the way into
+    /// a plan for users who skipped the starter program.
+    private var explorePromptCard: some View {
+        Button {
+            showExploreLibrary = true
+        } label: {
+            Card {
+                HStack(spacing: Space.md) {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 38, height: 38)
+                        .background(theme.accentSoft)
+                        .clipShape(Circle())
+                    Text("Find your program").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+        .buttonStyle(PressableButtonStyle())
     }
 
     private var readinessEmptyState: some View {
@@ -246,15 +494,26 @@ struct HomeView: View {
                         .clipShape(Circle())
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Ready when you are").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Connect Health or add a training program to build your baseline.")
+                        Text("Connect Apple Health or add a training program to build your baseline.")
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                 }
                 HStack(spacing: Space.md) {
-                    Button("Connect Health") { showSettings = true }
-                        .font(.bodyStrong)
-                        .buttonStyle(.glassProminent)
-                        .tint(theme.accent)
+                    // Triggers the Health permission directly — no detour
+                    // through the full Settings sheet to find the right card.
+                    Button(connectingHealth ? "Connecting…" : "Connect Apple Health") {
+                        connectingHealth = true
+                        Task {
+                            _ = await HealthService.shared.requestAuthorization()
+                            await HealthWorkoutImporter.shared.importRecent(in: modelContext)
+                            healthMetrics.refresh(force: true)
+                            connectingHealth = false
+                        }
+                    }
+                    .font(.bodyStrong)
+                    .buttonStyle(.glassProminent)
+                    .tint(theme.accent)
+                    .disabled(connectingHealth)
                     Button("Explore programs") { showExploreLibrary = true }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
@@ -303,10 +562,31 @@ struct HomeView: View {
     }
 
     private var weekCard: some View {
-        let week = weekMemo(AnalyticsFingerprint.of(workouts)) { analytics.thisWeek() }
+        let now = Date()
+        let interval = TrainingWeekSupport.interval(containing: now)
+        let week = weekMemo("\(AnalyticsFingerprint.of(workouts))|\(interval.start.timeIntervalSinceReferenceDate)") {
+            analytics.thisWeek()
+        }
+        let days = TrainingWeekSupport.days(workouts: workouts, containing: now)
         return Card {
             VStack(alignment: .leading, spacing: Space.lg) {
-                Text("This week").font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+                    Text("This week")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer(minLength: Space.md)
+                    Text(TrainingWeekSupport.rangeLabel(containing: now))
+                        .font(.tag)
+                        .foregroundStyle(theme.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .accessibilityIdentifier("home-week-date-range")
+                }
+
+                HomeWeekCalendarStrip(days: days)
+
+                TrainingLoadGauge(comparison: recovery.trainingLoad)
+
                 HStack {
                     StatColumn(label: "Workouts", value: "\(week.workoutCount)")
                     StatColumn(label: "Time", value: Fmt.durationShort(week.durationSeconds))
@@ -317,16 +597,195 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Welcome back (F10)
+
+    @AppStorage("welcomeBackPendingGapDays") private var welcomeBackGapDays = 0
+
+    private var trainedToday: Bool {
+        workouts.contains { $0.endedAt != nil && $0.deletedAt == nil && Calendar.current.isDateInToday($0.startedAt) }
+    }
+
+    /// Re-entry after a 7+ day lapse: most lapsed users DO come back — the
+    /// mistake is treating their return like a fresh start or shaming the
+    /// gap. One card: acknowledge, offer a deliberately lighter first
+    /// session (coach's reduce-volume dose), get out of the way.
+    private var welcomeBackCard: some View {
+        Card(fill: theme.accentSoft) {
+            VStack(alignment: .leading, spacing: Space.md) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Welcome back")
+                        .font(.cardTitle)
+                        .foregroundStyle(theme.textPrimary)
+                    Text("It's been \(welcomeBackGapDays) days. A lighter first session is the fastest way back.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: Space.sm) {
+                    if let suggestion,
+                       let effective = CoachAdjustments.effectivePlan(
+                           daily: CoachAdjustments.plan(for: .reduceVolume),
+                           weeklyDeloadActive: weeklyDeloadActive
+                       ) {
+                        PrimaryButton(title: "Ease back in", systemImage: "figure.walk") {
+                            welcomeBackGapDays = 0
+                            reviewRequest = CoachReviewRequest(plan: effective.plan, routine: suggestion.routine, sourceLabel: effective.sourceLabel)
+                        }
+                    }
+                    SecondaryButton(title: "I've got this") {
+                        welcomeBackGapDays = 0
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Morning check-in strip
+
+    /// The check-in's output (reason chips) leads the hero card, so its input
+    /// lives on the same screen: one row of tags, gone once answered. The full
+    /// card with explanations stays on the Recovery screen.
+    private var showsCheckinStrip: Bool { todayCheckinTags.isEmpty || checkinStripEngaged }
+
+    private var morningCheckinStrip: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text("How do you feel?")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(CheckinTags.all, id: \.id) { tag in
+                        let on = effectiveCheckinTags.contains(tag.id)
+                        Button {
+                            checkinStripEngaged = true
+                            toggleCheckinTag(tag.id)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: tag.icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .symbolEffect(.bounce, value: reduceMotion ? false : on)
+                                Text(tag.label).font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(on ? .white : theme.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(on ? theme.accent : theme.surfaceElevated))
+                            .animation(Motion.tap, value: on)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                        .accessibilityIdentifier("home-checkin-\(tag.id)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Toggle is optimistic: it updates the draft immediately (the capsule
+    /// repaints from the draft, never waiting on the persist) and debounces
+    /// the persist so rapid multi-tag tapping neither writes to disk nor
+    /// re-runs RecoveryEngine per tap.
+    private func toggleCheckinTag(_ tag: String) {
+        var tags = effectiveCheckinTags
+        if let index = tags.firstIndex(of: tag) {
+            tags.remove(at: index)
+        } else {
+            tags.append(tag)
+        }
+        checkinDraft = tags
+        scheduleCheckinCommit()
+    }
+
+    private func scheduleCheckinCommit() {
+        checkinCommitTask?.cancel()
+        checkinCommitTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            commitCheckinDraft()
+        }
+    }
+
+    /// Persist the pending mood tags. Idempotent and safe to call from the
+    /// debounce, on scene-background, and on disappear — a nil/unchanged draft
+    /// is a no-op, so a tapped-then-backgrounded check-in is never lost. Writing
+    /// `model.tags` here is what finally moves `todayCheckinTags`, so this is the
+    /// single point where the (memoized) recovery recompute is triggered.
+    private func commitCheckinDraft() {
+        checkinCommitTask?.cancel()
+        checkinCommitTask = nil
+        guard let tags = checkinDraft else { return }
+        guard tags != todayCheckinTags else { checkinDraft = nil; return }
+        let model: DailyCheckinModel
+        if let existing = todayCheckin {
+            model = existing
+        } else {
+            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
+            modelContext.insert(model)
+        }
+        model.tags = tags
+        model.updatedAt = Date()
+        try? modelContext.save()
+        // Draft is cleared by the todayCheckinTags onChange once the write is
+        // reflected, so the capsule never flickers back mid-commit.
+    }
+
+    /// The direct coach chat presented from Home when Coach's Corner is gated
+    /// off. Same view the Corner uses, wired with today's suggested session and
+    /// daily coach dose so advice can still turn into a one-tap start — the
+    /// saved routine is never modified (`CoachAdjustments.apply` mutates only
+    /// the freshly started workout).
+    @ViewBuilder private var coachChatSheet: some View {
+        let context = AICoachContext.build(
+            workouts: workouts, routines: routines, exercises: exercises,
+            recovery: recovery, suggestion: suggestion
+        )
+        let effective: (plan: CoachAdjustments.Plan, sourceLabel: String)? = {
+            guard let suggestion else { return nil }
+            let global = CoachAdjustments.plan(for: recovery.action)
+            let local = recovery.action == .trainAsPlanned
+                ? CoachAdjustments.localizedPlan(for: RoutineDoseContext.make(
+                    routine: suggestion.routine, workouts: workouts,
+                    exercises: exercises, recovery: recovery))
+                : nil
+            return CoachAdjustments.effectivePlan(daily: global ?? local, weeklyDeloadActive: weeklyDeloadActive)
+        }()
+        AICoachChatView(
+            context: context,
+            coachPlan: effective?.plan,
+            suggestedRoutineName: suggestion?.routine.name,
+            onApplyPlan: effective != nil ? { plan in
+                guard let suggestion else { return }
+                appState.requestStart {
+                    let workout = WorkoutFactory.start(
+                        routine: suggestion.routine, exercises: exercises,
+                        setupNotes: setupNotes, in: modelContext)
+                    CoachAdjustments.apply(plan, to: workout, in: modelContext)
+                    appState.showingLogger = true
+                }
+            } : nil
+        )
+    }
+
     private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
-        let targetReport = targetRecoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(routine.id)|\(routine.updatedAt.timeIntervalSince1970)") {
-            RecoveryEngine(
+        let doseContext = targetRecoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(todayCheckinTags.joined(separator: ","))|\(routine.id)|\(routine.updatedAt.timeIntervalSince1970)") {
+            RoutineDoseContext.make(
+                routine: routine,
                 workouts: workouts,
                 exercises: exercises,
-                healthMetrics: HealthMetricsStore.shared.metrics,
-                targetMuscles: targetMuscles(for: routine)
-            ).report()
+                recovery: recovery
+            )
         }
-        let coachPlan = CoachAdjustments.plan(for: targetReport.action)
+        let globalCoachPlan = CoachAdjustments.plan(for: recovery.action)
+        let localCoachPlan = recovery.action == .trainAsPlanned
+            ? CoachAdjustments.localizedPlan(for: doseContext)
+            : nil
+        // A weekly deload (Coach's Corner) always wins outright over the
+        // daily call — see `CoachAdjustments.effectivePlan` — so the
+        // "lighter localized version" framing only applies when nothing
+        // weekly is overriding it.
+        let effective = CoachAdjustments.effectivePlan(daily: globalCoachPlan ?? localCoachPlan, weeklyDeloadActive: weeklyDeloadActive)
+        let coachPlan = effective?.plan
+        let isLocalizedCoachPlan = !weeklyDeloadActive && globalCoachPlan == nil && localCoachPlan != nil
         // This is THE answer to "what should I do today" — the one card on
         // Home that should visually outrank everything else, so its Start
         // button is a full-width PrimaryButton, not a small corner capsule.
@@ -344,14 +803,11 @@ struct HomeView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: targetReport.action.systemImage)
-                            .font(.system(size: 11, weight: .bold))
-                        Text("For \(routine.name): \(targetReport.preWorkoutAdjustment)")
-                            .font(.tag)
-                            .lineLimit(2)
-                    }
-                    .foregroundStyle(targetReport.action.tint)
+                    // No readiness action line here: the RecoveryHeroCard above
+                    // already makes today's call, and per-muscle state lives in
+                    // Recovery → Per muscle. This card answers one question —
+                    // "what's next" — and the coach button below carries any
+                    // adjustment.
                 }
 
                 // Always "Start" — the coach's modified dose lives entirely
@@ -365,22 +821,19 @@ struct HomeView: View {
                 }
                 .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
 
-                // One-tap coach modification: today only, routine untouched.
-                if let coachPlan {
+                // Advice→action, review-first: today's dose is fully
+                // editable before anything starts (Coach's Corner review).
+                if let coachPlan, let effective {
                     Button {
-                        appState.requestStart {
-                            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                            CoachAdjustments.apply(coachPlan, to: workout, in: modelContext)
-                            appState.showingLogger = true
-                        }
+                        reviewRequest = CoachReviewRequest(plan: coachPlan, routine: routine, sourceLabel: effective.sourceLabel)
                     } label: {
                         HStack(spacing: Space.sm) {
                             Image(systemName: "wand.and.stars")
                                 .font(.system(size: 13, weight: .bold))
                             VStack(alignment: .leading, spacing: 1) {
-                                Text("Start coach's version")
+                                Text(isLocalizedCoachPlan ? "Review lighter \(doseContext.affectedMuscleNames) version" : "Review coach's version")
                                     .font(.system(size: 14, weight: .bold))
-                                Text("\(coachPlan.summary) · routine unchanged")
+                                Text("\(effective.sourceLabel) · \(coachPlan.summary) · routine unchanged")
                                     .font(.system(size: 11, weight: .medium))
                                     .opacity(0.85)
                             }
@@ -388,14 +841,14 @@ struct HomeView: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 11, weight: .bold))
                         }
-                        .foregroundStyle(targetReport.action.tint)
+                        .foregroundStyle(recovery.action.tint(in: theme))
                         .padding(10)
                         .frame(maxWidth: .infinity)
-                        .background(targetReport.action.tint.opacity(0.12))
+                        .background(recovery.action.tint(in: theme).opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("start-coach-version-\(routine.name)")
+                    .accessibilityIdentifier("review-coach-version-\(routine.name)")
                 }
             }
         }
@@ -404,16 +857,6 @@ struct HomeView: View {
                 .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
                 .allowsHitTesting(false)
         )
-    }
-
-    private func targetMuscles(for routine: RoutineModel) -> [String] {
-        var muscles: [String] = []
-        for routineExercise in routine.exercises {
-            guard let exercise = exerciseByID[routineExercise.exerciseID] else { continue }
-            muscles.append(contentsOf: exercise.primaryMuscles)
-        }
-        var seen = Set<String>()
-        return muscles.map { $0.lowercased() }.filter { seen.insert($0).inserted }
     }
 
     private var quickStart: some View {
@@ -489,14 +932,17 @@ struct HomeView: View {
                     .buttonStyle(PressableButtonStyle())
                 }
             }
-            if quickStartEditing {
-                Button("Done") {
+            Button(quickStartEditing ? "Done" : "Edit", systemImage: quickStartEditing ? "checkmark" : "pencil") {
+                if quickStartEditing {
                     dismissQuickStartEdit()
+                } else {
+                    withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
                 }
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(theme.accent)
-                .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(theme.accent)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityIdentifier("home-quick-start-edit")
         }
     }
 
@@ -506,7 +952,7 @@ struct HomeView: View {
         return actions.filter { action in
             switch action.kind {
             case .cardio: true
-            case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil }
+            case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }
             case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
             }
         }
@@ -552,7 +998,7 @@ struct HomeView: View {
             case .cardio(let modality):
                 _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
             case .routine(let id):
-                guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil }) else { return }
+                guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
                 _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
             case .yoga(let slug):
                 guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }
@@ -600,7 +1046,13 @@ struct HomeView: View {
     }
 }
 
-enum HomeRoute: Hashable { case recovery }
+enum HomeRoute: Hashable {
+    case recovery
+    case sleep
+    case strain
+    case health
+    case calendar
+}
 
 private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
     enum Kind: Hashable {
@@ -913,48 +1365,123 @@ private struct QuickStartAddSheet: View {
     }
 }
 
-/// The compact readiness card shown on Home.
+/// Home's action-first guidance. The metric grid below owns navigation and
+/// score exploration; this block answers only "what should I do today?"
 struct RecoveryHeroCard: View {
     @Environment(\.theme) private var theme
+    @State private var isExpanded = true
     let report: RecoveryEngine.Report
+    let source: HomeDashboardSource
+    let isRefreshing: Bool
 
     var body: some View {
         Card {
-            HStack(spacing: Space.lg) {
-                ZStack {
-                    ProgressRing(progress: report.displayScore, lineWidth: 10, color: theme.readinessColor(report.displayScore))
-                        .frame(width: 76, height: 76)
-                    VStack(spacing: 0) {
-                        Text("\(Int(report.displayScore * 100))")
-                            .font(.system(size: 24, weight: .bold)).foregroundStyle(theme.textPrimary)
-                        Text("ready").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text("Recovery").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
-                        Image(systemName: report.action.systemImage)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(report.action.tint)
-                        Text(report.action.title)
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(report.action.tint)
-                    }
-                    Text(report.recommendation)
-                        .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: isExpanded ? Space.md : 0) {
+                HStack(spacing: Space.sm) {
+                    Text("Today's recommendation")
+                        .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 6) {
-                        ForEach(report.reasonChips.prefix(2)) { chip in
-                            Tag(text: chip.text, color: chip.tone.foreground, background: chip.tone.background)
-                        }
-                        if report.confidence < 0.75 {
-                            Tag(text: "Building baseline", color: theme.warmup, background: theme.warmup.opacity(0.14))
-                        }
+                    Spacer(minLength: Space.sm)
+                    if isRefreshing, source != .loading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(theme.textTertiary)
                     }
+                    Button {
+                        withAnimation(.snappy(duration: 0.24)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isExpanded ? "Collapse today's recommendation" : "Expand today's recommendation")
+                    .accessibilityIdentifier("home-recommendation-disclosure")
                 }
-                Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
+
+                if isExpanded {
+                    guidance
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .accessibilityIdentifier("home-recommendation-details")
+                }
             }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var guidance: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            switch source {
+            case .loading:
+                HStack(spacing: Space.sm) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(theme.accent)
+                    Text("Crunching the numbers...")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                }
+            case .cached(_, let cache):
+                if cache.baselineReady, let action = RecoveryEngine.Action(rawValue: cache.actionRaw) {
+                    recommendationBody(
+                        action: action,
+                        recommendation: cache.recommendation,
+                        reasons: cache.reasonTexts)
+                } else {
+                    buildingBody
+                }
+            case .live:
+                if report.baselineReady {
+                    recommendationBody(
+                        action: report.action,
+                        recommendation: report.recommendation,
+                        reasons: report.reasonChips.prefix(2).map(\.text))
+                } else {
+                    buildingBody
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var buildingBody: some View {
+        Group {
+            Text("Building your baseline")
+                .font(.bodyStrong)
+                .foregroundStyle(theme.textPrimary)
+            Text("Keep logging and wearing your watch to unlock daily guidance.")
+                .font(.system(size: 13))
+                .foregroundStyle(theme.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private func recommendationBody(
+        action: RecoveryEngine.Action,
+        recommendation: String,
+        reasons: [String]
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: action.systemImage)
+                .font(.system(size: 12, weight: .bold))
+            Text(action.title)
+                .font(.system(size: 14, weight: .bold))
+        }
+        .foregroundStyle(action.tint(in: theme))
+        Text(recommendation)
+            .font(.system(size: 13))
+            .foregroundStyle(theme.textPrimary)
+            .lineLimit(3)
+        let joined = reasons.joined(separator: "  |  ")
+        if !joined.isEmpty {
+            Text(joined)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(2)
         }
     }
 }

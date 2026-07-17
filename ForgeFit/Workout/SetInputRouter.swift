@@ -24,6 +24,10 @@ final class SetInputRouter {
 
     private(set) var active: Actions?
     @ObservationIgnored private var ownerToken: String?
+    /// See `scheduleAccessoryRefresh` — a guaranteed second publish shortly
+    /// after every registration, so the root toolbar can't get stuck on a
+    /// stale/empty accessory view.
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     func register(
         token: String,
@@ -34,6 +38,7 @@ final class SetInputRouter {
     ) {
         ownerToken = token
         active = Actions(onNext: onNext, onComplete: onComplete, completeTitle: completeTitle, onDismiss: onDismiss)
+        scheduleAccessoryRefresh(for: token)
     }
 
     /// Only clears when `token` still owns the toolbar — focus moving from
@@ -43,5 +48,29 @@ final class SetInputRouter {
         guard ownerToken == token else { return }
         ownerToken = nil
         active = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+
+    /// On a *freshly presented* logger (right after MiniWorkoutBar collapses
+    /// and re-expands it), `ActiveWorkoutLoggerView` and every set row are
+    /// brand-new view instances. The very first field to gain focus can ask
+    /// UIKit for its keyboard accessory in the same beat this class publishes
+    /// `active` — before the root `.toolbar(placement: .keyboard)` has
+    /// finished subscribing to this object's Observation and pushed a
+    /// `reloadInputViews()` through the SwiftUI/UIKit bridge. When that
+    /// happens the keyboard opens with no accessory at all, and the pills
+    /// only show up "eventually", once some later, unrelated state change
+    /// happens to trigger another toolbar diff. Re-publishing the same
+    /// `active` value one run-loop tick later guarantees that second diff
+    /// ourselves instead of leaving it to chance, so the pills appear
+    /// deterministically on first focus every time.
+    private func scheduleAccessoryRefresh(for token: String) {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled, self.ownerToken == token, let current = self.active else { return }
+            self.active = current
+        }
     }
 }

@@ -1,0 +1,113 @@
+// ForgeFit — CloudKit public-database schema for the social feature.
+//
+// Container: iCloud.org.xpetsllc.ForgeFit  (public database)
+//
+// Import into the CloudKit Console (Development environment) or with
+//   cktool import-schema --team-id <TEAM> --container-id iCloud.org.xpetsllc.ForgeFit \
+//     --environment development --file cloudkit-social-schema.ckdb
+// then Deploy Schema Changes to Production before TestFlight.
+//
+// Record types + fields also auto-create on first write in Development, but
+// query/sort INDEXES and record-level SECURITY do NOT — which is what this file
+// pins. Index rationale is noted per field. Security model: anyone reads
+// (public profiles/workouts/leaderboards), any signed-in iCloud user creates,
+// only the record's creator can modify or delete it.
+
+DEFINE SCHEMA
+
+    // A user's public profile. recordName = the CloudKit user record id.
+    RECORD TYPE UserProfile (
+        handle               STRING QUERYABLE SEARCHABLE,  // future handle search
+        displayName          STRING,
+        totalXP              INT64 SORTABLE,                // overall leaderboard
+        workoutCount         INT64,
+        lifetimeHours        DOUBLE,
+        visibility           STRING,
+        discoverable         INT64 QUERYABLE,               // global leaderboard filter
+        updatedAt            TIMESTAMP,
+        lifetimeVolumeKg     DOUBLE SORTABLE,               // strength leaderboard
+        bestE1RMKg           DOUBLE SORTABLE,               // strength leaderboard
+        cardioDistanceMeters DOUBLE SORTABLE,               // cardio leaderboard
+        cardioMinutes        DOUBLE SORTABLE,               // cardio leaderboard
+        yogaMinutes          DOUBLE SORTABLE,               // yoga leaderboard
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    // Handle uniqueness registry. recordName = the normalized handle, so a
+    // second claimant collides on the primary key. Looked up by id only.
+    RECORD TYPE HandleClaim (
+        ownerID STRING,
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    // A published, health-safe workout. recordName = the workout UUID.
+    // `payload` is the JSON-encoded SharedWorkoutDTO (training data only).
+    RECORD TYPE SharedWorkout (
+        ownerID         STRING QUERYABLE,      // recent-workouts query
+        publishedAt     TIMESTAMP SORTABLE,    // recent-workouts sort
+        startedAt       TIMESTAMP,
+        title           STRING,
+        volumeKg        DOUBLE,
+        workingSets     INT64,
+        reps            INT64,
+        durationSeconds INT64,
+        exerciseCount   INT64,
+        distanceMeters  DOUBLE,
+        kind            STRING,
+        payload         BYTES,
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    // Follow edge. recordName = "<follower>__<followee>" (idempotent).
+    RECORD TYPE Follow (
+        followerID STRING QUERYABLE,   // "who I follow" query
+        followeeID STRING QUERYABLE,   // "my followers" query (future)
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    // Like. recordName = "<workoutID>__<liker>" (idempotent).
+    RECORD TYPE Like (
+        workoutID STRING QUERYABLE,   // like-count query
+        likerID   STRING QUERYABLE,   // "workouts I liked" (future)
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );

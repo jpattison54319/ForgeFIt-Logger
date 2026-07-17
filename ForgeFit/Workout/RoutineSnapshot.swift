@@ -19,6 +19,9 @@ struct RoutineSnapshot: Equatable {
         let targetRPE: Double?
         let targetRIR: Int?
         let targetDurationSeconds: Int?
+        let targetDistanceMeters: Double?
+        let plannedMiniSetCount: Int?
+        let plannedMiniRepsJSON: String?
 
         init(of set: RoutineSetModel) {
             id = set.id
@@ -30,6 +33,9 @@ struct RoutineSnapshot: Equatable {
             targetRPE = set.targetRPE
             targetRIR = set.targetRIR
             targetDurationSeconds = set.targetDurationSeconds
+            targetDistanceMeters = set.targetDistanceMeters
+            plannedMiniSetCount = set.plannedMiniSetCount
+            plannedMiniRepsJSON = set.plannedMiniRepsJSON
         }
     }
 
@@ -40,6 +46,11 @@ struct RoutineSnapshot: Equatable {
         let supersetGroup: Int?
         let notes: String?
         let intervalPlanJSON: String?
+        /// Captured alongside the interval plan: the yoga flow builder also
+        /// saves eagerly, so leaving this out made "Discard Changes" keep
+        /// flow edits — and flow-only edits skipped the discard prompt
+        /// entirely (the synthesized Equatable never saw them).
+        let yogaFlowJSON: String?
         let sets: [SetSnapshot]
 
         init(of exercise: RoutineExerciseModel) {
@@ -49,6 +60,7 @@ struct RoutineSnapshot: Equatable {
             supersetGroup = exercise.supersetGroup
             notes = exercise.notes
             intervalPlanJSON = exercise.intervalPlanJSON
+            yogaFlowJSON = exercise.yogaFlowJSON
             sets = exercise.sets.sorted { $0.position < $1.position }.map(SetSnapshot.init)
         }
     }
@@ -88,6 +100,7 @@ struct RoutineSnapshot: Equatable {
             model.supersetGroup = exerciseSnapshot.supersetGroup
             model.notes = exerciseSnapshot.notes
             model.intervalPlanJSON = exerciseSnapshot.intervalPlanJSON
+            model.yogaFlowJSON = exerciseSnapshot.yogaFlowJSON
             model.updatedAt = Date()
             restoreSets(exerciseSnapshot.sets, onto: model, userID: routine.userID, in: context)
             restored.append(model)
@@ -128,6 +141,9 @@ struct RoutineSnapshot: Equatable {
             model.targetRPE = snapshot.targetRPE
             model.targetRIR = snapshot.targetRIR
             model.targetDurationSeconds = snapshot.targetDurationSeconds
+            model.targetDistanceMeters = snapshot.targetDistanceMeters
+            model.plannedMiniSetCount = snapshot.plannedMiniSetCount
+            model.plannedMiniRepsJSON = snapshot.plannedMiniRepsJSON
             restored.append(model)
         }
 

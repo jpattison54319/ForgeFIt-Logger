@@ -230,7 +230,8 @@ struct WrappedTests {
                 workouts.append(strengthWorkout(on: date(2026, month, day), exercise: bench))
             }
         }
-        // Streak: five consecutive days in September.
+        // Extra September sessions should remain ordinary active days, not a
+        // streak-specific celebration page.
         for day in 7...11 {
             workouts.append(strengthWorkout(on: date(2026, 9, day), exercise: bench))
         }
@@ -238,11 +239,8 @@ struct WrappedTests {
         let payload = try #require(builder.buildYear(2026))
         let kinds = pages(payload)
         #expect(payload.title == "2026 Wrapped")
-        #expect(kinds.contains("longestStreak"))
+        #expect(!kinds.contains("longestStreak"))
         #expect(kinds.contains("topWorkouts"))
-        for case let .longestStreak(streak) in payload.pages {
-            #expect(streak.days == 5)
-        }
         // Yearly is celebration-weighted: no coaching pages.
         #expect(!kinds.contains("nextFocus"))
         #expect(!kinds.contains("heldBack"))
@@ -333,18 +331,9 @@ struct WrappedTests {
 
     // MARK: - Service (persistence, idempotency, viewed)
 
-    /// Returns the CONTAINER (not just a context): a ModelContext holds its
-    /// container weakly, so returning `container.mainContext` alone lets the
-    /// container deallocate and the first fetch crashes inside SwiftData.
-    private func makeContainer() throws -> ModelContainer {
-        let schema = Schema(ForgeDataSchema.models)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
-    }
-
     @Test func generationIsIdempotent() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let bench = benchPress()
         context.insert(bench)
         for day in [2, 9, 16, 23] {
@@ -366,16 +355,16 @@ struct WrappedTests {
     }
 
     @Test func emptyMonthGeneratesNothing() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let created = WrappedReportService.generateIfDue(in: context, now: date(2026, 7, 1), calendar: cal)
         #expect(created.isEmpty)
         #expect(try context.fetch(FetchDescriptor<WrappedReportModel>()).isEmpty)
     }
 
     @Test func lateSyncedWorkoutRefreshesReportInsideWindowOnly() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let bench = benchPress()
         context.insert(bench)
         for day in [2, 9, 16] {
@@ -406,8 +395,8 @@ struct WrappedTests {
     }
 
     @Test func markViewedIsOneWayAndPreservedByRefresh() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let bench = benchPress()
         context.insert(bench)
         context.insert(strengthWorkout(on: date(2026, 6, 9), exercise: bench))
@@ -430,8 +419,8 @@ struct WrappedTests {
     }
 
     @Test func yearlyGeneratesInJanuaryAlongsideDecemberMonthly() throws {
-        let container = try makeContainer()
-        let context = container.mainContext
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
         let bench = benchPress()
         context.insert(bench)
         for month in [3, 6, 9, 12] {

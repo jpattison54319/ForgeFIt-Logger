@@ -1,920 +1,1034 @@
 [
-  {
-    "slug": "mountain-pose",
-    "name": "Mountain Pose",
-    "sanskrit": "Tadasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": ["abdominals", "glutes"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Stand tall with your feet together and arms by your sides.", "Ground down through all four corners of each foot."],
-      "hold": ["Lengthen through the crown of your head.", "Soften your shoulders away from your ears."],
-      "exit": "Take one full breath in and out."
-    },
-    "breathCadence": 4,
-    "contraindications": []
+ {
+  "slug": "downward-facing-dog",
+  "name": "Downward-Facing Dog",
+  "sanskrit": "Adho Mukha Svanasana",
+  "category": "inversion",
+  "primaryMuscles": [
+   "hamstrings",
+   "calves"
+  ],
+  "secondaryMuscles": [
+   "shoulders",
+   "lats",
+   "spine"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 45,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "Plant your palms shoulder width apart and lift your hips high.",
+    "Make an upside-down V with your body."
+   ],
+   "hold": [
+    "Press the floor away and let your head hang.",
+    "Pedal your heels toward the mat, one at a time."
+   ],
+   "exit": "Lower your knees softly to the mat."
   },
-  {
-    "slug": "upward-salute",
-    "name": "Upward Salute",
-    "sanskrit": "Urdhva Hastasana",
-    "primaryMuscles": ["shoulders", "spine"],
-    "secondaryMuscles": ["lats", "abdominals"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Sweep your arms out and up overhead.", "Press your palms together or keep them shoulder width."],
-      "hold": ["Reach up through your fingertips.", "Keep your ribs soft and your gaze forward."],
-      "exit": "Release your arms back down by your sides."
-    },
-    "breathCadence": 4,
-    "contraindications": ["shoulder injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "wrist injury",
+   "high blood pressure",
+   "late pregnancy"
+  ]
+ },
+ {
+  "slug": "low-lunge",
+  "name": "Low Lunge",
+  "sanskrit": "Anjaneyasana",
+  "category": "hipOpener",
+  "primaryMuscles": [
+   "hips",
+   "quadriceps"
+  ],
+  "secondaryMuscles": [
+   "hamstrings",
+   "glutes"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 40,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Step one foot forward between your hands.",
+    "Lower your back knee to the mat and sweep your arms up."
+   ],
+   "hold": [
+    "Sink your hips forward and down.",
+    "Feel the stretch along the front of your back hip."
+   ],
+   "exit": "Frame your front foot with your hands and step back."
   },
-  {
-    "slug": "standing-forward-fold",
-    "name": "Standing Forward Fold",
-    "sanskrit": "Uttanasana",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["calves", "lower back"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Hinge at your hips and fold forward.", "Let your head and arms hang heavy."],
-      "hold": ["Bend your knees as much as you need.", "With each exhale, release a little deeper."],
-      "exit": "Rise up slowly, one vertebra at a time."
-    },
-    "breathCadence": 4,
-    "contraindications": ["low blood pressure", "hamstring tear"]
+  "breathCadence": 4,
+  "contraindications": [
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "high-lunge",
+  "name": "High Lunge",
+  "sanskrit": "Ashta Chandrasana",
+  "category": "standing",
+  "primaryMuscles": [
+   "quadriceps",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "glutes",
+   "calves",
+   "abdominals"
+  ],
+  "unilateral": true,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "Step one foot forward and stay high on your back toes.",
+    "Bend your front knee over your ankle and reach your arms up."
+   ],
+   "hold": [
+    "Press back through your back heel.",
+    "Square your hips toward the front of your mat."
+   ],
+   "exit": "Lower your hands and step back to your fold or plank."
   },
-  {
-    "slug": "halfway-lift",
-    "name": "Halfway Lift",
-    "sanskrit": "Ardha Uttanasana",
-    "primaryMuscles": ["hamstrings", "lower back"],
-    "secondaryMuscles": ["spine"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 15,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["From your fold, slide your hands up your shins.", "Lift your chest to a flat back."],
-      "hold": ["Lengthen from your tailbone to the crown of your head.", "Draw your shoulder blades together."],
-      "exit": "Fold back down over your legs."
-    },
-    "breathCadence": 4,
-    "contraindications": []
+  "breathCadence": 4,
+  "contraindications": [
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "warrior-ii",
+  "name": "Warrior II",
+  "sanskrit": "Virabhadrasana II",
+  "category": "standing",
+  "primaryMuscles": [
+   "quadriceps",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "glutes",
+   "shoulders",
+   "adductors"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "Open your hips and shoulders to the side of your mat.",
+    "Extend your arms long, front and back."
+   ],
+   "hold": [
+    "Stack your front knee over your ankle.",
+    "Gaze softly over your front fingertips."
+   ],
+   "exit": "Straighten your front leg and windmill your hands down."
   },
-  {
-    "slug": "chair-pose",
-    "name": "Chair Pose",
-    "sanskrit": "Utkatasana",
-    "primaryMuscles": ["quadriceps", "glutes"],
-    "secondaryMuscles": ["shoulders", "abdominals", "calves"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Bend your knees and sink your hips back like sitting into a chair.", "Sweep your arms up alongside your ears."],
-      "hold": ["Keep your weight in your heels.", "Lift your chest and drop your shoulders."],
-      "exit": "Press through your feet to stand tall."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "extended-side-angle",
+  "name": "Extended Side Angle",
+  "sanskrit": "Utthita Parsvakonasana",
+  "category": "standing",
+  "primaryMuscles": [
+   "hips",
+   "adductors"
+  ],
+  "secondaryMuscles": [
+   "quadriceps",
+   "lats",
+   "abdominals"
+  ],
+  "unilateral": true,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "From Warrior Two, bring your front forearm to your thigh.",
+    "Reach your top arm over your ear."
+   ],
+   "hold": [
+    "Make one long line from your back heel to your fingertips.",
+    "Roll your chest open toward the ceiling."
+   ],
+   "exit": "Press into your feet and rise back to Warrior Two."
   },
-  {
-    "slug": "downward-facing-dog",
-    "name": "Downward-Facing Dog",
-    "sanskrit": "Adho Mukha Svanasana",
-    "primaryMuscles": ["hamstrings", "calves"],
-    "secondaryMuscles": ["shoulders", "lats", "spine"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 45,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Plant your palms shoulder width apart and lift your hips high.", "Make an upside-down V with your body."],
-      "hold": ["Press the floor away and let your head hang.", "Pedal your heels toward the mat, one at a time."],
-      "exit": "Lower your knees softly to the mat."
-    },
-    "breathCadence": 4,
-    "contraindications": ["wrist injury", "high blood pressure", "late pregnancy"]
+  "breathCadence": 4,
+  "contraindications": [
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "tree-pose",
+  "name": "Tree Pose",
+  "sanskrit": "Vrksasana",
+  "category": "balance",
+  "primaryMuscles": [
+   "hips",
+   "glutes"
+  ],
+  "secondaryMuscles": [
+   "calves",
+   "abdominals",
+   "adductors"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.mind.and.body",
+  "cues": {
+   "entry": [
+    "Shift your weight into one foot.",
+    "Place your other foot on your ankle, calf, or inner thigh \u2014 never the knee."
+   ],
+   "hold": [
+    "Press your foot and leg into each other.",
+    "Find one still point to rest your gaze."
+   ],
+   "exit": "Slowly lower your foot back to the mat."
   },
-  {
-    "slug": "plank-pose",
-    "name": "Plank Pose",
-    "sanskrit": "Phalakasana",
-    "primaryMuscles": ["abdominals"],
-    "secondaryMuscles": ["shoulders", "chest", "quadriceps"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Come to the top of a push-up, shoulders over wrists.", "Make one straight line from head to heels."],
-      "hold": ["Press the floor away and hug your belly in.", "Reach back through your heels."],
-      "exit": "Lower your knees to the mat with control."
-    },
-    "breathCadence": 4,
-    "contraindications": ["wrist injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "ankle injury"
+  ]
+ },
+ {
+  "slug": "dancer-pose",
+  "name": "Dancer Pose",
+  "sanskrit": "Natarajasana",
+  "category": "balance",
+  "primaryMuscles": [
+   "quadriceps",
+   "chest"
+  ],
+  "secondaryMuscles": [
+   "shoulders",
+   "hips",
+   "spine"
+  ],
+  "unilateral": true,
+  "difficulty": "advanced",
+  "defaultHoldSeconds": 20,
+  "symbol": "figure.mind.and.body",
+  "cues": {
+   "entry": [
+    "Catch the inside of one ankle behind you.",
+    "Reach your other arm forward for balance."
+   ],
+   "hold": [
+    "Kick your foot into your hand and let your chest lift.",
+    "Keep your standing leg strong."
+   ],
+   "exit": "Release your ankle gently and return to standing."
   },
-  {
-    "slug": "low-lunge",
-    "name": "Low Lunge",
-    "sanskrit": "Anjaneyasana",
-    "primaryMuscles": ["hips", "quadriceps"],
-    "secondaryMuscles": ["hamstrings", "glutes"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 40,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Step one foot forward between your hands.", "Lower your back knee to the mat and sweep your arms up."],
-      "hold": ["Sink your hips forward and down.", "Feel the stretch along the front of your back hip."],
-      "exit": "Frame your front foot with your hands and step back."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "ankle injury",
+   "low blood pressure",
+   "shoulder injury"
+  ]
+ },
+ {
+  "slug": "cobra-pose",
+  "name": "Cobra Pose",
+  "sanskrit": "Bhujangasana",
+  "category": "backbend",
+  "primaryMuscles": [
+   "spine",
+   "abdominals"
+  ],
+  "secondaryMuscles": [
+   "chest",
+   "shoulders"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 20,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Lie on your belly with palms under your shoulders.",
+    "Press gently to peel your chest off the mat."
+   ],
+   "hold": [
+    "Keep your elbows hugging your ribs.",
+    "Lengthen through the back of your neck."
+   ],
+   "exit": "Lower down slowly, one rib at a time."
   },
-  {
-    "slug": "high-lunge",
-    "name": "High Lunge",
-    "sanskrit": "Ashta Chandrasana",
-    "primaryMuscles": ["quadriceps", "hips"],
-    "secondaryMuscles": ["glutes", "calves", "abdominals"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Step one foot forward and stay high on your back toes.", "Bend your front knee over your ankle and reach your arms up."],
-      "hold": ["Press back through your back heel.", "Square your hips toward the front of your mat."],
-      "exit": "Lower your hands and step back to your fold or plank."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "pregnancy",
+   "wrist injury"
+  ]
+ },
+ {
+  "slug": "upward-facing-dog",
+  "name": "Upward-Facing Dog",
+  "sanskrit": "Urdhva Mukha Svanasana",
+  "category": "backbend",
+  "primaryMuscles": [
+   "spine",
+   "chest"
+  ],
+  "secondaryMuscles": [
+   "shoulders",
+   "triceps",
+   "abdominals"
+  ],
+  "unilateral": false,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 15,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "Press through your palms and straighten your arms.",
+    "Lift your chest and your thighs off the mat."
+   ],
+   "hold": [
+    "Roll your shoulders back and open your collarbones.",
+    "Press the tops of your feet down."
+   ],
+   "exit": "Roll over your toes or lower down to your belly."
   },
-  {
-    "slug": "warrior-i",
-    "name": "Warrior I",
-    "sanskrit": "Virabhadrasana I",
-    "primaryMuscles": ["quadriceps", "hips"],
-    "secondaryMuscles": ["glutes", "shoulders", "calves"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Ground your back heel at a forty-five degree angle.", "Bend your front knee and reach both arms overhead."],
-      "hold": ["Draw your back hip forward to square your hips.", "Sink deeper into your front leg with each exhale."],
-      "exit": "Straighten your front leg and release your arms."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury", "shoulder injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "wrist injury",
+   "pregnancy"
+  ]
+ },
+ {
+  "slug": "bow-pose",
+  "name": "Bow Pose",
+  "sanskrit": "Dhanurasana",
+  "category": "backbend",
+  "primaryMuscles": [
+   "spine",
+   "quadriceps"
+  ],
+  "secondaryMuscles": [
+   "chest",
+   "shoulders",
+   "hips"
+  ],
+  "unilateral": false,
+  "difficulty": "advanced",
+  "defaultHoldSeconds": 20,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Bend your knees and catch the outside of your ankles.",
+    "Kick your feet back to lift your chest and thighs."
+   ],
+   "hold": [
+    "Keep your knees hip width apart.",
+    "Balance on the soft part of your belly and breathe."
+   ],
+   "exit": "Release your ankles gently and lower down."
   },
-  {
-    "slug": "warrior-ii",
-    "name": "Warrior II",
-    "sanskrit": "Virabhadrasana II",
-    "primaryMuscles": ["quadriceps", "hips"],
-    "secondaryMuscles": ["glutes", "shoulders", "adductors"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Open your hips and shoulders to the side of your mat.", "Extend your arms long, front and back."],
-      "hold": ["Stack your front knee over your ankle.", "Gaze softly over your front fingertips."],
-      "exit": "Straighten your front leg and windmill your hands down."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "pregnancy",
+   "shoulder injury"
+  ]
+ },
+ {
+  "slug": "childs-pose",
+  "name": "Child's Pose",
+  "sanskrit": "Balasana",
+  "category": "resting",
+  "primaryMuscles": [
+   "lower back",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "lats",
+   "shoulders"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.cooldown",
+  "cues": {
+   "entry": [
+    "Bring your big toes together and knees wide.",
+    "Sink your hips back to your heels and reach your arms forward."
+   ],
+   "hold": [
+    "Rest your forehead on the mat.",
+    "Let each exhale soften your back a little more."
+   ],
+   "exit": "Walk your hands in and rise up slowly."
   },
-  {
-    "slug": "reverse-warrior",
-    "name": "Reverse Warrior",
-    "sanskrit": "Viparita Virabhadrasana",
-    "primaryMuscles": ["hips", "lats"],
-    "secondaryMuscles": ["quadriceps", "adductors"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["From Warrior Two, flip your front palm and reach up and back.", "Slide your back hand down your back leg."],
-      "hold": ["Keep your front knee bent and heavy.", "Breathe length into your side body."],
-      "exit": "Return to Warrior Two."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 5,
+  "contraindications": [
+   "knee injury",
+   "pregnancy"
+  ]
+ },
+ {
+  "slug": "butterfly-pose",
+  "name": "Butterfly Pose",
+  "sanskrit": "Baddha Konasana",
+  "category": "hipOpener",
+  "primaryMuscles": [
+   "adductors",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "lower back"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Bring the soles of your feet together.",
+    "Let your knees fall open like book pages."
+   ],
+   "hold": [
+    "Hold your feet and sit tall, or fold forward.",
+    "Let gravity do the work on your inner thighs."
+   ],
+   "exit": "Support your knees with your hands as you bring them together."
   },
-  {
-    "slug": "extended-side-angle",
-    "name": "Extended Side Angle",
-    "sanskrit": "Utthita Parsvakonasana",
-    "primaryMuscles": ["hips", "adductors"],
-    "secondaryMuscles": ["quadriceps", "lats", "abdominals"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["From Warrior Two, bring your front forearm to your thigh.", "Reach your top arm over your ear."],
-      "hold": ["Make one long line from your back heel to your fingertips.", "Roll your chest open toward the ceiling."],
-      "exit": "Press into your feet and rise back to Warrior Two."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury"]
+  "breathCadence": 5,
+  "contraindications": [
+   "groin strain",
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "pigeon-pose",
+  "name": "Pigeon Pose",
+  "sanskrit": "Eka Pada Rajakapotasana",
+  "category": "hipOpener",
+  "primaryMuscles": [
+   "glutes",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "abductors",
+   "lower back"
+  ],
+  "unilateral": true,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Bring one shin forward and lay it across the mat.",
+    "Extend your back leg long behind you."
+   ],
+   "hold": [
+    "Square your hips and fold over your front shin.",
+    "Breathe into the deep stretch in your outer hip."
+   ],
+   "exit": "Press into your hands and step your front leg back."
   },
-  {
-    "slug": "triangle-pose",
-    "name": "Triangle Pose",
-    "sanskrit": "Trikonasana",
-    "primaryMuscles": ["hamstrings", "adductors"],
-    "secondaryMuscles": ["hips", "abdominals", "spine"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Straighten your front leg and reach forward.", "Tilt at the hip and bring your hand to your shin or a block."],
-      "hold": ["Stack your shoulders and reach your top arm to the sky.", "Keep both sides of your waist long."],
-      "exit": "Press into your feet and lift your torso upright."
-    },
-    "breathCadence": 4,
-    "contraindications": ["neck injury", "low blood pressure"]
+  "breathCadence": 5,
+  "contraindications": [
+   "knee injury",
+   "hip injury"
+  ]
+ },
+ {
+  "slug": "boat-pose",
+  "name": "Boat Pose",
+  "sanskrit": "Navasana",
+  "category": "core",
+  "primaryMuscles": [
+   "abdominals"
+  ],
+  "secondaryMuscles": [
+   "hips",
+   "quadriceps",
+   "spine"
+  ],
+  "unilateral": false,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 25,
+  "symbol": "figure.core.training",
+  "cues": {
+   "entry": [
+    "Balance on your sit bones and lift your shins parallel to the floor.",
+    "Reach your arms forward alongside your knees."
+   ],
+   "hold": [
+    "Lift through your chest \u2014 don't let your back round.",
+    "Straighten your legs for more challenge, or hold behind your thighs for less."
+   ],
+   "exit": "Lower your feet down with control."
   },
-  {
-    "slug": "pyramid-pose",
-    "name": "Pyramid Pose",
-    "sanskrit": "Parsvottanasana",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["calves", "hips", "spine"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Shorten your stance and square both hips forward.", "Fold over your straight front leg."],
-      "hold": ["Keep a soft bend in your front knee.", "Draw your chest toward your shin with each exhale."],
-      "exit": "Rise with a flat back and step your feet together."
-    },
-    "breathCadence": 4,
-    "contraindications": ["hamstring tear"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "pregnancy"
+  ]
+ },
+ {
+  "slug": "camel-pose",
+  "name": "Camel Pose",
+  "sanskrit": "Ustrasana",
+  "category": "backbend",
+  "primaryMuscles": [
+   "spine",
+   "chest"
+  ],
+  "secondaryMuscles": [
+   "quadriceps",
+   "hips",
+   "shoulders"
+  ],
+  "unilateral": false,
+  "difficulty": "advanced",
+  "defaultHoldSeconds": 20,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Kneel with your hips over your knees, hands on your low back.",
+    "Lift your chest and arch back; reach for your heels if it's there today."
+   ],
+   "hold": [
+    "Keep pressing your hips forward over your knees.",
+    "Let your chest lead the backbend, not your neck."
+   ],
+   "exit": "Bring your hands to your low back and rise up slowly."
   },
-  {
-    "slug": "tree-pose",
-    "name": "Tree Pose",
-    "sanskrit": "Vrksasana",
-    "primaryMuscles": ["hips", "glutes"],
-    "secondaryMuscles": ["calves", "abdominals", "adductors"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Shift your weight into one foot.", "Place your other foot on your ankle, calf, or inner thigh — never the knee."],
-      "hold": ["Press your foot and leg into each other.", "Find one still point to rest your gaze."],
-      "exit": "Slowly lower your foot back to the mat."
-    },
-    "breathCadence": 4,
-    "contraindications": ["ankle injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "neck injury",
+   "low blood pressure"
+  ]
+ },
+ {
+  "slug": "hero-pose",
+  "name": "Hero Pose",
+  "sanskrit": "Virasana",
+  "category": "resting",
+  "primaryMuscles": [
+   "quadriceps"
+  ],
+  "secondaryMuscles": [
+   "hips",
+   "calves"
+  ],
+  "unilateral": false,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.mind.and.body",
+  "cues": {
+   "entry": [
+    "Kneel and sit between your heels, or on a block.",
+    "Rest your hands on your thighs."
+   ],
+   "hold": [
+    "Grow tall through your spine.",
+    "Let your breath settle into an easy rhythm."
+   ],
+   "exit": "Come forward to hands and knees and stretch your legs out."
   },
-  {
-    "slug": "eagle-pose",
-    "name": "Eagle Pose",
-    "sanskrit": "Garudasana",
-    "primaryMuscles": ["shoulders", "hips"],
-    "secondaryMuscles": ["upper back", "quadriceps", "calves"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 25,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Wrap one leg over the other and sink your hips.", "Cross the opposite arm under and wrap your forearms."],
-      "hold": ["Lift your elbows and sink your hips a little lower.", "Squeeze everything toward your midline."],
-      "exit": "Unwind slowly and shake out your arms and legs."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury", "shoulder injury"]
+  "breathCadence": 5,
+  "contraindications": [
+   "knee injury",
+   "ankle injury"
+  ]
+ },
+ {
+  "slug": "mountain-pose",
+  "name": "Mountain Pose",
+  "sanskrit": "Tadasana",
+  "category": "standing",
+  "primaryMuscles": [
+   "quadriceps",
+   "abdominals"
+  ],
+  "secondaryMuscles": [
+   "glutes",
+   "calves",
+   "spine"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.mind.and.body",
+  "cues": {
+   "entry": [
+    "Stand with your big toes touching and your heels slightly apart.",
+    "Spread your weight evenly across all four corners of each foot."
+   ],
+   "hold": [
+    "Reach the crown of your head toward the ceiling and soften your shoulders down.",
+    "Draw your lower belly gently in so your low back stays long."
+   ],
+   "exit": "Soften your knees and move into your next shape."
   },
-  {
-    "slug": "dancer-pose",
-    "name": "Dancer Pose",
-    "sanskrit": "Natarajasana",
-    "primaryMuscles": ["quadriceps", "chest"],
-    "secondaryMuscles": ["shoulders", "hips", "spine"],
-    "unilateral": true,
-    "difficulty": "advanced",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Catch the inside of one ankle behind you.", "Reach your other arm forward for balance."],
-      "hold": ["Kick your foot into your hand and let your chest lift.", "Keep your standing leg strong."],
-      "exit": "Release your ankle gently and return to standing."
-    },
-    "breathCadence": 4,
-    "contraindications": ["ankle injury", "low blood pressure", "shoulder injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "low blood pressure"
+  ]
+ },
+ {
+  "slug": "cat-cow",
+  "name": "Cat-Cow",
+  "sanskrit": "Marjaryasana-Bitilasana",
+  "category": "warmup",
+  "primaryMuscles": [
+   "spine",
+   "abdominals"
+  ],
+  "secondaryMuscles": [
+   "shoulders",
+   "lower back"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Come to hands and knees with your wrists under your shoulders and knees under your hips.",
+    "Start with a long, neutral spine."
+   ],
+   "hold": [
+    "Inhale to drop your belly and lift your chest and tailbone for cow.",
+    "Exhale to round your spine toward the ceiling and tuck your chin for cat.",
+    "Let each breath drive one full wave of the movement."
+   ],
+   "exit": "Return to a neutral spine on hands and knees."
   },
-  {
-    "slug": "standing-figure-four",
-    "name": "Standing Figure Four",
-    "sanskrit": "Utthita Eka Pada Utkatasana",
-    "primaryMuscles": ["glutes", "hips"],
-    "secondaryMuscles": ["quadriceps", "abdominals"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Cross one ankle over the opposite thigh.", "Sit your hips back like a one-legged chair."],
-      "hold": ["Flex your lifted foot to protect your knee.", "Keep your chest tall as your hips sink."],
-      "exit": "Rise up and release your leg with control."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury", "ankle injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "wrist injury",
+   "knee injury"
+  ]
+ },
+ {
+  "slug": "thread-the-needle",
+  "name": "Thread the Needle",
+  "sanskrit": "Parsva Balasana",
+  "category": "warmup",
+  "primaryMuscles": [
+   "shoulders",
+   "spine"
+  ],
+  "secondaryMuscles": [
+   "lats",
+   "lower back"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 45,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "From hands and knees, slide one arm under your chest with the palm facing up.",
+    "Lower that shoulder and ear softly to the mat."
+   ],
+   "hold": [
+    "Keep your hips stacked over your knees.",
+    "Press lightly through your top hand to deepen the twist across your upper back."
+   ],
+   "exit": "Press into your supporting hand and unwind back to hands and knees."
   },
-  {
-    "slug": "wide-legged-forward-fold",
-    "name": "Wide-Legged Forward Fold",
-    "sanskrit": "Prasarita Padottanasana",
-    "primaryMuscles": ["hamstrings", "adductors"],
-    "secondaryMuscles": ["lower back", "calves"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 40,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Step your feet wide and parallel.", "Hinge at your hips and fold forward."],
-      "hold": ["Bring your hands to the floor or a block.", "Let the crown of your head sink toward the mat."],
-      "exit": "Hands to hips, rise up with a flat back."
-    },
-    "breathCadence": 4,
-    "contraindications": ["low blood pressure", "hamstring tear"]
+  "breathCadence": 5,
+  "contraindications": [
+   "recent shoulder injury",
+   "neck injury"
+  ]
+ },
+ {
+  "slug": "standing-forward-fold",
+  "name": "Standing Forward Fold",
+  "sanskrit": "Uttanasana",
+  "category": "forwardFold",
+  "primaryMuscles": [
+   "hamstrings",
+   "lower back"
+  ],
+  "secondaryMuscles": [
+   "calves",
+   "glutes"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 40,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "From standing, hinge at your hips and fold your chest toward your thighs.",
+    "Bend your knees as much as you need to keep your back long."
+   ],
+   "hold": [
+    "Let your head and neck hang completely heavy.",
+    "Shift your weight slightly forward toward the balls of your feet."
+   ],
+   "exit": "Roll up to standing slowly, one vertebra at a time."
   },
-  {
-    "slug": "goddess-pose",
-    "name": "Goddess Pose",
-    "sanskrit": "Utkata Konasana",
-    "primaryMuscles": ["adductors", "quadriceps"],
-    "secondaryMuscles": ["glutes", "hips", "calves"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Step wide and turn your toes out.", "Bend your knees deeply and bring your arms to cactus."],
-      "hold": ["Track your knees over your toes.", "Keep your tailbone tucked and your torso tall."],
-      "exit": "Straighten your legs and step your feet together."
-    },
-    "breathCadence": 4,
-    "contraindications": ["knee injury", "hip injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "high blood pressure"
+  ]
+ },
+ {
+  "slug": "seated-forward-fold",
+  "name": "Seated Forward Fold",
+  "sanskrit": "Paschimottanasana",
+  "category": "forwardFold",
+  "primaryMuscles": [
+   "hamstrings",
+   "lower back"
+  ],
+  "secondaryMuscles": [
+   "calves",
+   "spine"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Sit tall with your legs extended and flex your feet toward you.",
+    "Hinge from your hips and walk your hands down your legs."
+   ],
+   "hold": [
+    "Lead with your chest instead of your forehead to keep your spine long.",
+    "Soften your knees if the backs of your legs feel sharp."
+   ],
+   "exit": "Inhale and roll your spine back up to sitting."
   },
-  {
-    "slug": "half-moon-pose",
-    "name": "Half Moon Pose",
-    "sanskrit": "Ardha Chandrasana",
-    "primaryMuscles": ["hips", "glutes"],
-    "secondaryMuscles": ["hamstrings", "abdominals", "abductors"],
-    "unilateral": true,
-    "difficulty": "advanced",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["From Triangle, bend your front knee and step your back foot in.", "Float your back leg up as your fingertips find the floor or a block."],
-      "hold": ["Stack your hips and open your chest to the side.", "Reach your top arm high and flex your lifted foot."],
-      "exit": "Soften your front knee and lower your back leg with control."
-    },
-    "breathCadence": 4,
-    "contraindications": ["ankle injury", "low blood pressure"]
+  "breathCadence": 5,
+  "contraindications": [
+   "lower back injury",
+   "hamstring strain"
+  ]
+ },
+ {
+  "slug": "wide-legged-forward-fold",
+  "name": "Wide-Legged Forward Fold",
+  "sanskrit": "Prasarita Padottanasana",
+  "category": "forwardFold",
+  "primaryMuscles": [
+   "hamstrings",
+   "adductors"
+  ],
+  "secondaryMuscles": [
+   "lower back",
+   "calves"
+  ],
+  "unilateral": false,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 45,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Step your feet wide with your toes pointing straight ahead.",
+    "Hinge at your hips and bring your hands to the mat beneath your shoulders."
+   ],
+   "hold": [
+    "Press evenly through the outer edges of your feet.",
+    "Let the crown of your head release toward the floor."
+   ],
+   "exit": "Bring your hands to your hips and rise with a flat back."
   },
-  {
-    "slug": "cat-pose",
-    "name": "Cat Pose",
-    "sanskrit": "Marjaryasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": ["upper back", "neck", "abdominals"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 15,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Come to hands and knees, shoulders over wrists.", "Exhale and round your spine to the ceiling."],
-      "hold": ["Tuck your chin and your tailbone.", "Press the floor away between your shoulder blades."],
-      "exit": "Return to a flat, neutral back."
-    },
-    "breathCadence": 4,
-    "contraindications": ["wrist injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "high blood pressure",
+   "hamstring strain"
+  ]
+ },
+ {
+  "slug": "triangle-pose",
+  "name": "Triangle Pose",
+  "sanskrit": "Utthita Trikonasana",
+  "category": "standing",
+  "primaryMuscles": [
+   "hamstrings",
+   "hips"
+  ],
+  "secondaryMuscles": [
+   "adductors",
+   "abdominals",
+   "spine"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.yoga",
+  "cues": {
+   "entry": [
+    "From a wide stance, turn your front toes forward and reach long over your front leg.",
+    "Lower your bottom hand to your shin or a block and stretch your top arm to the ceiling."
+   ],
+   "hold": [
+    "Keep both legs straight without locking your knees.",
+    "Imagine your whole body pressed between two panes of glass."
+   ],
+   "exit": "Press into your feet and lift your torso back upright."
   },
-  {
-    "slug": "cow-pose",
-    "name": "Cow Pose",
-    "sanskrit": "Bitilasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": ["abdominals", "neck", "chest"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 15,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["From hands and knees, inhale and drop your belly.", "Lift your chest and tailbone toward the ceiling."],
-      "hold": ["Draw your shoulders away from your ears.", "Let your gaze lift gently, without crunching your neck."],
-      "exit": "Return to a flat, neutral back."
-    },
-    "breathCadence": 4,
-    "contraindications": ["wrist injury", "neck injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "neck injury",
+   "low blood pressure"
+  ]
+ },
+ {
+  "slug": "happy-baby-pose",
+  "name": "Happy Baby Pose",
+  "sanskrit": "Ananda Balasana",
+  "category": "hipOpener",
+  "primaryMuscles": [
+   "hips",
+   "adductors"
+  ],
+  "secondaryMuscles": [
+   "lower back",
+   "hamstrings"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.cooldown",
+  "cues": {
+   "entry": [
+    "Lie on your back and draw your knees toward your armpits.",
+    "Hold the outer edges of your feet with your soles facing the ceiling."
+   ],
+   "hold": [
+    "Draw your knees down while pressing your tailbone toward the mat.",
+    "Rock gently side to side if that feels good on your low back."
+   ],
+   "exit": "Release your feet and hug your knees into your chest."
   },
-  {
-    "slug": "thread-the-needle",
-    "name": "Thread the Needle",
-    "sanskrit": "Urdhva Mukha Pasasana",
-    "primaryMuscles": ["upper back", "shoulders"],
-    "secondaryMuscles": ["neck", "spine"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 40,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["From hands and knees, slide one arm under your chest.", "Rest your shoulder and ear on the mat."],
-      "hold": ["Let the twist wring out your upper back.", "Soften the weight of your body into the floor."],
-      "exit": "Press into your top hand to unwind back to all fours."
-    },
-    "breathCadence": 5,
-    "contraindications": ["shoulder injury", "neck injury"]
+  "breathCadence": 5,
+  "contraindications": [
+   "knee injury",
+   "late pregnancy"
+  ]
+ },
+ {
+  "slug": "bridge-pose",
+  "name": "Bridge Pose",
+  "sanskrit": "Setu Bandha Sarvangasana",
+  "category": "backbend",
+  "primaryMuscles": [
+   "glutes",
+   "spine"
+  ],
+  "secondaryMuscles": [
+   "hamstrings",
+   "chest",
+   "quadriceps"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.flexibility",
+  "cues": {
+   "entry": [
+    "Lie on your back with your knees bent and heels close to your hips.",
+    "Press through your feet to lift your hips toward the ceiling."
+   ],
+   "hold": [
+    "Keep your knees tracking over your ankles instead of splaying wide.",
+    "Roll your shoulders beneath you and let your chest open."
+   ],
+   "exit": "Lower your spine to the mat one vertebra at a time."
   },
-  {
-    "slug": "puppy-pose",
-    "name": "Puppy Pose",
-    "sanskrit": "Anahatasana",
-    "primaryMuscles": ["shoulders", "lats"],
-    "secondaryMuscles": ["chest", "spine"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 45,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Keep your hips over your knees and walk your hands forward.", "Melt your chest and forehead toward the mat."],
-      "hold": ["Keep your arms active, palms pressing down.", "Breathe into the stretch across your chest and shoulders."],
-      "exit": "Walk your hands back under your shoulders."
-    },
-    "breathCadence": 5,
-    "contraindications": ["shoulder injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "neck injury",
+   "recent shoulder injury"
+  ]
+ },
+ {
+  "slug": "seated-spinal-twist",
+  "name": "Seated Spinal Twist",
+  "sanskrit": "Ardha Matsyendrasana",
+  "category": "twist",
+  "primaryMuscles": [
+   "spine",
+   "abdominals"
+  ],
+  "secondaryMuscles": [
+   "hips",
+   "glutes"
+  ],
+  "unilateral": true,
+  "difficulty": "intermediate",
+  "defaultHoldSeconds": 40,
+  "symbol": "figure.mind.and.body",
+  "cues": {
+   "entry": [
+    "Sit tall and step one foot outside your opposite thigh.",
+    "Hug that knee with the opposite arm and plant your other hand behind you."
+   ],
+   "hold": [
+    "Inhale to grow taller, exhale to rotate a little further.",
+    "Turn from your ribs first and let your gaze follow last."
+   ],
+   "exit": "Unwind slowly back to center on an exhale."
   },
-  {
-    "slug": "cobra-pose",
-    "name": "Cobra Pose",
-    "sanskrit": "Bhujangasana",
-    "primaryMuscles": ["spine", "abdominals"],
-    "secondaryMuscles": ["chest", "shoulders"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Lie on your belly with palms under your shoulders.", "Press gently to peel your chest off the mat."],
-      "hold": ["Keep your elbows hugging your ribs.", "Lengthen through the back of your neck."],
-      "exit": "Lower down slowly, one rib at a time."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "pregnancy", "wrist injury"]
+  "breathCadence": 4,
+  "contraindications": [
+   "lower back injury",
+   "pregnancy"
+  ]
+ },
+ {
+  "slug": "supine-twist",
+  "name": "Supine Twist",
+  "sanskrit": "Supta Matsyendrasana",
+  "category": "twist",
+  "primaryMuscles": [
+   "spine",
+   "lower back"
+  ],
+  "secondaryMuscles": [
+   "glutes",
+   "abdominals",
+   "chest"
+  ],
+  "unilateral": true,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 60,
+  "symbol": "figure.cooldown",
+  "cues": {
+   "entry": [
+    "Lie on your back and hug one knee into your chest.",
+    "Guide that knee across your body toward the opposite side of the mat."
+   ],
+   "hold": [
+    "Keep both shoulders resting heavy on the floor.",
+    "Turn your gaze away from your knee if your neck allows."
+   ],
+   "exit": "Draw your knee back to center and stretch your leg long."
   },
-  {
-    "slug": "upward-facing-dog",
-    "name": "Upward-Facing Dog",
-    "sanskrit": "Urdhva Mukha Svanasana",
-    "primaryMuscles": ["spine", "chest"],
-    "secondaryMuscles": ["shoulders", "triceps", "abdominals"],
-    "unilateral": false,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 15,
-    "symbol": "figure.yoga",
-    "cues": {
-      "entry": ["Press through your palms and straighten your arms.", "Lift your chest and your thighs off the mat."],
-      "hold": ["Roll your shoulders back and open your collarbones.", "Press the tops of your feet down."],
-      "exit": "Roll over your toes or lower down to your belly."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "wrist injury", "pregnancy"]
+  "breathCadence": 5,
+  "contraindications": [
+   "lower back injury",
+   "late pregnancy"
+  ]
+ },
+ {
+  "slug": "plank-pose",
+  "name": "Plank Pose",
+  "sanskrit": "Phalakasana",
+  "category": "core",
+  "primaryMuscles": [
+   "abdominals",
+   "shoulders"
+  ],
+  "secondaryMuscles": [
+   "triceps",
+   "chest",
+   "quadriceps"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 30,
+  "symbol": "figure.core.training",
+  "cues": {
+   "entry": [
+    "From hands and knees, step your feet back until your body forms one straight line.",
+    "Stack your shoulders directly over your wrists."
+   ],
+   "hold": [
+    "Press the floor away and knit your ribs toward your hips.",
+    "Squeeze your thighs and reach back through your heels."
+   ],
+   "exit": "Lower your knees to the mat with control."
   },
-  {
-    "slug": "sphinx-pose",
-    "name": "Sphinx Pose",
-    "sanskrit": "Salamba Bhujangasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": ["chest", "abdominals"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Lie on your belly and prop up on your forearms.", "Stack your elbows under your shoulders."],
-      "hold": ["Press your forearms down and lengthen your chest forward.", "Relax your glutes and let your lower back soften."],
-      "exit": "Slide your arms forward and lower to the mat."
-    },
-    "breathCadence": 5,
-    "contraindications": ["lower back injury", "pregnancy"]
+  "breathCadence": 4,
+  "contraindications": [
+   "wrist injury",
+   "recent shoulder injury"
+  ]
+ },
+ {
+  "slug": "legs-up-the-wall",
+  "name": "Legs-Up-the-Wall",
+  "sanskrit": "Viparita Karani",
+  "category": "inversion",
+  "primaryMuscles": [
+   "hamstrings",
+   "lower back"
+  ],
+  "secondaryMuscles": [
+   "calves",
+   "hips"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 120,
+  "symbol": "figure.cooldown",
+  "cues": {
+   "entry": [
+    "Sit with one hip against a wall, then swing your legs up as you lie back.",
+    "Scoot your sit bones close to the wall and rest your arms by your sides."
+   ],
+   "hold": [
+    "Let the wall hold the full weight of your legs.",
+    "Soften your jaw, your throat, and the space between your eyebrows."
+   ],
+   "exit": "Bend your knees, roll to one side, and press up slowly."
   },
-  {
-    "slug": "locust-pose",
-    "name": "Locust Pose",
-    "sanskrit": "Salabhasana",
-    "primaryMuscles": ["lower back", "glutes"],
-    "secondaryMuscles": ["hamstrings", "upper back", "shoulders"],
-    "unilateral": false,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Lie on your belly with arms alongside your body.", "Lift your chest, arms, and legs off the mat."],
-      "hold": ["Reach your fingertips toward your heels.", "Keep your gaze down to protect your neck."],
-      "exit": "Lower everything down and rest one cheek on the mat."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "pregnancy"]
+  "breathCadence": 5,
+  "contraindications": [
+   "glaucoma",
+   "high blood pressure"
+  ]
+ },
+ {
+  "slug": "savasana",
+  "name": "Savasana",
+  "sanskrit": "Savasana",
+  "category": "resting",
+  "primaryMuscles": [
+   "spine"
+  ],
+  "secondaryMuscles": [
+   "shoulders",
+   "hips"
+  ],
+  "unilateral": false,
+  "difficulty": "beginner",
+  "defaultHoldSeconds": 120,
+  "symbol": "figure.cooldown",
+  "cues": {
+   "entry": [
+    "Lie on your back with your legs long and your feet falling open.",
+    "Rest your arms a little away from your body, palms facing up."
+   ],
+   "hold": [
+    "Release the weight of your body completely into the mat.",
+    "Let your breath return to its natural rhythm, with nothing left to do."
+   ],
+   "exit": "Wiggle your fingers and toes, roll to one side, and rise gently."
   },
-  {
-    "slug": "bow-pose",
-    "name": "Bow Pose",
-    "sanskrit": "Dhanurasana",
-    "primaryMuscles": ["spine", "quadriceps"],
-    "secondaryMuscles": ["chest", "shoulders", "hips"],
-    "unilateral": false,
-    "difficulty": "advanced",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Bend your knees and catch the outside of your ankles.", "Kick your feet back to lift your chest and thighs."],
-      "hold": ["Keep your knees hip width apart.", "Balance on the soft part of your belly and breathe."],
-      "exit": "Release your ankles gently and lower down."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "pregnancy", "shoulder injury"]
-  },
-  {
-    "slug": "childs-pose",
-    "name": "Child's Pose",
-    "sanskrit": "Balasana",
-    "primaryMuscles": ["lower back", "hips"],
-    "secondaryMuscles": ["lats", "shoulders"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Bring your big toes together and knees wide.", "Sink your hips back to your heels and reach your arms forward."],
-      "hold": ["Rest your forehead on the mat.", "Let each exhale soften your back a little more."],
-      "exit": "Walk your hands in and rise up slowly."
-    },
-    "breathCadence": 5,
-    "contraindications": ["knee injury", "pregnancy"]
-  },
-  {
-    "slug": "seated-forward-fold",
-    "name": "Seated Forward Fold",
-    "sanskrit": "Paschimottanasana",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["lower back", "calves", "spine"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Sit tall with your legs extended.", "Hinge at your hips and reach for your shins or feet."],
-      "hold": ["Keep your spine long rather than rounding hard.", "Soften your knees as much as you need."],
-      "exit": "Roll up slowly to sitting."
-    },
-    "breathCadence": 5,
-    "contraindications": ["hamstring tear", "lower back injury"]
-  },
-  {
-    "slug": "head-to-knee-pose",
-    "name": "Head-to-Knee Pose",
-    "sanskrit": "Janu Sirsasana",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["lower back", "hips", "adductors"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 45,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Extend one leg and tuck the other foot to your inner thigh.", "Square your chest over the long leg and fold."],
-      "hold": ["Lead with your heart, not your head.", "Keep the extended foot flexed toward the ceiling."],
-      "exit": "Rise up slowly and switch sides when cued."
-    },
-    "breathCadence": 5,
-    "contraindications": ["hamstring tear", "knee injury"]
-  },
-  {
-    "slug": "seated-twist",
-    "name": "Seated Twist",
-    "sanskrit": "Ardha Matsyendrasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": ["glutes", "hips", "upper back"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 40,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Cross one foot over the opposite thigh.", "Hug your knee and lengthen your spine tall."],
-      "hold": ["Inhale to grow taller, exhale to twist a little deeper.", "Keep both sit bones grounded."],
-      "exit": "Unwind on an exhale and face forward."
-    },
-    "breathCadence": 4,
-    "contraindications": ["spine injury", "pregnancy"]
-  },
-  {
-    "slug": "butterfly-pose",
-    "name": "Butterfly Pose",
-    "sanskrit": "Baddha Konasana",
-    "primaryMuscles": ["adductors", "hips"],
-    "secondaryMuscles": ["lower back"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Bring the soles of your feet together.", "Let your knees fall open like book pages."],
-      "hold": ["Hold your feet and sit tall, or fold forward.", "Let gravity do the work on your inner thighs."],
-      "exit": "Support your knees with your hands as you bring them together."
-    },
-    "breathCadence": 5,
-    "contraindications": ["groin strain", "knee injury"]
-  },
-  {
-    "slug": "pigeon-pose",
-    "name": "Pigeon Pose",
-    "sanskrit": "Eka Pada Rajakapotasana",
-    "primaryMuscles": ["glutes", "hips"],
-    "secondaryMuscles": ["abductors", "lower back"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Bring one shin forward and lay it across the mat.", "Extend your back leg long behind you."],
-      "hold": ["Square your hips and fold over your front shin.", "Breathe into the deep stretch in your outer hip."],
-      "exit": "Press into your hands and step your front leg back."
-    },
-    "breathCadence": 5,
-    "contraindications": ["knee injury", "hip injury"]
-  },
-  {
-    "slug": "lizard-pose",
-    "name": "Lizard Pose",
-    "sanskrit": "Utthan Pristhasana",
-    "primaryMuscles": ["hips"],
-    "secondaryMuscles": ["hamstrings", "quadriceps", "adductors"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 45,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Step one foot to the outside of your hands.", "Lower your back knee and come down to your forearms if you can."],
-      "hold": ["Let your front knee open slightly to the side.", "Keep your chest reaching forward."],
-      "exit": "Press up to your palms and step back."
-    },
-    "breathCadence": 5,
-    "contraindications": ["hip injury", "knee injury"]
-  },
-  {
-    "slug": "half-splits",
-    "name": "Half Splits",
-    "sanskrit": "Ardha Hanumanasana",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["calves", "lower back"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 40,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["From a low lunge, shift your hips back over your back knee.", "Straighten your front leg and flex the foot."],
-      "hold": ["Keep your hips square and fold over the straight leg.", "Stay long through your spine."],
-      "exit": "Bend your front knee and return to your lunge."
-    },
-    "breathCadence": 5,
-    "contraindications": ["hamstring tear", "knee injury"]
-  },
-  {
-    "slug": "happy-baby",
-    "name": "Happy Baby",
-    "sanskrit": "Ananda Balasana",
-    "primaryMuscles": ["hips", "adductors"],
-    "secondaryMuscles": ["lower back", "hamstrings"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 45,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Lie on your back and hug your knees in.", "Grab the outsides of your feet and open your knees wide."],
-      "hold": ["Draw your knees toward your armpits.", "Keep your tailbone heavy on the mat."],
-      "exit": "Release your feet and hug your knees to your chest."
-    },
-    "breathCadence": 5,
-    "contraindications": ["pregnancy", "knee injury"]
-  },
-  {
-    "slug": "supine-twist",
-    "name": "Supine Twist",
-    "sanskrit": "Supta Matsyendrasana",
-    "primaryMuscles": ["spine", "lower back"],
-    "secondaryMuscles": ["glutes", "chest", "hips"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Lie on your back and draw one knee to your chest.", "Guide it across your body toward the floor."],
-      "hold": ["Open your opposite arm wide and soften your shoulder down.", "Let your breath slow and deepen."],
-      "exit": "Draw your knee back to center on an inhale."
-    },
-    "breathCadence": 6,
-    "contraindications": ["spine injury"]
-  },
-  {
-    "slug": "bridge-pose",
-    "name": "Bridge Pose",
-    "sanskrit": "Setu Bandha Sarvangasana",
-    "primaryMuscles": ["glutes", "spine"],
-    "secondaryMuscles": ["hamstrings", "chest", "hips"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 30,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Lie on your back with knees bent, feet hip width.", "Press into your feet and lift your hips."],
-      "hold": ["Roll your shoulders under and keep your knees tracking forward.", "Lift your chest toward your chin, not your chin to your chest."],
-      "exit": "Lower your spine down slowly, one vertebra at a time."
-    },
-    "breathCadence": 4,
-    "contraindications": ["neck injury", "spine injury"]
-  },
-  {
-    "slug": "reclined-figure-four",
-    "name": "Reclined Figure Four",
-    "sanskrit": "Supta Kapotasana",
-    "primaryMuscles": ["glutes", "hips"],
-    "secondaryMuscles": ["abductors", "lower back"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Lie on your back and cross one ankle over the opposite thigh.", "Thread your hands behind that thigh and draw it in."],
-      "hold": ["Flex your crossed foot to protect your knee.", "Keep your head and shoulders relaxed on the mat."],
-      "exit": "Release your legs gently back to the floor."
-    },
-    "breathCadence": 5,
-    "contraindications": ["knee injury", "hip injury"]
-  },
-  {
-    "slug": "legs-up-the-wall",
-    "name": "Legs Up the Wall",
-    "sanskrit": "Viparita Karani",
-    "primaryMuscles": ["hamstrings"],
-    "secondaryMuscles": ["lower back", "hips"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 180,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Sit close to a wall and swing your legs up it.", "Let your arms rest open by your sides."],
-      "hold": ["Let the wall hold the full weight of your legs.", "Soften your face, jaw, and belly."],
-      "exit": "Bend your knees and roll to one side before sitting up."
-    },
-    "breathCadence": 6,
-    "contraindications": ["glaucoma", "late pregnancy"]
-  },
-  {
-    "slug": "boat-pose",
-    "name": "Boat Pose",
-    "sanskrit": "Navasana",
-    "primaryMuscles": ["abdominals"],
-    "secondaryMuscles": ["hips", "quadriceps", "spine"],
-    "unilateral": false,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 25,
-    "symbol": "figure.core.training",
-    "cues": {
-      "entry": ["Balance on your sit bones and lift your shins parallel to the floor.", "Reach your arms forward alongside your knees."],
-      "hold": ["Lift through your chest — don't let your back round.", "Straighten your legs for more challenge, or hold behind your thighs for less."],
-      "exit": "Lower your feet down with control."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "pregnancy"]
-  },
-  {
-    "slug": "camel-pose",
-    "name": "Camel Pose",
-    "sanskrit": "Ustrasana",
-    "primaryMuscles": ["spine", "chest"],
-    "secondaryMuscles": ["quadriceps", "hips", "shoulders"],
-    "unilateral": false,
-    "difficulty": "advanced",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Kneel with your hips over your knees, hands on your low back.", "Lift your chest and arch back; reach for your heels if it's there today."],
-      "hold": ["Keep pressing your hips forward over your knees.", "Let your chest lead the backbend, not your neck."],
-      "exit": "Bring your hands to your low back and rise up slowly."
-    },
-    "breathCadence": 4,
-    "contraindications": ["lower back injury", "neck injury", "low blood pressure"]
-  },
-  {
-    "slug": "hero-pose",
-    "name": "Hero Pose",
-    "sanskrit": "Virasana",
-    "primaryMuscles": ["quadriceps"],
-    "secondaryMuscles": ["hips", "calves"],
-    "unilateral": false,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 60,
-    "symbol": "figure.mind.and.body",
-    "cues": {
-      "entry": ["Kneel and sit between your heels, or on a block.", "Rest your hands on your thighs."],
-      "hold": ["Grow tall through your spine.", "Let your breath settle into an easy rhythm."],
-      "exit": "Come forward to hands and knees and stretch your legs out."
-    },
-    "breathCadence": 5,
-    "contraindications": ["knee injury", "ankle injury"]
-  },
-  {
-    "slug": "corpse-pose",
-    "name": "Corpse Pose",
-    "sanskrit": "Savasana",
-    "primaryMuscles": ["spine"],
-    "secondaryMuscles": [],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 180,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Lie flat on your back, legs long, arms by your sides.", "Let your feet fall open and your palms turn up."],
-      "hold": ["Release control of your breath.", "Let your whole body become heavy on the mat."],
-      "exit": "Wiggle your fingers and toes, then roll to one side and rise."
-    },
-    "breathCadence": 6,
-    "contraindications": []
-  },
-  {
-    "slug": "standing-side-bend",
-    "name": "Standing Side Bend",
-    "sanskrit": "Parsva Urdhva Hastasana",
-    "primaryMuscles": ["lats", "abdominals"],
-    "secondaryMuscles": ["spine", "shoulders"],
-    "unilateral": true,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 20,
-    "symbol": "figure.flexibility",
-    "cues": {
-      "entry": ["Reach both arms overhead and catch one wrist.", "Lean gently away from the caught wrist."],
-      "hold": ["Keep both feet grounded and hips level.", "Breathe into the long side of your ribs."],
-      "exit": "Rise back to center on an inhale."
-    },
-    "breathCadence": 4,
-    "contraindications": []
-  },
-  {
-    "slug": "melting-heart",
-    "name": "Melting Heart",
-    "sanskrit": "Anahatasana",
-    "primaryMuscles": ["shoulders", "spine"],
-    "secondaryMuscles": ["chest", "lats"],
-    "unilateral": false,
-    "difficulty": "beginner",
-    "defaultHoldSeconds": 120,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["From all fours, walk your hands far forward.", "Keep your hips high and let your chest melt down."],
-      "hold": ["Settle in — this is a long, quiet hold.", "Soften a little more with every exhale."],
-      "exit": "Walk your hands back and sit onto your heels."
-    },
-    "breathCadence": 6,
-    "contraindications": ["shoulder injury"]
-  },
-  {
-    "slug": "dragon-pose",
-    "name": "Dragon Pose",
-    "sanskrit": "Yin Dragon",
-    "primaryMuscles": ["hips", "quadriceps"],
-    "secondaryMuscles": ["hamstrings", "glutes"],
-    "unilateral": true,
-    "difficulty": "intermediate",
-    "defaultHoldSeconds": 120,
-    "symbol": "figure.cooldown",
-    "cues": {
-      "entry": ["Step one foot forward into a deep, long lunge.", "Let your back knee rest on the mat."],
-      "hold": ["Sink your hips low and let gravity open the front of your hip.", "Stay soft — no pushing, just time."],
-      "exit": "Press up slowly and step back with care."
-    },
-    "breathCadence": 6,
-    "contraindications": ["knee injury", "hip injury"]
-  }
+  "breathCadence": 5,
+  "contraindications": [
+   "late pregnancy"
+  ]
+ }
 ]

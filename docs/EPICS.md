@@ -4,6 +4,7 @@
 > Status legend: ⚪ Not Started (default) · 🟡 In Progress · 🟢 Completed.
 > Per-epic story cards live in [epics/](epics/README.md) (visual board).
 > Phases: **MVP** = E0–E9 · **MVP+** = E10–E13 · **ADV** = E14–E17.
+> _Status sync 2026-07-09: E7, E8, E10, E11, E13, E14 moved ⚪→🟡 per the code audit in [user-value-action-plan.md](user-value-action-plan.md) — substantial implementation exists in the working tree (readiness pipeline, watch live sessions, cardio analytics, telemetry/routes); acceptance criteria are not yet fully verified, so none move to 🟢._
 
 | Epic | Title | Phase | Status |
 |---|---|---|---|
@@ -14,14 +15,14 @@
 | E4 | Routine Builder | MVP | 🟡 |
 | E5 | CloudKit Sync | MVP | 🟡 |
 | E6 | HealthKit Write & Workout History | MVP | 🟡 |
-| E7 | Apple Watch Companion Logging | MVP | ⚪ |
-| E8 | Watch ⇄ iPhone Mirroring & Reliability | MVP | ⚪ |
-| E9 | Progression Engine v1 | MVP | ⚪ |
-| E10 | HealthKit Biometric Ingestion | MVP+ | ⚪ |
-| E11 | Readiness / Recovery | MVP+ | ⚪ |
+| E7 | Apple Watch Companion Logging | MVP | 🟡 |
+| E8 | Watch ⇄ iPhone Mirroring & Reliability | MVP | 🟡 |
+| E9 | Progression Engine v1 | MVP | 🟡 |
+| E10 | HealthKit Biometric Ingestion | MVP+ | 🟡 |
+| E11 | Readiness / Recovery | MVP+ | 🟡 |
 | E12 | Cardio Modality Logging | MVP+ | 🟡 |
-| E13 | Cardio Analytics & Training Load | MVP+ | ⚪ |
-| E14 | High-Res Telemetry | ADV | ⚪ |
+| E13 | Cardio Analytics & Training Load | MVP+ | 🟡 |
+| E14 | High-Res Telemetry | ADV | 🟡 |
 | E15 | Mesocycle Planning & Auto-Regulation | ADV | ⚪ |
 | E16 | Integrations & Data Ownership | ADV | ⚪ |
 | E17 | Polish, Accessibility, Privacy & Launch | ADV | ⚪ |
@@ -81,31 +82,31 @@ Scope: write completed strength workouts (correct activity type/energy/duration)
 - [x] Local History list/detail renders completed strength and cardio workouts
 - [ ] Basic volume/frequency charts render
 
-## E7 — Apple Watch Companion Logging ⬜
+## E7 — Apple Watch Companion Logging 🟡 *(live mirror sessions shipped; standalone logging + Input Lock outstanding)*
 Scope: native watchOS logging with HKWorkoutSession/LiveWorkoutBuilder/DataSource, glanceable UI, Input Lock, wrist-down collection.
 - [ ] Watch-only session records non-zero calories/HR; survives wrist-down
 - [ ] Accidental Crown turns don't corrupt weight/reps/rest/complete
 - [ ] Sets persist to watch cache instantly
 
-## E8 — Watch ⇄ iPhone Mirroring & Reliability ⬜  *(risk spike first)*
+## E8 — Watch ⇄ iPhone Mirroring & Reliability 🟡  *(phone-authoritative WC mirroring shipped w/ session recovery; dup/disconnect test matrix outstanding)*
 Scope: Watch-primary mirroring, iPhone start-request via WC, bidirectional set deltas, dup prevention, disconnect/crash recovery.
 - [ ] Every start permutation yields **exactly one** workout
 - [ ] Set logged on either device appears on the other; no dup
 - [ ] Forced BT drop mid-session recovers with no data loss
 - [ ] Full [Watch test matrix](04-watch-implementation.md#9-test-matrix) green on devices
 
-## E9 — Progression Engine v1 ⬜
+## E9 — Progression Engine v1 🟡 *(v1 shipped 2026-07-10: double progression/fixed/percent, explained suggestions, accept/edit/reject persisted; RPE rules + on-device verification outstanding)*
 Scope: progression_rules (%/fixed/rep-target/rpe), recommendations + rationale, e1RM trend, computed on-device via `ForgeCore`.
-- [ ] Exceeding a rep target produces an **explained** weight-increase suggestion
-- [ ] Suggestion prefills the next session; accept/reject tracked
-- [ ] e1RM trend chart renders
+- [x] Exceeding a rep target produces an **explained** weight-increase suggestion
+- [x] Suggestion prefills the next session; accept/reject tracked *(ProgressionSuggestionModel; needs on-device verification)*
+- [x] e1RM trend chart renders *(ExerciseDetailView, pre-existing)*
 
-## E10 — HealthKit Biometric Ingestion ⬜
+## E10 — HealthKit Biometric Ingestion 🟡 *(HRV/RHR/sleep/resp/SpO₂/VO₂max ingestion + nocturnal aggregation shipped; background delivery + sleep stages outstanding)*
 Scope: read HRV(SDNN), RHR, sleep(+stages), respiratory rate, wrist temp, SpO₂, body mass, VO₂max; background delivery; persisted anchors.
 - [ ] Nightly metrics ingest automatically into `health_metrics`/`body_metrics`
 - [ ] Denied/partial authorization handled gracefully (no crash, clear reprompt)
 
-## E11 — Readiness / Recovery ⬜  *(risk spike first)*
+## E11 — Readiness / Recovery 🟡  *(ln-space baselines, daily+systemic scores, honest building states, coach-adjusted starts shipped; formula docs + verification outstanding)*
 Scope: 0–100 readiness vs rolling 30–60d baseline; RMSSD enrichment when heartbeat series exists, SDNN+RHR+sleep fallback; explained maintain/push/reduce/deload.
 - [ ] Readiness computes daily with a documented formula
 - [ ] Degrades gracefully without RMSSD (`used_rmssd=false`), UI honest about it
@@ -120,12 +121,12 @@ Scope: modality-correct metrics (stairmaster/row/cycle/run/elliptical/walk/hike/
 - [ ] Each modality records its correct metric set
 - [ ] Writes a valid HealthKit workout with non-zero energy
 
-## E13 — Cardio Analytics & Training Load ⬜
+## E13 — Cardio Analytics & Training Load 🟡 *(zone distribution, 80/20 framing, EF, critical-pace shipped; measured time-in-zone fix + CTL/ATL curve outstanding)*
 Scope: time-in-zone + distribution (workout/week/month), polarized 80/20, TSS-like, CTL/ATL/TSB computed on-device, Swift Charts.
 - [ ] A week of cardio yields zone totals + 80/20 readout
 - [ ] CTL/ATL/form trend chart renders from `training_load_daily`
 
-## E14 — High-Res Telemetry ⬜
+## E14 — High-Res Telemetry 🟡 *(GPS routes, per-10s HR series, maps + telemetry charts shipped; zone-seconds from series + GPX in/out outstanding)*
 Scope: quantity-series + route queries, cardio telemetry as SwiftData models (`CardioRoutePointModel`, `CardioSplitModel`), route maps + telemetry charts.
 - [ ] A run stores route + per-second HR/power data linked to its session
 - [ ] Map + telemetry chart render; telemetry synced via CloudKit

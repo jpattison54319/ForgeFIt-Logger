@@ -32,6 +32,7 @@ private struct IntervalSplitsEditor: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Bindable var session: CardioSessionModel
+    @State private var saveError: String?
 
     private var laps: [CardioSplitModel] {
         session.splits.sorted { $0.index < $1.index }
@@ -60,18 +61,33 @@ private struct IntervalSplitsEditor: View {
                             session.splits.removeAll { $0.id == split.id }
                             modelContext.delete(split)
                         }
-                        try? modelContext.save()
+                        saveError = modelContext.saveReportingFailure()
                     }
                 } footer: {
-                    Text("Rename a lap or swipe to delete. Reverting from the workout restores plain laps.")
+                    Text("Reverting restores the original laps.")
                 }
             }
             .navigationTitle("Edit intervals")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { try? modelContext.save(); dismiss() }.font(.bodyStrong)
+                    Button("Done") {
+                        if let failure = modelContext.saveReportingFailure() {
+                            saveError = failure
+                        } else {
+                            dismiss()
+                        }
+                    }
+                    .font(.bodyStrong)
                 }
+            }
+            .alert(
+                "Couldn't Save",
+                isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
+            ) {
+                Button("OK", role: .cancel) { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }
@@ -94,7 +110,7 @@ struct WorkoutDetailView: View {
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
     @State private var recoveryPoints: [SetRecoveryPoint] = []
-    @State private var isSharing = false
+    @State private var showSharePreview = false
     @State private var sharePayload: SharePayload?
     @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
@@ -130,23 +146,7 @@ struct WorkoutDetailView: View {
                 }
 
                 let s = analytics.summary(for: workout)
-                let allYoga = !workout.cardioSessions.isEmpty && workout.cardioSessions.allSatisfy(\.isYogaSession)
-                Card {
-                    HStack {
-                        StatColumn(label: "Duration", value: Fmt.durationShort(s.durationSeconds))
-                        if s.isCardio, allYoga {
-                            StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
-                            let poses = workout.cardioSessions.compactMap(\.posesCompleted).reduce(0, +)
-                            StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—")
-                        } else if s.isCardio {
-                            StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
-                            StatColumn(label: "Distance", value: Fmt.distance(workout.cardioSessions.first?.distanceMeters))
-                        } else {
-                            StatColumn(label: "Volume", value: Fmt.volume(s.volume))
-                            StatColumn(label: "Sets", value: Fmt.sets(s.sets))
-                        }
-                    }
-                }
+                overallStatsCard(s)
 
                 if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
                     sessionMetricsCard
@@ -156,11 +156,11 @@ struct WorkoutDetailView: View {
                     heartRateCard
                 }
 
-                if !s.isCardio, recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
+                if s.hasStrength, recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
                     betweenSetRecoveryCard
                 }
 
-                if !s.isCardio {
+                if s.hasStrength {
                     let muscleRows = analytics.muscleVolume(for: workout)
                     if !muscleRows.isEmpty {
                         muscleWorkedCard(muscleRows)
@@ -197,6 +197,14 @@ struct WorkoutDetailView: View {
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
         }
+        .sheet(isPresented: $showSharePreview) {
+            WorkoutSharePreviewSheet(
+                workout: workout,
+                exercises: exercises,
+                hrSamples: hrSamples,
+                recoveryPoints: recoveryPoints
+            )
+        }
         .sheet(item: $editingSplits) { target in
             IntervalSplitsEditor(session: target.session)
         }
@@ -208,7 +216,7 @@ struct WorkoutDetailView: View {
                 workout: workout,
                 exercises: exercises,
                 setupNotes: [],
-                history: history,
+                injectedHistory: history,
                 mode: .historicalEdit
             )
         }
@@ -233,35 +241,18 @@ struct WorkoutDetailView: View {
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left") { dismiss() }
+            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
             Spacer()
             Text("Workout").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             HStack(spacing: Space.xs) {
-                // The share image includes an async GPS route snapshot
-                // (MKMapSnapshotter), so preparing it can take a beat — an
-                // icon swap alone is easy to miss; say so in words.
-                if isSharing {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini)
-                        Text("Preparing…").font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 38)
-                    .background(theme.surfaceElevated)
-                    .clipShape(Capsule())
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Preparing share image")
-                } else {
-                    CircleIconButton(systemImage: "square.and.arrow.up") {
-                        Task { await prepareShare() }
-                    }
-                        .accessibilityLabel("Share workout")
+                CircleIconButton(systemImage: "square.and.arrow.up", label: "Share workout") {
+                    showSharePreview = true
                 }
-                CircleIconButton(systemImage: "square.and.pencil") { showEditor = true }
+                    .accessibilityLabel("Share workout")
+                CircleIconButton(systemImage: "square.and.pencil", label: "Edit workout") { showEditor = true }
                     .accessibilityLabel("Edit workout")
-                CircleIconButton(systemImage: isDeleting ? "hourglass" : "trash") {
+                CircleIconButton(systemImage: isDeleting ? "hourglass" : "trash", label: "Delete workout") {
                     guard !isDeleting else { return }
                     showDeleteConfirm = true
                 }
@@ -269,6 +260,58 @@ struct WorkoutDetailView: View {
             }
         }
         .padding(.top, Space.sm)
+    }
+
+    /// Whole-workout facts only. Cardio pace, distance, HR, laps, and route
+    /// stay with their cardio block—especially important for mixed sessions.
+    private func overallStatsCard(_ summary: TrainingAnalytics.Summary) -> some View {
+        Card {
+            if summary.hasStrength, summary.hasCardio {
+                // Mixed sessions have three distinct stories: the whole
+                // session, strength output, and time spent doing cardio.
+                // A 2×2 grid keeps all four readouts legible at Dynamic Type.
+                Grid(horizontalSpacing: Space.lg, verticalSpacing: Space.md) {
+                    GridRow {
+                        StatColumn(label: "Total time", value: Fmt.durationShort(summary.durationSeconds))
+                        StatColumn(label: "Cardio", value: Fmt.durationShort(totalCardioSeconds))
+                    }
+                    GridRow {
+                        StatColumn(label: "Volume", value: Fmt.volume(summary.volume))
+                        StatColumn(label: "Sets", value: Fmt.sets(summary.sets))
+                    }
+                }
+            } else {
+                HStack {
+                    StatColumn(label: "Total time", value: Fmt.durationShort(summary.durationSeconds))
+                    if summary.hasStrength {
+                        StatColumn(label: "Volume", value: Fmt.volume(summary.volume))
+                        StatColumn(label: "Sets", value: Fmt.sets(summary.sets))
+                    } else {
+                        let linkedIDs = Set(workout.cardioSessions.compactMap(\.workoutExerciseID))
+                        let activities = linkedIDs.count
+                            + workout.cardioSessions.count(where: { $0.workoutExerciseID == nil })
+                        StatColumn(label: "Activities", value: "\(max(activities, 1))")
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(overallStatsAccessibilityLabel(summary))
+    }
+
+    private var totalCardioSeconds: Int {
+        workout.cardioSessions.compactMap(\.durationSeconds).reduce(0, +)
+    }
+
+    private func overallStatsAccessibilityLabel(_ summary: TrainingAnalytics.Summary) -> String {
+        var label = "Workout summary. Total time \(Fmt.durationShort(summary.durationSeconds))"
+        if summary.hasStrength {
+            label += ", volume \(Fmt.volume(summary.volume)), \(Fmt.sets(summary.sets)) sets"
+        }
+        if summary.hasStrength, summary.hasCardio {
+            label += ", cardio \(Fmt.durationShort(totalCardioSeconds))"
+        }
+        return label
     }
 
     private func scheduleDeleteWorkout() {
@@ -287,16 +330,14 @@ struct WorkoutDetailView: View {
         let now = Date()
         workout.updatedAt = now
         workout.deletedAt = now
-        do {
-            try modelContext.save()
-        } catch {
-            // Roll the tombstone back instead of leaving a phantom-deleted row
-            // in memory that a later unrelated save would silently commit.
-            workout.deletedAt = nil
+        // Rollback-on-failure keeps a phantom-deleted row from riding a later
+        // unrelated save (and undoes `updatedAt` too, unlike a manual revert).
+        if let failure = modelContext.saveReportingFailure() {
             isDeleting = false
-            deleteError = error.localizedDescription
+            deleteError = failure
             return
         }
+        BackupScheduler.shared.noteLogDataChanged()
         dismiss()
     }
 
@@ -323,7 +364,10 @@ struct WorkoutDetailView: View {
                     StatColumn(label: "Energy", value: workout.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
                 }
                 if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
-                    ZoneSecondsBar(zoneSeconds: workout.hrZoneSeconds)
+                    ZoneSecondsBar(
+                        zoneSeconds: workout.hrZoneSeconds,
+                        totalDurationSeconds: analytics.summary(for: workout).durationSeconds
+                    )
                 }
             }
         }
@@ -372,7 +416,7 @@ struct WorkoutDetailView: View {
                             .foregroundStyle(theme.danger)
                     }
                 }
-                HeartRateTrendChart(samples: hrSamples)
+                HeartRateTrendChart(samples: hrSamples, bands: HeartRateTrendChart.cardioBands(for: workout))
             }
         }
     }
@@ -504,11 +548,11 @@ struct WorkoutDetailView: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 if let exercise {
                     NavigationLink(value: exercise.id) {
-                        exerciseTitle(name, color: theme.accent, showsChevron: true)
+                        ExerciseNameLabel(name: name)
                     }
                     .buttonStyle(.plain)
                 } else {
-                    exerciseTitle(name, color: theme.accent)
+                    Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                     historicalSetRow(set, index: index, sets: sets, unit: unit)
@@ -521,11 +565,14 @@ struct WorkoutDetailView: View {
         let style = SetTypeStyle.of(set.setType)
         let label = historicalSetLabel(for: set, index: index, sets: sets)
         let isPlainWorking = set.setType == .working
+        let isCompleted = HistoricalSetPresentation.isCompleted(set)
+        let valueColor = isCompleted ? theme.textPrimary : theme.textTertiary
+        let outputColor = isCompleted ? theme.textSecondary : theme.textTertiary
         return HStack(spacing: Space.sm) {
             if set.setType == .drop {
                 Image(systemName: "arrow.turn.down.right")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(style.color)
+                    .foregroundStyle(isCompleted ? style.color : theme.textTertiary)
                     .frame(width: 14)
             } else {
                 Color.clear.frame(width: 14)
@@ -533,27 +580,33 @@ struct WorkoutDetailView: View {
 
             Text(label)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(isPlainWorking ? theme.textPrimary : style.color)
+                .foregroundStyle(
+                    isCompleted
+                        ? (isPlainWorking ? theme.textPrimary : style.color)
+                        : theme.textTertiary
+                )
                 .frame(width: 32, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(Fmt.loadUnit(set.weight, unit: unit))
+                Text(HistoricalSetPresentation.loadText(set, unit: unit))
                     .font(.rowValue)
-                    .foregroundStyle(theme.textPrimary)
+                    .foregroundStyle(valueColor)
                 if !isPlainWorking {
                     Text(style.label)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(style.color)
+                        .foregroundStyle(isCompleted ? style.color : theme.textTertiary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(historicalSetOutput(set))
+            Text(HistoricalSetPresentation.outputText(set))
                 .font(.rowValue)
-                .foregroundStyle(theme.textSecondary)
+                .foregroundStyle(outputColor)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.vertical, 2)
+        .opacity(isCompleted ? 1 : 0.72)
+        .accessibilityLabel(isCompleted ? "\(label), completed" : "\(label), not done")
     }
 
     private func historicalSetLabel(for set: SetModel, index: Int, sets: [SetModel]) -> String {
@@ -561,18 +614,6 @@ struct WorkoutDetailView: View {
         guard style.numbered else { return style.badge.isEmpty ? "•" : style.badge }
         let number = sets.prefix(index + 1).filter { SetTypeStyle.of($0.setType).numbered }.count
         return "\(number)\(style.badge)"
-    }
-
-    private func historicalSetOutput(_ set: SetModel) -> String {
-        if !set.miniReps.isEmpty {
-            let activation = set.reps.map(String.init)
-            let minis = set.miniReps.map(String.init).joined(separator: "+")
-            return [activation, minis].compactMap(\.self).joined(separator: "+") + " reps"
-        }
-        if let seconds = set.durationSeconds, seconds > 0 {
-            return Fmt.durationShort(seconds)
-        }
-        return "\(set.reps.map(String.init) ?? "—") reps"
     }
 
     /// Banner shown when ForgeFit optimistically applied detected interval laps
@@ -585,7 +626,7 @@ struct WorkoutDetailView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Detected \(workCount) interval\(workCount == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
-                Text("Auto-segmented from your effort — edit or revert to plain laps.")
+                Text("Auto-segmented from your effort — Revert restores plain laps.")
                     .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -651,11 +692,11 @@ struct WorkoutDetailView: View {
                         .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                     if let exercise {
                         NavigationLink(value: exercise.id) {
-                            exerciseTitle(name, color: theme.accent, showsChevron: true)
+                            ExerciseNameLabel(name: name)
                         }
                         .buttonStyle(.plain)
                     } else {
-                        exerciseTitle(name, color: theme.accent)
+                        Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     }
                     Spacer()
                     Tag(text: "\(style.title) Yoga", color: theme.accent, background: theme.accentSoft)
@@ -711,11 +752,11 @@ struct WorkoutDetailView: View {
                             .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                         if let exercise {
                             NavigationLink(value: exercise.id) {
-                                exerciseTitle(name, color: theme.secondaryAccent, showsChevron: true)
+                                ExerciseNameLabel(name: name)
                             }
                             .buttonStyle(.plain)
                         } else {
-                            exerciseTitle(name, color: theme.secondaryAccent)
+                            Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         }
                     }
 
@@ -832,18 +873,32 @@ struct WorkoutDetailView: View {
             if !laps.isEmpty { splitsTable(laps) }
         }
 
+        bestEffortsSection(for: cardio)
+
+        if cardio.routePoints.count >= 2 {
+            SecondaryButton(title: "Export GPX", systemImage: "square.and.arrow.up.on.square") {
+                exportGPX(cardio, kind: kind)
+            }
+            .accessibilityHint("Creates a GPX file to share with Strava or any training app")
+        }
+
+        // Show one zone story. Prefer the measured per-sample distribution;
+        // fall back to the stored distribution, then estimate from average HR.
+        let measuredZones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: cardio.sampleSeriesJSON)
+        let storedZones = cardio.hrZoneSeconds.contains(where: { $0 > 0 }) ? cardio.hrZoneSeconds : nil
         if let hr = cardio.avgHR {
-            HRZoneBar(avgHR: hr, maxHR: cardio.maxHR, durationSeconds: cardio.durationSeconds)
+            HRZoneBar(
+                avgHR: hr,
+                maxHR: cardio.maxHR,
+                durationSeconds: cardio.durationSeconds,
+                zoneSeconds: measuredZones ?? storedZones,
+                source: measuredZones == nil ? .estimated : .measured
+            )
         }
 
         if showPerBlockHR {
-            // Measured watch zones + this block's slice of the
-            // whole-workout HR series — the standalone detail shows
-            // these at the workout level, so mixed blocks carry their
-            // own copies inline.
-            if cardio.hrZoneSeconds.contains(where: { $0 > 0 }) {
-                ZoneSecondsBar(zoneSeconds: cardio.hrZoneSeconds)
-            }
+            // This block's slice of the whole-workout HR series. The zone
+            // distribution above already represents this block.
             if let window = CardioBlockSupport.blockWindow(
                 startedAt: cardio.startedAt,
                 liveStartedAt: cardio.liveStartedAt,
@@ -865,6 +920,92 @@ struct WorkoutDetailView: View {
         MuscleChips(muscles: kind.musclesWorked)
     }
 
+    // MARK: - Best efforts (T4-3)
+
+    /// This session's fastest windows over standard distances, with a PR
+    /// badge when a window beats every other stored session — Strava's most
+    /// loved feature, computed locally from the stored sample series.
+    @ViewBuilder
+    private func bestEffortsSection(for cardio: CardioSessionModel) -> some View {
+        let efforts = CardioSampleSeries.decode(from: cardio.sampleSeriesJSON)
+            .map(DistanceBestEfforts.fromSeries) ?? []
+        if !efforts.isEmpty {
+            let records = historicalBestEfforts(excluding: cardio.id)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Best efforts")
+                    .font(.tag)
+                    .foregroundStyle(theme.textSecondary)
+                ForEach(efforts, id: \.label) { effort in
+                    let isPR = (records[effort.label].map { effort.seconds < $0 }) ?? true
+                    HStack {
+                        Text(effort.label)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        if isPR {
+                            Tag(text: "PR", color: .white, background: theme.accent)
+                        }
+                        Text(Fmt.durationShort(Int(effort.seconds.rounded())))
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(isPR ? theme.accent : theme.textPrimary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// All-time fastest seconds per distance label across every OTHER stored
+    /// session — the bar this session's efforts must beat to badge PR.
+    private func historicalBestEfforts(excluding sessionID: UUID) -> [String: Double] {
+        let source = history.isEmpty ? [workout] : history
+        var best: [String: Double] = [:]
+        for past in source where past.endedAt != nil && past.deletedAt == nil {
+            for session in past.cardioSessions where session.id != sessionID && !session.isYogaSession {
+                guard let series = CardioSampleSeries.decode(from: session.sampleSeriesJSON) else { continue }
+                for effort in DistanceBestEfforts.fromSeries(series) {
+                    best[effort.label] = min(best[effort.label] ?? .infinity, effort.seconds)
+                }
+            }
+        }
+        return best
+    }
+
+    // MARK: - GPX export (T4-1)
+
+    /// Writes the session as a GPX file (route + heart rate) and hands it to
+    /// the share sheet — Strava, email, Files, any training app.
+    private func exportGPX(_ cardio: CardioSessionModel, kind: CardioKind) {
+        let points = cardio.routePoints.sorted { $0.timestamp < $1.timestamp }
+        guard points.count >= 2 else { return }
+        // HR by nearest sample time (±5 s) from the stored series, keyed off
+        // the session start so route timestamps and series offsets line up.
+        let series = CardioSampleSeries.decode(from: cardio.sampleSeriesJSON)
+        let start = cardio.liveStartedAt ?? cardio.startedAt
+        let hrByOffset: [Int: Int] = series.map {
+            Dictionary($0.samples.compactMap { s in s.hr.map { (s.t, $0) } }, uniquingKeysWith: { a, _ in a })
+        } ?? [:]
+        let track = GPXCodec.Track(
+            name: workout.title ?? kind.title,
+            points: points.map { point in
+                let offset = Int(point.timestamp.timeIntervalSince(start).rounded())
+                let hr = (offset - 5...offset + 5).lazy.compactMap { hrByOffset[$0] }.first
+                return GPXCodec.Point(
+                    time: point.timestamp,
+                    latitude: point.latitude,
+                    longitude: point.longitude,
+                    elevationMeters: point.altitudeMeters,
+                    heartRate: hr
+                )
+            }
+        )
+        let stamp = cardio.startedAt.formatted(.iso8601.year().month().day())
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeFit-\(kind.title)-\(stamp).gpx")
+        guard (try? GPXCodec.encode(track: track).write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+        sharePayload = SharePayload(items: [url])
+    }
+
     /// Start (green) / finish (red) markers for a route — without them a bare
     /// polyline doesn't say which end is which.
     @MapContentBuilder
@@ -883,18 +1024,6 @@ struct WorkoutDetailView: View {
                     .overlay(Circle().stroke(.white, lineWidth: 2))
             }
         }
-    }
-
-    private func exerciseTitle(_ name: String, color: Color, showsChevron: Bool = false) -> some View {
-        HStack(spacing: 4) {
-            Text(name)
-                .font(.bodyStrong)
-            if showsChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-            }
-        }
-        .foregroundStyle(color)
     }
 
     @ViewBuilder
@@ -999,38 +1128,6 @@ struct WorkoutDetailView: View {
 
     private func paceString(_ split: CardioSplitModel) -> String {
         CardioMetrics.paceString(distanceMeters: split.distanceMeters, durationSeconds: split.durationSeconds)
-    }
-
-    /// Render the full-length workout card to a single tall image and present
-    /// the share sheet (Save to Photos, Messages, AirDrop, …). Shares only the
-    /// image so exactly one artifact is produced, and passes the already-loaded
-    /// HR series / recovery points so the picture matches what's on screen.
-    ///
-    /// Async because GPS routes are snapshotted first via `MKMapSnapshotter`
-    /// (MapKit can't be rasterized off-screen by `ImageRenderer`). Indoor /
-    /// strength workouts have no routes, so this returns near-instantly.
-    private func prepareShare() async {
-        isSharing = true
-        defer { isSharing = false }
-        var routeMaps: [UUID: UIImage] = [:]
-        for session in workout.cardioSessions {
-            let coordinates = session.routePoints
-                .sorted { $0.timestamp < $1.timestamp }
-                .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-            if coordinates.count >= 2,
-               let map = await RouteMapSnapshot.image(coordinates: coordinates, size: WorkoutShareCard.routeMapSize, theme: theme) {
-                routeMaps[session.id] = map
-            }
-        }
-        guard let image = WorkoutShareRenderer.image(
-            for: workout,
-            exercises: exercises,
-            theme: theme,
-            hrSamples: hrSamples,
-            recoveryPoints: recoveryPoints,
-            routeMaps: routeMaps
-        ) else { return }
-        sharePayload = SharePayload(items: [image])
     }
 
     private func metric(_ label: String, _ value: String, color: Color? = nil) -> some View {

@@ -3,11 +3,12 @@ import SwiftData
 import SwiftUI
 
 /// Floating iOS 26 Liquid Glass app bar: a single clear-glass capsule with a
-/// fluid "expanding pill" indicator. Unselected tabs are outline glyphs;
-/// the selected tab grows to reveal its label inside an accent pill that morphs
-/// between tabs.
+/// fluid pill indicator that morphs between tabs. All tabs display a filled
+/// SF Symbol above a single-word label; the selected tab's accent pill
+/// animates into place using matched geometry.
 struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selection: AppTab
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
@@ -35,17 +36,13 @@ struct ForgeTabBar: View {
                 selection = tab
             }
         } label: {
-            HStack(spacing: 7) {
+            VStack(spacing: 3) {
                 Image(systemName: tab.systemImage)
-                    .symbolVariant(isSelected ? .fill : .none)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .symbolEffect(.bounce, value: isSelected)
-                if isSelected {
-                    Text(tab.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .fixedSize()
-                        .transition(.opacity.combined(with: .blurReplace))
-                }
+                Text(tab.title)
+                    .font(.caption.weight(.semibold))
+                    .fixedSize()
             }
             .overlay(alignment: .topTrailing) {
                 if badgeCount > 0 {
@@ -57,14 +54,14 @@ struct ForgeTabBar: View {
                         .frame(minWidth: 16, minHeight: 16)
                         .background(theme.danger, in: Capsule())
                         .offset(x: 8, y: -7)
+                        .transition(Motion.scaleIn(0.4, reduceMotion: reduceMotion))
                         .accessibilityLabel("\(badgeCount) imported exercises need review")
                 }
             }
+            .animation(Motion.stateChange, value: badgeCount)
             .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
-            .padding(.vertical, 12)
-            .padding(.horizontal, isSelected ? 18 : 16)
-            // Guarantee a ≥44pt tap target (Apple's HIG minimum). Icon-only
-            // tabs are otherwise ~40pt tall and read smaller than the stock bar.
+            .padding(.vertical, 6)
+            .padding(.horizontal, Space.sm)
             .frame(minWidth: 44, minHeight: 44)
             .background {
                 if isSelected {
@@ -125,56 +122,60 @@ struct MiniWorkoutBar: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let elapsed = max(0, Int(context.date.timeIntervalSince(workout.startedAt)))
-            GlassEffectContainer(spacing: Space.sm) {
-                HStack(spacing: Space.md) {
-                    Button(action: onExpand) {
-                        Image(systemName: "chevron.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(width: 44, height: 44)   // HIG minimum touch target
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
+        GlassEffectContainer(spacing: Space.sm) {
+            HStack(spacing: Space.md) {
+                Button(action: onExpand) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Resume workout")
+                .accessibilityIdentifier("expand-active-workout")
 
-                    Button(action: onExpand) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 6) {
-                                Circle().fill(theme.success).frame(width: 8, height: 8)
-                                Text("Workout")
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(theme.textPrimary)
+                Button(action: onExpand) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Circle().fill(theme.success).frame(width: 8, height: 8)
+                            Text("Workout")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(theme.textPrimary)
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                let elapsed = max(0, Int(context.date.timeIntervalSince(workout.startedAt)))
                                 Text(Fmt.elapsed(elapsed))
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(theme.textSecondary)
                                     .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                    .animation(Motion.tap, value: elapsed)
                             }
-                            Text(subtitle)
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(1)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
-
-                    Button(action: onDiscard) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.danger)
-                            .frame(width: 44, height: 44)   // HIG minimum touch target
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .tint(theme.danger)
-                    .accessibilityIdentifier("discard-active-workout")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(8)
-                .glassEffect(.regular.tint(theme.accent.opacity(0.16)), in: Capsule())
-                .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
-                .shadow(color: .black.opacity(0.42), radius: 14, y: 5)
+                .buttonStyle(.plain)
+
+                Button(action: onDiscard) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(theme.danger)
+                        .frame(width: 44, height: 44)   // HIG minimum touch target
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .tint(theme.danger)
+                .accessibilityIdentifier("discard-active-workout")
             }
+            .padding(8)
+            .glassEffect(.regular.tint(theme.accent.opacity(0.16)), in: Capsule())
+            .overlay(Capsule().stroke(theme.accent.opacity(0.32), lineWidth: 1))
+            .shadow(color: .black.opacity(0.42), radius: 14, y: 5)
         }
     }
 }

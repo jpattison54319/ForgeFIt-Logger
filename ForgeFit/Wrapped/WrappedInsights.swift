@@ -27,7 +27,6 @@ enum WrappedInsights {
         /// Mean readiness-at-start for the first/second halves of the period.
         var readinessFirstHalf: Double?
         var readinessSecondHalf: Double?
-        var longestStreakDays = 0
     }
 
     struct Insight: Equatable {
@@ -97,16 +96,6 @@ enum WrappedInsights {
                     detail: "\(Int((easyShare * 100).rounded()))% of your cardio stayed in Zones 1–2 — the polarized mix endurance research favors."
                 ),
                 maintain: "the easy-pace cardio base"
-            ))
-        }
-        if i.longestStreakDays >= 5 {
-            positives.append(Candidate(
-                priority: 50,
-                insight: Insight(
-                    headline: "\(i.longestStreakDays) days straight",
-                    detail: "Your longest run of consecutive training days this period."
-                ),
-                maintain: nil
             ))
         }
         if positives.isEmpty, i.activeDays >= 4 {
