@@ -1,24 +1,28 @@
 # ForgeFit Privacy Policy
 
-_Last updated: July 10, 2026_
+_Last updated: July 17, 2026_
 
 ForgeFit is built local-first: your training data belongs to you and lives on
-your device, with optional iCloud sync for your training plan and an optional
-iCloud Drive backup of your training log.
+your device, with optional iCloud sync for your training plan, an optional
+iCloud Drive backup of your training log, and optional community features you
+must explicitly opt into.
 
 ## What we collect
 
 **We operate no servers and collect no personal information.** ForgeFit stores
 your workouts, routines, exercise notes, and settings in a local database on
-your iPhone. We run no analytics and have no backend.
+your iPhone. We run no analytics and have no backend. The optional community
+feature stores only what you explicitly choose to share, in Apple's CloudKit
+public database — see Community below.
 
 ## iCloud sync & backup
 
 If you are signed into iCloud, ForgeFit syncs your **training plan** —
 routines, folders, your exercise library, notes, saved interval and yoga
-presets, and your XP progress — across your Apple devices using Apple's
-CloudKit, stored in your private CloudKit database, encrypted by Apple and
-accessible only to you.
+presets, saved insight charts (their definitions only — the numbers they show
+are recomputed on each device), and your XP progress — across your Apple
+devices using Apple's CloudKit, stored in your private CloudKit database,
+encrypted by Apple and accessible only to you.
 
 Your **workout history** is different: it stays in a local database on each
 device. To protect it against a lost or replaced phone, ForgeFit writes an
@@ -66,6 +70,27 @@ If you pair a Bluetooth heart-rate monitor, its readings are used live during
 your workout and stored with the session on your device, like any other
 workout metric. The pairing is remembered only on that device.
 
+## Community (optional)
+
+ForgeFit's community features are off until you create a community profile —
+nothing about you is visible to anyone before that.
+
+If you opt in, ForgeFit publishes a profile to Apple's CloudKit public
+database under a handle and display name you choose, along with your XP and
+level, workout count, lifetime training hours, and lifetime training totals
+(volume, best estimated 1RM, cardio distance and time, yoga time). You choose
+who sees it: **public** (discoverable; anyone can follow) or
+**approve followers** (not in discovery; you approve each follower). You can
+switch visibility at any time.
+
+Sharing a workout publishes a training-only copy: exercises, sets, reps,
+weights, durations, cardio pace and effort, and yoga poses. Shared records
+have **no fields** for heart rate, calories, sleep, readiness, body weight,
+GPS routes, or notes — health and location data cannot appear in shared
+content by construction. Follows and likes are also stored in the public
+database. You can unshare any workout at any time, which removes it from the
+community.
+
 ## Data export
 
 Settings → Export data creates JSON or CSV files of your workouts and routines
@@ -82,6 +107,12 @@ you control: delete it in the Files app (iCloud Drive → ForgeFit → Backups),
 or use Settings → Erase All Data, which also removes the backup. Workouts
 written to Apple Health remain there under your control and can be deleted in
 the Health app.
+
+Community data is separate: unsharing a workout removes it from the community
+immediately, and switching your profile to approve-followers takes it out of
+discovery. **Erase All Data does not delete an opted-in community profile** —
+to remove your profile and everything you shared, contact the developer while
+in-app profile deletion is being built.
 
 ## Changes
 
