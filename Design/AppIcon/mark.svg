@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- ForgeFit icon — MARK layer for Icon Composer (transparent canvas).
+       The Anvil-F: anvil face + right-facing horn as the F's top arm, the
+       flared footing as the middle arm, and the anvil's concave throat
+       extended downward as the single vertical stem, landing on a forged
+       foot. One compound path, brand gradient fill (Fresh Mint -> Active
+       Sage). No baked highlights or shadows — the system's Liquid Glass
+       supplies specular, depth, and the dark/tinted/clear modes. -->
+  <defs>
+    <linearGradient id="mk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3ADFA0"/>
+      <stop offset="1" stop-color="#3F9A63"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#mk)" d="M260 274 L620 274 A40 40 0 0 1 660 314 L660 362 A40 40 0 0 1 620 402 L260 402 A40 40 0 0 1 220 362 L220 314 A40 40 0 0 1 260 274 Z
+    M656 274 C724 276 788 296 812 326 C824 340 814 356 794 362 L656 402 Z
+    M256 402 C274 444 276 474 274 534 L274 664 C274 694 262 710 254 726 C246 742 254 754 272 754 L408 754 C426 754 434 742 426 726 C418 710 406 694 406 664 L406 534 C404 474 406 444 424 402 Z
+    M276 510 L610 510 C636 510 652 522 660 544 L676 582 C684 602 670 622 648 622 L276 622 Z"/>
+</svg>
