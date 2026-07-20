@@ -10,6 +10,7 @@ struct SocialHubView: View {
     let makeSnapshot: () -> ProfileSnapshot
 
     @State private var showOptIn = false
+    @State private var showDeleteProfile = false
     @State private var friends: [SocialProfile] = []
     @State private var loadingFriends = false
     @State private var linked: IdentifiedProfile?
@@ -32,6 +33,9 @@ struct SocialHubView: View {
         }
         .sheet(isPresented: $showOptIn) {
             SocialOptInView(makeSnapshot: makeSnapshot)
+        }
+        .sheet(isPresented: $showDeleteProfile) {
+            SocialDeleteProfileSheet()
         }
         .sheet(item: $linked) { item in NavigationStack { SocialProfileScreen(userID: item.profile.userID, preloaded: item.profile) } }
         .task { await syncAndLoad() }
@@ -61,10 +65,11 @@ struct SocialHubView: View {
 
     @ViewBuilder private var activeContent: some View {
         if let me = social.myProfile {
-            Button { linked = IdentifiedProfile(profile: me) } label: {
-                SocialProfileHeaderView(profile: me)
-            }
-            .buttonStyle(.plain)
+            // Deliberately no own-profile card and no own shared-workouts
+            // list: your stats already live one layer back on Profile, and
+            // every eligible workout publishes automatically — so a "what
+            // I shared" list would just mirror your history. Hearts reach
+            // you on the workout itself (`WorkoutHeartsRow`).
             HStack(spacing: Space.md) {
                 NavigationLink { AddFriendView() } label: {
                     hubAction("person.badge.plus", "Find friends")
@@ -88,6 +93,22 @@ struct SocialHubView: View {
                     .buttonStyle(.plain)
             }
         }
+
+        Button(role: .destructive) { showDeleteProfile = true } label: {
+            Card(padding: Space.md) {
+                HStack(spacing: Space.md) {
+                    Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(theme.danger).frame(width: 32)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Delete community profile").font(.bodyStrong).foregroundStyle(theme.danger)
+                        Text("Removes your profile and everything you've shared").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("social-delete-profile")
+        .padding(.top, Space.lg)
     }
 
     private func hubAction(_ icon: String, _ title: String) -> some View {

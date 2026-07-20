@@ -99,6 +99,12 @@ struct SetBlockView: View {
     @State private var entryText = ""
     @FocusState private var entryFocused: Bool
 
+    /// Activation completion is an intra-set interaction state, not a second
+    /// persisted set. Keep it local so tapping Log gets the same immediate
+    /// green receipt as a completed set without changing the workout schema.
+    @State private var completedActivationSides: Set<Int> = []
+    @State private var activationCompletionHapticTrigger = 0
+
     /// Raw weight text while the field has focus. Without this, the
     /// get-formats/set-parses binding erased a trailing decimal point the
     /// instant it was typed ("62." re-rendered as "62"), making fractional
@@ -118,6 +124,14 @@ struct SetBlockView: View {
     private var isCluster: Bool { self.set.setType == .cluster }
     private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
     private var isDone: Bool { self.set.completedAt != nil }
+
+    /// Myo-reps has a nested completion hierarchy: the green activation row
+    /// stays prominent, while the finished block uses only its green border.
+    private var blockFill: Color {
+        isDone && set.setType != .myoRep
+            ? theme.success.opacity(0.10)
+            : style.color.opacity(0.06)
+    }
 
     private var microRest: Int {
         workoutExercise.microRestSeconds ?? set.setType.defaultMicroRestSeconds ?? 15
@@ -163,7 +177,7 @@ struct SetBlockView: View {
             }
         }
         .padding(Space.sm)
-        .background(isDone ? theme.success.opacity(0.10) : style.color.opacity(0.06))
+        .background(blockFill)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
@@ -308,10 +322,11 @@ struct SetBlockView: View {
     // MARK: - Activation set (myo-reps / rest-pause)
 
     private func activationRow(side: Int) -> some View {
-        HStack(spacing: Space.sm) {
+        let isCompleted = activationIsCompleted(side: side)
+        return HStack(spacing: Space.sm) {
             Text("Activation")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.textSecondary)
+                .foregroundStyle(isCompleted ? theme.success : theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Weight is the implement's — shared across sides, entered once.
             if showWeight && side == 1 {
@@ -341,34 +356,44 @@ struct SetBlockView: View {
             // With nothing typed it adopts the ghost the placeholder shows —
             // the same "as planned" contract as the working-set checkbox —
             // so a lifter who hit the target logs the activation in one tap.
-            // Never disabled: with no reps AND no ghost it hands focus to the
-            // field instead — a dead-looking no-op here read as a bug when a
-            // set was converted to unilateral mid-workout and side 2 started
-            // empty.
+            // Before completion it is never disabled: with no reps AND no
+            // ghost it hands focus to the field instead — a dead-looking no-op
+            // here read as a bug when a set was converted to unilateral
+            // mid-workout and side 2 started empty.
             Button {
-                if sideReps(side) == nil, let ghost = activationGhostReps(side: side) {
-                    setSideReps(side, ghost)
-                    if showWeight && side == 1 && set.weight == nil {
-                        set.weight = previous?.weight
-                    }
-                    logActivation(side: side)
-                } else if sideReps(side) == nil {
-                    activationFocus = side
-                } else {
-                    logActivation(side: side)
-                }
+                handleActivationTap(side: side)
             } label: {
-                Image(systemName: "arrow.down.to.line")
+                Image(systemName: isCompleted ? "checkmark" : "arrow.down.to.line")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(activationLoggable(side: side) ? style.color : theme.textSecondary)
+                    .foregroundStyle(
+                        isCompleted
+                            ? theme.success
+                            : (activationLoggable(side: side) ? style.color : theme.textSecondary)
+                    )
                     .frame(width: 34, height: 30)
-                    .background(style.color.opacity(activationLoggable(side: side) ? 0.18 : 0.08))
+                    .background(
+                        isCompleted
+                            ? theme.success.opacity(0.18)
+                            : style.color.opacity(activationLoggable(side: side) ? 0.18 : 0.08)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(isCompleted ? theme.success.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressableButtonStyle())
+            .disabled(isCompleted || isDone)
             .accessibilityIdentifier("log-activation-\(side)")
             .accessibilityLabel(activationAccessibilityLabel(side: side))
+            .accessibilityValue(isCompleted ? "Completed" : "Not completed")
         }
+        .padding(.leading, 6)
+        .background(isCompleted ? theme.success.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .sensoryFeedback(.impact(weight: .medium), trigger: activationCompletionHapticTrigger)
     }
 
     /// Side 2 suggests matching side 1's activation; side 1 suggests history.
@@ -388,12 +413,38 @@ struct SetBlockView: View {
     }
 
     private func activationAccessibilityLabel(side: Int) -> String {
+        if activationIsCompleted(side: side) { return "Activation completed" }
         if sideReps(side) != nil { return "Log activation and start micro-rest" }
         if activationGhostReps(side: side) != nil { return "Log activation as planned and start micro-rest" }
         return "Enter activation reps"
     }
 
+    /// A mini-set or completed block proves the activation happened even if
+    /// SwiftUI rebuilt this row after the original tap.
+    private func activationIsCompleted(side: Int) -> Bool {
+        completedActivationSides.contains(side)
+            || !sideMinis(side).isEmpty
+            || (isDone && sideReps(side) != nil)
+    }
+
+    private func handleActivationTap(side: Int) {
+        guard !activationIsCompleted(side: side), !isDone else { return }
+        if sideReps(side) == nil, let ghost = activationGhostReps(side: side) {
+            setSideReps(side, ghost)
+            if showWeight && side == 1 && set.weight == nil {
+                set.weight = previous?.weight
+            }
+            logActivation(side: side)
+        } else if sideReps(side) == nil {
+            activationFocus = side
+        } else {
+            logActivation(side: side)
+        }
+    }
+
     private func logActivation(side: Int) {
+        completedActivationSides.insert(side)
+        activationCompletionHapticTrigger += 1
         timer.start(seconds: microRest, label: miniRestLabel(side: side, count: 1), micro: true, ownerID: set.id)
         onChange()
     }

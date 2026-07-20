@@ -103,7 +103,10 @@ struct FlexibilityAnalyticsTests {
 
     @Test func regionSecondsAggregatesYogaAndStretchingSets() throws {
         let (container, context) = try TestStore.make()
-        let now = Date()
+        // Pinned mid-day: the fixtures sit "an hour ago" and the assertions
+        // require one calendar day — a live `Date()` made that false (and the
+        // test flaky) for the first hour after midnight.
+        let now = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
 
         // A finished yoga workout with a frozen exposure snapshot.
         let yogaSession = CardioSessionModel(userID: ForgeFitDemo.userID, modality: "yoga", durationSeconds: 300)

@@ -385,7 +385,8 @@ public enum InsightQueryEngine {
         }
 
         // Zero-filled tallies have no "gaps" — every bucket is exact.
-        if !allSeriesAreZeroFilledTallies,
+        if recipe.shape != .relationship,
+           !allSeriesAreZeroFilledTallies,
            coverage.expectedBuckets > 0, coverage.fraction < sparseCoverageThreshold {
             warnings.append(.sparseCoverage(fraction: coverage.fraction))
         }
@@ -687,17 +688,18 @@ public enum InsightQueryEngine {
         }
         let outcomeDescriptor = byID[InsightOperand.metricID(fromKey: outcome.metricID)]
         let exposureDescriptor = byID[InsightOperand.metricID(fromKey: exposure.metricID)]
-        // Missingness defines the eligible population, operand by operand.
-        // A recorded measurement is REQUIRED; an absent event tally is an
-        // exact zero on a date made eligible by the other operand. Therefore:
-        //   never + never   -> intersection
-        //   zero  + never   -> the recorded operand's dates
-        //   zero  + zero    -> union of dates where either event occurred
-        // This avoids selecting only workout days in, for example, sleep vs
-        // training volume, while also avoiding fabricated sensor readings.
-        let outcomeMayBeZero = recipe.bucket != .session
+        // Missing measurements are always excluded. Zero-capable training
+        // totals may either stay on their recorded active buckets (the
+        // metric-aware default) or contribute structural zeros on dates made
+        // eligible by the other operand (the visible recipe override).
+        let population = InsightCompatibilityEngine.resolvedRelationshipPopulation(
+            for: recipe,
+            descriptors: Array(byID.values)
+        )
+        let includesInactiveBuckets = population == .includeInactiveBuckets
+        let outcomeMayBeZero = includesInactiveBuckets
             && outcomeDescriptor?.zeroFillPolicy == .zeroWhenAbsent
-        let exposureMayBeZero = recipe.bucket != .session
+        let exposureMayBeZero = includesInactiveBuckets
             && exposureDescriptor?.zeroFillPolicy == .zeroWhenAbsent
         let reverseComponent: Calendar.Component = recipe.lag?.unit == .weeks ? .weekOfYear : .day
         let reverseCount = -(recipe.lag?.count ?? 0)

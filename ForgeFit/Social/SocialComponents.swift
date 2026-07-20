@@ -122,6 +122,9 @@ struct SocialWorkoutRow: View {
                     Text(ref.title ?? "Workout").font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
                     Spacer()
                     Text(ref.startedAt.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                    // Rows open the workout detail (where likes live) —
+                    // chevron is the app's tappable signal.
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textTertiary)
                 }
                 HStack(spacing: Space.lg) {
                     rowStat("Time", Fmt.durationShort(ref.summary.durationSeconds))

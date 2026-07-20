@@ -6,6 +6,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct WorkoutHistoryImportView: View {
+    var completionTitle = "Done"
+    var onComplete: (() -> Void)?
+
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -17,6 +20,7 @@ struct WorkoutHistoryImportView: View {
     @State private var loading = false
     @State private var preview: WorkoutHistoryImportPreview?
     @State private var result: WorkoutHistoryImportCommitResult?
+    @State private var importError: WorkoutImportError?
     @State private var errorMessage: String?
     @State private var backups: [BackupRestoreService.BackupInfo] = []
     @State private var restoring = false
@@ -36,12 +40,22 @@ struct WorkoutHistoryImportView: View {
                         previewCard(preview)
                         exerciseMatchCard(preview)
                         warningsCard(preview)
-                        PrimaryButton(title: "Import \(preview.importableCount) Workouts", systemImage: "square.and.arrow.down.fill") {
-                            commit(preview)
+                        if preview.importableCount > 0 {
+                            PrimaryButton(title: "Import \(preview.importableCount) Workouts", systemImage: "square.and.arrow.down.fill") {
+                                commit(preview)
+                            }
+                            .disabled(loading)
+                        } else {
+                            duplicateOnlyCard(preview)
                         }
-                        .disabled(loading || preview.importableCount <= 0)
                     } else {
                         emptyPickerCard
+                        if let importError {
+                            importFailureCard(importError)
+                        }
+                    }
+                    if let errorMessage {
+                        operationFailureCard(errorMessage)
                     }
                 }
                 .padding(.horizontal, Space.lg)
@@ -92,6 +106,7 @@ struct WorkoutHistoryImportView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(theme.success)
                         .fixedSize(horizontal: false, vertical: true)
+                    PrimaryButton(title: completionTitle, systemImage: "arrow.right", action: completeFlow)
                 }
                 if restoring {
                     ProgressView("Restoring…").tint(theme.accent).foregroundStyle(theme.textSecondary)
@@ -159,12 +174,13 @@ struct WorkoutHistoryImportView: View {
                     }
                     Spacer()
                 }
-                Text("ForgeFit previews the file, skips duplicate imports, matches exercises to your library, and converts weights into the app’s internal history format.")
+                Text("ForgeFit checks the file before anything is saved, then previews workouts, duplicates, and exercise matches for your confirmation.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
                     result = nil
+                    importError = nil
                     errorMessage = nil
                     pickingFile = true
                 } label: {
@@ -190,17 +206,80 @@ struct WorkoutHistoryImportView: View {
                     supportRow("info.circle.fill", "Excel and Google Sheets should be exported as CSV before importing.")
                 }
                 if loading {
-                    ProgressView("Reading file…")
+                    ProgressView("Checking file…")
                         .tint(theme.accent)
                         .foregroundStyle(theme.textSecondary)
                 }
-                if let errorMessage {
-                    Text(errorMessage)
+            }
+        }
+    }
+
+    private func operationFailureCard(_ message: String) -> some View {
+        Card {
+            HStack(alignment: .top, spacing: Space.sm) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(theme.danger)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import couldn’t finish")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.danger)
+                        .foregroundStyle(theme.textPrimary)
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func importFailureCard(_ error: WorkoutImportError) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(alignment: .top, spacing: Space.md) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(theme.danger)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(error.title)
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        if let description = error.errorDescription {
+                            Text(description)
+                                .font(.system(size: 13))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                if !error.columnDetails.isEmpty {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text("Missing from this file")
+                            .font(.tag)
+                            .foregroundStyle(theme.textTertiary)
+                        ForEach(error.columnDetails, id: \.self) { column in
+                            Text(column)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(theme.danger)
+                        }
+                    }
+                    .padding(.leading, 40)
+                }
+                Text(error.recoverySuggestion)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                SecondaryButton(title: "Choose Another File", systemImage: "doc.badge.plus") {
+                    importError = nil
+                    errorMessage = nil
+                    pickingFile = true
+                }
+                .accessibilityIdentifier("import-choose-another-file")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("import-file-error")
     }
 
     private func supportRow(_ icon: String, _ text: String) -> some View {
@@ -221,7 +300,20 @@ struct WorkoutHistoryImportView: View {
             SectionHeader("Preview")
             Card {
                 VStack(spacing: Space.md) {
-                    summaryRow("Source", preview.parseResult.source.displayName)
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(theme.success)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("File checked")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                            Text("\(preview.parseResult.source.displayName) export recognized · \(preview.parseResult.checkedRowCount) rows")
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        Spacer()
+                    }
                     Divider().overlay(theme.separator)
                     summaryRow("File", preview.parseResult.fileName)
                     Divider().overlay(theme.separator)
@@ -260,6 +352,27 @@ struct WorkoutHistoryImportView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private func duplicateOnlyCard(_ preview: WorkoutHistoryImportPreview) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(alignment: .top, spacing: Space.sm) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(theme.success)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("These workouts are already here")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        Text("All \(preview.duplicateCount) workouts match history that was previously imported. Nothing new will be added.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                PrimaryButton(title: completionTitle, systemImage: "checkmark", action: completeFlow)
             }
         }
     }
@@ -337,12 +450,17 @@ struct WorkoutHistoryImportView: View {
                         showReviewQueue = true
                     }
                 }
-                PrimaryButton(title: "Start training", systemImage: "arrow.right") { dismiss() }
+                PrimaryButton(title: completionTitle, systemImage: "arrow.right", action: completeFlow)
             }
         }
         .sheet(isPresented: $showReviewQueue) {
             ReviewImportedExercisesView(workouts: workouts)
         }
+    }
+
+    private func completeFlow() {
+        onComplete?()
+        dismiss()
     }
 
     /// Heaviest completed set per exercise, best three — weights are already
@@ -422,6 +540,7 @@ struct WorkoutHistoryImportView: View {
 
     private func load(_ url: URL) {
         loading = true
+        importError = nil
         errorMessage = nil
         do {
             let scoped = url.startAccessingSecurityScopedResource()
@@ -451,13 +570,17 @@ struct WorkoutHistoryImportView: View {
                     )
                 } catch {
                     preview = nil
-                    errorMessage = error.localizedDescription
+                    if let error = error as? WorkoutImportError {
+                        importError = error
+                    } else {
+                        importError = .unreadableFile
+                    }
                 }
                 loading = false
             }
         } catch {
             preview = nil
-            errorMessage = error.localizedDescription
+            importError = .unreadableFile
             loading = false
         }
     }

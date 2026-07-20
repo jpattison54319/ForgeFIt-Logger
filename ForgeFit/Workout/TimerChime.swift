@@ -35,24 +35,28 @@ final class TimerChime: NSObject, AVAudioPlayerDelegate {
     func play() {
         guard Self.isEnabled,
               let url = Bundle.main.url(forResource: "ForgeTimerChime", withExtension: "caf") else { return }
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.duckOthers, .mixWithOthers])
-        try? session.setActive(true)
-        guard let player = try? AVAudioPlayer(contentsOf: url) else {
-            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-            return
+        // Activate off the main thread (setActive can block on a Bluetooth
+        // handoff), then build and play the chime. `.default` mode — this is a
+        // sound, not speech. If the player won't load, release the session so
+        // other audio doesn't stay ducked.
+        Task {
+            try? await AudioCueSession.shared.activate(mode: .default)
+            guard let player = try? AVAudioPlayer(contentsOf: url) else {
+                try? await AudioCueSession.shared.deactivate()
+                return
+            }
+            self.player = player
+            player.delegate = self
+            player.volume = 0.9
+            player.play()
         }
-        self.player = player
-        player.delegate = self
-        player.volume = 0.9
-        player.play()
     }
 
     /// Un-duck other audio the moment the chime finishes.
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             self.player = nil
-            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            try? await AudioCueSession.shared.deactivate()
         }
     }
 }

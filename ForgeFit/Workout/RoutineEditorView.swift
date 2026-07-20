@@ -18,16 +18,17 @@ struct RoutineEditorView: View {
     /// deletes the placeholder instead of leaving "New Routine" in the library.
     var isNew: Bool = false
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showPicker = false
     @State private var entrySnapshot: RoutineSnapshot?
     @State private var showDiscardConfirm = false
-    @State private var reordering = false
     @State private var replaceTarget: RoutineExerciseModel?
     @State private var detailExerciseID: UUID?
-    /// The exercise currently being dragged by its handle (touch-and-drag
-    /// entry into reorder mode — see `beginReorderDrag`).
-    @State private var draggingExerciseID: UUID?
-    @State private var dragOriginIndex: Int?
+    /// Reference-backed so per-frame finger updates invalidate only the small
+    /// reorder overlay, not every editor row and target field.
+    @State private var reorderSession: ExerciseReorderSession?
+    /// Debounced structural-save plumbing — see `save()`.
+    @State private var deferredSaveTask: Task<Void, Never>?
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
 
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
@@ -41,31 +42,18 @@ struct RoutineEditorView: View {
     }
 
     var body: some View {
-        // `mainScroll` stays mounted (just hidden) even while reordering,
-        // instead of being swapped out by an `if/else`. Touch-and-drag entry
-        // into reorder mode (see `ExerciseEditRow`'s handle) starts its
-        // gesture on a row inside `mainScroll`; if that view were removed
-        // from the tree the instant `reordering` flips true, the in-flight
-        // touch would be cancelled and the drag would die right as it began.
-        // Keeping it mounted lets the same continuous gesture keep driving
-        // the reorder after `reorderList` appears on top of it.
         ZStack(alignment: .top) {
+            // Always mounted, even while the reorder overlay covers it: the
+            // hold-to-reorder gesture starts on a row handle inside this
+            // scroll — removing the view mid-gesture would cancel the touch
+            // and kill the drag right as it began.
             mainScroll
-                .opacity(reordering ? 0 : 1)
-                // Visually hidden, not removed (see comment above) — but it
-                // must not stay reachable by VoiceOver or UI-test element
-                // queries while the reorder screen is what's actually on
-                // screen. `accessibilityHidden` only affects the
-                // accessibility tree, not hit-testing, so it can't cancel the
-                // in-flight drag gesture the way toggling `allowsHitTesting`
-                // mid-touch would.
-                .accessibilityHidden(reordering)
-            if reordering {
-                VStack(spacing: 0) {
-                    header.padding(.horizontal, Space.lg)
-                    reorderList
-                }
-                .transition(.opacity)
+                .accessibilityHidden(reorderSession != nil)
+            if reorderSession != nil {
+                reorderOverlay
+                    .transition(.opacity)
+                    .zIndex(1)
+                    .allowsHitTesting(false)
             }
         }
         .background(theme.background)
@@ -82,9 +70,19 @@ struct RoutineEditorView: View {
         .onAppear {
             if entrySnapshot == nil { entrySnapshot = RoutineSnapshot(of: routine) }
         }
+        .onDisappear { flushPendingSave() }
+        // The 2s save debounce must not lose edits when the app is locked or
+        // backgrounded mid-edit.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { flushPendingSave() }
+        }
         .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
-            Button("Save Changes") { save(); dismiss() }
+            Button("Save Changes") { saveNow(); dismiss() }
             Button("Discard Changes", role: .destructive) {
+                // A queued debounced save must not fire after the restore and
+                // persist the very edits being thrown away.
+                deferredSaveTask?.cancel()
+                deferredSaveTask = nil
                 if isNew {
                     // The routine never existed before this editor opened —
                     // discarding means it shouldn't exist at all.
@@ -150,13 +148,7 @@ struct RoutineEditorView: View {
                     }
                 }
 
-                SectionHeader("Exercises") {
-                    if sortedExercises.count > 1 {
-                        Button("Reorder") { withAnimation { reordering = true } }
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
-                            .accessibilityIdentifier("reorder-exercises-button")
-                    }
-                }
+                SectionHeader("Exercises")
 
                 ForEach(sortedExercises) { re in
                     ExerciseEditRow(
@@ -169,12 +161,9 @@ struct RoutineEditorView: View {
                         onUngroupSuperset: { ungroupSuperset($0) },
                         onReplace: { replaceTarget = re },
                         onRemove: { remove(re) },
-                        onReorder: { withAnimation { reordering = true } },
-                        onReorderDragChanged: { translation in
-                            if draggingExerciseID != re.id { beginReorderDrag(re) }
-                            updateReorderDrag(re, translation: translation)
-                        },
-                        onReorderDragEnded: { endReorderDrag() }
+                        onReorderDragChanged: { fingerY in reorderDragChanged(re, fingerY: fingerY) },
+                        onReorderDragEnded: { reorderDragEnded() },
+                        onAccessibilityMoveBy: { offset in accessibilityMoveExercise(re.id, by: offset) }
                     )
                 }
 
@@ -182,122 +171,98 @@ struct RoutineEditorView: View {
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.tabBarClearance)
+            // Keep the last fields scrollable above the number pad without
+            // padding — and therefore shrinking — the ScrollView itself.
+            .keyboardAdaptiveBottomInset()
         }
+        .accessibilityIdentifier("routine-editor-scroll")
         .background(theme.background)
         // The target fields use number pads (no return key) — without
         // these there was no way to dismiss the keyboard at all.
         .scrollDismissesKeyboard(.interactively)
-        // Root-cause fix (shared with ScreenScaffold): without this,
-        // the last exercise card's fields can be stranded behind the
-        // keyboard with no way to scroll further — see
-        // `KeyboardAdaptiveBottomInset` in AppShell/ScreenScaffold.swift.
-        .keyboardAdaptiveBottomInset()
     }
 
-    /// Begins a touch-and-drag reorder seeded from `re`'s handle in the
-    /// normal (non-reordering) row — collapses into `reorderList` immediately
-    /// instead of requiring a separate tap-then-drag. `dragOriginIndex` is
-    /// fixed for the whole gesture; every `updateReorderDrag` call recomputes
-    /// the target index fresh from it so index math can't drift as rows move.
-    private func beginReorderDrag(_ re: RoutineExerciseModel) {
-        draggingExerciseID = re.id
-        dragOriginIndex = sortedExercises.firstIndex { $0.id == re.id }
-        if !reordering {
-            withAnimation(.snappy(duration: 0.22)) { reordering = true }
+    /// One continuous gesture from a row's reorder handle. UIKit calls this
+    /// once when the stationary hold recognizes, then again for movement.
+    private func reorderDragChanged(_ re: RoutineExerciseModel, fingerY: CGFloat) {
+        if let reorderSession {
+            guard reorderSession.heldID == re.id else { return }
+            reorderSession.fingerGlobalY = fingerY
+            return
+        }
+
+        hideKeyboard()
+        let exerciseNames = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0.name) })
+        let rows = sortedExercises.map {
+            ReorderCollapseOverlay.Row(
+                id: $0.id,
+                name: exerciseNames[$0.exerciseID] ?? "Exercise"
+            )
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            reorderSession = ExerciseReorderSession(
+                heldID: re.id,
+                fingerGlobalY: fingerY,
+                rows: rows
+            )
         }
     }
 
-    /// Compact-row height in `reorderList` (40pt thumbnail + row padding) —
-    /// the unit `translation` is measured against to decide how many rows to
-    /// step the dragged exercise past.
-    private static let reorderRowHeight: CGFloat = 56
-
-    private func updateReorderDrag(_ re: RoutineExerciseModel, translation: CGFloat) {
-        guard draggingExerciseID == re.id, let originIndex = dragOriginIndex else { return }
-        let delta = Int((translation / Self.reorderRowHeight).rounded())
-        var rows = sortedExercises
-        let targetIndex = max(0, min(rows.count - 1, originIndex + delta))
-        guard let currentIndex = rows.firstIndex(where: { $0.id == re.id }), currentIndex != targetIndex else { return }
-        rows.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: targetIndex > currentIndex ? targetIndex + 1 : targetIndex)
-        for (index, row) in rows.enumerated() { row.position = index }
-    }
-
-    private func endReorderDrag() {
-        guard draggingExerciseID != nil else { return }
-        draggingExerciseID = nil
-        dragOriginIndex = nil
-        save()
-        // Deliberately NOT `reordering = false` here — per the requested
-        // interaction, dropping a dragged row stays on the reorder view
-        // until the user explicitly taps Done.
+    private func reorderDragEnded() {
+        guard let reorderSession else { return }
+        if reorderSession.didMove {
+            let exercisesByID = Dictionary(uniqueKeysWithValues: routine.exercises.map { ($0.id, $0) })
+            for (index, row) in reorderSession.rows.enumerated() {
+                exercisesByID[row.id]?.position = index
+            }
+            save()
+        }
+        withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
     }
 
     private var header: some View {
         HStack {
-            if reordering {
-                Text("Reorder").font(.rowValue).foregroundStyle(theme.textPrimary)
-                Spacer()
-                Button("Done") { withAnimation { reordering = false } }
-                    .font(.bodyStrong).foregroundStyle(theme.accent)
-                    .accessibilityIdentifier("reorder-done-button")
-            } else {
-                // Back offers to save or discard when the routine changed — it no
-                // longer silently saves, so Save actually means something.
-                CircleIconButton(systemImage: "chevron.left", label: "Back") {
-                    if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
-                        showDiscardConfirm = true
-                    } else if isNew {
-                        // Untouched placeholder — silently clean it up.
-                        discardNewRoutine()
-                    } else {
-                        dismiss()
-                    }
+            // Back offers to save or discard when the routine changed — it no
+            // longer silently saves, so Save actually means something.
+            CircleIconButton(systemImage: "chevron.left", label: "Back") {
+                if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
+                    showDiscardConfirm = true
+                } else if isNew {
+                    // Untouched placeholder — silently clean it up.
+                    discardNewRoutine()
+                } else {
+                    dismiss()
                 }
-                Spacer()
-                Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
-                Spacer()
-                Button("Save") { save(); dismiss() }
-                    .font(.bodyStrong).foregroundStyle(theme.accent)
             }
+            Spacer()
+            Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
+            Spacer()
+            Button("Save") { saveNow(); dismiss() }
+                .font(.bodyStrong).foregroundStyle(theme.accent)
         }
         .padding(.top, Space.sm)
     }
 
-    /// Drag-to-reorder list, mirroring the live logger's reorder mode so the
-    /// gesture is consistent app-wide.
-    private var reorderList: some View {
-        List {
-            ForEach(sortedExercises) { re in
-                HStack(spacing: Space.md) {
-                    if let ex = exercises.first(where: { $0.id == re.exerciseID }) {
-                        ExerciseThumbnail(exercise: ex, size: 40)
-                        Text(ex.name).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
-                    }
-                    Spacer()
-                    // No explicit handle here: with `.onMove` + editMode
-                    // active, List already renders its own native drag
-                    // handle on the trailing edge. Drawing a second
-                    // "line.3.horizontal" here used to show two hamburger
-                    // icons per row.
-                }
-                .listRowBackground(theme.surface)
-                .listRowSeparatorTint(theme.separator)
-            }
-            .onMove(perform: moveExercises)
-            .onDelete { offsets in
-                for index in offsets.sorted(by: >) { remove(sortedExercises[index]) }
-            }
+    /// The collapse overlay (see `ReorderCollapseOverlay`): every exercise as
+    /// a name-only row gathered around the finger, the held one scaled under
+    /// it, hovered rows dimmed, order snapping live — identical to the
+    /// live logger's.
+    @ViewBuilder
+    private var reorderOverlay: some View {
+        if let reorderSession {
+            ReorderCollapseOverlay(session: reorderSession)
+                .accessibilityIdentifier("routine-editor-reorder-overlay")
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(theme.background)
-        .environment(\.editMode, .constant(.active))
     }
 
-    private func moveExercises(from offsets: IndexSet, to destination: Int) {
+    /// VoiceOver fallback for the drag: step a row one slot at a time.
+    private func accessibilityMoveExercise(_ id: UUID, by offset: Int) {
         var rows = sortedExercises
-        rows.move(fromOffsets: offsets, toOffset: destination)
-        for (index, row) in rows.enumerated() { row.position = index }
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        let target = max(0, min(rows.count - 1, index + offset))
+        guard target != index else { return }
+        rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
+        for (i, row) in rows.enumerated() { row.position = i }
         save()
     }
 
@@ -385,7 +350,38 @@ struct RoutineEditorView: View {
         }
     }
 
+    /// Debounced, matching the live logger's save discipline: a synchronous
+    /// `modelContext.save()` re-publishes this screen's own root
+    /// `allWorkouts` @Query (O(total history) on the main thread), and doing
+    /// that on every structural tap or reorder move landed exactly when the
+    /// thumb came down to scroll — eating the first pan gesture. The model
+    /// mutates in memory immediately (the UI reads models, not the store);
+    /// only the store write is deferred. Durability is unchanged: Save
+    /// buttons, dismissal, and app-background all flush synchronously.
     private func save() {
+        routine.updatedAt = Date()
+        scheduleSave()
+    }
+
+    private func scheduleSave() {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            saveNow()
+            deferredSaveTask = nil
+        }
+    }
+
+    /// Flush a pending debounced save right now; no-op when nothing is queued.
+    private func flushPendingSave() {
+        guard deferredSaveTask != nil else { return }
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
+        saveNow()
+    }
+
+    private func saveNow() {
         routine.updatedAt = Date()
         try? modelContext.save()
     }
@@ -402,10 +398,7 @@ struct RoutineEditorView: View {
     }
 
     private func nextSupersetGroup() -> Int {
-        var candidate = 0
-        let used = Set(supersetGroups)
-        while used.contains(candidate) { candidate += 1 }
-        return candidate
+        SupersetUI.nextGroup(excluding: supersetGroups)
     }
 
     private func assignSuperset(_ group: Int?, to re: RoutineExerciseModel) {
@@ -451,6 +444,7 @@ struct RoutineEditorView: View {
 private struct ExerciseEditRow: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @Bindable var routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
     let availableSupersetGroups: [Int]
@@ -460,17 +454,13 @@ private struct ExerciseEditRow: View {
     let onUngroupSuperset: (Int) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
-    /// Enters reorder mode — the row's drag-handle affordance, matching the
-    /// live logger instead of relying on the header button alone. Fired by a
-    /// plain tap-release on the handle with no meaningful movement.
-    let onReorder: () -> Void
-    /// Fired continuously while the handle is pressed AND dragged (not just
-    /// tapped) — collapses into reorder mode immediately and carries this
-    /// row's live drag translation, instead of requiring a discrete tap to
-    /// enter reorder mode before a separate press-and-drag on the (now
-    /// visible) list handle can begin.
+    /// Streams the finger's global Y while the reorder handle is held and
+    /// dragged — the parent collapses every row around the finger with this
+    /// exercise scaled under it (see `ReorderCollapseOverlay`).
     var onReorderDragChanged: (CGFloat) -> Void = { _ in }
     var onReorderDragEnded: () -> Void = {}
+    /// VoiceOver fallback for the drag: move this exercise one slot up/down.
+    var onAccessibilityMoveBy: (Int) -> Void = { _ in }
 
     @State private var showIntervalBuilder = false
     @State private var showFlowBuilder = false
@@ -490,21 +480,47 @@ private struct ExerciseEditRow: View {
     private var isYoga: Bool { exercise?.isYoga == true }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
 
+    /// The ⋯ overflow menu, section-for-section identical to the old SwiftUI
+    /// Menu (supersets | add sets | progression submenu | replace | remove).
+    private var overflowMenuSections: [[ScrollSafeMenuItem]] {
+        let supersets = SupersetUI.scrollSafeMenuItems(
+            currentGroup: routineExercise.supersetGroup,
+            availableGroups: availableSupersetGroups,
+            onAssign: onAssignSuperset,
+            onCreate: onCreateSuperset,
+            onUngroup: onUngroupSuperset
+        )
+
+        var sections = [supersets]
+        if !isCardio && !isYoga {
+            sections.append([
+                ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) },
+                ScrollSafeMenuItem(title: "Add Working Set", systemImage: "plus") { addSet(type: .working) }
+            ])
+            sections.append([ScrollSafeMenuItem(
+                title: "Progression",
+                systemImage: "chart.line.uptrend.xyaxis",
+                children: [
+                    progressionRuleItem("Double progression (default)", rule: nil),
+                    progressionRuleItem("Fixed +\(displayUnit == .lb ? "5 lb" : "2.5 kg") on target", rule: .fixedIncrement(step: displayUnit == .lb ? 5 : 2.5)),
+                    progressionRuleItem("Percent +2.5% on target", rule: .percent(step: 2.5)),
+                    progressionRuleItem("Off", rule: ProgressionRule.off)
+                ]
+            )])
+        }
+        sections.append([ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)])
+        sections.append([ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)])
+        return sections
+    }
+
     /// nil rule = the double-progression default (stored as nil JSON).
-    private func progressionRuleButton(_ title: String, rule: ProgressionRule?) -> some View {
-        Button {
+    private func progressionRuleItem(_ title: String, rule: ProgressionRule?) -> ScrollSafeMenuItem {
+        let isSelected = rule == nil
+            ? routineExercise.progressionRuleJSON == nil
+            : currentProgressionRule == rule
+        return ScrollSafeMenuItem(title: title, isChecked: isSelected) {
             routineExercise.progressionRuleJSON = rule?.encodedJSON()
-            routineExercise.updatedAt = Date()
-            try? modelContext.save()
-        } label: {
-            let isSelected = rule == nil
-                ? routineExercise.progressionRuleJSON == nil
-                : currentProgressionRule == rule
-            if isSelected {
-                Label(title, systemImage: "checkmark")
-            } else {
-                Text(title)
-            }
+            save()
         }
     }
 
@@ -542,66 +558,20 @@ private struct ExerciseEditRow: View {
                         }
                     }
                     Spacer()
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                        // A plain tap-release (~0 translation) still just
-                        // enters reorder mode, matching the old Button. Any
-                        // real movement is treated as "grab and drag this
-                        // row right now" — one continuous touch collapses
-                        // into the compact reorder list AND starts moving
-                        // this exercise, instead of tap-to-enter-mode then a
-                        // second separate press-and-drag on the list's own
-                        // handle. `.highPriorityGesture` so the ambient
-                        // ScrollView doesn't win the vertical pan first.
-                        .highPriorityGesture(
-                            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                                .onChanged { value in
-                                    guard abs(value.translation.height) > 2 || abs(value.translation.width) > 2 else { return }
-                                    onReorderDragChanged(value.translation.height)
-                                }
-                                .onEnded { value in
-                                    if abs(value.translation.height) <= 2, abs(value.translation.width) <= 2 {
-                                        onReorder()
-                                    } else {
-                                        onReorderDragEnded()
-                                    }
-                                }
-                        )
-                        .accessibilityLabel("Reorder exercises")
-                        .accessibilityAddTraits(.isButton)
-                    Menu {
-                        SupersetMenuItems(
-                            currentGroup: routineExercise.supersetGroup,
-                            availableGroups: availableSupersetGroups,
-                            onAssign: onAssignSuperset,
-                            onCreate: onCreateSuperset,
-                            onUngroup: onUngroupSuperset
-                        )
-                        if !isCardio && !isYoga {
-                            Divider()
-                            Button("Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) }
-                            Button("Add Working Set", systemImage: "plus") { addSet(type: .working) }
-                            Divider()
-                            Menu {
-                                progressionRuleButton("Double progression (default)", rule: nil)
-                                progressionRuleButton("Fixed +\(displayUnit == .lb ? "5 lb" : "2.5 kg") on target", rule: .fixedIncrement(step: displayUnit == .lb ? 5 : 2.5))
-                                progressionRuleButton("Percent +2.5% on target", rule: .percent(step: 2.5))
-                                progressionRuleButton("Off", rule: ProgressionRule.off)
-                            } label: {
-                                Label("Progression", systemImage: "chart.line.uptrend.xyaxis")
-                            }
-                        }
-                        Divider()
-                        Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
-                        Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
-                    } label: {
+                    ReorderHandle(
+                        onDragChanged: onReorderDragChanged,
+                        onDragEnded: onReorderDragEnded,
+                        onAccessibilityMoveBy: onAccessibilityMoveBy
+                    )
+                    // ScrollSafeMenu, not Menu — same conversion as the live
+                    // logger's ⋯ menu: a scroll starting on the glyph must
+                    // scroll, not dead-stop into the menu's touch claim.
+                    ScrollSafeMenu(sections: overflowMenuSections) {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(theme.textSecondary)
                             .frame(width: 44, height: 44)   // HIG minimum touch target
+                            .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("routine-exercise-menu-\(exercise?.name ?? "")")
                 }
@@ -618,9 +588,10 @@ private struct ExerciseEditRow: View {
                 }
             }
         }
-        .onDisappear {
-            deferredSaveTask?.cancel()
-            saveNow()
+        .onDisappear { flushPendingSave() }
+        // Backgrounding mid-edit must not sit on a 2s debounce.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { flushPendingSave() }
         }
     }
 
@@ -652,19 +623,6 @@ private struct ExerciseEditRow: View {
                         onAddDrop: { addDropSet(below: set, index: index) },
                         onDelete: { deleteSet(set) }
                     )
-                }
-                if set.setType.countsAsWorkingVolume && set.setType != .drop {
-                    HStack {
-                        Spacer()
-                        Button {
-                            addDropSet(below: set, index: index)
-                        } label: {
-                            Label("Drop set", systemImage: "arrow.down.right")
-                                .font(.tag)
-                        }
-                        .foregroundStyle(theme.accent)
-                    }
-                    .padding(.trailing, 40)
                 }
             }
 
@@ -713,8 +671,7 @@ private struct ExerciseEditRow: View {
             .sheet(isPresented: $showFlowBuilder) {
                 YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON) { json in
                     routineExercise.yogaFlowJSON = json
-                    routineExercise.updatedAt = Date()
-                    try? modelContext.save()
+                    save()
                 }
             }
 
@@ -836,10 +793,26 @@ private struct ExerciseEditRow: View {
     private func scheduleSave() {
         deferredSaveTask?.cancel()
         deferredSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
+            // 2s, not 350ms, for the live logger's reason: a save re-publishes
+            // the editor's root all-workouts @Query (O(total history) on the
+            // main thread), and at +350ms it landed exactly when the thumb
+            // came down to scroll after an edit — eating the first pan
+            // gesture. 2s parks it in idle time; row-exit, app-background,
+            // and the Save/dismiss paths all flush immediately.
+            try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             saveNow()
+            deferredSaveTask = nil
         }
+    }
+
+    /// Flush a pending debounced save right now; no-op when nothing is queued
+    /// (so row recycling during a plain scroll never triggers save/publish).
+    private func flushPendingSave() {
+        guard deferredSaveTask != nil else { return }
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
+        saveNow()
     }
 
     private func saveNow() {
@@ -916,10 +889,13 @@ private struct ExerciseEditRow: View {
         }
     }
 
+    /// Every row mutation routes through the debounce: the model updates in
+    /// memory instantly (that's what the UI renders); only the store write —
+    /// and its @Query republish — waits for idle time.
     private func save() {
         routineExercise.updatedAt = Date()
         routineExercise.routine?.updatedAt = Date()
-        try? modelContext.save()
+        scheduleSave()
     }
 }
 
@@ -967,6 +943,7 @@ private struct SetTargetEditRow: View {
                     onChange: onChange
                 )
                 OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+                    .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
                 OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
             }
         }
@@ -976,20 +953,20 @@ private struct SetTargetEditRow: View {
     }
 
     private var typeMenu: some View {
-        Menu {
-            ForEach(SetType.selectable, id: \.self) { type in
-                Button {
+        // ScrollSafeMenu, not Menu: the badge sits mid-row on the scroll
+        // surface — exactly where a thumb lands to scroll. Same conversion
+        // as the live logger's set-row badges.
+        ScrollSafeMenu(sections: [
+            SetType.selectable.map { type in
+                ScrollSafeMenuItem(title: SetTypeStyle.of(type).label, isChecked: set.setType == type) {
                     onSetType(type)
-                } label: {
-                    Label(SetTypeStyle.of(type).label, systemImage: set.setType == type ? "checkmark" : "")
                 }
-            }
-            Divider()
-            Button("Add Drop Set Below", systemImage: "arrow.down.right", action: onAddDrop)
+            },
+            [ScrollSafeMenuItem(title: "Add Drop Set Below", systemImage: "arrow.down.right", action: onAddDrop)],
             // Accessible fallback — the primary delete is swipe-to-delete,
             // exactly like the live logger.
-            Button("Delete Set", systemImage: "trash", role: .destructive, action: onDelete)
-        } label: {
+            [ScrollSafeMenuItem(title: "Delete Set", systemImage: "trash", isDestructive: true, action: onDelete)]
+        ]) {
             let hasBadge = !style.badge.isEmpty
             Text(style.numbered ? "\(workingNumber)\(style.badge)" : style.badge)
                 .font(.system(size: 15, weight: .bold))
@@ -997,6 +974,7 @@ private struct SetTargetEditRow: View {
                 .frame(width: isDrop ? 32 : 40, height: 30)
                 .background(hasBadge ? style.color.opacity(0.15) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .accessibilityLabel("Set type")
     }
@@ -1049,17 +1027,20 @@ private struct SetTargetEditRow: View {
                     }
                 } else {
                     ForEach(Array(set.plannedMiniReps.enumerated()), id: \.offset) { index, goal in
-                        Menu {
-                            Button("+1 rep", systemImage: "plus") { adjustClusterGoal(index, by: 1) }
-                            Button("−1 rep", systemImage: "minus") { adjustClusterGoal(index, by: -1) }
-                            Divider()
-                            Button("Remove", systemImage: "trash", role: .destructive) {
+                        // ScrollSafeMenu, not Menu — bubbles are prime
+                        // scroll-start territory in a long cluster plan.
+                        ScrollSafeMenu(sections: [
+                            [
+                                ScrollSafeMenuItem(title: "+1 rep", systemImage: "plus") { adjustClusterGoal(index, by: 1) },
+                                ScrollSafeMenuItem(title: "−1 rep", systemImage: "minus") { adjustClusterGoal(index, by: -1) }
+                            ],
+                            [ScrollSafeMenuItem(title: "Remove", systemImage: "trash", isDestructive: true) {
                                 var plan = set.plannedMiniReps
                                 plan.remove(at: index)
                                 set.plannedMiniReps = plan
                                 onChange()
-                            }
-                        } label: {
+                            }]
+                        ]) {
                             placeholderBubble(label: "\(goal)")
                         }
                         .accessibilityLabel("Mini-set \(index + 1): goal \(goal) reps")

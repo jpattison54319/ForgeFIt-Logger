@@ -99,6 +99,7 @@ struct WorkoutDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @Environment(SocialService.self) private var social
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     var history: [WorkoutModel] = []
@@ -144,6 +145,18 @@ struct WorkoutDetailView: View {
                     Text(workout.startedAt.formatted(date: .complete, time: .shortened))
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
                 }
+
+                // Likes only exist for workouts shared through an opted-in
+                // community profile.
+                if social.isOptedIn, SocialBackfill.isEligible(workout) {
+                    WorkoutHeartsRow(workoutID: workout.id)
+                }
+                #if DEBUG
+                // Automation probe: distinguishes a closed product gate from
+                // a mounted row whose async fetch has not completed.
+                Color.clear.frame(width: 0, height: 0)
+                    .accessibilityIdentifier("hearts-gate-optedIn-\(social.isOptedIn)-eligible-\(SocialBackfill.isEligible(workout))")
+                #endif
 
                 let s = analytics.summary(for: workout)
                 overallStatsCard(s)

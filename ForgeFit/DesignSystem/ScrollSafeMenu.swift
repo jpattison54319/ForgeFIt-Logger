@@ -6,23 +6,32 @@ import UIKit
 struct ScrollSafeMenuItem {
     var title: String
     var systemImage: String? = nil
+    /// Optional fixed tint for identity-bearing menu icons, such as the dot
+    /// that maps a superset name to the same color used in exercise headers.
+    var iconColor: Color? = nil
     var isChecked = false
     var isDestructive = false
     /// Non-empty turns this item into a submenu; `action` is ignored then.
     var children: [ScrollSafeMenuItem] = []
     var action: () -> Void = {}
 
+    private var uiImage: UIImage? {
+        guard let image = systemImage.flatMap({ UIImage(systemName: $0) }) else { return nil }
+        guard let iconColor else { return image }
+        return image.withTintColor(UIColor(iconColor), renderingMode: .alwaysOriginal)
+    }
+
     fileprivate var uiElement: UIMenuElement {
         guard children.isEmpty else {
             return UIMenu(
                 title: title,
-                image: systemImage.flatMap { UIImage(systemName: $0) },
+                image: uiImage,
                 children: children.map(\.uiElement)
             )
         }
         return UIAction(
             title: title,
-            image: systemImage.flatMap { UIImage(systemName: $0) },
+            image: uiImage,
             attributes: isDestructive ? .destructive : [],
             state: isChecked ? .on : .off,
             handler: { _ in action() }

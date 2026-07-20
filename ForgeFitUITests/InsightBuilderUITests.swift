@@ -422,4 +422,54 @@ final class InsightBuilderUITests: XCTestCase {
         XCTAssertTrue(primaryScope.label.localizedCaseInsensitiveContains("Run"))
         XCTAssertTrue(comparisonScope.label.localizedCaseInsensitiveContains("Run"))
     }
+
+    /// Relationship population is a visible, state-stable math choice only
+    /// when a training total can be structurally zero. Health measurements
+    /// never expose a control that could manufacture missing readings.
+    @MainActor
+    func testRelationshipPopulationDefaultsToTrainingDaysAndHidesForHealthOnly() throws {
+        let app = launchApp(seedHistory: true)
+        openBlankBuilder(app)
+
+        app.buttons["Relationship"].firstMatch.tap()
+        element(app, "insight-add-comparison").tap()
+        chooseMetric("health.sleepTotal", in: app)
+
+        let trainingDays = element(app, "insight-population-activeBucketsOnly")
+        let allMeasuredDays = element(app, "insight-population-includeInactiveBuckets")
+        XCTAssertTrue(scrollTo(trainingDays, in: app), "A volume relationship needs a visible population choice.")
+        XCTAssertTrue(trainingDays.isSelected, "Automatic population should resolve to training days.")
+        XCTAssertTrue(allMeasuredDays.exists)
+        XCTAssertTrue(app.staticTexts["Not enough overlap yet"].exists)
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "matched days to create insight")
+            ).firstMatch.exists
+        )
+        XCTAssertFalse(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "isn't on the chart")
+            ).firstMatch.exists,
+            "The insufficient-overlap preview must not repeat its explanation as a warning."
+        )
+
+        allMeasuredDays.tap()
+        XCTAssertTrue(allMeasuredDays.isSelected)
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "count as 0")
+            ).firstMatch.waitForExistence(timeout: 3),
+            "The selected population must state the zero consequence inline."
+        )
+
+        let primary = element(app, "insight-metric-row-primary")
+        XCTAssertTrue(scrollTo(primary, in: app, direction: .down))
+        primary.tap()
+        chooseMetric("health.hrv", in: app)
+
+        XCTAssertFalse(
+            trainingDays.exists || allMeasuredDays.exists,
+            "Health-only relationships must always use recorded overlap without a zero override."
+        )
+    }
 }

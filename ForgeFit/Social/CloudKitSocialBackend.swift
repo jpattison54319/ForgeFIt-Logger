@@ -9,8 +9,8 @@ import Foundation
 /// (launch `--mock-social`). Before production, the record types below must be
 /// created/deployed in the CloudKit Dashboard (Development → Production), with
 /// the queried fields (`ownerID`, `publishedAt`, `handle`, `discoverable`,
-/// `followerID`, `workoutID`, and the leaderboard stat fields) marked Queryable
-/// / Sortable.
+/// `followerID`, `workoutID`, `likerID`, and the leaderboard stat fields)
+/// marked Queryable / Sortable.
 ///
 /// Health boundary: the only workout data transmitted is the pre-sanitized
 /// `SharedWorkoutDTO` (as an opaque `payload` blob). This type never imports or
@@ -81,11 +81,13 @@ public actor CloudKitSocialBackend: SocialBackend {
 
     // MARK: Shared workouts
 
-    public func publishWorkout(_ dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date) async throws {
+    public func publishWorkout(_ dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date, sourceUpdatedAt: Date) async throws {
         let me = try await currentUserID()
         let record = try await fetchOrNew(RecordType.workout, name: dto.id.uuidString)
         record["ownerID"] = me.rawValue
         record["publishedAt"] = publishedAt
+        // Staleness watermark only (never queried/sorted — no dashboard index).
+        record["sourceUpdatedAt"] = sourceUpdatedAt
         record["startedAt"] = dto.startedAt
         record["title"] = dto.title
         record["volumeKg"] = summary.volumeKg
@@ -102,12 +104,26 @@ public actor CloudKitSocialBackend: SocialBackend {
     public func unpublishWorkout(id: UUID) async throws {
         do { try await database.deleteRecord(withID: CKRecord.ID(recordName: id.uuidString)) }
         catch let error as CKError where error.code == .unknownItem { /* already gone */ }
+        // Other users' like records on this workout are not ours to delete
+        // (public-DB records are creator-owned) — they become unreachable
+        // orphans, same as the deleteAllMyData contract. Workout UUIDs are
+        // never reused, so orphaned likes can't resurrect on a new workout.
     }
 
-    public func recentWorkouts(for id: SocialUserID, limit: Int) async throws -> [SocialWorkoutRef] {
-        let query = CKQuery(recordType: RecordType.workout, predicate: NSPredicate(format: "ownerID == %@", id.rawValue))
+    /// Summary fields only via `desiredKeys` — the `payload` blob (the full
+    /// workout JSON) is by far the largest field on the record and the list
+    /// never reads it, so a page of rows costs KBs, not the whole history.
+    /// `workoutDetail(id:)` fetches the payload for the one workout opened.
+    public func recentWorkouts(for id: SocialUserID, limit: Int, before: Date?) async throws -> [SocialWorkoutRef] {
+        let predicate = before.map { NSPredicate(format: "ownerID == %@ AND publishedAt < %@", id.rawValue, $0 as NSDate) }
+            ?? NSPredicate(format: "ownerID == %@", id.rawValue)
+        let query = CKQuery(recordType: RecordType.workout, predicate: predicate)
         query.sortDescriptors = [NSSortDescriptor(key: "publishedAt", ascending: false)]
-        let (results, _) = try await database.records(matching: query, resultsLimit: limit)
+        let summaryKeys = [
+            "ownerID", "publishedAt", "sourceUpdatedAt", "startedAt", "title", "volumeKg",
+            "workingSets", "reps", "durationSeconds", "exerciseCount", "distanceMeters", "kind"
+        ]
+        let (results, _) = try await database.records(matching: query, desiredKeys: summaryKeys, resultsLimit: limit)
         return results.compactMap { try? $0.1.get() }.compactMap { workoutRef(from: $0) }
     }
 
@@ -125,7 +141,12 @@ public actor CloudKitSocialBackend: SocialBackend {
         let record = CKRecord(recordType: RecordType.follow, recordID: CKRecord.ID(recordName: followKey(me, id)))
         record["followerID"] = me.rawValue
         record["followeeID"] = id.rawValue
-        _ = try await database.save(record)
+        do {
+            _ = try await database.save(record)
+        } catch let error as CKError where error.code == .serverRecordChanged {
+            // The follow record already exists (a stale "Follow" button after
+            // an isFollowing read failed) — already the desired end state.
+        }
     }
 
     public func unfollow(_ id: SocialUserID) async throws {
@@ -163,14 +184,43 @@ public actor CloudKitSocialBackend: SocialBackend {
     }
 
     public func likeCount(workoutID: UUID) async throws -> Int {
-        let query = CKQuery(recordType: RecordType.like, predicate: NSPredicate(format: "workoutID == %@", workoutID.uuidString))
-        let (results, _) = try await database.records(matching: query, resultsLimit: CKQueryOperation.maximumResults)
-        return results.count
+        try await likeRecords(workoutID: workoutID).count
     }
 
     public func hasLiked(workoutID: UUID) async throws -> Bool {
         let me = try await currentUserID()
         return try await fetch(RecordType.like, name: likeKey(workoutID, me)) != nil
+    }
+
+    public func likers(workoutID: UUID) async throws -> [SocialLike] {
+        try await likeRecords(workoutID: workoutID)
+            .compactMap { record -> SocialLike? in
+                guard let raw = record["likerID"] as? String else { return nil }
+                // creationDate is server metadata — free on fetched records,
+                // no sortable-index schema change. nil only on never-saved
+                // records, which a query can't return.
+                return SocialLike(userID: SocialUserID(raw), likedAt: record.creationDate ?? .distantPast)
+            }
+            .sorted {
+                if $0.likedAt != $1.likedAt { return $0.likedAt > $1.likedAt }
+                return $0.userID.rawValue < $1.userID.rawValue   // stable tiebreak
+            }
+    }
+
+    /// Every like record for a workout. The server caps one query op at
+    /// ~100–200 results regardless of `resultsLimit`, so this MUST follow
+    /// the cursor — a truncated page shows a wrong heart count and a wrong
+    /// "most recent" liker.
+    private func likeRecords(workoutID: UUID) async throws -> [CKRecord] {
+        let query = CKQuery(recordType: RecordType.like, predicate: NSPredicate(format: "workoutID == %@", workoutID.uuidString))
+        var records: [CKRecord] = []
+        var (results, cursor) = try await database.records(matching: query, resultsLimit: CKQueryOperation.maximumResults)
+        records.append(contentsOf: results.compactMap { try? $0.1.get() })
+        while let next = cursor {
+            (results, cursor) = try await database.records(continuingMatchFrom: next)
+            records.append(contentsOf: results.compactMap { try? $0.1.get() })
+        }
+        return records
     }
 
     // MARK: Leaderboards
@@ -193,6 +243,65 @@ public actor CloudKitSocialBackend: SocialBackend {
         }
         return profiles.prefix(limit).enumerated().map {
             SocialLeaderboardEntry(profile: $0.element, value: value($0.element, metric), rank: $0.offset + 1)
+        }
+    }
+
+    // MARK: Account deletion
+
+    /// Deletes the user's community presence in three retry-safe steps:
+    /// content (workouts, follows, likes), then the handle claim, then the
+    /// profile record. Profile-last is deliberate — while it survives, the
+    /// account still reads as opted-in, so after a partial failure (offline,
+    /// throttled) the deletion UI stays reachable and a retry finishes the
+    /// job (`unknownItem` on already-deleted records is ignored).
+    ///
+    /// The public database grants write only to a record's creator, so
+    /// other users' records about me — their follows, their likes on my
+    /// workouts — cannot be deleted from this device. They hold only opaque
+    /// IDs and resolve to nothing once profile and workouts are gone.
+    public func deleteAllMyData() async throws {
+        let me = try await currentUserID()
+        // Resolve the handle before deleting anything: `HandleClaim` is
+        // addressed by handle (its recordName), and `ownerID` is not a
+        // queryable field — the handle only lives on the profile record.
+        let handle = try await profile(for: me)?.handle
+
+        var content: [CKRecord.ID] = []
+        content += try await allRecordIDs(ofType: RecordType.workout, matching: NSPredicate(format: "ownerID == %@", me.rawValue))
+        content += try await allRecordIDs(ofType: RecordType.follow, matching: NSPredicate(format: "followerID == %@", me.rawValue))
+        content += try await allRecordIDs(ofType: RecordType.like, matching: NSPredicate(format: "likerID == %@", me.rawValue))
+        try await delete(content)
+        if let handle {
+            try await delete([CKRecord.ID(recordName: SocialHandle.normalize(handle))])
+        }
+        try await delete([CKRecord.ID(recordName: me.rawValue)])
+    }
+
+    /// Every record ID matching `predicate`, following query cursors so
+    /// results beyond the first server page are included.
+    private func allRecordIDs(ofType type: String, matching predicate: NSPredicate) async throws -> [CKRecord.ID] {
+        let query = CKQuery(recordType: type, predicate: predicate)
+        var (matches, cursor) = try await database.records(matching: query, desiredKeys: [])
+        var ids = matches.map(\.0)
+        while let next = cursor {
+            (matches, cursor) = try await database.records(continuingMatchFrom: next, desiredKeys: [])
+            ids += matches.map(\.0)
+        }
+        return ids
+    }
+
+    /// Batch-deletes in chunks under CloudKit's per-operation record limit.
+    /// Non-atomic so an already-gone record doesn't fail its batch; anything
+    /// other than `unknownItem` (network, throttle, permission) propagates.
+    private func delete(_ recordIDs: [CKRecord.ID]) async throws {
+        var remaining = recordIDs[...]
+        while !remaining.isEmpty {
+            let chunk = Array(remaining.prefix(200))
+            remaining = remaining.dropFirst(chunk.count)
+            let (_, deleteResults) = try await database.modifyRecords(saving: [], deleting: chunk, atomically: false)
+            for case .failure(let error) in deleteResults.values where (error as? CKError)?.code != .unknownItem {
+                throw error
+            }
         }
     }
 
@@ -251,7 +360,11 @@ public actor CloudKitSocialBackend: SocialBackend {
             distanceMeters: record["distanceMeters"] as? Double ?? 0,
             kind: record["kind"] as? String ?? "strength"
         )
-        return SocialWorkoutRef(id: id, owner: SocialUserID(ownerID), title: record["title"] as? String, startedAt: startedAt, publishedAt: publishedAt, summary: summary)
+        return SocialWorkoutRef(
+            id: id, owner: SocialUserID(ownerID), title: record["title"] as? String,
+            startedAt: startedAt, publishedAt: publishedAt,
+            sourceUpdatedAt: record["sourceUpdatedAt"] as? Date, summary: summary
+        )
     }
 
     // MARK: - Helpers
@@ -266,10 +379,13 @@ public actor CloudKitSocialBackend: SocialBackend {
     }
 
     private func followKey(_ follower: SocialUserID, _ followee: SocialUserID) -> String {
-        "\(follower.rawValue)__\(followee.rawValue)"
+        // CloudKit user record names begin with an Apple-reserved underscore.
+        // A custom CKRecord.ID cannot start with that raw value, so keep the
+        // deterministic relationship key in an app-owned namespace.
+        "follow-\(follower.rawValue)-\(followee.rawValue)"
     }
     private func likeKey(_ workoutID: UUID, _ liker: SocialUserID) -> String {
-        "\(workoutID.uuidString)__\(liker.rawValue)"
+        "like-\(workoutID.uuidString)-\(liker.rawValue)"
     }
 
     private func fieldKey(for metric: SocialLeaderboardMetric) -> String {

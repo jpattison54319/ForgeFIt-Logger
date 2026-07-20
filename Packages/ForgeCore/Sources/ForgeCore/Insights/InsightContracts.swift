@@ -72,6 +72,16 @@ public enum InsightNormalization: String, Codable, Sendable {
     case baselineIndex
 }
 
+/// Which calendar buckets a relationship may pair when a training total can
+/// be structurally zero. `automatic` keeps saved recipes metric-aware: dose
+/// relationships use active buckets, while relationships without a
+/// zero-capable operand simply use their recorded intersection.
+public enum InsightRelationshipPopulation: String, Codable, Sendable, Equatable {
+    case automatic
+    case includeInactiveBuckets
+    case activeBucketsOnly
+}
+
 /// Every chart the result surface can draw. The compatibility engine decides
 /// which of these a given recipe may use; the UI never offers the rest.
 public enum InsightChartKind: String, Codable, Sendable, CaseIterable {
@@ -336,7 +346,7 @@ public struct InsightOperand: Codable, Sendable, Equatable, Hashable {
 /// outlives catalog evolution — unknown ids surface as editable warnings,
 /// never decode failures.
 public struct InsightRecipe: Codable, Sendable, Equatable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var id: UUID
@@ -353,6 +363,7 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
     public var range: InsightRange
     public var bucket: InsightBucket
     public var lag: InsightLag?
+    public var relationshipPopulation: InsightRelationshipPopulation
     public var normalization: InsightNormalization
     /// nil = engine-recommended chart.
     public var chart: InsightChartKind?
@@ -372,6 +383,7 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
         range: InsightRange = .twelveWeeks,
         bucket: InsightBucket = .daily,
         lag: InsightLag? = nil,
+        relationshipPopulation: InsightRelationshipPopulation = .automatic,
         normalization: InsightNormalization = .none,
         chart: InsightChartKind? = nil,
         createdAt: Date = Date(),
@@ -382,7 +394,8 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
             shape: shape,
             operands: ([primaryMetricID] + comparisonMetricIDs).map { InsightOperand(metricID: $0) },
             dimension: dimension, filters: filters, range: range, bucket: bucket,
-            lag: lag, normalization: normalization, chart: chart,
+            lag: lag, relationshipPopulation: relationshipPopulation,
+            normalization: normalization, chart: chart,
             createdAt: createdAt, updatedAt: updatedAt
         )
     }
@@ -399,6 +412,7 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
         range: InsightRange = .twelveWeeks,
         bucket: InsightBucket = .daily,
         lag: InsightLag? = nil,
+        relationshipPopulation: InsightRelationshipPopulation = .automatic,
         normalization: InsightNormalization = .none,
         chart: InsightChartKind? = nil,
         createdAt: Date = Date(),
@@ -415,6 +429,7 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
         self.range = range
         self.bucket = bucket
         self.lag = lag
+        self.relationshipPopulation = relationshipPopulation
         self.normalization = normalization
         self.chart = chart
         self.createdAt = createdAt
@@ -454,20 +469,22 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
             // Math-contract version: bump whenever engine calculations
             // change meaning, so cached results from the old math can never
             // satisfy a lookup for the new.
-            "m6",
+            "m7",
             "v\(schemaVersion)", shape.rawValue,
             operandKeys.joined(separator: ","),
             dimension?.rawValue ?? "none", filterPart,
-            range.rawValue, bucket.rawValue, lagPart, normalization.rawValue,
+            range.rawValue, bucket.rawValue, lagPart,
+            relationshipPopulation.rawValue, normalization.rawValue,
         ].joined(separator: ";")
     }
 
-    // MARK: Codable (v1 → v2 migration)
+    // MARK: Codable (v1 → v3 migration)
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, templateID, shape, operands
         case primaryMetricID, comparisonMetricIDs
-        case dimension, filters, range, bucket, lag, normalization, chart
+        case dimension, filters, range, bucket, lag, relationshipPopulation
+        case normalization, chart
         case createdAt, updatedAt
     }
 
@@ -495,6 +512,10 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
         range = try container.decode(InsightRange.self, forKey: .range)
         bucket = try container.decode(InsightBucket.self, forKey: .bucket)
         lag = try container.decodeIfPresent(InsightLag.self, forKey: .lag)
+        relationshipPopulation = try container.decodeIfPresent(
+            InsightRelationshipPopulation.self,
+            forKey: .relationshipPopulation
+        ) ?? .automatic
         normalization = try container.decodeIfPresent(InsightNormalization.self, forKey: .normalization) ?? .none
         chart = try container.decodeIfPresent(InsightChartKind.self, forKey: .chart)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
@@ -518,6 +539,7 @@ public struct InsightRecipe: Codable, Sendable, Equatable {
         try container.encode(range, forKey: .range)
         try container.encode(bucket, forKey: .bucket)
         try container.encodeIfPresent(lag, forKey: .lag)
+        try container.encode(relationshipPopulation, forKey: .relationshipPopulation)
         try container.encode(normalization, forKey: .normalization)
         try container.encodeIfPresent(chart, forKey: .chart)
         try container.encode(createdAt, forKey: .createdAt)

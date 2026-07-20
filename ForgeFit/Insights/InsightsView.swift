@@ -281,12 +281,17 @@ struct ExerciseDetailView: View {
     @State private var seriesMemo = Memo<String, [MetricPoint]>()
     @State private var bestsMemo = Memo<String, [PersonalRecords.AllTimeBest]>()
     @State private var sessionsMemo = Memo<String, [(workout: WorkoutModel, sets: [SetModel])]>()
+    @State private var cardioEntriesMemo = Memo<String, [CardioExerciseStats.SessionEntry]>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var exercise: ExerciseLibraryModel? { exercises.first { $0.id == exerciseID } }
     private var name: String { exercise?.name ?? "Exercise" }
     private var unit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
     private var isCardio: Bool { exercise?.isCardio == true }
+    private var isYoga: Bool { exercise?.isYoga == true }
+    /// Session-logged exercises (cardio + yoga) chart sessions, not sets.
+    private var isSessionBased: Bool { isCardio || isYoga }
+    private var cardioKind: CardioKind { exercise?.resolvedCardioKind ?? .other }
     private var detailFingerprint: String {
         "\(AnalyticsFingerprint.of(workouts))|\(exerciseID.uuidString)"
     }
@@ -294,6 +299,27 @@ struct ExerciseDetailView: View {
         seriesMemo("\(detailFingerprint)|\(range.rawValue)") {
             range.filtered(analytics.e1rmSeries(for: exerciseID))
         }
+    }
+
+    /// Cardio/yoga sessions of this exercise, newest first.
+    private var sessionEntries: [CardioExerciseStats.SessionEntry] {
+        cardioEntriesMemo(detailFingerprint) {
+            CardioExerciseStats.entries(for: exerciseID, in: workouts, isYoga: isYoga)
+        }
+    }
+    /// The modality's progression metric with its chartable series. Yoga has
+    /// no CardioKind — practice time is its only honest trend.
+    private var cardioTrend: (metric: CardioExerciseStats.TrendMetric, points: [MetricPoint]) {
+        let all = isYoga
+            ? (metric: CardioExerciseStats.TrendMetric.duration,
+               points: CardioExerciseStats.series(.duration, entries: sessionEntries))
+            : CardioExerciseStats.trend(for: cardioKind, entries: sessionEntries)
+        return (all.metric, range.filtered(all.points))
+    }
+    private var cardioRecords: [CardioExerciseStats.Record] {
+        if isYoga { return CardioExerciseStats.yogaRecords(entries: sessionEntries) }
+        guard isCardio else { return [] }
+        return CardioExerciseStats.records(for: cardioKind, entries: sessionEntries)
     }
 
     /// Standing all-time records for this exercise (includes an active session).
@@ -351,34 +377,27 @@ struct ExerciseDetailView: View {
                     ExerciseInfoCard(exercise: exercise)
                 }
 
-                if let exercise, !exercise.isCardio {
+                // Weight-unit preference only applies where weight is logged —
+                // session-based exercises (cardio, yoga) have no weight field.
+                if let exercise, !exercise.isCardio, !exercise.isYoga {
                     ExerciseUnitSettingsCard(exercise: exercise)
                 }
 
-                Card {
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Estimated 1RM").font(.bodyStrong).foregroundStyle(theme.textSecondary)
-                            Spacer()
-                            TimeChartRangePicker(selection: $range)
-                        }
-                        if let last = series.last {
-                            Text(Fmt.loadUnit(last.value, unit: unit)).font(.metricValue).foregroundStyle(theme.textPrimary)
-                        }
-                        if series.count >= 2 {
-                            LineTrendChart(points: series)
-                        } else {
-                            Text("Log this exercise across multiple sessions to chart strength progress.")
-                                .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
-                        }
-                    }
+                if isSessionBased {
+                    cardioTrendCard
+                } else {
+                    strengthTrendCard
                 }
 
-                if !bests.isEmpty {
+                if isSessionBased, !cardioRecords.isEmpty {
+                    cardioRecordsCard
+                } else if !isSessionBased, !bests.isEmpty {
                     recordsCard
                 }
 
-                if !sessions.isEmpty {
+                if isSessionBased, !sessionEntries.isEmpty {
+                    cardioHistoryCard
+                } else if !isSessionBased, !sessions.isEmpty {
                     historyCard
                 }
             }
@@ -395,7 +414,98 @@ struct ExerciseDetailView: View {
         }
     }
 
+    // MARK: - Trend cards
+
+    private var strengthTrendCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Estimated 1RM").font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    TimeChartRangePicker(selection: $range)
+                }
+                if let last = series.last {
+                    Text(Fmt.loadUnit(last.value, unit: unit)).font(.metricValue).foregroundStyle(theme.textPrimary)
+                }
+                if series.count >= 2 {
+                    LineTrendChart(points: series)
+                } else {
+                    Text("Log this exercise across multiple sessions to chart strength progress.")
+                        .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
+                }
+            }
+        }
+    }
+
+    /// Modality-aware progression: pace for runs, /500m splits for the erg,
+    /// power for the bike, floors for the stair machine, practice time for
+    /// yoga — never a rep-max estimate on an exercise without reps.
+    private var cardioTrendCard: some View {
+        let trend = cardioTrend
+        return Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(isYoga ? "Practice Time" : trend.metric.title)
+                        .font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    TimeChartRangePicker(selection: $range)
+                }
+                if let last = trend.points.last {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(trend.metric.format(last.value, distanceUnit: Fmt.distanceUnit))
+                            .font(.metricValue).foregroundStyle(theme.textPrimary)
+                        Text("last session").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
+                    }
+                }
+                if trend.points.count >= 2 {
+                    LineTrendChart(points: trend.points)
+                    if trend.metric.lowerIsBetter {
+                        Text("Lower is faster.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
+                    }
+                } else {
+                    Text(isYoga
+                         ? "Practice this flow across multiple sessions to chart your time on the mat."
+                         : "Log this exercise across multiple sessions to chart your progress.")
+                        .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
+                }
+            }
+        }
+    }
+
     // MARK: - Records
+
+    private var cardioRecordsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Label("Records", systemImage: "trophy.fill")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.warmup)
+                ForEach(cardioRecords) { record in
+                    HStack(spacing: Space.md) {
+                        Image(systemName: record.kind.icon)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.warmup)
+                            .frame(width: 28, height: 28)
+                            .background(theme.warmup.opacity(0.15))
+                            .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(record.kind.label)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                            Text(record.date.formatted(date: .abbreviated, time: .omitted))
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        Spacer()
+                        Text(record.valueText(distanceUnit: Fmt.distanceUnit, fixedMeters: cardioKind.usesFixedMeters))
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(theme.warmup)
+                    }
+                }
+            }
+        }
+    }
 
     private var recordsCard: some View {
         Card {
@@ -461,6 +571,48 @@ struct ExerciseDetailView: View {
         }
     }
 
+    /// Session-based history: one row per cardio/yoga session in the
+    /// modality's vocabulary ("42min · 8.2 km · 5:11 /km · 152 bpm").
+    private var cardioHistoryCard: some View {
+        let visible = showFullHistory ? sessionEntries : Array(sessionEntries.prefix(Self.recentSessionCount))
+        return Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("History")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textSecondary)
+
+                ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
+                    if index > 0 {
+                        Divider().overlay(theme.separator)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.date.formatted(date: .abbreviated, time: .omitted))
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                        Text(isYoga
+                             ? CardioExerciseStats.yogaSummary(for: entry)
+                             : CardioExerciseStats.summary(for: entry, kind: cardioKind))
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+
+                if sessionEntries.count > Self.recentSessionCount {
+                    Button {
+                        withAnimation(.spring(duration: 0.3)) { showFullHistory.toggle() }
+                    } label: {
+                        Text(showFullHistory ? "Show Recent Only" : "Show All \(sessionEntries.count) Sessions")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     private func sessionBlock(_ workout: WorkoutModel, sets: [SetModel]) -> some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(alignment: .firstTextBaseline) {
@@ -509,9 +661,8 @@ struct ExerciseDetailView: View {
     /// cardio-style sets.
     private func setSummary(_ set: SetModel) -> String {
         if isCardio { return Fmt.durationShort(set.durationSeconds) }
-        let weight = Fmt.load(set.weight, unit: unit)
         let reps = set.reps.map(String.init) ?? "—"
-        return "\(weight) \(unit.suffix) × \(reps)"
+        return "\(HistoricalSetPresentation.loadText(set, unit: unit)) × \(reps)"
     }
 }
 

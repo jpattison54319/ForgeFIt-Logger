@@ -100,7 +100,10 @@ struct InsightBuilderView: View {
                     metricsSection
                     if recipe.shape == .groupComparison { dimensionSection }
                     alignmentSection
-                    if recipe.shape == .relationship { lagSection }
+                    if recipe.shape == .relationship {
+                        lagSection
+                        populationSection
+                    }
                     chartSection
                     validationSection
                     previewSection
@@ -542,6 +545,75 @@ struct InsightBuilderView: View {
         return "\(count) \(unit)\(count == 1 ? "" : "s") later"
     }
 
+    private var populationOptions: [InsightRelationshipPopulation] {
+        InsightCompatibilityEngine.allowedRelationshipPopulations(
+            for: recipe,
+            descriptors: descriptors
+        )
+    }
+
+    @ViewBuilder
+    private var populationSection: some View {
+        if !populationOptions.isEmpty {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                header("Population")
+                SegmentedPills(
+                    options: populationOptions,
+                    title: populationTitle,
+                    selection: Binding(
+                        get: {
+                            InsightCompatibilityEngine.resolvedRelationshipPopulation(
+                                for: recipe,
+                                descriptors: descriptors
+                            )
+                        },
+                        set: { recipe.relationshipPopulation = $0 }
+                    ),
+                    accessibilityID: { "insight-population-\($0.rawValue)" }
+                )
+                Text(populationExplanation)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func populationTitle(_ population: InsightRelationshipPopulation) -> String {
+        let noun = recipe.bucket == .weekly ? "weeks" : "days"
+        switch population {
+        case .activeBucketsOnly, .automatic:
+            return "Training \(noun)"
+        case .includeInactiveBuckets:
+            return "All measured \(noun)"
+        }
+    }
+
+    private var populationExplanation: String {
+        let resolved = InsightCompatibilityEngine.resolvedRelationshipPopulation(
+            for: recipe,
+            descriptors: descriptors
+        )
+        let bucketNoun = recipe.bucket == .weekly ? "Weeks" : "Days"
+        let zeroTitles = recipe.operands.compactMap { operand -> String? in
+            guard let descriptor = InsightMetricCatalog.definition(for: operand.metricID),
+                  descriptor.zeroFillPolicy == .zeroWhenAbsent else { return nil }
+            return displayTitle(for: operand.key).lowercased()
+        }
+        let zeroSubject = zeroTitles.count == 1
+            ? (zeroTitles.first ?? "training")
+            : "either training total"
+        let zeroRule = resolved == .includeInactiveBuckets
+            ? "\(bucketNoun) without \(zeroSubject) count as 0."
+            : "\(bucketNoun) without \(zeroSubject) are excluded."
+        let hasHealthMeasurement = descriptors.contains {
+            $0.requiresHealth && $0.zeroFillPolicy == .never
+        }
+        return hasHealthMeasurement
+            ? zeroRule + " Missing Health readings stay excluded."
+            : zeroRule + " Missing readings stay excluded."
+    }
+
     @ViewBuilder
     private var chartSection: some View {
         if chartChoices.count > 1 {
@@ -730,16 +802,19 @@ struct InsightBuilderView: View {
         case .groupComparison:
             recipe.operands = Array(recipe.operands.prefix(1))
             recipe.lag = nil
+            recipe.relationshipPopulation = .automatic
             if recipe.dimension == nil { recipe.dimension = .checkinTag }
             recipe.normalization = .none
         case .distribution:
             recipe.operands = Array(recipe.operands.prefix(1))
             recipe.dimension = nil
             recipe.lag = nil
+            recipe.relationshipPopulation = .automatic
             recipe.normalization = .none
         case .trend, .periodComparison:
             recipe.dimension = nil
             recipe.lag = nil
+            recipe.relationshipPopulation = .automatic
             if recipe.shape == .periodComparison { recipe.normalization = .none }
         }
         conformTrendNormalization()
@@ -802,6 +877,13 @@ struct InsightBuilderView: View {
         )
         if let current = recipe.lag, !lags.contains(current) {
             recipe.lag = lags.first
+        }
+        let populations = InsightCompatibilityEngine.allowedRelationshipPopulations(
+            for: recipe,
+            descriptors: InsightMetricCatalog.descriptors(covering: recipe)
+        )
+        if populations.isEmpty {
+            recipe.relationshipPopulation = .automatic
         }
         conformTrendNormalization()
         var chartless = recipe

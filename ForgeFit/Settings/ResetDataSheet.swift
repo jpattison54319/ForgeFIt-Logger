@@ -9,6 +9,7 @@ struct ResetDataSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(SocialService.self) private var social
     let onFinished: () -> Void
 
     @State private var isResetting = false
@@ -36,6 +37,10 @@ struct ResetDataSheet: View {
                             resetBullet("Deleted", "Workouts, routines, imports, notes, custom data, XP, levels, reminders, and preferences.")
                             Divider().overlay(theme.separator)
                             resetBullet("Kept in Apple Health", "Health records and permission grants are managed by iOS. ForgeFit will not delete Health workouts.")
+                            if social.isOptedIn {
+                                Divider().overlay(theme.separator)
+                                resetBullet("Kept in the community", "Your public profile and shared workouts stay up. Community → Delete community profile removes them.")
+                            }
                             Divider().overlay(theme.separator)
                             resetBullet("After reset", "The bundled exercise library is restored so you can start clean immediately.")
                         }

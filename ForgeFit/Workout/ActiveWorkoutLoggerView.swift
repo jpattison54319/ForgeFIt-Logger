@@ -61,7 +61,9 @@ struct ActiveWorkoutLoggerView: View {
     /// host can publish it to social (if the user has opted in).
     var onFinished: ((WorkoutModel) -> Void)? = nil
 
-    @State private var reordering = false
+    /// Reference-backed so per-frame finger updates invalidate only the small
+    /// reorder overlay, not this entire logger and all of its set fields.
+    @State private var reorderSession: ExerciseReorderSession?
     @State private var showAddPicker = false
     @State private var replaceTarget: WorkoutExerciseModel?
     /// This session's progression suggestions, keyed by workout-exercise id.
@@ -106,12 +108,17 @@ struct ActiveWorkoutLoggerView: View {
     var body: some View {
         ZStack(alignment: .top) {
             ScreenBackground()
-            if reordering {
-                reorderList
+            // Always mounted, even while the reorder overlay covers it: the
+            // hold-to-reorder gesture starts on a card handle inside this
+            // scroll — removing the view mid-gesture would cancel the touch
+            // and kill the drag right as it began.
+            loggerScroll
+                .accessibilityHidden(reorderSession != nil)
+            if reorderSession != nil {
+                reorderOverlay
                     .transition(.opacity)
-            } else {
-                loggerScroll
-                    .transition(.opacity)
+                    .zIndex(1)
+                    .allowsHitTesting(false)
             }
         }
         // The header lives in the safe area, so content can never slide
@@ -119,17 +126,15 @@ struct ActiveWorkoutLoggerView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 header
-                if !reordering {
-                    statsBar
+                statsBar
+                    .padding(.horizontal, Space.lg)
+                    .padding(.bottom, Space.sm)
+                // The rest countdown gets its own full-width strip below
+                // the stats instead of cramming into the top bar.
+                if !isHistoricalEdit {
+                    RestTimerBar()
                         .padding(.horizontal, Space.lg)
                         .padding(.bottom, Space.sm)
-                    // The rest countdown gets its own full-width strip below
-                    // the stats instead of cramming into the top bar.
-                    if !isHistoricalEdit {
-                        RestTimerBar()
-                            .padding(.horizontal, Space.lg)
-                            .padding(.bottom, Space.sm)
-                    }
                 }
             }
             .animation(.snappy(duration: 0.25), value: RestTimerController.shared.isRunning)
@@ -259,42 +264,70 @@ struct ActiveWorkoutLoggerView: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
-    // MARK: - Reorder mode
+    // MARK: - Hold-to-reorder
 
-    private var reorderList: some View {
-        List {
-            ForEach(sortedExercises) { we in
-                // The native move control lifts this entire row and opens an
-                // insertion gap as it travels. Rendering the real logger card
-                // here keeps the exercise visibly attached to the user's
-                // thumb instead of swapping it for an ambiguous compact row.
-                exerciseCard(for: we, isReorderPreview: true)
-                    .allowsHitTesting(false)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(
-                        EdgeInsets(
-                            top: Space.sm,
-                            leading: Space.lg,
-                            bottom: Space.sm,
-                            trailing: Space.sm
-                        )
-                    )
-            }
-            .onMove(perform: moveExercises)
+    /// The collapse overlay (see `ReorderCollapseOverlay`): every exercise as
+    /// a name-only row gathered around the finger, the held one scaled under
+    /// it, hovered rows dimmed, order snapping live as slots are crossed.
+    @ViewBuilder
+    private var reorderOverlay: some View {
+        if let reorderSession {
+            ReorderCollapseOverlay(session: reorderSession)
+                .accessibilityIdentifier("live-workout-reorder-overlay")
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(theme.background)
-        .environment(\.editMode, .constant(.active))
-        .accessibilityIdentifier("live-workout-reorder-list")
+    }
+
+    /// One continuous gesture from a card's reorder handle. UIKit calls this
+    /// once when the stationary hold recognizes, then again for movement.
+    private func reorderDragChanged(_ we: WorkoutExerciseModel, fingerY: CGFloat) {
+        if let reorderSession {
+            guard reorderSession.heldID == we.id else { return }
+            reorderSession.fingerGlobalY = fingerY
+            return
+        }
+
+        hideKeyboard()
+        let exerciseNames = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0.name) })
+        let rows = sortedExercises.map {
+            ReorderCollapseOverlay.Row(
+                id: $0.id,
+                name: exerciseNames[$0.exerciseID] ?? "Exercise"
+            )
+        }
+        withAnimation(.snappy(duration: 0.2)) {
+            reorderSession = ExerciseReorderSession(
+                heldID: we.id,
+                fingerGlobalY: fingerY,
+                rows: rows
+            )
+        }
+    }
+
+    private func reorderDragEnded() {
+        guard let reorderSession else { return }
+        if reorderSession.didMove {
+            let exercisesByID = Dictionary(uniqueKeysWithValues: workout.exercises.map { ($0.id, $0) })
+            for (index, row) in reorderSession.rows.enumerated() {
+                exercisesByID[row.id]?.position = index
+            }
+            try? modelContext.save()
+        }
+        withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
+    }
+
+    /// VoiceOver fallback for the drag: step a row one slot at a time.
+    private func accessibilityMoveExercise(_ id: UUID, by offset: Int) {
+        var rows = sortedExercises
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        let target = max(0, min(rows.count - 1, index + offset))
+        guard target != index else { return }
+        rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
+        for (i, e) in rows.enumerated() { e.position = i }
+        try? modelContext.save()
     }
 
     @ViewBuilder
-    private func exerciseCard(
-        for we: WorkoutExerciseModel,
-        isReorderPreview: Bool = false
-    ) -> some View {
+    private func exerciseCard(for we: WorkoutExerciseModel) -> some View {
         let ex = exercises.first { $0.id == we.exerciseID }
         let isYogaRow = ex?.isYoga == true
             || we.yogaFlowJSON != nil
@@ -311,7 +344,10 @@ struct ActiveWorkoutLoggerView: View {
                 onUngroupSuperset: { ungroupSuperset($0) },
                 onShowExerciseDetail: { exercise in detailExercise = exercise },
                 onReplace: { replaceTarget = we },
-                onRemove: { removeExercise(we) }
+                onRemove: { removeExercise(we) },
+                onReorderDragChanged: { fingerY in reorderDragChanged(we, fingerY: fingerY) },
+                onReorderDragEnded: { reorderDragEnded() },
+                onAccessibilityMoveBy: { offset in accessibilityMoveExercise(we.id, by: offset) }
             )
         } else if ex?.isCardio == true {
             CardioExerciseCard(
@@ -326,6 +362,9 @@ struct ActiveWorkoutLoggerView: View {
                 onShowExerciseDetail: { exercise in detailExercise = exercise },
                 onReplace: { replaceTarget = we },
                 onRemove: { removeExercise(we) },
+                onReorderDragChanged: { fingerY in reorderDragChanged(we, fingerY: fingerY) },
+                onReorderDragEnded: { reorderDragEnded() },
+                onAccessibilityMoveBy: { offset in accessibilityMoveExercise(we.id, by: offset) },
                 history: history
             )
         } else {
@@ -341,7 +380,6 @@ struct ActiveWorkoutLoggerView: View {
                 showRPE: showRPEInLogger,
                 failureTrainingEnabled: showRPEInLogger && failureTrainingEnabled,
                 showsPreviousTapHint: !isHistoricalEdit,
-                showsReorderHandle: !isReorderPreview,
                 effortScale: EffortScale(rawValue: effortScaleRaw) ?? .rpe,
                 completionDate: isHistoricalEdit ? (workout.endedAt ?? workout.startedAt) : nil,
                 availableSupersetGroups: supersetGroups,
@@ -354,7 +392,9 @@ struct ActiveWorkoutLoggerView: View {
                 onShowExerciseDetail: { exercise in detailExercise = exercise },
                 onReplace: { replaceTarget = we },
                 onRemove: { removeExercise(we) },
-                onReorder: { withAnimation(.snappy(duration: 0.22)) { reordering = true } },
+                onReorderDragChanged: { fingerY in reorderDragChanged(we, fingerY: fingerY) },
+                onReorderDragEnded: { reorderDragEnded() },
+                onAccessibilityMoveBy: { offset in accessibilityMoveExercise(we.id, by: offset) },
                 progression: progressionByWorkoutExercise[we.id],
                 onRejectProgression: { rejectProgression(for: we) }
             )
@@ -369,76 +409,64 @@ struct ActiveWorkoutLoggerView: View {
     private var header: some View {
         GlassEffectContainer(spacing: Space.sm) {
             HStack(spacing: Space.sm) {
-                if reordering {
-                    Text("Reorder")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    Button("Done") { withAnimation { reordering = false } }
-                        .font(.bodyStrong)
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.capsule)
-                        .accessibilityIdentifier("live-reorder-done")
-                } else {
-                    CircleIconButton(systemImage: isHistoricalEdit ? "xmark" : "chevron.down", label: isHistoricalEdit ? "Close editor" : "Minimize workout") {
-                        if isHistoricalEdit {
-                            saveHistoricalEdit()
-                        } else if let onMinimize {
-                            onMinimize()
-                        } else {
-                            dismiss()
-                        }
+                CircleIconButton(systemImage: isHistoricalEdit ? "xmark" : "chevron.down", label: isHistoricalEdit ? "Close editor" : "Minimize workout") {
+                    if isHistoricalEdit {
+                        saveHistoricalEdit()
+                    } else if let onMinimize {
+                        onMinimize()
+                    } else {
+                        dismiss()
                     }
-                    .accessibilityIdentifier(isHistoricalEdit ? "close-workout-editor" : "minimize-workout")
-                    Text(isHistoricalEdit ? "Edit Workout" : "Log Workout")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(theme.textPrimary)
-                    Spacer()
-                    if !isHistoricalEdit && !RestTimerController.shared.isRunning {
-                        // Start a rest manually at any point.
-                        RestDurationMenu(
-                            options: [30, 60, 90, 120, 180, 300],
-                            allowsOff: false,
-                            selected: nil,
-                            onPick: { seconds in
-                                if let seconds { RestTimerController.shared.start(seconds: seconds, label: "Rest") }
-                            }
-                        ) {
-                            Image(systemName: "timer")
-                                .font(.bodyStrong)
-                                .foregroundStyle(theme.textPrimary)
-                                .frame(width: 44, height: 44)   // HIG minimum touch target
-                        }
-                        .glassEffect(.regular.interactive(), in: Circle())
-                        .accessibilityLabel("Start rest timer")
-                    }
-                    Button {
-                        if isHistoricalEdit {
-                            saveHistoricalEdit()
-                        } else if !WorkoutFinisher.hasSubstance(workout) {
-                            // Nothing logged: the celebratory summary would be
-                            // all zeros, and finishing would discard anyway
-                            // (WorkoutFinisher's empty-workout guard) — ask
-                            // the one honest question instead.
-                            showEmptyDiscardConfirm = true
-                        } else {
-                            // Straight to the summary — it IS the confirmation
-                            // (Save Workout / Keep Logging live there). The old
-                            // intermediate "Finish this workout?" dialog made
-                            // every workout a double-confirm.
-                            showPostWorkoutSummary = true
-                        }
-                    } label: {
-                        Text(isHistoricalEdit ? "Save" : "Finish")
-                            .font(.system(size: 15, weight: .bold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(theme.accent)
-                    .buttonBorderShape(.capsule)
-                    .accessibilityIdentifier("finish-workout-button")
                 }
+                .accessibilityIdentifier(isHistoricalEdit ? "close-workout-editor" : "minimize-workout")
+                Text(isHistoricalEdit ? "Edit Workout" : "Log Workout")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                if !isHistoricalEdit && !RestTimerController.shared.isRunning {
+                    // Start a rest manually at any point.
+                    RestDurationMenu(
+                        options: [30, 60, 90, 120, 180, 300],
+                        allowsOff: false,
+                        selected: nil,
+                        onPick: { seconds in
+                            if let seconds { RestTimerController.shared.start(seconds: seconds, label: "Rest") }
+                        }
+                    ) {
+                        Image(systemName: "timer")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
+                    }
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Start rest timer")
+                }
+                Button {
+                    if isHistoricalEdit {
+                        saveHistoricalEdit()
+                    } else if !WorkoutFinisher.hasSubstance(workout) {
+                        // Nothing logged: the celebratory summary would be
+                        // all zeros, and finishing would discard anyway
+                        // (WorkoutFinisher's empty-workout guard) — ask
+                        // the one honest question instead.
+                        showEmptyDiscardConfirm = true
+                    } else {
+                        // Straight to the summary — it IS the confirmation
+                        // (Save Workout / Keep Logging live there). The old
+                        // intermediate "Finish this workout?" dialog made
+                        // every workout a double-confirm.
+                        showPostWorkoutSummary = true
+                    }
+                } label: {
+                    Text(isHistoricalEdit ? "Save" : "Finish")
+                        .font(.system(size: 15, weight: .bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(theme.accent)
+                .buttonBorderShape(.capsule)
+                .accessibilityIdentifier("finish-workout-button")
             }
         }
         .padding(.horizontal, Space.lg)
@@ -986,18 +1014,8 @@ struct ActiveWorkoutLoggerView: View {
         workout.cardioSessions.removeAll { $0.workoutExerciseID == workoutExerciseID }
     }
 
-    private func moveExercises(from offsets: IndexSet, to destination: Int) {
-        var rows = sortedExercises
-        rows.move(fromOffsets: offsets, toOffset: destination)
-        for (i, e) in rows.enumerated() { e.position = i }
-        try? modelContext.save()
-    }
-
     private func nextSupersetGroup() -> Int {
-        var candidate = 0
-        let used = Set(supersetGroups)
-        while used.contains(candidate) { candidate += 1 }
-        return candidate
+        SupersetUI.nextGroup(excluding: supersetGroups)
     }
 
     private func assignSuperset(_ group: Int?, to we: WorkoutExerciseModel) {
@@ -1846,9 +1864,13 @@ private struct ExerciseLogCard: View {
     let onShowExerciseDetail: (ExerciseLibraryModel) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
-    /// Enters reorder mode after a deliberate handle hold, or immediately
-    /// from the overflow menu's explicit "Reorder Exercises" command.
-    let onReorder: () -> Void
+    /// Streams the finger's global Y while the reorder handle is held and
+    /// dragged — the parent collapses every card around the finger with this
+    /// exercise scaled under it (see `ReorderCollapseOverlay`).
+    var onReorderDragChanged: (CGFloat) -> Void = { _ in }
+    var onReorderDragEnded: () -> Void = {}
+    /// VoiceOver fallback for the drag: move this exercise one slot up/down.
+    var onAccessibilityMoveBy: (Int) -> Void = { _ in }
     /// This exercise's progression suggestion for the session (nil = none
     /// offered — no history, rule off, or not a strength exercise).
     var progression: ProgressionSuggestionModel? = nil
@@ -1877,7 +1899,6 @@ private struct ExerciseLogCard: View {
     /// `onAppear` still re-folds an already-completed exercise on revisit so the
     /// list stays tidy and the fold survives LazyVStack row recycling.
     @State private var collapsed = false
-    @State private var reorderHandlePressed = false
 
     private var sortedSets: [SetModel] { workoutExercise.sets.sorted { $0.position < $1.position } }
     private var completedSetIDs: Set<UUID> {
@@ -2260,27 +2281,11 @@ private struct ExerciseLogCard: View {
 	                    .accessibilityIdentifier("collapse-completed-exercise")
 	                }
 	                if showsReorderHandle {
-	                    Image(systemName: "line.3.horizontal")
-	                        .font(.bodyStrong)
-	                        .foregroundStyle(theme.textTertiary)
-	                        .frame(width: 44, height: 44)
-	                        .contentShape(Rectangle())
-	                        .scaleEffect(reorderHandlePressed ? 0.88 : 1)
-	                        .onLongPressGesture(
-	                            minimumDuration: 0.45,
-	                            maximumDistance: 12,
-	                            pressing: { isPressing in
-	                                withAnimation(.easeOut(duration: 0.12)) {
-	                                    reorderHandlePressed = isPressing
-	                                }
-	                            },
-	                            perform: onReorder
-	                        )
-	                        .accessibilityLabel("Reorder exercises")
-	                        .accessibilityHint("Touch and hold to open the reorder screen")
-	                        .accessibilityAddTraits(.isButton)
-	                        .accessibilityAction { onReorder() }
-	                        .accessibilityIdentifier("hold-to-reorder-exercises")
+	                    ReorderHandle(
+	                        onDragChanged: onReorderDragChanged,
+	                        onDragEnded: onReorderDragEnded,
+	                        onAccessibilityMoveBy: onAccessibilityMoveBy
+	                    )
 	                }
 	                // ScrollSafeMenu, not Menu: this was the last SwiftUI Menu on
                 // the logger scroll surface — a scroll starting on the ⋯ glyph
@@ -2318,29 +2323,14 @@ private struct ExerciseLogCard: View {
         }
         actions.append(ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) })
         actions.append(ScrollSafeMenuItem(title: "Add Warm-up Ramp", systemImage: "flame.fill") { addWarmupRamp() })
-        actions.append(ScrollSafeMenuItem(title: "Create Superset", systemImage: "link.badge.plus") { onCreateSuperset() })
-        if !availableSupersetGroups.isEmpty {
-            actions.append(ScrollSafeMenuItem(
-                title: "Add to Superset",
-                systemImage: "link",
-                children: availableSupersetGroups.map { group in
-                    ScrollSafeMenuItem(
-                        title: SupersetUI.label(for: group),
-                        isChecked: workoutExercise.supersetGroup == group
-                    ) { onAssignSuperset(group) }
-                }
-            ))
-        }
-        if let currentGroup = workoutExercise.supersetGroup {
-            actions.append(ScrollSafeMenuItem(title: "Remove from \(SupersetUI.label(for: currentGroup))", systemImage: "link.badge.minus") {
-                onAssignSuperset(nil)
-            })
-            actions.append(ScrollSafeMenuItem(title: "Ungroup \(SupersetUI.label(for: currentGroup))", systemImage: "rectangle.split.3x1") {
-                onUngroupSuperset(currentGroup)
-            })
-        }
+        actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
+            currentGroup: workoutExercise.supersetGroup,
+            availableGroups: availableSupersetGroups,
+            onAssign: onAssignSuperset,
+            onCreate: onCreateSuperset,
+            onUngroup: onUngroupSuperset
+        ))
         actions.append(ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath") { onReplace() })
-        actions.append(ScrollSafeMenuItem(title: "Reorder Exercises", systemImage: "arrow.up.arrow.down") { onReorder() })
 
         let destructive = [ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true) { onRemove() }]
         return [details, actions, destructive].filter { !$0.isEmpty }

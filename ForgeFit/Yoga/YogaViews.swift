@@ -23,6 +23,10 @@ struct YogaExerciseCard: View {
     var onShowExerciseDetail: (ExerciseLibraryModel) -> Void = { _ in }
     let onReplace: () -> Void
     let onRemove: () -> Void
+    /// Hold-to-reorder stream — see `ReorderHandle`/`ReorderCollapseOverlay`.
+    var onReorderDragChanged: (CGFloat) -> Void = { _ in }
+    var onReorderDragEnded: () -> Void = {}
+    var onAccessibilityMoveBy: (Int) -> Void = { _ in }
 
     @State private var session: CardioSessionModel?
     @State private var showManual = false
@@ -328,26 +332,43 @@ struct YogaExerciseCard: View {
                 }
             }
             Spacer()
-            Menu {
-                if let exercise {
-                    Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
-                    Divider()
-                }
-                SupersetMenuItems(
-                    currentGroup: workoutExercise.supersetGroup,
-                    availableGroups: availableSupersetGroups,
-                    onAssign: onAssignSuperset,
-                    onCreate: onCreateSuperset,
-                    onUngroup: onUngroupSuperset
-                )
-                Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
-                Divider()
-                Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
-            } label: {
+            ReorderHandle(
+                onDragChanged: onReorderDragChanged,
+                onDragEnded: onReorderDragEnded,
+                onAccessibilityMoveBy: onAccessibilityMoveBy
+            )
+            // ScrollSafeMenu, not Menu: this card lives on the live-workout
+            // scroll surface — the ⋯ glyph must never dead-stop a scroll
+            // (same conversion as the strength card's 2026-07-16 fix, which
+            // missed the yoga and cardio cards).
+            ScrollSafeMenu(sections: overflowMenuSections) {
                 Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(theme.textSecondary).frame(width: 44, height: 44)   // HIG minimum touch target
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel("Exercise options")
         }
+    }
+
+    /// Section-for-section identical to the old SwiftUI Menu
+    /// (details | supersets + replace | destructive remove).
+    private var overflowMenuSections: [[ScrollSafeMenuItem]] {
+        var details: [ScrollSafeMenuItem] = []
+        if let exercise {
+            details.append(ScrollSafeMenuItem(title: "Exercise Details", systemImage: "info.circle") {
+                onShowExerciseDetail(exercise)
+            })
+        }
+        var actions = SupersetUI.scrollSafeMenuItems(
+            currentGroup: workoutExercise.supersetGroup,
+            availableGroups: availableSupersetGroups,
+            onAssign: onAssignSuperset,
+            onCreate: onCreateSuperset,
+            onUngroup: onUngroupSuperset
+        )
+        actions.append(ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace))
+        let remove = [ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)]
+        return [details, actions, remove].filter { !$0.isEmpty }
     }
 
     /// The new yoga row is the class container. Legacy pose rows keep their

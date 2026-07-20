@@ -10,7 +10,10 @@ public actor MockSocialBackend: SocialBackend {
     private var payloads: [UUID: SharedWorkoutDTO] = [:]
     private var refs: [SocialUserID: [SocialWorkoutRef]] = [:]
     private var follows: Set<SocialUserID> = []
-    private var likes: [UUID: Set<SocialUserID>] = [:]
+    /// Hearts keyed by workout, each liker mapped to when they hearted —
+    /// the timestamp orders the hearts row exactly like CloudKit's
+    /// record `creationDate` does on device.
+    private var likes: [UUID: [SocialUserID: Date]] = [:]
 
     public init(me: SocialUserID = SocialUserID("me")) {
         self.me = me
@@ -42,11 +45,12 @@ public actor MockSocialBackend: SocialBackend {
     }
 
     // MARK: Shared workouts
-    public func publishWorkout(_ dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date) {
+    public func publishWorkout(_ dto: SharedWorkoutDTO, summary: SharedWorkoutSummary, publishedAt: Date, sourceUpdatedAt: Date) {
         payloads[dto.id] = dto
         let ref = SocialWorkoutRef(
             id: dto.id, owner: me, title: dto.title,
-            startedAt: dto.startedAt, publishedAt: publishedAt, summary: summary
+            startedAt: dto.startedAt, publishedAt: publishedAt,
+            sourceUpdatedAt: sourceUpdatedAt, summary: summary
         )
         var list = refs[me, default: []].filter { $0.id != dto.id }
         list.append(ref)
@@ -58,8 +62,10 @@ public actor MockSocialBackend: SocialBackend {
         for owner in refs.keys { refs[owner]?.removeAll { $0.id == id } }
     }
 
-    public func recentWorkouts(for id: SocialUserID, limit: Int) -> [SocialWorkoutRef] {
-        Array(refs[id, default: []].prefix(limit))
+    public func recentWorkouts(for id: SocialUserID, limit: Int, before: Date?) -> [SocialWorkoutRef] {
+        var list = refs[id, default: []]
+        if let before { list = list.filter { $0.publishedAt < before } }
+        return Array(list.prefix(limit))
     }
 
     public func workoutDetail(id: UUID) -> SharedWorkoutDTO? { payloads[id] }
@@ -72,11 +78,19 @@ public actor MockSocialBackend: SocialBackend {
 
     // MARK: Likes
     public func setLike(_ liked: Bool, workoutID: UUID) {
-        if liked { likes[workoutID, default: []].insert(me) }
-        else { likes[workoutID]?.remove(me) }
+        if liked { likes[workoutID, default: [:]][me] = Date() }
+        else { likes[workoutID]?[me] = nil }
     }
     public func likeCount(workoutID: UUID) -> Int { likes[workoutID]?.count ?? 0 }
-    public func hasLiked(workoutID: UUID) -> Bool { likes[workoutID]?.contains(me) ?? false }
+    public func hasLiked(workoutID: UUID) -> Bool { likes[workoutID]?[me] != nil }
+    public func likers(workoutID: UUID) -> [SocialLike] {
+        (likes[workoutID] ?? [:])
+            .map { SocialLike(userID: $0.key, likedAt: $0.value) }
+            .sorted {
+                if $0.likedAt != $1.likedAt { return $0.likedAt > $1.likedAt }
+                return $0.userID.rawValue < $1.userID.rawValue   // stable tiebreak
+            }
+    }
 
     // MARK: Leaderboards
     public func leaderboard(metric: SocialLeaderboardMetric, scope: LeaderboardScope, limit: Int) -> [SocialLeaderboardEntry] {
@@ -93,6 +107,20 @@ public actor MockSocialBackend: SocialBackend {
             .map { SocialLeaderboardEntry(profile: $0.element.profile, value: $0.element.value, rank: $0.offset + 1) }
     }
 
+    // MARK: Account deletion
+
+    /// Mirrors the CloudKit contract: only records *I* created disappear —
+    /// my profile, handle claims, workouts, follows, and likes. Seeded
+    /// friends and their content survive untouched.
+    public func deleteAllMyData() {
+        for ref in refs[me, default: []] { payloads[ref.id] = nil }
+        refs[me] = nil
+        follows.removeAll()
+        for workoutID in likes.keys { likes[workoutID]?[me] = nil }
+        handleRegistry = handleRegistry.filter { $0.value != me }
+        profiles[me] = nil
+    }
+
     // MARK: - Seeding (demo/preview only)
 
     /// Directly inserts another user's profile + shared workouts and makes the
@@ -107,6 +135,13 @@ public actor MockSocialBackend: SocialBackend {
         }
         refs[profile.userID] = list.sorted { $0.publishedAt > $1.publishedAt }
         if follow { follows.insert(profile.userID) }
+    }
+
+    /// Plants another user's heart on a workout — demo/preview only. The
+    /// production path only ever likes as `me` (CloudKit enforces the same:
+    /// you can't write a like record naming someone else's user ID).
+    public func seedLike(workoutID: UUID, by user: SocialUserID, at date: Date) {
+        likes[workoutID, default: [:]][user] = date
     }
 }
 

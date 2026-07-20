@@ -111,33 +111,32 @@ final class YogaCueSpeaker: NSObject {
 
     private func speak(_ lines: [String]) {
         guard !lines.isEmpty else { return }
-        activateSession()
-        let rate = (UserDefaults.standard.object(forKey: "yogaVoiceRate") as? Float) ?? 0.45
-        let voice = (UserDefaults.standard.string(forKey: "yogaVoiceID"))
-            .flatMap(AVSpeechSynthesisVoice.init(identifier:))
-            ?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
-        for (index, line) in lines.enumerated() {
-            let utterance = AVSpeechUtterance(string: line)
-            utterance.rate = rate
-            utterance.voice = voice
-            utterance.preUtteranceDelay = index == 0 ? 0.05 : 0.35
-            synthesizer.speak(utterance)
+        // `.playback` (not ambient) so cues keep speaking with the screen
+        // locked; `.duckOthers` dips the user's own music underneath. Activate
+        // before enqueuing so the music has ducked and the route is up by the
+        // time the first word plays — off the main thread so the blocking
+        // activation can't stall the running class's timers.
+        Task {
+            try? await AudioCueSession.shared.activate()
+            let rate = (UserDefaults.standard.object(forKey: "yogaVoiceRate") as? Float) ?? 0.45
+            let voice = (UserDefaults.standard.string(forKey: "yogaVoiceID"))
+                .flatMap(AVSpeechSynthesisVoice.init(identifier:))
+                ?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+            for (index, line) in lines.enumerated() {
+                let utterance = AVSpeechUtterance(string: line)
+                utterance.rate = rate
+                utterance.voice = voice
+                utterance.preUtteranceDelay = index == 0 ? 0.05 : 0.35
+                synthesizer.speak(utterance)
+            }
         }
-    }
-
-    /// `.playback` (not ambient) so cues keep speaking with the screen
-    /// locked; `.duckOthers` dips the user's own music underneath.
-    private func activateSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
-        try? session.setActive(true)
     }
 
     private func deactivateSession() {
         // Never deactivate while another speaker (zone guard) might be mid-
         // sentence; stopping our own queue is enough. Deactivation with
         // notify restores the user's music to full volume.
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        Task { try? await AudioCueSession.shared.deactivate() }
     }
 
     nonisolated private static func handleInterruption(_ notification: Notification) {

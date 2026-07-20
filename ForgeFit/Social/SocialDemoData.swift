@@ -117,4 +117,19 @@ enum SocialDemoData {
         let dto = SharedWorkoutDTO(id: UUID(), title: title, startedAt: started, endedAt: ended, exercises: dtoExercises)
         return (dto, dto.summary, started.addingTimeInterval(3_600))
     }
+
+    /// Opts the demo user in so publish-dependent surfaces (hearts) work in
+    /// the simulator. Demo-only: on device the profile is created by the
+    /// real opt-in flow, which also claims the handle in CloudKit.
+    static func seedMyProfile(into backend: MockSocialBackend) async {
+        try? await backend.upsertMyProfile(
+            SocialProfile(
+                userID: SocialUserID("demo-me"), handle: "you", displayName: "You",
+                totalXP: 5_600, workoutCount: 142, lifetimeHours: 118,
+                stats: SocialStats(
+                    lifetimeVolumeKg: 910_000, bestE1RMKg: 165,
+                    cardioDistanceMeters: 128_000, cardioMinutes: 640, yogaMinutes: 210),
+                updatedAt: Date())
+        )
+    }
 }

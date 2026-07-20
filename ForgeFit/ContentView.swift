@@ -95,7 +95,12 @@ struct ContentView: View {
     // switching back is instant instead of re-running full-history analytics in
     // `body`. Seeded lazily (only the first tab mounts at launch).
     @State private var mountedTabs: Set<AppTab> = []
-    @State private var showBootSplash = true
+    /// True while the software keyboard is up — hides the floating tab bar /
+    /// quick-action bubble so keyboard avoidance can't lift them into view.
+    @State private var keyboardVisible = false
+    /// Local-log → cloud pipeline (backup + community). Built once the shell
+    /// appears; see `SyncCoordinator`.
+    @State private var syncCoordinator: SyncCoordinator?
     // First launch only; UI-test launch hooks skip it.
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didOnboard")
         && UserDefaults.standard.string(forKey: "initialTab") == nil
@@ -148,21 +153,26 @@ struct ContentView: View {
     // purely for the type-checker: as one expression it exceeded the
     // reasonable-time limit once the deep-link hook landed.
     private var presentedShell: some View {
-        ZStack {
-            appShell
-
-            if showBootSplash {
-                BootSplashView()
-                    .transition(.opacity)
-                    .zIndex(1)
-            }
-        }
+        appShell
             .environment(appState)
             .environment(social)
             .environment(\.theme, activeTheme)
             .preferredColorScheme(resolvedColorScheme)
             .tint(activeTheme.accent)
-            .task { await social.bootstrap() }
+            .task {
+                await social.bootstrap()
+                // The sync pipeline: watches every SwiftData save and keeps
+                // backup + community converged with the local log (see
+                // SyncCoordinator). The forced launch pass publishes history
+                // for accounts that opted in before backfill existed and
+                // catches up anything done offline last session.
+                if syncCoordinator == nil {
+                    let coordinator = SyncCoordinator(social: social, container: modelContext.container)
+                    coordinator.start()
+                    syncCoordinator = coordinator
+                }
+                await syncCoordinator?.syncNow(force: true)
+            }
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
                 // No `injectedHistory:` — the logger snapshots history itself,
@@ -173,7 +183,9 @@ struct ContentView: View {
                     exercises: exercises,
                     setupNotes: setupNotes,
                     onMinimize: { appState.showingLogger = false },
-                    onFinished: { publishFinishedWorkout($0) }
+                    // The finish save already queued the share via the change
+                    // feed; skipping the debounce makes it appear immediately.
+                    onFinished: { _ in Task { await syncCoordinator?.flushNow() } }
                 )
                 .environment(social)
             }
@@ -290,6 +302,12 @@ struct ContentView: View {
 
     private var shellRealtimeHandlers: some View {
         presentedShell
+            // Fresh opt-in flips status to .active — publish the user's
+            // existing history right then, not on the next launch.
+            .onChange(of: social.status) { _, status in
+                guard status == .active else { return }
+                Task { await syncCoordinator?.syncNow(force: true) }
+            }
             .onChange(of: showOnboarding) { _, isPresented in handleOnboardingPresentationChange(isPresented) }
             .onChange(of: appState.startRequestID) { _, requestID in handleStartRequestChange(requestID) }
             .onChange(of: routineListVersion) { WatchLink.shared.publishState() }
@@ -359,7 +377,17 @@ struct ContentView: View {
             // untouched by this modifier, so its own ScrollView content still
             // gets normal keyboard avoidance/insetting.
             .ignoresSafeArea(.keyboard, edges: .bottom)
+            // Belt to the exemption's suspenders: on a pushed editor
+            // (RoutineEditorView) SwiftUI's automatic keyboard avoidance was
+            // lifting this whole layer — tab bar + quick-action bubble — into a
+            // black gap above the keyboard anyway. Behind the keyboard it's
+            // unusable, so hide it outright while editing; it can't be raised
+            // into view if it isn't drawn.
+            .opacity(keyboardVisible ? 0 : 1)
+            .allowsHitTesting(!keyboardVisible)
+            .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: keyboardVisible)
         }
+        .onKeyboardVisibilityChange($keyboardVisible)
     }
 
     /// Dimmed tap-catcher behind the open quick-action fan: above the tab
@@ -573,18 +601,6 @@ struct ContentView: View {
         }
     }
 
-    /// Projects a just-finished workout to its health-safe shared form
-    /// (strength, cardio, or yoga — health + GPS stripped) and publishes it
-    /// (no-op unless the user opted into social). Skips a genuinely empty one.
-    private func publishFinishedWorkout(_ workout: WorkoutModel) {
-        guard social.isOptedIn else { return }
-        let names = Dictionary(exercises.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        let dto = SocialWorkoutMapper.shared(from: workout, exerciseNames: names)
-        guard !(dto.exercises.isEmpty && dto.cardioSessions.isEmpty) else { return }
-        let summary = dto.summary
-        Task { await social.publish(dto, summary: summary) }
-    }
-
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         // Guided yoga backstop: iOS suspends the app soon after backgrounding
         // (the runner's in-process timers stop), so hand the remaining pose
@@ -597,6 +613,9 @@ struct ContentView: View {
         if phase == .active {
             UserDefaults.standard.set(Date(), forKey: "lastActiveDate")
             Task { await importHealthWorkoutHistory() }
+            // Foreground pass: drain queued share intents and reconcile
+            // (throttled inside the service).
+            Task { await syncCoordinator?.syncNow() }
             // Force: every app open must pick up the day's new Health data
             // (overnight sleep, morning HRV, weigh-ins) so readiness is
             // never stale. Re-write the idle widget once fresh metrics land so
@@ -694,24 +713,8 @@ struct ContentView: View {
     private func runLaunchTasksIfNeeded() async {
         guard !didStartLaunchTasks else { return }
         didStartLaunchTasks = true
-        let startedAt = Date()
 
         await launchTasks()
-
-        // The branding beat is a first-impression device; a returning user
-        // just wants in. Warm launches drop the minimum hold and dismiss the
-        // splash as soon as launch tasks finish.
-        let isWarmLaunch = UserDefaults.standard.bool(forKey: "hasCompletedFirstLaunch")
-        UserDefaults.standard.set(true, forKey: "hasCompletedFirstLaunch")
-        let minimumSplashSeconds = isWarmLaunch ? 0 : 0.65
-        let elapsed = Date().timeIntervalSince(startedAt)
-        if elapsed < minimumSplashSeconds {
-            try? await Task.sleep(for: .seconds(minimumSplashSeconds - elapsed))
-        }
-
-        withAnimation(.easeOut(duration: 0.22)) {
-            showBootSplash = false
-        }
 
         if shouldAutoStartRoutine {
             presentLoggerWhenActiveWorkoutIsReady()
@@ -803,6 +806,16 @@ struct ContentView: View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
+        }
+        // Hearts demo: plant friends' hearts on existing share-eligible
+        // workouts. Seeded at launch rather than on publish so the row is
+        // visible immediately in the simulator (and to screenshot
+        // automation) without having to finish a live workout first.
+        if ProcessInfo.processInfo.arguments.contains("--seed-social-hearts") {
+            let eligible = ((try? modelContext.fetch(
+                FetchDescriptor<WorkoutModel>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+            )) ?? []).filter(SocialBackfill.isEligible)
+            await social.seedDemoHearts(workoutIDs: eligible.prefix(12).map(\.id))
         }
         #endif
         generateWrappedIfDue()
@@ -1233,49 +1246,6 @@ private struct LiveHeartRateObserver: View {
             .onChange(of: hub.liveMetrics?.heartRate) { _, heartRate in
                 onChange(heartRate)
             }
-    }
-}
-
-private struct BootSplashView: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        ZStack {
-            ScreenBackground()
-
-            VStack(spacing: Space.xl) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentSoft)
-                        .frame(width: 92, height: 92)
-
-                    Circle()
-                        .stroke(theme.accent.opacity(0.38), lineWidth: 1)
-                        .frame(width: 92, height: 92)
-
-                    Image(systemName: "dumbbell.fill")
-                        .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(theme.accent)
-                }
-
-                VStack(spacing: Space.sm) {
-                    Text("ForgeFit")
-                        .font(.screenTitle)
-                        .foregroundStyle(theme.textPrimary)
-
-                    Text("Loading your training")
-                        .font(.label)
-                        .foregroundStyle(theme.textSecondary)
-                }
-
-                ProgressView()
-                    .tint(theme.accent)
-                    .controlSize(.regular)
-            }
-            .padding(.horizontal, Space.xxl)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("ForgeFit is loading")
     }
 }
 

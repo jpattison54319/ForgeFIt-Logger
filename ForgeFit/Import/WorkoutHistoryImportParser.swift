@@ -63,6 +63,7 @@ nonisolated struct ImportedSetDraft: Identifiable, Hashable, Sendable {
 nonisolated struct WorkoutHistoryImportParseResult: Sendable {
     var source: WorkoutImportSource
     var fileName: String
+    var checkedRowCount: Int
     var workouts: [ImportedWorkoutDraft]
     var warnings: [WorkoutImportWarning]
 }
@@ -72,7 +73,13 @@ nonisolated enum WorkoutHistoryImportParser {
         let trimmed = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if fileName.lowercased().hasSuffix(".json") || trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
-            return try parseForgeFitJSON(data: data, fileName: fileName)
+            do {
+                return try parseForgeFitJSON(data: data, fileName: fileName)
+            } catch let error as WorkoutImportError {
+                throw error
+            } catch {
+                throw WorkoutImportError.invalidForgeFitJSON
+            }
         }
         return try parseCSV(data: data, fileName: fileName)
     }
@@ -90,19 +97,40 @@ nonisolated private extension WorkoutHistoryImportParser {
         guard !records.isEmpty else { throw WorkoutImportError.emptyFile }
 
         let normalizedHeaders = Set(header.map(CSVRecord.normalize(_:)))
+        guard normalizedHeaders.count > 1 else { throw WorkoutImportError.notWorkoutCSV }
+
+        let hevySignatureMatchCount = normalizedHeaders.intersection(CSVImportMapper.hevySignatureHeaders).count
+        let looksLikeHevy = normalizedHeaders.contains("exercisetitle") && hevySignatureMatchCount >= 2
+        if looksLikeHevy, !normalizedHeaders.contains("starttime") {
+            throw WorkoutImportError.hevyWorkoutDateColumnMissing
+        }
+
         let source = detectSource(headers: normalizedHeaders)
         let mapper = CSVImportMapper(source: source, headers: normalizedHeaders)
+        let missingColumns = mapper.missingRequiredColumnDescriptions
+        guard missingColumns.isEmpty else {
+            throw WorkoutImportError.missingRequiredColumns(missingColumns)
+        }
+
         var warnings: [WorkoutImportWarning] = []
         var grouped: [String: WorkoutBuilder] = [:]
         var order: [String] = []
+        var missingExerciseRows = 0
+        var firstMissingExerciseRow: Int?
+        var unreadableDateRows = 0
+        var firstUnreadableDate: (row: Int, value: String?)?
 
         for (rowIndex, record) in records.enumerated() {
             guard let exerciseName = mapper.exerciseName(record), !exerciseName.isEmpty else {
-                warnings.append(.init(message: "Skipped row \(rowIndex + 2): missing exercise name."))
+                missingExerciseRows += 1
+                firstMissingExerciseRow = firstMissingExerciseRow ?? rowIndex + 2
                 continue
             }
             guard let start = mapper.startDate(record) else {
-                warnings.append(.init(message: "Skipped row \(rowIndex + 2): missing or unreadable workout date."))
+                unreadableDateRows += 1
+                if firstUnreadableDate == nil {
+                    firstUnreadableDate = (rowIndex + 2, mapper.rawStartDate(record))
+                }
                 continue
             }
             let title = mapper.workoutTitle(record) ?? "Imported Workout"
@@ -137,15 +165,62 @@ nonisolated private extension WorkoutHistoryImportParser {
             )
         }
 
+        if missingExerciseRows > 0 {
+            let noun = missingExerciseRows == 1 ? "row" : "rows"
+            warnings.append(.init(
+                message: "Skipped \(missingExerciseRows) \(noun) with no exercise name"
+                    + (firstMissingExerciseRow.map { " (first at row \($0))." } ?? ".")
+            ))
+        }
+        if unreadableDateRows > 0 {
+            let noun = unreadableDateRows == 1 ? "row" : "rows"
+            let example = firstUnreadableDate.map { detail in
+                detail.value.map { " First issue: row \(detail.row), “\($0)”." }
+                    ?? " First issue: row \(detail.row)."
+            } ?? ""
+            warnings.append(.init(message: "Skipped \(unreadableDateRows) \(noun) with an unreadable workout date.\(example)"))
+        }
+
+        let ignoredColumns = header.compactMap { rawHeader -> String? in
+            let normalized = CSVRecord.normalize(rawHeader)
+            guard !normalized.isEmpty, !CSVImportMapper.supportedHeaders.contains(normalized) else { return nil }
+            return rawHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if !ignoredColumns.isEmpty {
+            let shown = ignoredColumns.prefix(4).joined(separator: ", ")
+            let remainder = ignoredColumns.count > 4 ? " and \(ignoredColumns.count - 4) more" : ""
+            warnings.append(.init(
+                message: "Optional columns not used by ForgeFit were ignored: \(shown)\(remainder)."
+            ))
+        }
+
         let workouts = order.compactMap { key -> ImportedWorkoutDraft? in
             guard let builder = grouped[key] else { return nil }
             return builder.draft(source: source)
         }
-        guard !workouts.isEmpty else { throw WorkoutImportError.noImportableWorkouts }
+        guard !workouts.isEmpty else {
+            if unreadableDateRows == records.count {
+                throw WorkoutImportError.unreadableWorkoutDates(
+                    source: source,
+                    rowCount: unreadableDateRows,
+                    firstRow: firstUnreadableDate?.row,
+                    example: firstUnreadableDate?.value
+                )
+            }
+            if missingExerciseRows == records.count {
+                throw WorkoutImportError.missingExerciseNames(
+                    source: source,
+                    rowCount: missingExerciseRows,
+                    firstRow: firstMissingExerciseRow
+                )
+            }
+            throw WorkoutImportError.noImportableRows(source: source)
+        }
 
         return WorkoutHistoryImportParseResult(
             source: source,
             fileName: fileName,
+            checkedRowCount: records.count,
             workouts: workouts,
             warnings: warnings
         )
@@ -199,17 +274,18 @@ nonisolated private extension WorkoutHistoryImportParser {
             return draft.withFingerprint(source: .forgeFitJSON)
         }
 
-        guard !drafts.isEmpty else { throw WorkoutImportError.noImportableWorkouts }
+        guard !drafts.isEmpty else { throw WorkoutImportError.noImportableRows(source: .forgeFitJSON) }
         return WorkoutHistoryImportParseResult(
             source: .forgeFitJSON,
             fileName: fileName,
+            checkedRowCount: file.workouts.count,
             workouts: drafts,
             warnings: []
         )
     }
 
     static func detectSource(headers: Set<String>) -> WorkoutImportSource {
-        if headers.contains("starttime"), headers.contains("exercisetitle"), headers.contains("setindex") {
+        if headers.contains("starttime"), headers.contains("exercisetitle") {
             return .hevy
         }
         if headers.contains("workoutname"), headers.contains("exercisename"), headers.contains("weightunit") {
@@ -225,16 +301,95 @@ nonisolated private extension WorkoutHistoryImportParser {
     }
 }
 
-nonisolated enum WorkoutImportError: LocalizedError {
+nonisolated enum WorkoutImportError: LocalizedError, Sendable {
     case unreadableFile
     case emptyFile
-    case noImportableWorkouts
+    case notWorkoutCSV
+    case invalidForgeFitJSON
+    case hevyWorkoutDateColumnMissing
+    case missingRequiredColumns([String])
+    case unreadableWorkoutDates(
+        source: WorkoutImportSource,
+        rowCount: Int,
+        firstRow: Int?,
+        example: String?
+    )
+    case missingExerciseNames(source: WorkoutImportSource, rowCount: Int, firstRow: Int?)
+    case noImportableRows(source: WorkoutImportSource)
+
+    var title: String {
+        switch self {
+        case .unreadableFile: "File couldn’t be read"
+        case .emptyFile: "No workout data found"
+        case .notWorkoutCSV: "This doesn’t look like a workout CSV"
+        case .invalidForgeFitJSON: "ForgeFit backup format not recognized"
+        case .hevyWorkoutDateColumnMissing: "Hevy workout export needed"
+        case .missingRequiredColumns: "Required columns are missing"
+        case .unreadableWorkoutDates: "Workout dates aren’t recognized"
+        case .missingExerciseNames: "Exercise names are missing"
+        case .noImportableRows: "No workouts can be imported"
+        }
+    }
 
     var errorDescription: String? {
         switch self {
-        case .unreadableFile: "ForgeFit could not read this file."
-        case .emptyFile: "This file does not contain workout rows."
-        case .noImportableWorkouts: "ForgeFit could not find importable workouts in this file."
+        case .unreadableFile:
+            return "ForgeFit couldn’t open the selected file."
+        case .emptyFile:
+            return "The file has column headings but no workout rows."
+        case .notWorkoutCSV:
+            return "ForgeFit found text, but not a table of workout data."
+        case .invalidForgeFitJSON:
+            return "The JSON file doesn’t match a ForgeFit workout-history export."
+        case .hevyWorkoutDateColumnMissing:
+            return "This looks like a Hevy file, but it has no start_time column. It may be a routine or template file rather than completed workout history."
+        case .missingRequiredColumns(let columns):
+            return "ForgeFit needs \(columns.joined(separator: " and ")) to build workout history."
+        case .unreadableWorkoutDates(let source, let rowCount, let firstRow, let example):
+            let rows = rowCount == 1 ? "1 row" : "\(rowCount) rows"
+            let location = firstRow.map { " The first is row \($0)." } ?? ""
+            let value = example.map { " ForgeFit read its date as “\($0)”." } ?? ""
+            return "The \(source.displayName) file was recognized, but \(rows) had a date format ForgeFit couldn’t read.\(location)\(value)"
+        case .missingExerciseNames(let source, let rowCount, let firstRow):
+            let rows = rowCount == 1 ? "1 row" : "\(rowCount) rows"
+            let location = firstRow.map { " The first is row \($0)." } ?? ""
+            return "The \(source.displayName) file was recognized, but \(rows) had no exercise name.\(location)"
+        case .noImportableRows(let source):
+            return "The \(source.displayName) file was recognized, but every row is missing a workout date or exercise name."
+        }
+    }
+
+    var recoverySuggestion: String {
+        switch self {
+        case .unreadableFile:
+            "Choose the original CSV or JSON export again. If it is stored in another app, save it to Files first."
+        case .emptyFile:
+            "Export workout history again and choose the file that contains completed workouts."
+        case .notWorkoutCSV:
+            "Choose a .csv export with a header row and one row per exercise set."
+        case .invalidForgeFitJSON:
+            "Choose a ForgeFit workout-history JSON export, or use a CSV workout export instead."
+        case .hevyWorkoutDateColumnMissing:
+            "In Hevy, open Profile → Settings → Export & Import Data → Export Data → Export Workouts. Save the CSV to Files, then return to ForgeFit and choose that file."
+        case .missingRequiredColumns:
+            "Export completed workout history directly from the source app instead of editing or resaving the file."
+        case .unreadableWorkoutDates:
+            "Export the file again without editing it. If the new export still fails, send this screen and the CSV through TestFlight feedback so the beta parser can be updated."
+        case .missingExerciseNames:
+            "Export the file again and make sure it contains completed workout sets, not only workout summaries."
+        case .noImportableRows:
+            "Export completed workout history again. If it still fails, send the CSV through TestFlight feedback."
+        }
+    }
+
+    var columnDetails: [String] {
+        switch self {
+        case .hevyWorkoutDateColumnMissing:
+            ["start_time"]
+        case .missingRequiredColumns(let columns):
+            columns
+        default:
+            []
         }
     }
 }
@@ -257,6 +412,31 @@ nonisolated private struct CSVImportMapper {
     static let durationKeys = ["durationseconds", "seconds", "durations", "duration", "time"]
     static let workoutDurationKeys = ["workoutduration"]
     static let supersetKeys = ["supersetid", "superset"]
+    static let hevySignatureHeaders: Set<String> = [
+        "supersetid", "exercisenotes", "setindex", "settype",
+        "distancekm", "distancemiles", "durationseconds"
+    ]
+    static let supportedHeaders: Set<String> = Set(
+        titleKeys + exerciseKeys + startKeys + endKeys + setIndexKeys + setTypeKeys
+            + repsKeys + rpeKeys + notesKeys + exerciseNotesKeys + workoutNotesKeys
+            + durationKeys + workoutDurationKeys + supersetKeys + [
+                "iswarmup", "weightkg", "weightlbs", "weightlb", "weight", "load", "mass",
+                "weightunit", "unit", "weightunits", "distancem", "distanceinmeters",
+                "distancekm", "distancemiles", "distancemi", "distance", "distanceunit",
+                "distanceunits", "musclegroup"
+            ]
+    )
+
+    var missingRequiredColumnDescriptions: [String] {
+        var missing: [String] = []
+        if headers.isDisjoint(with: Set(Self.startKeys)) {
+            missing.append("start_time / date")
+        }
+        if headers.isDisjoint(with: Set(Self.exerciseKeys)) {
+            missing.append("exercise_title / exercise_name")
+        }
+        return missing
+    }
 
     func workoutTitle(_ record: CSVRecord) -> String? {
         string(record, keys: Self.titleKeys)
@@ -280,6 +460,10 @@ nonisolated private struct CSVImportMapper {
 
     func startDate(_ record: CSVRecord) -> Date? {
         date(record, keys: Self.startKeys)
+    }
+
+    func rawStartDate(_ record: CSVRecord) -> String? {
+        string(record, keys: Self.startKeys)
     }
 
     func endDate(_ record: CSVRecord) -> Date? {
@@ -571,6 +755,12 @@ nonisolated private enum DateImportParser {
     private static let dateFormats = [
         "MMM d, yyyy, h:mm a",
         "MMM d, yyyy h:mm a",
+        "MMM d, yyyy, HH:mm",
+        "MMM d, yyyy HH:mm",
+        "d MMM yyyy, h:mm a",
+        "d MMM yyyy h:mm a",
+        "d MMM yyyy, HH:mm",
+        "d MMM yyyy HH:mm",
         "yyyy-MM-dd HH:mm:ss",
         "yyyy-MM-dd HH:mm",
         "yyyy-MM-dd",

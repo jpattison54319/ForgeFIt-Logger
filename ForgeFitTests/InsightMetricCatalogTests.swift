@@ -223,6 +223,42 @@ struct InsightMetricCatalogTests {
         }
     }
 
+    @Test func catalogPopulationDefaultsToTrainingDaysAndHealthHasNoOverride() {
+        let volumeAndSleep = InsightRecipe(
+            shape: .relationship,
+            primaryMetricID: "strength.volume",
+            comparisonMetricIDs: ["health.sleepTotal"],
+            bucket: .daily
+        )
+        let mixedDescriptors = InsightMetricCatalog.descriptors(covering: volumeAndSleep)
+        #expect(
+            InsightCompatibilityEngine.allowedRelationshipPopulations(
+                for: volumeAndSleep,
+                descriptors: mixedDescriptors
+            ) == [.activeBucketsOnly, .includeInactiveBuckets]
+        )
+        #expect(
+            InsightCompatibilityEngine.resolvedRelationshipPopulation(
+                for: volumeAndSleep,
+                descriptors: mixedDescriptors
+            ) == .activeBucketsOnly
+        )
+
+        let healthOnly = InsightRecipe(
+            shape: .relationship,
+            primaryMetricID: "health.sleepTotal",
+            comparisonMetricIDs: ["health.hrv"],
+            bucket: .daily,
+            relationshipPopulation: .includeInactiveBuckets
+        )
+        #expect(
+            InsightCompatibilityEngine.allowedRelationshipPopulations(
+                for: healthOnly,
+                descriptors: InsightMetricCatalog.descriptors(covering: healthOnly)
+            ).isEmpty
+        )
+    }
+
     @Test func onlyPartitioningDimensionsCanRenderShares() {
         let cardio = InsightMetricCatalog.definition(for: "cardio.duration")
         let strength = InsightMetricCatalog.definition(for: "strength.volume")
@@ -297,7 +333,8 @@ struct InsightMetricCatalogTests {
                 InsightOperand(metricID: "strength.workingSets"),
             ],
             bucket: .daily,
-            lag: InsightLag(unit: .days, count: 0)
+            lag: InsightLag(unit: .days, count: 0),
+            relationshipPopulation: .includeInactiveBuckets
         )
         let copy = InsightRelationshipPopulationCopy.text(
             recipe: recipe,
@@ -309,6 +346,33 @@ struct InsightMetricCatalogTests {
         #expect(copy.contains("Sleep duration had a recorded value"))
         #expect(copy.contains("absent working sets total counted as zero"))
         #expect(!copy.contains("both metrics had a recorded value"))
+    }
+
+    @Test func automaticRelationshipPopulationCopyNamesExcludedTrainingDays() {
+        let recipe = InsightRecipe(
+            shape: .relationship,
+            operands: [
+                InsightOperand(metricID: "strength.volume"),
+                InsightOperand(metricID: "health.sleepTotal"),
+            ],
+            bucket: .daily,
+            lag: InsightLag(unit: .days, count: 0)
+        )
+        let copy = InsightRelationshipPopulationCopy.text(
+            recipe: recipe,
+            bucketNoun: "days",
+            titleFor: { key in
+                InsightMetricCatalog.definition(for: InsightOperand.metricID(fromKey: key))?.title ?? key
+            }
+        )
+        #expect(copy.contains("days without working volume were excluded"))
+        #expect(!copy.contains("counted as zero"))
+    }
+
+    @Test func insufficientPairStateUsesOneConciseProgressLine() {
+        let state = InsightPresentationState.insufficientPairs(found: 7, needed: 10)
+        #expect(!state.showsSummary)
+        #expect(state.progressText(bucketNoun: "days") == "7/10 matched days to create insight")
     }
 
     @Test func mixedPaceDenominatorsCannotShareOneDisplayAxis() {
@@ -466,7 +530,7 @@ struct InsightMetricCatalogTests {
         })
     }
 
-    @Test func v1RecipesMigrateAndV2RoundTrips() throws {
+    @Test func legacyRecipesDefaultPopulationAndV3RoundTrips() throws {
         let v1JSON = """
         {"schemaVersion":1,"id":"11111111-1111-1111-1111-111111111111","name":"Old","shape":"trend",\
         "primaryMetricID":"strength.volume","comparisonMetricIDs":["health.sleepTotal"],"filters":[],\
@@ -476,14 +540,19 @@ struct InsightMetricCatalogTests {
         let migrated = try #require(InsightRecipe.decode(from: v1JSON))
         #expect(migrated.allMetricIDs == ["strength.volume", "health.sleepTotal"])
         #expect(migrated.operandKeys == ["strength.volume", "health.sleepTotal"])
+        #expect(migrated.relationshipPopulation == .automatic)
 
-        let v2 = InsightRecipe(
-            shape: .trend,
-            operands: [InsightOperand(metricID: "strength.e1rm", exerciseID: UUID())]
+        let v3 = InsightRecipe(
+            shape: .relationship,
+            operands: [
+                InsightOperand(metricID: "strength.volume"),
+                InsightOperand(metricID: "health.sleepTotal"),
+            ],
+            relationshipPopulation: .includeInactiveBuckets
         )
-        let json = try #require(v2.encodedJSON())
+        let json = try #require(v3.encodedJSON())
         let decoded = try #require(InsightRecipe.decode(from: json))
-        #expect(decoded == v2)
+        #expect(decoded == v3)
     }
 
     // MARK: - Muscle-scoped metrics

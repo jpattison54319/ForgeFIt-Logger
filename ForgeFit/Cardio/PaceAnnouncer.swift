@@ -35,23 +35,25 @@ final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {
             unitLabel: unitLabel, index: index,
             splitSeconds: splitSeconds, totalSeconds: totalSeconds
         )
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
-        try? session.setActive(true)
-        let utterance = AVSpeechUtterance(string: phrase)
-        utterance.prefersAssistiveTechnologySettings = false
-        synthesizer.speak(utterance)
+        // Activate off the main thread, then speak: the route recorder is
+        // running and setActive can block on a Bluetooth handoff mid-run.
+        Task {
+            try? await AudioCueSession.shared.activate()
+            let utterance = AVSpeechUtterance(string: phrase)
+            utterance.prefersAssistiveTechnologySettings = false
+            synthesizer.speak(utterance)
+        }
     }
 
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        Task { try? await AudioCueSession.shared.deactivate() }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             guard !self.synthesizer.isSpeaking else { return }
-            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            try? await AudioCueSession.shared.deactivate()
         }
     }
 }

@@ -74,7 +74,11 @@ final class MyoActivationUITests: XCTestCase {
         let repsField = element(app, "activation-reps-1")
         repsField.tap()
         repsField.typeText("12")
-        element(app, "log-activation-1").tap()
+        let activationButton = element(app, "log-activation-1")
+        activationButton.tap()
+        XCTAssertEqual(activationButton.label, "Activation completed",
+                       "Expected the activation control to visibly enter its completed state.")
+        XCTAssertEqual(activationButton.value as? String, "Completed")
         // Complete the block and save the workout. The checkbox id carries
         // the block's working-set number — match by prefix, first row wins.
         tapWhenHittable(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")).firstMatch)
@@ -90,7 +94,10 @@ final class MyoActivationUITests: XCTestCase {
         // summary materializing "12 reps" proves the value landed (an empty
         // field's XCUI `value` echoes the placeholder, so the summary is the
         // honest signal).
-        element(app, "log-activation-1").tap()
+        let ghostActivationButton = element(app, "log-activation-1")
+        ghostActivationButton.tap()
+        XCTAssertEqual(ghostActivationButton.label, "Activation completed")
+        XCTAssertEqual(ghostActivationButton.value as? String, "Completed")
         XCTAssertTrue(app.staticTexts["12 reps"].waitForExistence(timeout: 3),
                       "Expected the adopted ghost in the block's rep summary.")
 

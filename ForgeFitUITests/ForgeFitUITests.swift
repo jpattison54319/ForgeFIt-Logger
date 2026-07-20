@@ -497,6 +497,56 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(configured.waitForExistence(timeout: 3), "Expected the Yoga Session row to show the saved pose flow.")
     }
 
+    /// New and existing routines use the same editor row as the live logger:
+    /// creating Superset A promises purple in the menu, then renders the same
+    /// compact lettered marker after assignment.
+    @MainActor
+    func testRoutineEditorUsesSharedSupersetIdentity() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(newRoutine)
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("squat")
+
+        let exercise = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        ).firstMatch
+        XCTAssertTrue(exercise.waitForExistence(timeout: 4))
+        tapWhenReady(exercise)
+
+        let commit = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commit.waitForExistence(timeout: 3))
+        tapWhenReady(commit)
+
+        let menu = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
+        ).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        tapWhenReady(menu)
+
+        let createSuperset = app.buttons["Create Superset A · Purple"].firstMatch
+        XCTAssertTrue(createSuperset.waitForExistence(timeout: 3))
+        tapWhenReady(createSuperset)
+
+        let marker = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Superset A")
+        ).firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+        XCTAssertEqual(marker.value as? String, "Purple")
+    }
+
     /// Routine editor: exercises can be reordered (mirrors the live logger's
     /// reorder mode) and replaced in place (via the row's ellipsis menu),
     /// without changing how many exercises the routine has.
@@ -539,15 +589,14 @@ final class ForgeFitUITests: XCTestCase {
         )
         XCTAssertEqual(menus.count, 2, "Expected two exercises in the routine before reordering.")
 
-        // Reorder mode: only offered once there's something to reorder.
-        let reorderButton = app.buttons["reorder-exercises-button"].firstMatch
-        XCTAssertTrue(reorderButton.waitForExistence(timeout: 5), "Expected the Reorder button with 2+ exercises.")
-        tapWhenReady(reorderButton)
-        XCTAssertTrue(app.staticTexts["Reorder"].waitForExistence(timeout: 3), "Expected the Reorder screen.")
-        let reorderDone = app.buttons["reorder-done-button"].firstMatch
-        XCTAssertTrue(reorderDone.waitForExistence(timeout: 3))
-        tapWhenReady(reorderDone)
-        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to return to normal editing after Done.")
+        // Reorder is a hold-and-drag on each row's handle now (no mode/button)
+        // — the drag itself can't be synthesized by XCUITest (see the
+        // scroll-from-control limitation), so this test only asserts the
+        // handles exist; the interaction is verified by hand on device.
+        let reorderHandle = app.descendants(matching: .any)
+            .matching(identifier: "hold-to-reorder-exercises").firstMatch
+        XCTAssertTrue(reorderHandle.waitForExistence(timeout: 3),
+                      "Expected per-exercise reorder handles in the editor.")
 
         // Replace: swap one exercise for another without changing the count.
         let firstMenu = menus.firstMatch
@@ -572,6 +621,71 @@ final class ForgeFitUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
         )
         XCTAssertEqual(menusAfterReplace.count, 2, "Replacing should swap the exercise, not add or remove one.")
+    }
+
+    /// Regression: keyboard clearance belongs inside the routine editor's
+    /// scrollable content. Applying it to the ScrollView itself shrinks the
+    /// editor by the full keyboard height and exposes a large black band.
+    @MainActor
+    func testRoutineEditorKeyboardDoesNotShrinkEditorOrRaiseBottomChrome() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected New Routine button.")
+        tapWhenReady(newRoutine)
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected Add Exercise in the routine editor.")
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the exercise picker search field.")
+        searchField.tap()
+        searchField.typeText("squat")
+
+        let exercise = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        ).firstMatch
+        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected a squat search result.")
+        tapWhenReady(exercise)
+
+        let commit = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commit.waitForExistence(timeout: 3), "Expected the picker commit button.")
+        tapWhenReady(commit)
+
+        let weightField = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-set-weight-'")
+        ).firstMatch
+        XCTAssertTrue(weightField.waitForExistence(timeout: 5), "Expected a routine target-weight field.")
+        tapWhenReady(weightField)
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 3), "Expected the number pad.")
+
+        let editorScroll = app.scrollViews["routine-editor-scroll"].firstMatch
+        XCTAssertTrue(editorScroll.exists, "Expected the routine editor scroll view.")
+        let uncoveredGap = keyboard.frame.minY - editorScroll.frame.maxY
+        XCTAssertLessThan(
+            uncoveredGap,
+            80,
+            "The editor ended \(Int(uncoveredGap)) pt above the keyboard; keyboard clearance must not shrink the ScrollView."
+        )
+
+        for chrome in [
+            app.buttons["tab-workout"].firstMatch,
+            app.buttons["quick-actions-trigger"].firstMatch,
+        ] where chrome.exists {
+            XCTAssertTrue(
+                !chrome.isHittable || chrome.frame.minY >= keyboard.frame.minY,
+                "Bottom chrome must remain hidden by the keyboard instead of being lifted above it."
+            )
+        }
+
+        attachScreenshot(app, name: "routine-editor-keyboard")
     }
 
     /// Regression: the keyboard accessory's Complete button used to stop

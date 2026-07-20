@@ -89,7 +89,8 @@ have **no fields** for heart rate, calories, sleep, readiness, body weight,
 GPS routes, or notes — health and location data cannot appear in shared
 content by construction. Follows and likes are also stored in the public
 database. You can unshare any workout at any time, which removes it from the
-community.
+community, and you can delete your entire community profile in the app at any
+time — see Data deletion.
 
 ## Data export
 
@@ -110,9 +111,14 @@ the Health app.
 
 Community data is separate: unsharing a workout removes it from the community
 immediately, and switching your profile to approve-followers takes it out of
-discovery. **Erase All Data does not delete an opted-in community profile** —
-to remove your profile and everything you shared, contact the developer while
-in-app profile deletion is being built.
+discovery. To leave the community entirely, use Profile → Community →
+**Delete community profile**. This permanently removes your public profile
+and handle, every workout you shared, and your follows and likes from the
+public database. Likes and follows that other members created are their
+records and cannot be deleted from your device; they contain no training or
+health data and lead nowhere once your profile and workouts are gone.
+**Erase All Data resets only this device — it does not delete your community
+profile.** Use Delete community profile for that.
 
 ## Changes
 

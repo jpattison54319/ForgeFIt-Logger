@@ -97,6 +97,12 @@ public struct SocialWorkoutRef: Codable, Sendable, Equatable, Identifiable {
     public var startedAt: Date
     /// Publish time — the ordering key for "recent workouts".
     public var publishedAt: Date
+    /// The source workout's `updatedAt` when this share was last written.
+    /// Reconcile republishes when the local workout is newer — how an edit to
+    /// an already-shared workout reaches the community without disturbing
+    /// `publishedAt` ordering. `nil` on records written before this field
+    /// existed (reads as infinitely stale, so they self-heal on next pass).
+    public var sourceUpdatedAt: Date?
     public var summary: SharedWorkoutSummary
 
     public init(
@@ -105,6 +111,7 @@ public struct SocialWorkoutRef: Codable, Sendable, Equatable, Identifiable {
         title: String?,
         startedAt: Date,
         publishedAt: Date,
+        sourceUpdatedAt: Date? = nil,
         summary: SharedWorkoutSummary
     ) {
         self.id = id
@@ -112,6 +119,7 @@ public struct SocialWorkoutRef: Codable, Sendable, Equatable, Identifiable {
         self.title = title
         self.startedAt = startedAt
         self.publishedAt = publishedAt
+        self.sourceUpdatedAt = sourceUpdatedAt
         self.summary = summary
     }
 }

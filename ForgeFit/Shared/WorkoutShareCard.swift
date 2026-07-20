@@ -5,6 +5,59 @@ import SwiftUI
 import UIKit
 #endif
 
+/// One rendering unit in a shared workout log: a standalone exercise, or a
+/// run of consecutive exercises sharing a superset group. Pairing is part of
+/// what a workout *is* — two exercises alternated back-to-back is a different
+/// session than the same two done straight — so the share image must carry it.
+enum ShareLogEntry: Identifiable {
+    case single(WorkoutExerciseModel)
+    case superset(group: Int, members: [WorkoutExerciseModel])
+
+    var id: String {
+        switch self {
+        case .single(let we): "single-\(we.id)"
+        case .superset(let group, let members): "ss-\(group)-\(members.first?.id.uuidString ?? "")"
+        }
+    }
+
+    /// Segments an ordered exercise list into standalone entries and superset
+    /// runs. Runs are built from *consecutive* same-group exercises so the log
+    /// keeps its logged order; a group member that isn't adjacent to its
+    /// partners still carries its badge at the call site, so nothing goes
+    /// unlabelled even when ordering is unusual. A group with a single member
+    /// stays standalone — a one-exercise "superset" container would be noise.
+    static func entries(for ordered: [WorkoutExerciseModel]) -> [ShareLogEntry] {
+        var entries: [ShareLogEntry] = []
+        var pending: (group: Int, members: [WorkoutExerciseModel])?
+
+        func flush() {
+            guard let pending else { return }
+            entries.append(
+                pending.members.count > 1
+                    ? .superset(group: pending.group, members: pending.members)
+                    : .single(pending.members[0])
+            )
+        }
+
+        for we in ordered {
+            guard let group = we.supersetGroup else {
+                flush(); pending = nil
+                entries.append(.single(we))
+                continue
+            }
+            if var current = pending, current.group == group {
+                current.members.append(we)
+                pending = current
+            } else {
+                flush()
+                pending = (group, [we])
+            }
+        }
+        flush()
+        return entries
+    }
+}
+
 /// A branded, full-length snapshot of a completed workout, designed to be
 /// rendered to a single tall image and shared / saved to Photos. Mirrors every
 /// section the user sees on `WorkoutDetailView` — summary, session metrics, HR
@@ -38,6 +91,8 @@ struct WorkoutShareCard: View {
         exercises.first { $0.id == we.exerciseID }
     }
 
+    private var logEntries: [ShareLogEntry] { ShareLogEntry.entries(for: sortedExercises) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
@@ -56,16 +111,21 @@ struct WorkoutShareCard: View {
                 if !muscles.isEmpty { muscleBlock(muscles) }
             }
             Rectangle().fill(theme.separator).frame(height: 1)
-            ForEach(sortedExercises) { we in
-                if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
-                    cardioBlock(we, session)
-                } else {
-                    strengthBlock(we)
+            ForEach(logEntries) { entry in
+                switch entry {
+                case .single(let we):
+                    exerciseBlock(we)
+                case .superset(let group, let members):
+                    supersetContainer(group: group, members: members)
                 }
             }
-            // Legacy cardio sessions not linked to an exercise.
+            // Sessions not linked to an exercise (Health/GPX imports).
             ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil }) { session in
-                cardioBlock(nil, session)
+                if session.isYogaSession {
+                    yogaBlock(nil, session)
+                } else {
+                    cardioBlock(nil, session)
+                }
             }
             footer
         }
@@ -90,7 +150,7 @@ struct WorkoutShareCard: View {
                 chrome.stat("Avg HR", summary.avgHR.map { "\($0)" } ?? "—", theme.danger)
             } else {
                 chrome.stat("Volume", Fmt.volume(summary.volume), theme.secondaryAccent)
-                chrome.stat("Sets", "\(summary.sets)", theme.textPrimary)
+                chrome.stat("Sets", ShareCardChrome.setCount(summary.sets), theme.textPrimary)
             }
         }
     }
@@ -214,14 +274,84 @@ struct WorkoutShareCard: View {
         }
     }
 
+    // MARK: - Log entries
+
+    /// Routes one exercise to the block matching how it was logged. Yoga and
+    /// cardio both log as sessions but read nothing alike — a flow has poses
+    /// and a style, a run has pace and distance.
+    /// `showsSupersetBadge` is false inside a superset container, where the
+    /// header already names the group — a badge there would repeat it once
+    /// per member.
+    @ViewBuilder
+    private func exerciseBlock(_ we: WorkoutExerciseModel, showsSupersetBadge: Bool = true) -> some View {
+        if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
+            if session.isYogaSession {
+                yogaBlock(we, session, showsSupersetBadge: showsSupersetBadge)
+            } else {
+                cardioBlock(we, session, showsSupersetBadge: showsSupersetBadge)
+            }
+        } else {
+            strengthBlock(we, showsSupersetBadge: showsSupersetBadge)
+        }
+    }
+
+    /// Superset run: members share one bordered container in the group's
+    /// colour, so the pairing is visible at a glance rather than inferred
+    /// from adjacency.
+    private func supersetContainer(group: Int, members: [WorkoutExerciseModel]) -> some View {
+        let color = SupersetUI.color(for: group)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(color)
+                Text(SupersetUI.label(for: group))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(color)
+            }
+            // Members carry no badge: the container's header and border
+            // already say which group they're in, and the enclosure itself
+            // shows they're paired.
+            ForEach(members) { we in
+                exerciseBlock(we, showsSupersetBadge: false)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(color.opacity(0.45), lineWidth: 1.5)
+        )
+    }
+
+    /// Group badge for a superset member rendered OUTSIDE a container — a
+    /// lone member, or one separated from its partners in the logged order.
+    /// Inside a container the header carries this, so it's suppressed there.
+    @ViewBuilder
+    private func supersetBadge(_ we: WorkoutExerciseModel, enabled: Bool) -> some View {
+        if enabled, let group = we.supersetGroup {
+            Text(SupersetUI.label(for: group))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(SupersetUI.color(for: group))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(SupersetUI.color(for: group).opacity(0.16), in: Capsule())
+        }
+    }
+
     // MARK: - Strength
 
-    private func strengthBlock(_ we: WorkoutExerciseModel) -> some View {
+    private func strengthBlock(_ we: WorkoutExerciseModel, showsSupersetBadge: Bool) -> some View {
         let unit = library(we)?.effectiveWeightUnit ?? Fmt.unit
         let sets = we.sets.sorted { $0.position < $1.position }
         return VStack(alignment: .leading, spacing: 8) {
-            Text(library(we)?.name ?? "Exercise")
-                .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
+            HStack(spacing: 6) {
+                Text(library(we)?.name ?? "Exercise")
+                    .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
+                supersetBadge(we, enabled: showsSupersetBadge)
+            }
             if let notes = we.notes, !notes.isEmpty {
                 Text(notes).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
             }
@@ -272,22 +402,51 @@ struct WorkoutShareCard: View {
 
     // MARK: - Cardio
 
-    private func cardioBlock(_ we: WorkoutExerciseModel?, _ session: CardioSessionModel) -> some View {
+    private func cardioBlock(_ we: WorkoutExerciseModel?, _ session: CardioSessionModel, showsSupersetBadge: Bool = true) -> some View {
         let kind = CardioKind.from(modality: session.modality)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: kind.systemImage).font(.system(size: 15, weight: .bold)).foregroundStyle(theme.secondaryAccent)
                 Text(we.flatMap { library($0)?.name } ?? kind.title)
                     .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
+                if let we { supersetBadge(we, enabled: showsSupersetBadge) }
             }
-            HStack(spacing: 10) {
-                if let d = session.distanceMeters, d > 0 { chrome.chip("Distance", Fmt.distance(d)) }
+            // Chips follow the modality contract: a rower speaks /500m
+            // splits, a bike watts, a stair machine floors. Showing a
+            // generic "Pace" for all of them misreports the session.
+            WrapLayout(spacing: 8) {
+                if kind.usesDistance, let d = session.distanceMeters, d > 0 {
+                    chrome.chip("Distance", Fmt.cardioDistance(d, kind: kind))
+                }
                 chrome.chip("Time", Fmt.durationShort(session.durationSeconds))
                 if session.distanceMeters ?? 0 > 0 {
-                    chrome.chip(kind.usesPace ? "Pace" : "Speed",
-                                kind.usesPace
-                                    ? CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds, kind: kind)
-                                    : CardioMetrics.speedString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds))
+                    chrome.chip(
+                        kind.paceHeadline,
+                        kind.usesPace
+                            ? CardioMetrics.paceString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds, kind: kind)
+                            : CardioMetrics.speedString(distanceMeters: session.distanceMeters, durationSeconds: session.durationSeconds)
+                    )
+                }
+                if kind.usesPower, let watts = session.avgPowerWatts, watts > 0 {
+                    chrome.chip("Power", "\(Int(watts.rounded())) W")
+                }
+                if kind.usesFloors, let floors = session.floorsClimbed, floors > 0 {
+                    chrome.chip("Floors", "\(floors)")
+                }
+                if kind.usesStepCount, let steps = session.totalSteps, steps > 0 {
+                    chrome.chip(kind.stepCountLabel, "\(steps)")
+                }
+                if kind.usesStrokeRate, let rate = session.strokeRate, rate > 0 {
+                    chrome.chip("Stroke rate", "\(rate) spm")
+                }
+                if kind.usesCadence, let cadence = session.avgCadence, cadence > 0 {
+                    chrome.chip("Cadence", "\(cadence) \(kind.cadenceUnit)")
+                }
+                if kind.usesSwimContract, let lengths = session.lengthsCompleted, lengths > 0 {
+                    chrome.chip("Lengths", "\(lengths)")
+                }
+                if kind.usesElevation, let gain = session.elevationGainMeters, gain > 0 {
+                    chrome.chip("Elevation", "\(Int(gain)) m")
                 }
                 if let hr = session.avgHR { chrome.chip("Avg HR", "\(hr)") }
             }
@@ -302,6 +461,68 @@ struct WorkoutShareCard: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .stroke(theme.separator, lineWidth: 1)
                     )
+            }
+            let zones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: session.sampleSeriesJSON) ?? session.hrZoneSeconds
+            if zones.reduce(0, +) > 0 {
+                zoneBar(zones)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - Yoga
+
+    /// Yoga logs as a session like cardio but shares none of its vocabulary:
+    /// the mat doesn't move, so there's no distance or pace — the honest
+    /// metrics are time, poses, and style. Previously these rendered through
+    /// `cardioBlock`, which stamped a running figure and a "Pace" chip on a
+    /// yin practice.
+    private func yogaBlock(_ we: WorkoutExerciseModel?, _ session: CardioSessionModel, showsSupersetBadge: Bool = true) -> some View {
+        let style = session.resolvedYogaStyle
+        let name = we.flatMap { library($0)?.name } ?? "Yoga"
+        let poses = session.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: style.systemImage)
+                    .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.accent)
+                Text(name)
+                    .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
+                if let we { supersetBadge(we, enabled: showsSupersetBadge) }
+                Spacer(minLength: 0)
+                Text("\(style.title) Yoga")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(theme.accentSoft, in: Capsule())
+            }
+            WrapLayout(spacing: 8) {
+                chrome.chip("Time", Fmt.durationShort(session.durationSeconds))
+                if let count = session.posesCompleted, count > 0 {
+                    chrome.chip("Poses", "\(count)")
+                }
+                if let hr = session.avgHR { chrome.chip("Avg HR", "\(hr)") }
+                if let kcal = session.activeEnergyKcal, kcal > 0 {
+                    chrome.chip("Energy", "\(Int(kcal)) kcal")
+                }
+            }
+            if !poses.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Poses").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    ForEach(poses) { pose in
+                        HStack(spacing: 8) {
+                            Text(pose.label ?? "Pose")
+                                .font(.system(size: 12)).foregroundStyle(theme.textPrimary)
+                            Spacer(minLength: 0)
+                            Text(Fmt.durationShort(pose.durationSeconds))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                }
             }
             let zones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: session.sampleSeriesJSON) ?? session.hrZoneSeconds
             if zones.reduce(0, +) > 0 {

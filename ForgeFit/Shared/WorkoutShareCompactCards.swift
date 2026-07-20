@@ -383,11 +383,11 @@ struct WorkoutShareCardMinimal: View {
         switch shape {
         case .strength:
             tiles.append(("Volume", Fmt.volume(summary.volume)))
-            tiles.append(("Sets", "\(summary.sets)"))
+            tiles.append(("Sets", ShareCardChrome.setCount(summary.sets)))
             tiles.append(("Energy", kcal ?? topMuscle ?? "—"))
         case .hybrid:
             tiles.append(("Volume", Fmt.volume(summary.volume)))
-            tiles.append(("Sets", "\(summary.sets)"))
+            tiles.append(("Sets", ShareCardChrome.setCount(summary.sets)))
             tiles.append(distance > 0 ? ("Distance", Fmt.distance(distance)) : ("Energy", kcal ?? "—"))
         case .cardio:
             let single = sessions.count == 1 ? sessions.first : nil
@@ -464,7 +464,7 @@ private struct ShareHeroRow: View {
         switch shape {
         case .strength, .hybrid:
             out.append(("Volume", Fmt.volume(summary.volume), theme.secondaryAccent))
-            out.append(("Sets", "\(summary.sets)", theme.textPrimary))
+            out.append(("Sets", ShareCardChrome.setCount(summary.sets), theme.textPrimary))
         case .cardio:
             let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
             let distance = sessions.compactMap(\.distanceMeters).reduce(0, +)

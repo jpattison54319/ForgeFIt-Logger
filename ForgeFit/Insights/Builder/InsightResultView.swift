@@ -126,22 +126,22 @@ struct InsightResultView: View {
                     message: "Log training (or connect the Health metrics involved) and this insight fills in.",
                     systemImage: "chart.xyaxis.line"
                 )
-            case .insufficientHistory(let found, let needed):
+            case .insufficientHistory:
                 EmptyStateCard(
                     title: "More history needed",
-                    message: "\(found) days are available; this metric needs \(needed) before a trend is shown.",
+                    message: nil,
                     systemImage: "calendar.badge.clock"
                 )
-            case .insufficientTrend(let found, let needed):
+            case .insufficientTrend:
                 EmptyStateCard(
                     title: "More values needed",
-                    message: "\(found) recorded \(found == 1 ? "value" : "values"); a trend needs \(needed).",
+                    message: nil,
                     systemImage: "chart.line.uptrend.xyaxis"
                 )
-            case .insufficientPairs(let found, let needed):
+            case .insufficientPairs:
                 EmptyStateCard(
                     title: "Not enough overlap yet",
-                    message: "\(found) matched \(bucketNoun.lowercased()) so far. \(needed) are needed before this comparison says anything trustworthy.",
+                    message: nil,
                     systemImage: "hourglass"
                 )
             case .constantRelationship(let key):
@@ -150,10 +150,10 @@ struct InsightResultView: View {
                     message: "\(titleFor(key)) had one repeated value across the matched \(bucketNoun.lowercased()), so correlation is undefined.",
                     systemImage: "equal.circle"
                 )
-            case .insufficientDistribution(let found, let needed):
+            case .insufficientDistribution:
                 EmptyStateCard(
                     title: "More values needed",
-                    message: "\(found) recorded \(found == 1 ? "value" : "values"); a distribution needs \(needed).",
+                    message: nil,
                     systemImage: "chart.bar.xaxis"
                 )
             case .constantDistribution(let value, let count):
@@ -184,20 +184,26 @@ struct InsightResultView: View {
                 )
             }
 
-            Text(summary)
-                .font(.system(size: 14))
-                .foregroundStyle(theme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+            if presentationState.showsSummary {
+                Text(summary)
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            badges
+            if let progress = presentationState.progressText(bucketNoun: bucketNoun.lowercased()) {
+                badge(icon: "hourglass", text: progress, tint: theme.textSecondary)
+            } else if presentationState.showsSummary {
+                badges
+            }
 
             if showsAdvanced, presentationState.hasInspectableData {
                 dataDisclosure
             }
 
-            if !warningLines.isEmpty {
+            if !visibleWarningLines.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(warningLines, id: \.self) { line in
+                    ForEach(visibleWarningLines, id: \.self) { line in
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 10, weight: .bold))
@@ -272,11 +278,13 @@ struct InsightResultView: View {
 
     private var badges: some View {
         HStack(spacing: Space.sm) {
-            badge(
-                icon: "square.grid.2x2",
-                text: coverageText,
-                tint: result.coverage.fraction < InsightQueryEngine.sparseCoverageThreshold ? theme.warmup : theme.textSecondary
-            )
+            if recipe.shape != .relationship {
+                badge(
+                    icon: "square.grid.2x2",
+                    text: coverageText,
+                    tint: result.coverage.fraction < InsightQueryEngine.sparseCoverageThreshold ? theme.warmup : theme.textSecondary
+                )
+            }
             badge(icon: provenanceIcon, text: provenanceText, tint: theme.textSecondary)
             if let pairs = result.coverage.pairedSamples {
                 badge(
@@ -364,6 +372,29 @@ struct InsightResultView: View {
                 return "No \(titleFor(key)) data in this range — it isn't on the chart."
             case .invalidRecipe, .insufficientPairs, .emptyResult:
                 return nil   // rendered as full states above
+            }
+        }
+    }
+
+    /// Compact cards already carry the takeaway and evidence badges. Keep only
+    /// warnings that change what the chart is displaying; fuller interpretation
+    /// remains available on the detail surface.
+    private var visibleWarningLines: [String] {
+        guard !showsAdvanced else { return warningLines }
+        guard presentationState.showsSummary else { return [] }
+        return result.warnings.compactMap { warning in
+            switch warning {
+            case .insufficientBaseline:
+                return "Not enough early data to index against a baseline — showing raw values."
+            case .zeroDominatedIndexAnchor:
+                let base = "Mostly-empty \(recipe.bucket == .weekly ? "weeks" : "days") can't anchor one shared scale — each metric keeps its own units."
+                return recipe.bucket == .daily ? base + " Week grouping usually can." : base
+            case .groupsBelowMinimum(let dropped, let needed):
+                return "\(dropped) \(dropped == 1 ? "group has" : "groups have") fewer than \(needed) \(bucketNoun.lowercased()) and \(dropped == 1 ? "isn't" : "aren't") shown."
+            case .emptySeries(let key):
+                return "No \(titleFor(key)) data in this range — it isn't on the chart."
+            default:
+                return nil
             }
         }
     }
@@ -536,20 +567,41 @@ struct InsightResultView: View {
 }
 
 /// Explains the exact population the relationship engine paired. This copy is
-/// a math contract: measurement/measurement uses their intersection,
-/// tally/tally uses their active union, and a mixed pair follows the recorded
-/// measurement grid while only the absent tally becomes zero.
+/// a math contract: measurements always require recorded values; zero-capable
+/// training totals use their active intersection by default and include
+/// structural zeros only when the recipe explicitly asks for them.
 enum InsightRelationshipPopulationCopy {
     static func text(
         recipe: InsightRecipe,
         bucketNoun: String,
         titleFor: (String) -> String
     ) -> String {
+        let descriptors = InsightMetricCatalog.descriptors(covering: recipe)
         let policies = recipe.operands.map { operand in
-            InsightMetricCatalog.definition(for: operand.metricID)?.zeroFillPolicy ?? .never
+            descriptors.first(where: { $0.id == operand.metricID })?.zeroFillPolicy ?? .never
         }
         guard recipe.bucket != .session, policies.count == 2 else {
             return bothRecorded(bucketNoun)
+        }
+
+        let populations = InsightCompatibilityEngine.allowedRelationshipPopulations(
+            for: recipe,
+            descriptors: descriptors
+        )
+        let population = InsightCompatibilityEngine.resolvedRelationshipPopulation(
+            for: recipe,
+            descriptors: descriptors
+        )
+        if !populations.isEmpty, population == .activeBucketsOnly {
+            let tallyTitles = policies.indices.compactMap { index in
+                policies[index] == .zeroWhenAbsent
+                    ? titleFor(recipe.operands[index].key).lowercased()
+                    : nil
+            }
+            let subject = tallyTitles.count == 1
+                ? (tallyTitles.first ?? "training")
+                : "both logged totals"
+            return "Population: matched \(bucketNoun) with recorded values for both metrics; \(bucketNoun) without \(subject) were excluded."
         }
 
         let tallyIndices = policies.indices.filter { policies[$0] == .zeroWhenAbsent }
@@ -682,5 +734,24 @@ enum InsightPresentationState: Equatable {
         if case .invalidRecipe = self { return false }
         if case .empty = self { return false }
         return true
+    }
+
+    var showsSummary: Bool {
+        if case .chart = self { return true }
+        return false
+    }
+
+    func progressText(bucketNoun: String) -> String? {
+        switch self {
+        case .insufficientHistory(let found, let needed):
+            return "\(found)/\(needed) days to create insight"
+        case .insufficientTrend(let found, let needed),
+             .insufficientDistribution(let found, let needed):
+            return "\(found)/\(needed) values to create insight"
+        case .insufficientPairs(let found, let needed):
+            return "\(found)/\(needed) matched \(bucketNoun) to create insight"
+        default:
+            return nil
+        }
     }
 }

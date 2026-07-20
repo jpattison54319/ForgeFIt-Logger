@@ -204,6 +204,7 @@ struct SegmentedPills<T: Hashable>: View {
     let options: [T]
     let title: (T) -> String
     @Binding var selection: T
+    var accessibilityID: ((T) -> String)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -224,6 +225,7 @@ struct SegmentedPills<T: Hashable>: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .accessibilityIdentifier(accessibilityID?(option) ?? "")
                     .glassEffect(
                         isSelected ? .regular.tint(theme.accent).interactive() : .regular.interactive(),
                         in: Capsule()
@@ -372,7 +374,7 @@ struct ProgressRing: View {
 
 struct EmptyStateCard: View {
     let title: String
-    let message: String
+    let message: String?
     let systemImage: String
 
     @Environment(\.theme) private var theme
@@ -386,10 +388,12 @@ struct EmptyStateCard: View {
                 Text(title)
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
-                Text(message)
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.textSecondary)
-                    .multilineTextAlignment(.center)
+                if let message {
+                    Text(message)
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, Space.md)

@@ -121,6 +121,13 @@ struct ShareCardChrome {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Set counts are `Double` (half-sets exist for unilateral work), so raw
+    /// interpolation renders "6.0" on a shared image. Drop the trailing
+    /// zero, keep a genuine half.
+    static func setCount(_ sets: Double) -> String {
+        sets.formatted(.number.precision(.fractionLength(0...1)))
+    }
+
     func chip(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(theme.textPrimary)

@@ -1,10 +1,9 @@
 import Foundation
 
-/// What the user said they train during onboarding. Drives the pre-selected
-/// starter program, the Home quick-start seeds, and the empty logger's
-/// suggested exercises — so a lifter's fastest buttons are never four cardio
-/// tiles. Stored in UserDefaults ("trainingFocusRaw"); changeable by simply
-/// editing quick starts later, so it's a seed, not a cage.
+/// What the user said they train during onboarding. Drives the Home quick-start
+/// seeds and the empty logger's suggested exercises. Stored in UserDefaults
+/// ("trainingFocusRaw"); changeable by editing quick starts later, so it's a
+/// seed, not a cage.
 enum TrainingFocus: String, CaseIterable, Identifiable {
     case strength, cardio, yoga, mixed
 
@@ -25,16 +24,6 @@ enum TrainingFocus: String, CaseIterable, Identifiable {
         case .cardio: "figure.run"
         case .yoga: "figure.yoga"
         case .mixed: "square.grid.2x2.fill"
-        }
-    }
-
-    /// The starter program pre-selected for this focus (always deselectable).
-    /// Yoga gets none — its plan is the built-in guided flows, not routines.
-    var defaultProgramID: String? {
-        switch self {
-        case .strength: "full-body-foundation"
-        case .cardio, .mixed: "hybrid-engine"
-        case .yoga: nil
         }
     }
 
