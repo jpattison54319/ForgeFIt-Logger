@@ -69,7 +69,7 @@ struct SettingsHealthSection: View {
         connecting = true
         Task {
             _ = await HealthService.shared.requestAuthorization()
-            await HealthWorkoutImporter.shared.importRecent(in: modelContext)
+            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
             await MainActor.run {
                 connected = HealthService.shared.isConnected
                 connecting = false

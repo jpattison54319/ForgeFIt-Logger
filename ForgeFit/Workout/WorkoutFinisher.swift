@@ -18,11 +18,22 @@ enum WorkoutFinisher {
 
     /// A workout is worth keeping when something actually happened: a
     /// completed set, a cardio/yoga session that ran live or was deliberately
-    /// logged, or typed exercise notes (never silently delete typed text).
+    /// logged, or typed workout/exercise notes (never silently delete typed text).
     /// An untouched planned block counts for nothing — matching the
     /// auto-complete rules below, which ignore sessions that never started.
     @MainActor
     static func hasSubstance(_ workout: WorkoutModel) -> Bool {
+        if let progress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
+           progress.fullRounds > 0 || !progress.completedMovementIDs.isEmpty || !progress.partialValues.isEmpty {
+            return true
+        }
+        if let result = ConditioningResult.decode(from: workout.conditioningResultJSON),
+           !result.sectionResults.isEmpty {
+            return true
+        }
+        if WorkoutNotePolicy.userText(in: workout) != nil {
+            return true
+        }
         if workout.exercises.contains(where: { we in we.sets.contains { $0.completedAt != nil } }) {
             return true
         }
@@ -46,7 +57,8 @@ enum WorkoutFinisher {
         _ workout: WorkoutModel,
         in context: ModelContext,
         liveMetrics: WatchLiveMetrics? = nil,
-        watchSavedToHealth: Bool = false
+        watchSavedToHealth: Bool = false,
+        endedAt requestedEnd: Date? = nil
     ) -> String? {
         // Finishing an empty workout is a discard, not a completion: nothing
         // lands in history, no XP is awarded, and no phantom HKWorkout is
@@ -58,7 +70,7 @@ enum WorkoutFinisher {
         // Hidden effort must never leak into history, exports, analytics, or
         // HealthKit. Failure mode fills only unrated completed non-warm-up sets.
         WorkoutEffortPolicy.prepareForFinish(workout)
-        let now = Date.now
+        let now = max(workout.startedAt, min(requestedEnd ?? .now, .now))
         let workoutExercisesByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // The deferred HealthKit fills below outlive this call. If the
         // container deinits first (unit tests; theoretical shutdown races),
@@ -187,10 +199,11 @@ enum WorkoutFinisher {
             let pureSessions = !workout.exercises.isEmpty
                 && workout.exercises.allSatisfy { we in workout.cardioSessions.contains { $0.workoutExerciseID == we.id } }
             let pureYoga = pureSessions && workout.cardioSessions.allSatisfy(\.isYogaSession)
-            // Effort 1–10 from what was logged: cardio session effort and/or
-            // average strength RPE across completed sets. Nil when nothing
-            // was rated — never invent a number.
+            // A genuine whole-session rating is the preferred HealthKit
+            // effort. Older workouts fall back to their directly logged
+            // cardio/set ratings, never to an inferred default.
             let effortScore: Double? = {
+                if let sessionRPE = workout.wholeSessionRPE { return sessionRPE }
                 var values = workout.cardioSessions.compactMap { $0.effort.map(Double.init) }
                 let rpes = workout.exercises.flatMap(\.sets)
                     .filter { $0.completedAt != nil }
@@ -204,7 +217,8 @@ enum WorkoutFinisher {
                     from: start, to: now,
                     isCardio: pureSessions && !pureYoga, isYoga: pureYoga, modality: cardioKind,
                     energyKcal: energy, distanceMeters: distance,
-                    effortScore: effortScore
+                    effortScore: effortScore,
+                    workoutName: workout.title
                 )
             }
         }
@@ -219,7 +233,7 @@ enum WorkoutFinisher {
         // Tell the watch the session is over and refresh its snapshot.
         WatchLink.shared.sendCommand(.workoutFinished)
         WatchLink.shared.publishState()
-        endLiveSurfaces()
+        cancelLiveRuntime()
         // A finished workout is the log change that matters most — refresh
         // the sanitized iCloud backup (debounced).
         BackupScheduler.shared.noteLogDataChanged()
@@ -240,7 +254,7 @@ enum WorkoutFinisher {
         }
         WatchLink.shared.sendCommand(.discardWorkout)
         WatchLink.shared.publishState()
-        endLiveSurfaces()
+        cancelLiveRuntime()
         return nil
     }
 
@@ -261,18 +275,41 @@ enum WorkoutFinisher {
         ))?.first
     }
 
+    /// One idempotent terminal path for every process-owned workout resource.
+    /// Finishing, discarding, account reset, remote deletion, and lifecycle
+    /// reconciliation all call this so no timer, sensor, cue, or Live Activity
+    /// can survive after the model stops being live.
     @MainActor
-    private static func endLiveSurfaces() {
+    static func cancelLiveRuntime() {
+        CardioRouteRecorder.shared.cancel()
         WorkoutActivityController.shared.end()
         RestTimerController.shared.skip()
+        TimerChime.shared.stop()
         IntervalRunnerHub.shared.stop()
         HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
         YogaFlowRunnerHub.shared.stop()
+        NotificationScheduler.shared.cancelWorkoutCues()
         LiveMetricsHub.shared.endSession()
+        BLEHeartRateService.shared.stopWorkoutConnection()
         ForgeFitWidgetSnapshotStore.save(ForgeFitWidgetSnapshot(mode: .idle))
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
         #endif
+    }
+
+    /// Cancel runtime work owned by one deleted/replaced cardio session while
+    /// leaving the surrounding mixed workout alive.
+    @MainActor
+    static func cancelLiveRuntime(for session: CardioSessionModel) {
+        CardioRouteRecorder.shared.cancel(sessionID: session.id)
+        IntervalRunnerHub.shared.stop(for: session.id)
+        YogaFlowRunnerHub.shared.stop(for: session.id)
+        guard session.liveStartedAt != nil, session.endedAt == nil else { return }
+        HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
+        PaceAnnouncer.shared.stop()
+        NotificationScheduler.shared.cancelCardioCues()
     }
 }
 

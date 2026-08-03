@@ -369,7 +369,12 @@ struct CoachWeeklyReviewTests {
     // MARK: - 9. Conservative-dose precedence
 
     @Test func weeklyDeloadBeatsDailyReduceVolumeAndNeverStacksTwoReductions() throws {
-        let reduceVolume = try #require(CoachAdjustments.plan(for: .reduceVolume))
+        let reduceVolume = CoachAdjustments.Plan(
+            action: .reduceVolume,
+            affectedExerciseIDs: nil,
+            summary: "Voluntary lighter session",
+            changes: ["One reviewed set reduction"]
+        )
         let deload = try #require(CoachAdjustments.plan(for: .deloadRecover))
 
         let weeklyWins = CoachAdjustments.effectivePlan(daily: reduceVolume, weeklyDeloadActive: true)

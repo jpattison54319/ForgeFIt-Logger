@@ -1,10 +1,13 @@
 import CoreLocation
+import ForgeCore
 import ForgeData
 import Foundation
 import Observation
 import SwiftData
 
-enum CardioRouteMath {
+/// Pure route math plus caller-owned ModelContext mutations. It is safe on the
+/// foreground MainActor and on the Health importer's private ModelActor.
+nonisolated enum CardioRouteMath {
     static var defaultSplitDistanceMeters: Double {
         Locale.current.measurementSystem == .us ? 1609.344 : 1000
     }
@@ -106,14 +109,33 @@ enum CardioRouteMath {
     }
 }
 
+enum CardioRouteOwnershipPolicy {
+    static func shouldStartAfterAuthorization(
+        isAuthorized: Bool,
+        pendingSessionID: UUID?,
+        recordingSessionID: UUID?
+    ) -> Bool {
+        guard isAuthorized, let pendingSessionID else { return false }
+        return pendingSessionID == recordingSessionID
+    }
+
+    static func shouldCancelAsOrphan(
+        recordingSessionID: UUID?,
+        pendingSessionID: UUID?,
+        validSessionIDs: Set<UUID>
+    ) -> Bool {
+        guard let sessionID = recordingSessionID ?? pendingSessionID else { return false }
+        return !validSessionIDs.contains(sessionID)
+    }
+}
+
 @MainActor
 @Observable
 final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     static let shared = CardioRouteRecorder()
 
-    /// Live running distance total (meters) for the current session, updated as
-    /// GPS fixes arrive so the logger can show distance in real time — the
-    /// phone-side fallback when no Apple Watch is streaming.
+    /// Phone GPS running total. Consumers must use
+    /// `authoritativeLiveDistance` so a fresh Watch stream and speech agree.
     private(set) var liveDistanceMeters: Double = 0
 
     @ObservationIgnored private let manager = CLLocationManager()
@@ -121,10 +143,11 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     @ObservationIgnored private var locations: [CLLocation] = []
     @ObservationIgnored private var lastLiveLocation: CLLocation?
     @ObservationIgnored private var pendingStartSessionID: UUID?
-    // T4-4 live split announcements: boundary bookkeeping over the live
-    // distance total. `announcedSplits` is how many km/mi lines were spoken;
-    // dates anchor split + total durations.
-    @ObservationIgnored private var announcedSplits = 0
+    private var watchDistanceReading: LiveDistanceReading?
+    private var phoneGPSDistanceReading: LiveDistanceReading?
+    @ObservationIgnored private var milestoneTracker = DistanceMilestoneTracker(
+        boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
+    )
     @ObservationIgnored private var splitAnchorDate: Date?
     @ObservationIgnored private var recordingStartDate: Date?
 
@@ -146,44 +169,75 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     }
 
     func start(session: CardioSessionModel) {
+        if let recordingSessionID, recordingSessionID != session.id {
+            cancel()
+        }
+        beginSession(
+            sessionID: session.id,
+            startedAt: session.liveStartedAt ?? session.startedAt
+        )
         if authorizationStatus == .notDetermined {
             pendingStartSessionID = session.id
             requestAuthorization()
             return
         }
         guard isAuthorized else { return }
-        beginRecording(sessionID: session.id)
+        startLocationUpdates()
     }
 
-    private func beginRecording(sessionID: UUID) {
-        pendingStartSessionID = nil
+    private func beginSession(sessionID: UUID, startedAt: Date) {
         recordingSessionID = sessionID
         locations = []
         lastLiveLocation = nil
         liveDistanceMeters = 0
-        announcedSplits = 0
-        splitAnchorDate = nil
-        recordingStartDate = nil
+        watchDistanceReading = nil
+        phoneGPSDistanceReading = nil
+        milestoneTracker = DistanceMilestoneTracker(
+            boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
+        )
+        splitAnchorDate = startedAt
+        recordingStartDate = startedAt
+    }
+
+    private func startLocationUpdates() {
+        pendingStartSessionID = nil
         manager.allowsBackgroundLocationUpdates = true
         manager.pausesLocationUpdatesAutomatically = false
         manager.startUpdatingLocation()
     }
 
-    /// Live distance for a session if it's the one currently recording, else nil.
-    func liveDistanceMeters(for sessionID: UUID) -> Double? {
-        recordingSessionID == sessionID ? liveDistanceMeters : nil
+    /// The same distance source used by the logger, intervals, Live Activity,
+    /// and milestone speech. Watch freshness is based on phone receipt time,
+    /// not the Watch sample's `asOf` (which may be an HR timestamp).
+    func authoritativeLiveDistance(
+        for sessionID: UUID,
+        storedMeters: Double? = nil,
+        at referenceDate: Date = .now
+    ) -> Double? {
+        guard recordingSessionID == sessionID else { return storedMeters }
+        return LiveDistanceArbiter.preferred(
+            watch: watchDistanceReading,
+            phoneGPS: phoneGPSDistanceReading,
+            storedMeters: storedMeters,
+            at: referenceDate
+        )?.meters
+    }
+
+    func updateWatchDistance(_ meters: Double?, receivedAt: Date = .now) {
+        guard recordingSessionID != nil,
+              let meters,
+              meters.isFinite,
+              meters >= 0 else { return }
+        watchDistanceReading = LiveDistanceReading(
+            meters: meters,
+            observedAt: receivedAt,
+            source: .watch
+        )
+        announceMilestonesIfCrossed(at: receivedAt)
     }
 
     func stop(session: CardioSessionModel, in context: ModelContext) {
-        manager.stopUpdatingLocation()
-        PaceAnnouncer.shared.stop()
-        defer {
-            recordingSessionID = nil
-            pendingStartSessionID = nil
-            locations = []
-            liveDistanceMeters = 0
-            manager.allowsBackgroundLocationUpdates = false
-        }
+        defer { cancel() }
         guard recordingSessionID == session.id, !locations.isEmpty else { return }
         CardioRouteMath.replaceRoute(for: session, locations: locations, in: context)
         session.distanceMeters = session.routePoints.count > 1
@@ -192,6 +246,44 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
             : session.distanceMeters
         session.elevationGainMeters = elevationGain(session.routePoints)
         session.updatedAt = Date()
+    }
+
+    /// Stop GPS without persisting a route. Used when a session/workout is
+    /// discarded, replaced, reset, or found orphaned during lifecycle
+    /// reconciliation. Idempotent so terminal paths can safely overlap.
+    func cancel(sessionID: UUID? = nil) {
+        if let sessionID,
+           recordingSessionID != sessionID,
+           pendingStartSessionID != sessionID {
+            return
+        }
+        manager.stopUpdatingLocation()
+        manager.allowsBackgroundLocationUpdates = false
+        manager.pausesLocationUpdatesAutomatically = true
+        PaceAnnouncer.shared.stop()
+        recordingSessionID = nil
+        pendingStartSessionID = nil
+        locations = []
+        lastLiveLocation = nil
+        liveDistanceMeters = 0
+        watchDistanceReading = nil
+        phoneGPSDistanceReading = nil
+        milestoneTracker = DistanceMilestoneTracker(
+            boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
+        )
+        splitAnchorDate = nil
+        recordingStartDate = nil
+    }
+
+    /// Defensive lifecycle backstop: a CLLocationManager must not outlive the
+    /// active model session that owns it.
+    func cancelIfOrphaned(validSessionIDs: Set<UUID>) {
+        guard CardioRouteOwnershipPolicy.shouldCancelAsOrphan(
+            recordingSessionID: recordingSessionID,
+            pendingSessionID: pendingStartSessionID,
+            validSessionIDs: validSessionIDs
+        ) else { return }
+        cancel()
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -205,30 +297,28 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
                     if segment >= 1 { self.liveDistanceMeters += segment }
                 }
                 self.lastLiveLocation = location
-                if self.recordingStartDate == nil {
-                    self.recordingStartDate = location.timestamp
-                    self.splitAnchorDate = location.timestamp
-                }
-                self.announceSplitIfCrossed(at: location.timestamp)
+                let receivedAt = Date.now
+                self.phoneGPSDistanceReading = LiveDistanceReading(
+                    meters: self.liveDistanceMeters,
+                    observedAt: receivedAt,
+                    source: .phoneGPS
+                )
+                self.announceMilestonesIfCrossed(at: receivedAt)
             }
         }
     }
 
-    /// Speaks each completed km/mi as the live total crosses the boundary
-    /// (locale decides the unit, same as the split table). One fix can cross
-    /// at most one boundary at running speeds; the `while` guards a GPS gap
-    /// crossing two — later boundaries speak once, with the gap's time on
-    /// the first.
-    private func announceSplitIfCrossed(at timestamp: Date) {
-        let unit = CardioRouteMath.defaultSplitDistanceMeters
-        while liveDistanceMeters >= Double(announcedSplits + 1) * unit {
-            announcedSplits += 1
+    private func announceMilestonesIfCrossed(at timestamp: Date) {
+        guard let sessionID = recordingSessionID,
+              let distance = authoritativeLiveDistance(for: sessionID, at: timestamp) else { return }
+
+        for milestone in milestoneTracker.consume(distanceMeters: distance) {
             let splitSeconds = splitAnchorDate.map { max(1, Int(timestamp.timeIntervalSince($0))) } ?? 0
             let totalSeconds = recordingStartDate.map { max(1, Int(timestamp.timeIntervalSince($0))) }
             splitAnchorDate = timestamp
             PaceAnnouncer.shared.announceSplit(
                 unitLabel: Locale.current.measurementSystem == .us ? "mile" : "kilometer",
-                index: announcedSplits,
+                index: milestone,
                 splitSeconds: splitSeconds,
                 totalSeconds: totalSeconds
             )
@@ -237,8 +327,12 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
-            guard self.isAuthorized, let sessionID = self.pendingStartSessionID else { return }
-            self.beginRecording(sessionID: sessionID)
+            guard CardioRouteOwnershipPolicy.shouldStartAfterAuthorization(
+                isAuthorized: self.isAuthorized,
+                pendingSessionID: self.pendingStartSessionID,
+                recordingSessionID: self.recordingSessionID
+            ) else { return }
+            self.startLocationUpdates()
         }
     }
 

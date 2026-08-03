@@ -3,11 +3,8 @@ import ForgeData
 import SwiftUI
 
 /// The flexibility pillar's Insights card: weekly time-under-stretch per body
-/// region against the evidence-based "effective dose" marker, plus session
-/// consistency. Claims are deliberately limited to range of motion — the one
-/// outcome the stretch-dose literature actually supports (Thomas et al. 2018;
-/// ACSM ≥2–3 sessions/week). Renders nothing when there's no signal, like the
-/// other insight cards.
+/// region against the app's weekly marker, plus session consistency. Renders
+/// nothing when there's no signal, like the other insight cards.
 struct FlexibilityInsightsCard: View {
     @Environment(\.theme) private var theme
     let analytics: TrainingAnalytics
@@ -70,7 +67,7 @@ struct FlexibilityInsightsCard: View {
                             regionBars
                         }
                         consistencyRow
-                        Text("Around 10 minutes of stretch per region per week is where range-of-motion gains become reliable.")
+                        Text("Each bar compares your logged stretch time with a 10-minute weekly marker for that region.")
                             .font(.system(size: 12))
                             .foregroundStyle(theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -132,9 +129,7 @@ struct FlexibilityInsightsCard: View {
             Image(systemName: sessionDays >= 2 ? "checkmark.seal.fill" : "calendar")
                 .font(.system(size: 12))
                 .foregroundStyle(sessionDays >= 2 ? theme.success : theme.textTertiary)
-            Text(sessionDays >= 2
-                 ? "\(sessionDays) flexibility days this week — that's the consistency that moves range of motion."
-                 : "\(sessionDays == 0 ? "No" : "\(sessionDays)") flexibility day\(sessionDays == 1 ? "" : "s") this week yet — 2–3 per week is the evidence-backed target.")
+            Text("\(sessionDays == 0 ? "No" : "\(sessionDays)") flexibility day\(sessionDays == 1 ? "" : "s") logged this week.")
                 .font(.system(size: 12))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

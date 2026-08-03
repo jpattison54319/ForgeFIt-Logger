@@ -3,19 +3,10 @@ import ForgeCore
 import ForgeData
 import SwiftData
 
-/// One-tap "coach's version" of a routine for days when readiness says to back
-/// off. Adjustments are applied to the *started workout only* — the saved
-/// routine is never touched, so tomorrow starts from the normal plan.
-///
-/// The dose adjustments follow the same evidence the readiness engine cites:
-///  - Reduce volume: drop ~one working set per exercise and cap effort at
-///    RPE 8 (≥2 RIR). Stopping short of failure preserves the stimulus while
-///    cutting the recovery cost (Morán-Navarro 2017; Helms 2016 RIR-based
-///    autoregulation).
-///  - Deload/recover: roughly halve working sets and take ~10% off the load,
-///    capping at RPE 7 — the volume-first deload structure practitioners
-///    converge on (Bell et al. 2023 deload survey; Schoenfeld 2016 dose
-///    guidance).
+/// A user-reviewed lighter version of a routine. Numeric recovery bands never
+/// apply it automatically: it is available for an explicit weekly deload or a
+/// voluntary/localized adjustment. Only the started workout is changed; the
+/// saved routine remains untouched.
 ///
 /// Coach's Corner review (Phase 4) lets the lifter see and edit every one of
 /// these numbers before a workout starts — `AdjustmentDraft` is the editable
@@ -44,23 +35,12 @@ enum CoachAdjustments {
         var scalesWeight: Bool { action == .deloadRecover }
     }
 
-    /// The coach's proposed modification for today's action — nil when the plan
-    /// should run as written (push / train-as-planned).
+    /// Only an explicit deload state creates an automatic proposal. Numeric
+    /// recovery-index bands and legacy push states return nil.
     static func plan(for action: RecoveryEngine.Action) -> Plan? {
         switch action {
-        case .push, .trainAsPlanned:
+        case .insufficientData, .push, .trainAsPlanned, .reduceVolume:
             return nil
-        case .reduceVolume:
-            return Plan(
-                action: action,
-                affectedExerciseIDs: nil,
-                summary: "1 working set less per lift · cap RPE 8",
-                changes: [
-                    "Removes the last working set of each exercise that has 3+",
-                    "Caps set targets at RPE 8 (≈2 reps in reserve)",
-                    "Your saved routine is not changed",
-                ]
-            )
         case .deloadRecover:
             return Plan(
                 action: action,
@@ -217,7 +197,7 @@ enum CoachAdjustments {
         case .deloadRecover:
             let keep = max(1, workingCount / 2)
             return max(0, workingCount - keep)
-        case .push, .trainAsPlanned:
+        case .insufficientData, .push, .trainAsPlanned:
             return 0
         }
     }

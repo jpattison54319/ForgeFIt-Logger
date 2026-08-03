@@ -188,6 +188,9 @@ private struct RoutineExerciseSummary: View {
                         if let equipment = exercise?.equipment {
                             Tag(text: equipment.capitalized)
                         }
+                        if let group = routineExercise.supersetGroup {
+                            SupersetChip(group: group)
+                        }
                     }
                     Spacer()
                 }
@@ -238,28 +241,50 @@ private struct RoutineExerciseSummary: View {
             }
             .foregroundStyle(theme.accent)
 
-            HStack {
+            HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
                 Text(displayUnit.suffix.uppercased()).frame(maxWidth: .infinity, alignment: .leading)
                 Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
+                Text("EFFORT").frame(width: 64, alignment: .trailing)
             }
             .font(.tag)
             .foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
-                HStack {
-                    Text(set.setType == .warmup ? "W" : "\(index + 1)")
-                        .font(.rowValue)
-                        .foregroundStyle(set.setType == .warmup ? theme.warmup : theme.textPrimary)
+                let style = SetTypeStyle.of(set.setType)
+                HStack(alignment: .top, spacing: 8) {
+                    Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sortedSets))
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(set.setType == .working ? theme.textPrimary : style.color)
                         .frame(width: 44, alignment: .leading)
-                    Text(Fmt.load(set.targetWeight, unit: displayUnit))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Fmt.load(set.targetWeight, unit: displayUnit))
+                            .font(.rowValue)
+                            .foregroundStyle(theme.textPrimary)
+                        if set.setType != .working {
+                            Text(style.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(style.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(RoutineSetPresentation.repsText(for: set))
                         .font(.rowValue).foregroundStyle(theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(repsText(set))
-                        .font(.rowValue).foregroundStyle(theme.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(RoutineSetPresentation.effortText(for: set))
+                        .font(.tag)
+                        .foregroundStyle(theme.textTertiary)
+                        .frame(width: 64, alignment: .trailing)
                 }
                 .padding(.vertical, 2)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(style.label), \(Fmt.load(set.targetWeight, unit: displayUnit)), "
+                        + "\(RoutineSetPresentation.repsText(for: set)), "
+                        + RoutineSetPresentation.effortText(for: set)
+                )
             }
         }
     }
@@ -304,24 +329,4 @@ private struct RoutineExerciseSummary: View {
         }
     }
 
-    private func repsText(_ set: RoutineSetModel) -> String {
-        // Structured plans summarize their shape, not a rep range.
-        switch set.setType {
-        case .myoRep:
-            if let minis = set.plannedMiniSetCount { return "activation + \(minis) minis" }
-        case .cluster:
-            let plan = set.plannedMiniReps
-            if !plan.isEmpty { return plan.map(String.init).joined(separator: "+") }
-        case .amrap:
-            if let seconds = set.targetDurationSeconds { return "max reps in \(seconds)s" }
-        default:
-            break
-        }
-        switch (set.targetRepsLow, set.targetRepsHigh) {
-        case let (lo?, hi?) where lo != hi: return "\(lo)–\(hi)"
-        case let (lo?, _): return "\(lo)"
-        case let (_, hi?): return "\(hi)"
-        default: return "—"
-        }
-    }
 }

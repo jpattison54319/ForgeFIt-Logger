@@ -5,7 +5,7 @@ import ForgeData
 /// Pure, deterministic analytics computed from logged workouts. Everything the
 /// Home / Insights / Profile / Recovery screens display is derived here so the
 /// views stay declarative and the math is testable in one place.
-struct TrainingAnalytics {
+nonisolated struct TrainingAnalytics {
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     var calendar = Calendar.current
@@ -282,18 +282,19 @@ struct TrainingAnalytics {
     }
 
     /// Seconds spent in each of the 5 HR zones, summed across cardio sessions in
-    /// the last `weeks` weeks. Prefers each session's stored `hrZoneSeconds`
-    /// (measured), falling back to an average-HR estimate so a distribution
-    /// still appears for sessions logged without a per-second stream.
+    /// the last `weeks` weeks. Only a stored HR sample series can establish
+    /// measured time in zone; average HR is not expanded into a distribution.
     func cardioZoneTotals(weeks: Int = 12) -> [Int] {
         guard let thisWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start,
               let windowStart = calendar.date(byAdding: .weekOfYear, value: -(weeks - 1), to: thisWeekStart)
         else { return [Int](repeating: 0, count: 5) }
         var totals = [Int](repeating: 0, count: 5)
         for session in cardioSessions where session.startedAt >= windowStart {
-            let zones = session.hrZoneSeconds.count == 5 && session.hrZoneSeconds.contains(where: { $0 > 0 })
+            let zones = session.sampleSeriesJSON != nil
+                && session.hrZoneSeconds.count == 5
+                && session.hrZoneSeconds.contains(where: { $0 > 0 })
                 ? session.hrZoneSeconds
-                : CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
+                : [Int](repeating: 0, count: 5)
             for i in 0..<5 { totals[i] += zones[i] }
         }
         return totals

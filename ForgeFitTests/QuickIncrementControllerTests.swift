@@ -4,6 +4,8 @@ import Testing
 @testable import ForgeFit
 
 struct QuickIncrementControllerTests {
+    private let bounds = CGRect(x: 0, y: 0, width: 400, height: 800)
+    private let field = CGRect(x: 150, y: 400, width: 60, height: 32)
 
     @Test func repsOptionsFanFromPlusThreeToMinusThree() {
         let options = QuickIncrementController.repsOptions()
@@ -11,16 +13,40 @@ struct QuickIncrementControllerTests {
         #expect(options.map(\.label) == ["+3", "+2", "+1", "−1", "−2", "−3"])
     }
 
-    @Test func weightOptionsMultiplyTheLogicalStep() {
-        let lb = QuickIncrementController.weightOptions(step: 2.5, suffix: "lb")
-        #expect(lb.map(\.delta) == [7.5, 5.0, 2.5, -2.5, -5.0, -7.5])
-        #expect(lb.map(\.label) == ["+7.5", "+5", "+2.5", "−2.5", "−5", "−7.5"])
+    @Test func weightOptionsUseNativeStepsForEachUnit() {
+        let pounds = QuickIncrementController.weightOptions(unit: .lb)
+        #expect(pounds.map(\.delta) == [7.5, 5, 2.5, -2.5, -5, -7.5])
+        #expect(pounds.map(\.label) == ["+7.5", "+5", "+2.5", "−2.5", "−5", "−7.5"])
 
-        let kgBarbell = QuickIncrementController.weightOptions(step: 2.5, suffix: "kg")
-        #expect(kgBarbell.first?.delta == 7.5)
+        let kilograms = QuickIncrementController.weightOptions(unit: .kg)
+        #expect(kilograms.map(\.delta) == [3.75, 2.5, 1.25, -1.25, -2.5, -3.75])
+        #expect(kilograms.map(\.label) == ["+3.75", "+2.5", "+1.25", "−1.25", "−2.5", "−3.75"])
+    }
 
-        let kgSmall = QuickIncrementController.weightOptions(step: 1.25, suffix: "kg")
-        #expect(kgSmall.map(\.delta) == [3.75, 2.5, 1.25, -1.25, -2.5, -3.75])
+    @Test func displayedBaseUsesTheVisibleGhostNotTheHiddenRoutineValue() {
+        let base = QuickIncrementController.displayedBase(
+            draftValue: 625.18,
+            isDraftEdited: false,
+            enteredValue: 625.18,
+            suggestedValue: 72.5,
+            isShowingSuggestion: true
+        )
+
+        #expect(base == 72.5)
+        #expect(QuickIncrementController.displayedBase(
+            draftValue: 80,
+            isDraftEdited: true,
+            enteredValue: 625.18,
+            suggestedValue: 72.5,
+            isShowingSuggestion: true
+        ) == 80)
+        #expect(QuickIncrementController.displayedBase(
+            draftValue: nil,
+            isDraftEdited: true,
+            enteredValue: 625.18,
+            suggestedValue: 72.5,
+            isShowingSuggestion: true
+        ) == nil)
     }
 
     @Test func revealStagesPairEqualDistancesAndBudOutward() {
@@ -32,111 +58,205 @@ struct QuickIncrementControllerTests {
             QuickIncrementController.revealParentIndex(for: $0, count: count)
         }
 
-        // Stored top-to-bottom: +3, +2, +1, −1, −2, −3.
         #expect(stages == [2, 1, 0, 0, 1, 2])
         #expect(parents == [1, 2, nil, nil, 3, 4])
     }
 
-    @Test func layoutStacksPositivesAboveAndNegativesBelowTheField() {
-        let controller = QuickIncrementController()
-        controller.overlayBounds = CGRect(x: 0, y: 0, width: 400, height: 800)
-        controller.begin(
-            fieldFrame: CGRect(x: 150, y: 400, width: 60, height: 32),
-            options: QuickIncrementController.repsOptions(),
-            apply: { _ in }
-        )
+    @Test func layoutStacksAroundTheFieldAndFreezesForTheTransaction() {
+        let controller = configuredController()
+        _ = begin(controller, options: QuickIncrementController.repsOptions(), base: 0)
 
         let slots = try! #require(controller.layout())
         #expect(slots.count == 6)
-        // First three above the field (higher = smaller y), last three below.
         #expect(slots[0].rect.maxY <= slots[1].rect.minY + 0.001)
-        #expect(slots[2].rect.maxY <= 400)
-        #expect(slots[3].rect.minY >= 432)
+        #expect(slots[2].rect.maxY <= field.minY)
+        #expect(slots[3].rect.minY >= field.maxY)
         #expect(slots[5].rect.minY > slots[4].rect.minY)
-        // +1 (index 2) hugs the field; +3 (index 0) is furthest away.
-        #expect(slots[2].rect.midY > slots[0].rect.midY)
+
+        controller.overlayBounds = CGRect(x: 0, y: 200, width: 250, height: 300)
+        #expect(controller.layout() == slots)
     }
 
     @Test func layoutSlidesInsideBoundsNearTheTopEdge() {
-        let controller = QuickIncrementController()
-        controller.overlayBounds = CGRect(x: 0, y: 0, width: 400, height: 800)
-        controller.begin(
-            fieldFrame: CGRect(x: 150, y: 20, width: 60, height: 32),   // near top
-            options: QuickIncrementController.repsOptions(),
-            apply: { _ in }
-        )
+        let controller = configuredController()
+        let topField = CGRect(x: 150, y: 20, width: 60, height: 32)
+        _ = begin(controller, field: topField, options: QuickIncrementController.repsOptions(), base: 0)
 
         let slots = try! #require(controller.layout())
-        #expect(slots.allSatisfy { $0.rect.minY >= controller.overlayBounds.minY })
-        #expect(slots.allSatisfy { $0.rect.maxY <= controller.overlayBounds.maxY })
+        #expect(slots.allSatisfy { $0.rect.minY >= bounds.minY })
+        #expect(slots.allSatisfy { $0.rect.maxY <= bounds.maxY })
     }
 
-    @Test func hoverPicksTheBandUnderTheFingerAndFinishApplies() {
-        let controller = QuickIncrementController()
-        controller.overlayBounds = CGRect(x: 0, y: 0, width: 400, height: 800)
+    @Test func highlightedBandAppliesAndTerminalJitterCannotReplaceIt() {
+        let controller = configuredController()
         var applied: Double?
-        controller.begin(
-            fieldFrame: CGRect(x: 150, y: 400, width: 60, height: 32),
+        let transactionID = begin(
+            controller,
             options: QuickIncrementController.repsOptions(),
+            base: 10,
             apply: { applied = $0 }
         )
         let slots = try! #require(controller.layout())
 
-        // Hover the "+1" band (closest above the field, index 2).
-        controller.updateHover(at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY))
+        controller.updateHover(
+            at: CGPoint(x: slots[2].rect.maxX + 30, y: slots[2].rect.midY),
+            transactionID: transactionID
+        )
         #expect(controller.fan?.hoveredIndex == 2)
 
-        // Horizontal slop: well off to the side of the band still counts.
-        controller.updateHover(at: CGPoint(x: slots[2].rect.maxX + 30, y: slots[2].rect.midY))
-        #expect(controller.fan?.hoveredIndex == 2)
-
-        controller.finish()
-        #expect(applied == 1)
+        // UIKit can report a noisy terminal coordinate on a fast lift. The
+        // option already highlighted to the user remains authoritative.
+        controller.finish(
+            at: CGPoint(x: slots[4].rect.midX, y: slots[4].rect.midY),
+            transactionID: transactionID
+        )
+        #expect(applied == 11)
         #expect(!controller.isActive)
     }
 
-    @Test func releasingOnTheFieldOrOutsideAppliesNothing() {
-        let controller = QuickIncrementController()
-        controller.overlayBounds = CGRect(x: 0, y: 0, width: 400, height: 800)
+    @Test func fastReleaseUsesTerminalPointWhenNoChangedEventArrived() {
+        let controller = configuredController()
         var applied: Double?
-        controller.begin(
-            fieldFrame: CGRect(x: 150, y: 400, width: 60, height: 32),
+        let transactionID = begin(
+            controller,
+            options: QuickIncrementController.weightOptions(unit: .kg),
+            base: 72.5,
+            apply: { applied = $0 }
+        )
+        let slots = try! #require(controller.layout())
+
+        controller.finish(
+            at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY),
+            transactionID: transactionID
+        )
+
+        #expect(applied == 73.75)
+        #expect(!controller.isActive)
+    }
+
+    @Test func neutralReleaseCancelsWithoutApplying() {
+        let controller = configuredController()
+        var applied: Double?
+        let transactionID = begin(
+            controller,
             options: QuickIncrementController.repsOptions(),
+            base: 10,
             apply: { applied = $0 }
         )
 
-        // On the field itself: the neutral cancel zone.
-        controller.updateHover(at: CGPoint(x: 180, y: 416))
-        #expect(controller.fan?.hoveredIndex == nil)
-        controller.finish()
+        controller.finish(
+            at: CGPoint(x: field.midX, y: field.midY),
+            transactionID: transactionID
+        )
+
         #expect(applied == nil)
+        #expect(!controller.isActive)
     }
 
-    @Test func cancellationClearsTheFanAndTheNextInteractionStillApplies() {
-        let controller = QuickIncrementController()
-        controller.overlayBounds = CGRect(x: 0, y: 0, width: 400, height: 800)
-        var applied: [Double] = []
-        let field = CGRect(x: 150, y: 400, width: 60, height: 32)
-
-        controller.begin(
-            fieldFrame: field,
+    @Test func onlyTheRecognizerThatOpenedTheFanCanUpdateOrFinishIt() {
+        let controller = configuredController()
+        var applied: Double?
+        let transactionID = begin(
+            controller,
             options: QuickIncrementController.repsOptions(),
-            apply: { applied.append($0) }
-        )
-        controller.cancel()
-        #expect(!controller.isActive)
-        #expect(applied.isEmpty)
-
-        controller.begin(
-            fieldFrame: field,
-            options: QuickIncrementController.repsOptions(),
-            apply: { applied.append($0) }
+            base: 10,
+            apply: { applied = $0 }
         )
         let slots = try! #require(controller.layout())
-        controller.updateHover(at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY))
-        controller.finish()
+        let staleID = UUID()
 
-        #expect(applied == [1])
+        controller.updateHover(at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY), transactionID: staleID)
+        controller.finish(at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY), transactionID: staleID)
+        controller.cancel(transactionID: staleID)
+
+        #expect(controller.isActive)
+        #expect(controller.fan?.hoveredIndex == nil)
+        #expect(applied == nil)
+
+        controller.finish(at: CGPoint(x: slots[2].rect.midX, y: slots[2].rect.midY), transactionID: transactionID)
+        #expect(applied == 11)
+    }
+
+    @Test func adjustmentUsesTheBaseCapturedWhenTheHoldBegins() {
+        let controller = configuredController()
+        var visibleValue = 72.5
+        var applied: Double?
+        let transactionID = begin(
+            controller,
+            options: QuickIncrementController.weightOptions(unit: .kg),
+            base: visibleValue,
+            apply: { applied = $0 }
+        )
+
+        visibleValue = 625.18
+        let slots = try! #require(controller.layout())
+        controller.updateHover(at: CGPoint(x: slots[1].rect.midX, y: slots[1].rect.midY), transactionID: transactionID)
+        controller.finish(at: CGPoint(x: slots[1].rect.midX, y: slots[1].rect.midY), transactionID: transactionID)
+
+        #expect(visibleValue == 625.18)
+        #expect(applied == 75)
+    }
+
+    @Test func everyBandAppliesExactlyOnceInKilogramsAndPounds() {
+        for unit in [WeightUnit.kg, .lb] {
+            let options = QuickIncrementController.weightOptions(unit: unit)
+            for index in options.indices {
+                let controller = configuredController()
+                var applied: [Double] = []
+                let transactionID = begin(
+                    controller,
+                    options: options,
+                    base: 72.5,
+                    apply: { applied.append($0) }
+                )
+                let slots = try! #require(controller.layout())
+                let point = CGPoint(x: slots[index].rect.midX, y: slots[index].rect.midY)
+                controller.updateHover(at: point, transactionID: transactionID)
+                controller.finish(at: point, transactionID: transactionID)
+                controller.finish(at: point, transactionID: transactionID)
+
+                #expect(applied == [max(0, 72.5 + options[index].delta)])
+            }
+        }
+    }
+
+    @Test func invalidGeometryOrValueCannotOpenATransaction() {
+        let controller = QuickIncrementController()
+        controller.overlayBounds = bounds
+
+        #expect(controller.begin(
+            fieldFrame: .zero,
+            options: QuickIncrementController.repsOptions(),
+            baseValue: 10,
+            applyValue: { _ in }
+        ) == nil)
+        #expect(controller.begin(
+            fieldFrame: field,
+            options: QuickIncrementController.repsOptions(),
+            baseValue: .nan,
+            applyValue: { _ in }
+        ) == nil)
         #expect(!controller.isActive)
+    }
+
+    private func configuredController() -> QuickIncrementController {
+        let controller = QuickIncrementController()
+        controller.overlayBounds = bounds
+        return controller
+    }
+
+    private func begin(
+        _ controller: QuickIncrementController,
+        field: CGRect? = nil,
+        options: [QuickIncrementController.Option],
+        base: Double,
+        apply: @escaping (Double) -> Void = { _ in }
+    ) -> UUID {
+        try! #require(controller.begin(
+            fieldFrame: field ?? self.field,
+            options: options,
+            baseValue: base,
+            applyValue: apply
+        ))
     }
 }

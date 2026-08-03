@@ -64,7 +64,9 @@ enum WorkoutFactory {
             userID: ForgeFitDemo.userID,
             routineID: routine.id,
             title: routine.name,
-            sourceDevice: "iphone"
+            sourceDevice: "iphone",
+            conditioningPlanSnapshotJSON: routine.conditioningPlanJSON,
+            conditioningProgressJSON: routine.conditioningPlanJSON == nil ? nil : ConditioningProgress().encodedJSON()
         )
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
@@ -86,7 +88,7 @@ enum WorkoutFactory {
                 // tonnage treat the raw number as the lifted load (assistance
                 // × reps for assisted work) instead of the effective load.
                 let weightMode = exercise?.defaultWeightMode ?? .external
-                let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
+                let pendingSets: [SetModel] = (isSessionBased || routine.conditioningPlanJSON != nil) ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
                         let effort = WorkoutEffortPolicy.initialEffort(
@@ -148,23 +150,26 @@ enum WorkoutFactory {
                 } else if let exercise, exercise.isCardio {
                     let target = routineExercise.sets.sorted { $0.position < $1.position }.first
                     let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
-                    // A routine distance target starts the session as a live
-                    // goal — never a pre-filled logged distance (planned is
-                    // not achieved). An explicit goal in the plan wins.
-                    if let meters = target?.targetDistanceMeters, meters > 0 {
-                        var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON) ?? IntervalPlan(steps: [])
-                        if plan.goal == nil {
+                    // Routine targets start as live goals, never pre-filled
+                    // logged results: planned distance has not been covered,
+                    // and planned duration is not elapsed time. An explicit
+                    // goal already stored in the plan wins.
+                    var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)
+                        ?? IntervalPlan(steps: [])
+                    if plan.goal == nil {
+                        if let meters = target?.targetDistanceMeters, meters > 0 {
                             plan.goal = .init(kind: .distance, value: meters)
-                            workoutExercise.intervalPlanJSON = plan.encodedJSON()
+                        } else if let seconds = target?.targetDurationSeconds, seconds > 0 {
+                            plan.goal = .init(kind: .duration, value: Double(seconds))
                         }
                     }
+                    workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
                     cardioSessions.append(CardioSessionModel(
                         userID: ForgeFitDemo.userID,
                         workoutExerciseID: workoutExercise.id,
                         modality: kind.rawValue,
                         startedAt: workout.startedAt,
-                        sourceDevice: "iphone-cardio-\(kind.rawValue)",
-                        durationSeconds: target?.targetDurationSeconds
+                        sourceDevice: "iphone-cardio-\(kind.rawValue)"
                     ))
                 }
                 return workoutExercise
@@ -220,7 +225,6 @@ enum WorkoutFactory {
             title: title,
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
-            notes: "Yoga session",
             exercises: [workoutExercise],
             cardioSessions: [session]
         )
@@ -248,7 +252,6 @@ enum WorkoutFactory {
             title: modality.title,
             startedAt: startedAt,
             sourceDevice: "iphone-cardio-\(modality.rawValue)",
-            notes: "Cardio workout",
             exercises: workoutExercise.map { [$0] } ?? [],
             cardioSessions: [cardioSession]
         )

@@ -28,15 +28,27 @@ struct WorkoutShareCardTrainingLog: View {
     private var sessions: [CardioSessionModel] {
         workout.cardioSessions.filter { $0.deletedAt == nil }
     }
+    private var conditioningPlan: ConditioningPlan? { ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON) }
+    private var conditioningResult: ConditioningResult? { ConditioningResult.decode(from: workout.conditioningResultJSON) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             chrome.header(title: workout.title ?? "Workout", date: workout.startedAt, compact: true)
             ShareHeroRow(workout: workout, summary: summary, shape: shape, theme: theme)
-            switch shape {
-            case .strength, .hybrid: strengthWork
-            case .cardio: cardioWork
-            case .yoga: yogaWork
+            if let conditioningPlan {
+                ConditioningShareBlock(
+                    plan: conditioningPlan,
+                    result: conditioningResult,
+                    exercises: exercises,
+                    theme: theme,
+                    compact: true
+                )
+            } else {
+                switch shape {
+                case .strength, .hybrid: strengthWork
+                case .cardio: cardioWork
+                case .yoga: yogaWork
+                }
             }
             Spacer(minLength: 0)
             chrome.footer()
@@ -283,6 +295,7 @@ struct WorkoutShareCardMetrics: View {
     private var summary: TrainingAnalytics.Summary { analytics.summary(for: workout) }
     private var shape: WorkoutShareShape { .of(workout: workout, summary: summary) }
     private var chrome: ShareCardChrome { ShareCardChrome(theme: theme) }
+    private var conditioningResult: ConditioningResult? { ConditioningResult.decode(from: workout.conditioningResultJSON) }
 
     /// Workout-level zones, falling back to the sessions' own arrays for
     /// cardio-only workouts logged before workout-level zones existed.
@@ -373,6 +386,7 @@ struct WorkoutShareCardMinimal: View {
     private var summary: TrainingAnalytics.Summary { analytics.summary(for: workout) }
     private var shape: WorkoutShareShape { .of(workout: workout, summary: summary) }
     private var chrome: ShareCardChrome { ShareCardChrome(theme: theme) }
+    private var conditioningResult: ConditioningResult? { ConditioningResult.decode(from: workout.conditioningResultJSON) }
 
     /// Always four tiles — missing data falls through to the next best fact.
     private var stats: [(label: String, value: String)] {
@@ -380,6 +394,12 @@ struct WorkoutShareCardMinimal: View {
         let kcal = workout.activeEnergyKcal.map { "\(Int($0)) kcal" }
         let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
         let distance = sessions.compactMap(\.distanceMeters).reduce(0, +)
+        if let result = conditioningResult?.sectionResults.first {
+            tiles.append(("Score", ConditioningSharePresentation.score(result)))
+            tiles.append(("Format", result.format.title))
+            tiles.append(("Energy", kcal ?? topMuscle ?? "—"))
+            return tiles
+        }
         switch shape {
         case .strength:
             tiles.append(("Volume", Fmt.volume(summary.volume)))
@@ -461,6 +481,11 @@ private struct ShareHeroRow: View {
         var out: [(label: String, value: String, color: Color)] = [
             ("Duration", Fmt.durationShort(summary.durationSeconds), theme.textPrimary)
         ]
+        if let result = ConditioningResult.decode(from: workout.conditioningResultJSON)?.sectionResults.first {
+            out.append(("Score", ConditioningSharePresentation.score(result), theme.accent))
+            out.append(("Format", result.format.title, theme.secondaryAccent))
+            return out
+        }
         switch shape {
         case .strength, .hybrid:
             out.append(("Volume", Fmt.volume(summary.volume), theme.secondaryAccent))

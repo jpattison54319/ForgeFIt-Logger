@@ -8,11 +8,17 @@ import SwiftData
 @MainActor
 enum ReadinessReportFactory {
     static func todayCheckinTags(in context: ModelContext, now: Date = .now) -> [String] {
-        let checkins = (try? context.fetch(FetchDescriptor<DailyCheckinModel>())) ?? []
-        return checkins
-            .filter { $0.deletedAt == nil && Calendar.current.isDate($0.date, inSameDayAs: now) }
-            .max { $0.updatedAt < $1.updatedAt }?
-            .tags ?? []
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: now)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
+        var descriptor = FetchDescriptor<DailyCheckinModel>(
+            predicate: #Predicate {
+                $0.deletedAt == nil && $0.date >= dayStart && $0.date < dayEnd
+            },
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return (try? context.fetch(descriptor).first)?.tags ?? []
     }
 
     static func report(

@@ -7,6 +7,7 @@ struct SleepDetailView: View {
 
     let metrics: [RecoveryEngine.DailyHealthMetric]
     @State private var selectedTab: MetricDetailTab = .today
+    @State private var showingInfo = false
 
     private var latest: RecoveryEngine.DailyHealthMetric? {
         metrics.max { $0.date < $1.date }
@@ -18,11 +19,14 @@ struct SleepDetailView: View {
         let values = usable.compactMap { metric -> (date: Date, value: Double)? in
             metric.sleepTotalMinutes.map { (metric.date, Double($0) / 60) }
         }
-        let baseline = usable
-            .dropLast()
-            .filter { !$0.sleepUserCorrected }
-            .compactMap { $0.sleepTotalMinutes.map { Double($0) / 60 } }
-        return MetricTrendSeries.make(values: values, baselineValues: baseline)
+        let baselinePairs = usable.dropLast().compactMap { metric -> (Date, Double)? in
+            metric.sleepTotalMinutes.map { (metric.date, Double($0) / 60) }
+        }
+        return MetricTrendSeries.make(
+            values: values,
+            baselineValues: baselinePairs.map(\.1),
+            baselineDates: baselinePairs.map(\.0)
+        )
     }
 
     var body: some View {
@@ -35,6 +39,31 @@ struct SleepDetailView: View {
             }
         }
         .refreshable { await AppRefresh.run(in: modelContext) }
+        .sheet(isPresented: $showingInfo) {
+            MetricExplanationSheet(
+                title: "How sleep is interpreted",
+                summary: "Sleep stays a set of observed readings, not a diagnosis or a readiness guarantee.",
+                items: [
+                    MetricExplanationItem(
+                        "Sleep target",
+                        detail: "Last night's duration is compared with your selected target.",
+                        systemImage: "target"
+                    ),
+                    MetricExplanationItem(
+                        "Comparable nights",
+                        detail: "Partial or excluded nights are not treated as zero and stay out of your trend baseline.",
+                        systemImage: "moon.zzz.fill"
+                    ),
+                    MetricExplanationItem(
+                        "Usual range",
+                        detail: "The shaded band is your 10th–90th percentile after 28 comparable nights spanning at least 42 days. It is not a medical range or an estimate of sleep need.",
+                        systemImage: "chart.line.uptrend.xyaxis"
+                    ),
+                ]
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     @ViewBuilder
@@ -53,16 +82,8 @@ struct SleepDetailView: View {
                 sleepTiming(latest)
             }
 
-            Card {
-                VStack(alignment: .leading, spacing: Space.sm) {
-                    Label("How ForgeFit uses sleep", systemImage: "checkmark.shield.fill")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                    Text("Duration is compared with your sleep need and your own recent nights. A partial or excluded night is not treated as zero sleep, and manually corrected nights do not reshape your baseline.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            MetricInfoLink(title: "How sleep is interpreted") {
+                showingInfo = true
             }
         } else {
             MetricEmptyCard(
@@ -88,12 +109,12 @@ struct SleepDetailView: View {
                                 .foregroundStyle(theme.textSecondary)
                         }
                         Spacer()
-                        Text(SleepMetricPresentation.duration(Int((trend.mean * 60).rounded())))
+                        Text(SleepMetricPresentation.duration(Int((trend.median * 60).rounded())))
                             .font(.tag)
                             .foregroundStyle(theme.textSecondary)
                     }
                     MetricBaselineBandChart(trend: trend, metricName: "Sleep hours", tint: theme.zone2)
-                    Text("The shaded band is your personal normal range. Corrected nights can appear in the history, but they do not move that range.")
+                    Text("Shading shows your personal 10th–90th percentile range, not a medical range or sleep-need estimate.")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -104,7 +125,7 @@ struct SleepDetailView: View {
         } else {
             MetricEmptyCard(
                 title: "Sleep trend is building",
-                message: "Seven consistent nights unlock your personal range and trend chart.",
+                message: "A usual observed band needs 28 comparable nights spanning at least 42 days.",
                 systemImage: "chart.line.uptrend.xyaxis"
             )
         }
@@ -133,7 +154,7 @@ struct SleepDetailView: View {
                 if metric.sleepOverrideStatus != .notTracked, let minutes = metric.sleepTotalMinutes {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Sleep need")
+                            Text("Sleep target")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)
                             Spacer()

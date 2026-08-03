@@ -10,7 +10,7 @@ import SwiftData
 enum AppRefresh {
     static func run(in context: ModelContext) async {
         await ImportedExerciseBackfill.runIfNeeded(in: context)
-        await HealthWorkoutImporter.shared.importRecent(in: context)
+        await HealthWorkoutImporter.shared.importRecent(in: context.container)
         await HealthMetricsStore.shared.refreshNow()
 
         WatchLink.shared.publishState()

@@ -20,6 +20,7 @@ struct RoutineEditorView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var showPicker = false
+    @State private var showYogaBuilder = false
     @State private var entrySnapshot: RoutineSnapshot?
     @State private var showDiscardConfirm = false
     @State private var replaceTarget: RoutineExerciseModel?
@@ -32,6 +33,7 @@ struct RoutineEditorView: View {
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
 
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
+    private var isConditioningRoutine: Bool { routine.conditioningPlanJSON != nil }
     private var supersetGroups: [Int] {
         Array(Set(routine.exercises.compactMap(\.supersetGroup))).sorted()
     }
@@ -99,6 +101,9 @@ struct RoutineEditorView: View {
         .sheet(isPresented: $showPicker) {
             ExercisePickerView(excludeYogaPoses: true, context: exercisesInRoutine, history: allWorkouts) { added in added.forEach(add) }
         }
+        .sheet(isPresented: $showYogaBuilder) {
+            YogaFlowBuilderView(planJSON: nil, onSave: addYogaFlow)
+        }
         .sheet(item: $replaceTarget) { target in
             // Gym swap: lead with close substitutes for the exercise being
             // replaced; search stays one tap away inside the sheet.
@@ -112,7 +117,14 @@ struct RoutineEditorView: View {
                     replace(target, with: picked)
                 }
             } else {
-                ExercisePickerView(singleSelection: true, excludeYogaPoses: true, context: exercisesInRoutine, history: allWorkouts) { picked in
+                ExercisePickerView(
+                    singleSelection: true,
+                    excludeYogaPoses: true,
+                    context: exercisesInRoutine,
+                    history: allWorkouts,
+                    navigationTitle: "Replace Exercise",
+                    excludedIDs: Set(routine.exercises.map(\.exerciseID))
+                ) { picked in
                     if let first = picked.first { replace(target, with: first) }
                 }
             }
@@ -148,26 +160,36 @@ struct RoutineEditorView: View {
                     }
                 }
 
-                SectionHeader("Exercises")
+                ConditioningPlanEditor(
+                    routine: routine,
+                    exercises: exercises,
+                    workouts: allWorkouts,
+                    onAddYoga: { showYogaBuilder = true },
+                    onChange: save
+                )
 
-                ForEach(sortedExercises) { re in
-                    ExerciseEditRow(
-                        routineExercise: re,
-                        exercise: exercises.first { $0.id == re.exerciseID },
-                        availableSupersetGroups: supersetGroups,
-                        onShowDetail: { detailExerciseID = $0 },
-                        onAssignSuperset: { assignSuperset($0, to: re) },
-                        onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: re) },
-                        onUngroupSuperset: { ungroupSuperset($0) },
-                        onReplace: { replaceTarget = re },
-                        onRemove: { remove(re) },
-                        onReorderDragChanged: { fingerY in reorderDragChanged(re, fingerY: fingerY) },
-                        onReorderDragEnded: { reorderDragEnded() },
-                        onAccessibilityMoveBy: { offset in accessibilityMoveExercise(re.id, by: offset) }
-                    )
+                if !isConditioningRoutine {
+                    SectionHeader("Exercises")
+
+                    ForEach(sortedExercises) { re in
+                        ExerciseEditRow(
+                            routineExercise: re,
+                            exercise: exercises.first { $0.id == re.exerciseID },
+                            availableSupersetGroups: supersetGroups,
+                            onShowDetail: { detailExerciseID = $0 },
+                            onAssignSuperset: { assignSuperset($0, to: re) },
+                            onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: re) },
+                            onUngroupSuperset: { ungroupSuperset($0) },
+                            onReplace: { replaceTarget = re },
+                            onRemove: { remove(re) },
+                            onReorderDragChanged: { fingerY in reorderDragChanged(re, fingerY: fingerY) },
+                            onReorderDragEnded: { reorderDragEnded() },
+                            onAccessibilityMoveBy: { offset in accessibilityMoveExercise(re.id, by: offset) }
+                        )
+                    }
+
+                    SecondaryButton(title: "Add Exercise", systemImage: "plus") { showPicker = true }
                 }
-
-                SecondaryButton(title: "Add Exercise", systemImage: "plus") { showPicker = true }
             }
             .padding(.horizontal, Space.lg)
             .padding(.bottom, Space.tabBarClearance)
@@ -273,6 +295,7 @@ struct RoutineEditorView: View {
     /// Cardio/strength swaps reset to a fresh default set — duration and
     /// rep-based targets don't translate.
     private func replace(_ target: RoutineExerciseModel, with exercise: ExerciseLibraryModel) {
+        let replacedExerciseID = target.exerciseID
         let previous = exercises.first { $0.id == target.exerciseID }
         let wasModality = previous?.modality ?? (target.yogaFlowJSON != nil ? .yoga : .strength)
         let replacement = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
@@ -303,6 +326,17 @@ struct RoutineEditorView: View {
                 set.targetRPE = nil
             }
         }
+        if var plan = ConditioningPlan.decode(from: routine.conditioningPlanJSON) {
+            for sectionIndex in plan.sections.indices {
+                for movementIndex in plan.sections[sectionIndex].movements.indices
+                    where plan.sections[sectionIndex].movements[movementIndex].exerciseID == replacedExerciseID {
+                    plan.sections[sectionIndex].movements[movementIndex].exerciseID = replacement.id
+                    plan.sections[sectionIndex].movements[movementIndex].targetLoad = nil
+                    plan.sections[sectionIndex].movements[movementIndex].weightMode = replacement.defaultWeightMode
+                }
+            }
+            routine.conditioningPlanJSON = plan.encodedJSON()
+        }
         save()
     }
 
@@ -320,6 +354,22 @@ struct RoutineEditorView: View {
                 re.yogaFlowJSON = YogaFlowPlan.fromSelectedPoses([exercise])?.encodedJSON()
             }
             routine.exercises.append(re)
+            save()
+        }
+    }
+
+    private func addYogaFlow(_ planJSON: String?) {
+        guard let planJSON else { return }
+        withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
+            let sessionExercise = YogaPoseCatalog.sessionExercise(in: modelContext)
+            let routineExercise = RoutineExerciseModel(
+                userID: ForgeFitDemo.userID,
+                exerciseID: sessionExercise.id,
+                position: routine.exercises.count,
+                yogaFlowJSON: planJSON
+            )
+            modelContext.insert(routineExercise)
+            routine.exercises.append(routineExercise)
             save()
         }
     }

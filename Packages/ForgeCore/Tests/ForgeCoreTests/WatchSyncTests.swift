@@ -106,6 +106,14 @@ struct WatchSyncTests {
             guard case .liveMetrics(let decodedMetrics) = $0 else { return false }
             return decodedMetrics == metrics
         }
+        let conditioningEvent = ConditioningProgressEvent(
+            timestamp: Date(timeIntervalSince1970: 1_800_000_500),
+            action: .completeRound
+        )
+        try expectCommand(.conditioningEvent(conditioningEvent)) {
+            guard case .conditioningEvent(let decodedEvent) = $0 else { return false }
+            return decodedEvent == conditioningEvent
+        }
         try expectCommand(.finishWorkout(metrics: metrics, savedToHealth: true)) {
             guard case .finishWorkout(let decodedMetrics, let savedToHealth) = $0 else { return false }
             return decodedMetrics == metrics && savedToHealth

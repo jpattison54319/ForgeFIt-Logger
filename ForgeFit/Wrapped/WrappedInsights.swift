@@ -5,8 +5,9 @@ import Foundation
 /// ingredient numbers, emits copy with SPECIFIC values and actions (the
 /// request's bar: "Add 2 easy Zone 2 cardio sessions per week", never "try
 /// to be more balanced").
-enum WrappedInsights {
+nonisolated enum WrappedInsights {
     struct Ingredients {
+        var weightUnit: WeightUnit = .lb
         var workouts = 0
         var workoutsDelta: Int?
         var volumeKg: Double = 0
@@ -80,7 +81,7 @@ enum WrappedInsights {
                 priority: 70,
                 insight: Insight(
                     headline: "\(lift) got stronger",
-                    detail: "Your estimated 1RM on \(lift) climbed \(Fmt.loadUnit(gain)) — the biggest jump of the period."
+                    detail: "Your estimated 1RM on \(lift) climbed \(loadText(gain, unit: i.weightUnit)) — the biggest jump of the period."
                 ),
                 maintain: "weekly heavy work on \(lift)"
             ))
@@ -93,7 +94,7 @@ enum WrappedInsights {
                 priority: 60,
                 insight: Insight(
                     headline: "Aerobic base, built right",
-                    detail: "\(Int((easyShare * 100).rounded()))% of your cardio stayed in Zones 1–2 — the polarized mix endurance research favors."
+                    detail: "\(Int((easyShare * 100).rounded()))% of your cardio stayed in Zones 1–2, so most of your recorded cardio time was easy."
                 ),
                 maintain: "the easy-pace cardio base"
             ))
@@ -119,7 +120,7 @@ enum WrappedInsights {
                 priority: 95,
                 insight: Insight(
                     headline: "Load outran recovery",
-                    detail: "Volume jumped \(Fmt.volume(volumeDelta)) while your readiness slid from \(Int(first.rounded())) to \(Int(second.rounded())) — the classic overreach pattern."
+                    detail: "Volume jumped \(volumeText(volumeDelta, unit: i.weightUnit)) while your readiness slid from \(Int(first.rounded())) to \(Int(second.rounded())) — the classic overreach pattern."
                 ),
                 action: "Hold total volume at this month's level (no increases) and protect one full rest day per week."
             ))
@@ -209,5 +210,22 @@ enum WrappedInsights {
             maintain: improved?.maintain.map { "Maintain \($0)." }
         )
         return Outcome(improved: improved?.insight, heldBack: heldBack?.insight, focus: focus)
+    }
+
+    private static func loadText(_ kilograms: Double, unit: WeightUnit) -> String {
+        let maxFractionDigits = unit == .kg ? 2 : 1
+        let value = unit.displayValue(fromKilograms: kilograms)
+            .formatted(.number.precision(.fractionLength(0...maxFractionDigits)))
+        return "\(value) \(unit.suffix)"
+    }
+
+    private static func volumeText(_ kilograms: Double, unit: WeightUnit) -> String {
+        let value = unit.displayValue(fromKilograms: kilograms)
+        if value >= 10_000 {
+            let thousands = (value / 1_000)
+                .formatted(.number.precision(.fractionLength(0...1)))
+            return "\(thousands)k \(unit.suffix)"
+        }
+        return "\(value.formatted(.number.precision(.fractionLength(0)))) \(unit.suffix)"
     }
 }

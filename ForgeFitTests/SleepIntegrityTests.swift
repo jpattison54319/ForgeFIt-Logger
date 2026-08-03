@@ -36,9 +36,11 @@ struct SleepIntegrityTests {
         )
     }
 
-    /// 20 stable 8 h nights plus a configurable "last night".
+    /// 29 stable 8 h nights plus a configurable "last night". The first and
+    /// last baseline observations are then 28 calendar days apart, satisfying
+    /// the v2 channel-maturity span without counting the current night.
     private func series(lastNight: RecoveryEngine.DailyHealthMetric) -> [RecoveryEngine.DailyHealthMetric] {
-        var out = (1...20).map { night(daysAgo: $0, sleepMinutes: 480) }
+        var out = (1...29).map { night(daysAgo: $0, sleepMinutes: 480) }
         out.append(lastNight)
         return out
     }
@@ -73,6 +75,32 @@ struct SleepIntegrityTests {
         let last = night(daysAgo: 0, sleepMinutes: 470, hrvSamples: 40, hrSamples: 60)
         let annotated = SleepIntegrity.annotate(series(lastNight: last))
         #expect(annotated.last?.sleepLikelyPartial == false)
+    }
+
+    @Test func updatedSleepReplacesThePromptDurationWhenStillPartial() throws {
+        let initial = night(daysAgo: 0, sleepMinutes: 276, hrvSamples: 2, hrSamples: 3)
+        var annotated = SleepIntegrity.annotate(series(lastNight: initial))
+        let latestIndex = try #require(annotated.indices.last)
+        #expect(SleepIntegrityAlert(metric: annotated[latestIndex])?.capturedMinutes == 276)
+
+        annotated[latestIndex].sleepTotalMinutes = 300
+        let updated = SleepIntegrity.annotate(annotated)
+
+        #expect(updated[latestIndex].sleepLikelyPartial == true)
+        #expect(SleepIntegrityAlert(metric: updated[latestIndex])?.capturedMinutes == 300)
+    }
+
+    @Test func updatedSleepRetiresAStalePromptWhenNoLongerPartial() throws {
+        let initial = night(daysAgo: 0, sleepMinutes: 276, hrvSamples: 2, hrSamples: 3)
+        var annotated = SleepIntegrity.annotate(series(lastNight: initial))
+        let latestIndex = try #require(annotated.indices.last)
+        #expect(annotated[latestIndex].sleepLikelyPartial == true)
+
+        annotated[latestIndex].sleepTotalMinutes = 373
+        let updated = SleepIntegrity.annotate(annotated)
+
+        #expect(updated[latestIndex].sleepLikelyPartial == false)
+        #expect(SleepIntegrityAlert(metric: updated[latestIndex]) == nil)
     }
 
     @Test func noBaselineMeansNoFlag() {
@@ -114,16 +142,14 @@ struct SleepIntegrityTests {
         #expect(engine(annotated).sleepDebtHours() == 0)
     }
 
-    @Test func partialNightDoesNotCapReadinessOrChargeDebt() {
+    @Test func partialNightWithholdsAcuteScoreAndDoesNotChargeDebt() {
         let last = night(daysAgo: 0, sleepMinutes: 120, hrvSamples: 2, hrSamples: 3)
         let flagged = engine(SleepIntegrity.annotate(series(lastNight: last))).report()
         // Same series but the fragment TRUSTED (pretend it's real 2 h sleep).
         let trustedSeries = series(lastNight: night(daysAgo: 0, sleepMinutes: 120, hrvSamples: 40, hrSamples: 60, bedHour: 23, wakeHour: 1))
         let trusted = engine(trustedSeries).report()
-        // The honest fallback must not report a worse score than trusting a
-        // real short night would — a data gap is never a bigger deficit than
-        // measured short sleep.
-        #expect(flagged.score >= trusted.score)
+        #expect(flagged.recovery.daily.state.value == nil)
+        #expect(trusted.recovery.daily.state.value != nil)
         #expect(flagged.missingInputs.contains("Sleep (partial)"))
         #expect(!flagged.reasonChips.contains { $0.text == "Sleep debt" })
     }
@@ -208,7 +234,7 @@ struct SleepIntegrityTests {
         )
 
         #expect(part.sleepOverrideStatus == .edited)
-        #expect(part.valueText.contains("7.5"))
+        #expect(part.valueText == "7 h 30 min")
         #expect(part.detailText.contains("Edited by you"))
     }
 

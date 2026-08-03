@@ -4,6 +4,63 @@ import ForgeData
 import Foundation
 import SwiftData
 
+nonisolated struct BackupSnapshotMetadata: Sendable {
+    let preferences: [String: BackupPreferenceValue]
+    let userID: UUID
+    let appVersion: String?
+}
+
+/// Reads and maps the full log graph on a private context. Automatic backups
+/// are intentionally delayed until the app is idle, but that delay is not a
+/// performance boundary by itself: doing the eventual relationship faulting
+/// on MainActor would still freeze scrolling when a daily backup is due.
+nonisolated struct BackupSnapshotWorker: Sendable {
+    let modelContainer: ModelContainer
+
+    func snapshot(metadata: BackupSnapshotMetadata) async throws -> ForgeFitBackupFile {
+        let container = modelContainer
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let context = ModelContext(container)
+            let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
+            let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())
+            let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            let names = Dictionary(
+                exercises.map { ($0.id, $0.name) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let file = BackupMapper.file(
+                workouts: workouts,
+                batches: batches,
+                exerciseNames: names,
+                preferences: metadata.preferences,
+                userID: metadata.userID,
+                appVersion: metadata.appVersion
+            )
+            try Task.checkCancellation()
+            return file
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    #if DEBUG
+    func isExecutingOnMainThreadForTesting() async -> Bool {
+        let container = modelContainer
+        return await Task.detached(priority: .utility) {
+            _ = ModelContext(container)
+            return Self.currentThreadIsMain()
+        }.value
+    }
+
+    private static func currentThreadIsMain() -> Bool {
+        Thread.isMainThread
+    }
+    #endif
+}
+
 /// Writes the sanitized training-log backup into the user's own iCloud
 /// Drive (visible in Files → iCloud Drive → ForgeFit → Backups). The file
 /// contains ONLY user-authored training data — the DTO types in
@@ -57,10 +114,11 @@ actor BackupExporter {
         backupDirectoryURL()?.appendingPathComponent("ForgeFit-Backup-previous.\(Self.fileExtension)")
     }
 
-    /// Snapshot on the MainActor (SwiftData models are main-bound), map +
-    /// compress + write here. Returns the resulting status.
+    /// Snapshot on a private SwiftData context, then map + compress + write on
+    /// this actor. Returns the resulting status.
     @discardableResult
     func exportNow(container: ModelContainer) async -> Status {
+        guard !Task.isCancelled else { return .idle }
         guard let directory = backupDirectoryURL(),
               let latestURL = latestBackupURL(),
               let previousURL = previousBackupURL() else {
@@ -70,6 +128,10 @@ actor BackupExporter {
         status = .exporting
         do {
             let file = try await Self.snapshotFile(container: container)
+            guard !Task.isCancelled else {
+                status = .idle
+                return status
+            }
             let data = try BackupMapper.encode(file)
             let compressed = try (data as NSData).compressed(using: .zlib) as Data
 
@@ -124,18 +186,18 @@ actor BackupExporter {
         status = .idle
     }
 
-    // MARK: - Snapshot (MainActor — models are main-bound)
+    // MARK: - Snapshot
 
     // Internal (not private): the user-facing data export reuses this same
     // snapshot so backup and export can never disagree about the training log.
-    @MainActor
-    static func snapshotFile(container: ModelContainer) throws -> ForgeFitBackupFile {
-        let context = container.mainContext
-        let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
-        let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())
-        let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
-        let names = Dictionary(exercises.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+    nonisolated static func snapshotFile(container: ModelContainer) async throws -> ForgeFitBackupFile {
+        let metadata = await MainActor.run { snapshotMetadata() }
+        return try await BackupSnapshotWorker(modelContainer: container)
+            .snapshot(metadata: metadata)
+    }
 
+    @MainActor
+    private static func snapshotMetadata() -> BackupSnapshotMetadata {
         var preferences: [String: BackupPreferenceValue] = [:]
         let defaults = UserDefaults.standard
         for key in AppPreferenceKeys.backedUp {
@@ -161,10 +223,7 @@ actor BackupExporter {
             }
         }
 
-        return BackupMapper.file(
-            workouts: workouts,
-            batches: batches,
-            exerciseNames: names,
+        return BackupSnapshotMetadata(
             preferences: preferences,
             userID: ForgeFitDemo.userID,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String

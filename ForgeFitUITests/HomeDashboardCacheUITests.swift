@@ -44,7 +44,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
                       "The cached sleep duration should paint instantly.")
         XCTAssertTrue(app.staticTexts["All in range"].exists,
                       "The cached health headline should paint instantly.")
-        XCTAssertTrue(app.staticTexts["Green light. Push intensity or volume today."].exists,
+        XCTAssertTrue(app.staticTexts["No recovery-based restriction was detected. Use your warm-up to confirm."].exists,
                       "The cached recommendation should paint instantly.")
         XCTAssertFalse(app.staticTexts["Syncing today's data"].exists,
                        "A day with a cached render must not show the loading tiles.")
@@ -73,12 +73,52 @@ final class HomeDashboardCacheUITests: XCTestCase {
                       "First open of a new day must show the loading tiles.")
         XCTAssertFalse(app.staticTexts["7h 12m"].exists,
                        "Yesterday's sleep value must never leak into a new day.")
-        XCTAssertFalse(app.staticTexts["Green light. Push intensity or volume today."].exists,
+        XCTAssertFalse(app.staticTexts["No recovery-based restriction was detected. Use your warm-up to confirm."].exists,
                        "Yesterday's recommendation must never leak into a new day.")
         let recoveryCard = app.descendants(matching: .any)["home-recovery-card"].firstMatch
         if recoveryCard.exists {
             XCTAssertFalse(recoveryCard.label.contains("82"),
                            "Yesterday's recovery score must never leak into a new day.")
+        }
+    }
+
+    /// The dashboard may legitimately stay in its loading state while
+    /// HealthKit and analytics finish. Neither cold launch nor reactivation
+    /// may couple scrolling/navigation to those five cards becoming ready.
+    @MainActor
+    func testColdLaunchAndForegroundStayInteractiveWhileMetricsAreLoading() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-history",
+            "--suppress-health-refresh",
+            "--seed-yesterday-dashboard-cache",
+            "-didOnboard", "YES",
+            "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let grid = app.descendants(matching: .any)["home-metric-grid"].firstMatch
+        XCTAssertTrue(grid.waitForExistence(timeout: 15), "Expected the Home metric grid.")
+        XCTAssertTrue(app.staticTexts["Syncing today's data"].firstMatch.waitForExistence(timeout: 5))
+
+        let quickStart = app.buttons["start-empty-workout"].firstMatch
+        reveal(quickStart, in: app)
+        XCTAssertTrue(quickStart.isHittable,
+                      "Home must scroll before readiness cards finish loading.")
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(grid.waitForExistence(timeout: 5), "Home should resume immediately.")
+        XCTAssertTrue(app.buttons["tab-workout"].firstMatch.waitForExistence(timeout: 2))
+        app.buttons["tab-workout"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["new-routine-button"].firstMatch.waitForExistence(timeout: 3),
+                      "Foreground maintenance must not block the first navigation tap.")
+    }
+
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<8 where !element.isHittable {
+            app.swipeUp()
         }
     }
 }

@@ -249,7 +249,7 @@ final class WatchWorkoutEngine: NSObject {
 
     /// End the session and save the HKWorkout to Apple Health.
     /// Returns the final metrics and whether the save succeeded.
-    func finish() async -> (metrics: WatchLiveMetrics, savedToHealth: Bool) {
+    func finish(workoutName: String? = nil) async -> (metrics: WatchLiveMetrics, savedToHealth: Bool) {
         let metrics = currentMetrics()
         cancelPendingTransitions()
         guard let session, let builder else { return (metrics, false) }
@@ -258,6 +258,12 @@ final class WatchWorkoutEngine: NSObject {
         session.end()
         var saved = false
         do {
+            if let workoutName = workoutName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !workoutName.isEmpty {
+                // Keep the activity classification while giving Fitness the
+                // ForgeFit routine title for the workout's displayed name.
+                try? await builder.addMetadata([HKMetadataKeyWorkoutBrandName: workoutName])
+            }
             try await builder.endCollection(at: Date())
             if (try? await builder.finishWorkout()) != nil {
                 saved = true

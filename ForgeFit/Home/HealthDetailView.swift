@@ -8,17 +8,14 @@ struct HealthDetailView: View {
     let report: RecoveryEngine.Report
     let metrics: [RecoveryEngine.DailyHealthMetric]
     @State private var selectedTab: MetricDetailTab = .today
+    @State private var showingInfo = false
 
     private var assessment: HealthRangeAssessment {
         .make(metrics: metrics)
     }
 
     private var supplementalSignals: [RecoveryEngine.Signal] {
-        let separated = Set([
-            "HRV", "Resting HR", "Sleep", "Respiratory", "Blood O₂",
-            "Steps", "Active energy",
-        ])
-        return report.signals.filter { !separated.contains($0.name) && $0.connected }
+        HealthDetailSignalFilter.supplemental(from: report.signals)
     }
 
     private var hrvChannel: HealthMetricChannelSeries? {
@@ -41,7 +38,8 @@ struct HealthDetailView: View {
         guard let channel = hrvChannel else { return nil }
         return MetricTrendSeries.make(
             values: channel.values,
-            baselineValues: channel.baselineValues
+            baselineValues: channel.baselineValues,
+            baselineDates: channel.baselineDates
         )
     }
 
@@ -49,7 +47,8 @@ struct HealthDetailView: View {
         guard let channel = heartRateChannel else { return nil }
         return MetricTrendSeries.make(
             values: channel.values,
-            baselineValues: channel.baselineValues
+            baselineValues: channel.baselineValues,
+            baselineDates: channel.baselineDates
         )
     }
 
@@ -57,7 +56,8 @@ struct HealthDetailView: View {
         guard let channel = respiratoryChannel else { return nil }
         return MetricTrendSeries.make(
             values: channel.values,
-            baselineValues: channel.baselineValues
+            baselineValues: channel.baselineValues,
+            baselineDates: channel.baselineDates
         )
     }
 
@@ -65,8 +65,19 @@ struct HealthDetailView: View {
         guard let channel = oxygenChannel else { return nil }
         return MetricTrendSeries.make(
             values: channel.values,
-            baselineValues: channel.baselineValues
+            baselineValues: channel.baselineValues,
+            baselineDates: channel.baselineDates
         )
+    }
+
+    private var hasAnyTrend: Bool {
+        hrvTrend != nil || heartRateTrend != nil || respiratoryTrend != nil || oxygenTrend != nil
+    }
+
+    private var hasLowBloodOxygen: Bool {
+        assessment.readings.contains {
+            $0.id == "blood-oxygen" && $0.status == .belowRange
+        }
     }
 
     var body: some View {
@@ -79,6 +90,31 @@ struct HealthDetailView: View {
             }
         }
         .refreshable { await AppRefresh.run(in: modelContext) }
+        .sheet(isPresented: $showingInfo) {
+            MetricExplanationSheet(
+                title: "How health ranges work",
+                summary: "Health shows individual readings. It does not combine them into a second health or recovery score.",
+                items: [
+                    MetricExplanationItem(
+                        "Personal ranges",
+                        detail: "Each reading is compared only with the same source and measurement channel from your own history.",
+                        systemImage: "person.crop.circle"
+                    ),
+                    MetricExplanationItem(
+                        "Enough history",
+                        detail: "A usual range needs 28 comparable readings spanning at least 42 days and shows the middle 80% of those observations.",
+                        systemImage: "chart.line.uptrend.xyaxis"
+                    ),
+                    MetricExplanationItem(
+                        "Not a medical range",
+                        detail: "Usual for you does not mean medically normal. Blood oxygen is a wellness estimate; repeat a concerning reading. Seek care for shortness of breath, chest pain, confusion, or blue or gray lips. Symptoms take priority over every displayed range.",
+                        systemImage: "cross.case.fill"
+                    ),
+                ]
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     @ViewBuilder
@@ -88,7 +124,7 @@ struct HealthDetailView: View {
         if !assessment.readings.isEmpty {
             Card {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Text("Signals vs personal range")
+                    Text("Compared with usual")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                     ForEach(Array(assessment.readings.enumerated()), id: \.element.id) { index, reading in
@@ -119,24 +155,36 @@ struct HealthDetailView: View {
             }
         }
 
-        Card {
-            VStack(alignment: .leading, spacing: Space.sm) {
-                Label("Readings, not another score", systemImage: "checkmark.shield.fill")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.textPrimary)
-                Text("Health shows the measurements behind recovery without blending them into a second readiness number. Only signals with enough history are labeled against your personal range.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        if hasLowBloodOxygen {
+            Card {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Label("Blood oxygen is below usual", systemImage: "exclamationmark.triangle.fill")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    Text("Rest, check watch fit, and repeat the reading. Seek medical care for a persistent concern or urgent symptoms.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+        }
+
+        MetricInfoLink(title: "How health ranges work") {
+            showingInfo = true
         }
     }
 
     @ViewBuilder
     private var trendsContent: some View {
+        if hasAnyTrend {
+            Label("Shading shows your personal 10th–90th percentile range.", systemImage: "rectangle.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+        }
+
         if let trend = hrvTrend {
             trendCard(
-                title: "HRV vs baseline",
+                title: "HRV",
                 value: "\(Int((trend.latest?.value ?? 0).rounded())) ms",
                 metricName: "HRV",
                 trend: trend,
@@ -146,7 +194,7 @@ struct HealthDetailView: View {
 
         if let trend = heartRateTrend {
             trendCard(
-                title: "\(heartRateChannel?.name ?? "Heart rate") vs baseline",
+                title: heartRateChannel?.name ?? "Heart rate",
                 value: "\(Int((trend.latest?.value ?? 0).rounded())) bpm",
                 metricName: "Heart rate",
                 trend: trend,
@@ -156,7 +204,7 @@ struct HealthDetailView: View {
 
         if let trend = respiratoryTrend {
             trendCard(
-                title: "Respiratory rate vs baseline",
+                title: "Respiratory rate",
                 value: "\((trend.latest?.value ?? 0).formatted(.number.precision(.fractionLength(1)))) br/min",
                 metricName: "Respiratory rate",
                 trend: trend,
@@ -166,7 +214,7 @@ struct HealthDetailView: View {
 
         if let trend = oxygenTrend {
             trendCard(
-                title: "Blood oxygen vs baseline",
+                title: "Blood oxygen",
                 value: "\(Int((trend.latest?.value ?? 0).rounded()))%",
                 metricName: "Blood oxygen",
                 trend: trend,
@@ -177,7 +225,7 @@ struct HealthDetailView: View {
         if hrvTrend == nil, heartRateTrend == nil, respiratoryTrend == nil, oxygenTrend == nil {
             MetricEmptyCard(
                 title: "Health trends are building",
-                message: "Seven consistent readings unlock personal range charts.",
+                message: "A usual observed band needs 28 comparable readings spanning at least 42 days.",
                 systemImage: "waveform.path.ecg"
             )
         }
@@ -221,19 +269,25 @@ struct HealthDetailView: View {
     }
 
     private func rangePresentation(_ reading: PersonalRangeReading) -> (detail: String, tint: Color) {
-        guard let mean = reading.mean else {
-            return ("Personal range is building", theme.textTertiary)
+        guard let lower = reading.lowerBound, let upper = reading.upperBound else {
+            return ("Usual range building", theme.textTertiary)
         }
-        let baseline = "usual \(formattedValue(mean, for: reading))"
+        let baseline = "\(formattedValue(lower, for: reading))–\(formattedValue(upper, for: reading))"
         switch reading.status {
         case .typical:
-            return ("Within your range - \(baseline)", theme.success)
+            return ("Within usual · \(baseline)", theme.success)
         case .belowRange:
-            return ("Below your range - \(baseline)", reading.id == "hrv" ? theme.recoveryLow : theme.secondaryAccent)
+            let tint = reading.id == "hrv" || reading.id == "blood-oxygen"
+                ? theme.recoveryLow
+                : theme.secondaryAccent
+            return ("Below usual · \(baseline)", tint)
         case .aboveRange:
-            return ("Above your range - \(baseline)", reading.id == "resting-heart-rate" ? theme.recoveryLow : theme.secondaryAccent)
+            let tint = reading.id == "resting-heart-rate" || reading.id == "respiratory-rate"
+                ? theme.recoveryLow
+                : theme.secondaryAccent
+            return ("Above usual · \(baseline)", tint)
         case .building:
-            return ("Personal range is building", theme.textTertiary)
+            return ("Usual range building", theme.textTertiary)
         }
     }
 
@@ -267,9 +321,6 @@ struct HealthDetailView: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 MetricBaselineBandChart(trend: trend, metricName: metricName, tint: tint)
-                Text("Shaded area: your recent mean +/- one standard deviation.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textSecondary)
             }
         }
     }

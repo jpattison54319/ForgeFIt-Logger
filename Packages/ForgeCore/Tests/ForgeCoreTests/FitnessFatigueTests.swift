@@ -40,10 +40,9 @@ struct FitnessFatigueTests {
         )
         #expect(points.count == 1)
         let p = points[0]
-        #expect(abs(p.ctl - 100.0 / 42.0) < 1e-9)
-        #expect(abs(p.atl - 100.0 / 7.0) < 1e-9)
-        // A fresh spike is all fatigue, no fitness yet: form must be negative.
-        #expect(p.tsb < 0)
+        #expect(abs(p.ctl - 100) < 1e-9)
+        #expect(abs(p.atl - 100) < 1e-9)
+        #expect(abs(p.tsb) < 1e-9)
     }
 
     @Test func seriesDatesAreConsecutiveStartOfDays() {
@@ -69,9 +68,8 @@ struct FitnessFatigueTests {
         var loads = (0..<60).map { (date: day($0), load: 100.0) }
         loads += (60..<67).map { (date: day($0), load: 0.0) }
         let points = FitnessFatigue.series(dailyLoads: loads, calendar: cal)
-        // Under constant loading fatigue leads fitness...
-        #expect(points[59].tsb < 0)
-        // ...and 7 zero days drain ATL much faster than CTL: form flips positive.
+        #expect(abs(points[59].tsb) < 1e-9)
+        // Seven zero days pull the short-term curve down faster.
         #expect(points.last!.tsb > 0)
     }
 
@@ -83,13 +81,12 @@ struct FitnessFatigueTests {
     }
 
     @Test func fatigueRespondsFasterThanFitness() {
-        // One spike, then a month of nothing: ATL must dominate immediately,
-        // then decay away faster so TSB eventually crosses positive.
-        let loads = [(date: day(0), load: 100.0), (date: day(30), load: 0.0)]
+        // After an established zero history, a spike moves short-term load more.
+        var loads = (0..<30).map { (date: day($0), load: 0.0) }
+        loads.append((date: day(30), load: 100.0))
         let points = FitnessFatigue.series(dailyLoads: loads, calendar: cal)
-        #expect(points.first!.atl > points.first!.ctl)
-        #expect(points.first!.tsb < 0)
-        #expect(points.last!.tsb > 0)
+        #expect(points.last!.atl > points.last!.ctl)
+        #expect(points.last!.tsb < 0)
     }
 
     // MARK: - Bucketing and gaps
@@ -98,9 +95,9 @@ struct FitnessFatigueTests {
         let loads = [(date: day(0), load: 100.0), (date: day(10), load: 100.0)]
         let points = FitnessFatigue.series(dailyLoads: loads, calendar: cal)
         #expect(points.count == 11)
-        // Every silent day decays ATL by exactly (1 - 1/7).
+        // Startup normalization still decays on every silent day.
         for i in 1..<10 {
-            #expect(abs(points[i].atl - points[i - 1].atl * (6.0 / 7.0)) < 1e-9)
+            #expect(points[i].atl < points[i - 1].atl)
         }
         // The day-10 workout pushes fatigue back up.
         #expect(points[10].atl > points[9].atl)
@@ -130,9 +127,10 @@ struct FitnessFatigueTests {
         let now = day(7, hour: 15)
         let p = FitnessFatigue.today(dailyLoads: loads, calendar: cal, now: now)!
         #expect(p.date == cal.startOfDay(for: now))
-        // Closed-form EWMA decay from the day-0 spike over 7 zero-load days.
-        let expectedATL = (100.0 / 7.0) * pow(6.0 / 7.0, 7)
-        let expectedCTL = (100.0 / 42.0) * pow(41.0 / 42.0, 7)
+        let atlDecay = exp(-1.0 / 7.0)
+        let ctlDecay = exp(-1.0 / 42.0)
+        let expectedATL = 100 * pow(atlDecay, 7) / (0...7).map { pow(atlDecay, Double($0)) }.reduce(0, +)
+        let expectedCTL = 100 * pow(ctlDecay, 7) / (0...7).map { pow(ctlDecay, Double($0)) }.reduce(0, +)
         #expect(abs(p.atl - expectedATL) < 1e-9)
         #expect(abs(p.ctl - expectedCTL) < 1e-9)
     }

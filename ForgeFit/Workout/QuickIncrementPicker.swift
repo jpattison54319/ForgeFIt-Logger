@@ -22,9 +22,16 @@ final class QuickIncrementController {
     }
 
     struct Fan {
+        let transactionID: UUID
         let fieldFrame: CGRect          // in `spaceName` coordinates
         let options: [Option]           // +max first … −max last
-        let apply: (Double) -> Void
+        /// Frozen when the hold recognizes. Keyboard dismissal, row updates,
+        /// and unit changes must not move the hit map under an active finger.
+        let slots: [Slot]
+        /// Captured when the hold recognizes, before focus dismissal can
+        /// commit/reformat the field or expose a different ghost value.
+        let baseValue: Double
+        let applyValue: (Double) -> Void
         var hoveredIndex: Int?
     }
 
@@ -44,15 +51,48 @@ final class QuickIncrementController {
 
     var isActive: Bool { fan != nil }
 
-    func begin(fieldFrame: CGRect, options: [Option], apply: @escaping (Double) -> Void) {
-        fan = Fan(fieldFrame: fieldFrame, options: options, apply: apply, hoveredIndex: nil)
+    @discardableResult
+    func begin(
+        fieldFrame: CGRect,
+        options: [Option],
+        baseValue: Double,
+        applyValue: @escaping (Double) -> Void
+    ) -> UUID? {
+        guard fan == nil,
+              !fieldFrame.isEmpty,
+              !fieldFrame.isNull,
+              !fieldFrame.isInfinite,
+              overlayBounds.width > 0,
+              overlayBounds.height > 0,
+              baseValue.isFinite,
+              !options.isEmpty,
+              options.count.isMultiple(of: 2),
+              options.allSatisfy({ $0.delta.isFinite && $0.delta != 0 }),
+              let slots = Self.makeLayout(
+                fieldFrame: fieldFrame,
+                options: options,
+                overlayBounds: overlayBounds
+              ) else { return nil }
+
+        let transactionID = UUID()
+        fan = Fan(
+            transactionID: transactionID,
+            fieldFrame: fieldFrame,
+            options: options,
+            slots: slots,
+            baseValue: max(0, baseValue),
+            applyValue: applyValue,
+            hoveredIndex: nil
+        )
         openTick += 1
+        return transactionID
     }
 
-    func updateHover(at location: CGPoint) {
-        guard fan != nil else { return }
-        let currentLayout = layout()
-        let hit = currentLayout?.firstIndex { slot in
+    func updateHover(at location: CGPoint, transactionID: UUID) {
+        guard fan?.transactionID == transactionID,
+              location.x.isFinite,
+              location.y.isFinite else { return }
+        let hit = fan?.slots.firstIndex { slot in
             // Generous horizontal slop: vertical position picks the option,
             // the finger shouldn't have to stay inside a narrow column.
             slot.rect.insetBy(dx: -44, dy: 0).contains(location)
@@ -63,15 +103,30 @@ final class QuickIncrementController {
         }
     }
 
-    /// Applies the hovered option (release on/near the field = cancel).
-    func finish() {
-        if let fan, let index = fan.hoveredIndex, fan.options.indices.contains(index) {
-            fan.apply(fan.options[index].delta)
+    /// Applies the last visibly-hovered option. A very fast drag can skip a
+    /// `.changed` callback, so the terminal point is used only when no option
+    /// was highlighted. It never replaces an option the user already saw.
+    func finish(at location: CGPoint, transactionID: UUID) {
+        guard fan?.transactionID == transactionID else { return }
+        if fan?.hoveredIndex == nil {
+            updateHover(at: location, transactionID: transactionID)
         }
+        guard let completedFan = fan,
+              completedFan.transactionID == transactionID else { return }
+        // End the gesture transaction before its callback mutates SwiftData
+        // and re-renders the row. A duplicate terminal callback can therefore
+        // never apply the option twice.
         self.fan = nil
+        guard let index = completedFan.hoveredIndex,
+              completedFan.options.indices.contains(index) else { return }
+        let delta = completedFan.options[index].delta
+        let result = max(0, completedFan.baseValue + delta)
+        guard result.isFinite else { return }
+        completedFan.applyValue(result)
     }
 
-    func cancel() {
+    func cancel(transactionID: UUID) {
+        guard fan?.transactionID == transactionID else { return }
         fan = nil
     }
 
@@ -85,23 +140,31 @@ final class QuickIncrementController {
     /// from the field, negative bands downward, the whole fan slides (never
     /// shrinks) to stay inside the overlay bounds.
     func layout() -> [Slot]? {
-        guard let fan, overlayBounds != .zero else { return nil }
-        let half = fan.options.count / 2
+        fan?.slots
+    }
+
+    private static func makeLayout(
+        fieldFrame: CGRect,
+        options: [Option],
+        overlayBounds: CGRect
+    ) -> [Slot]? {
+        guard overlayBounds.width > 0, overlayBounds.height > 0 else { return nil }
+        let half = options.count / 2
         let width = Self.bandWidth
-        let x = min(max(fan.fieldFrame.midX, overlayBounds.minX + width / 2 + 8),
+        let x = min(max(fieldFrame.midX, overlayBounds.minX + width / 2 + 8),
                     overlayBounds.maxX - width / 2 - 8)
 
         var slots: [Slot] = []
-        for (index, option) in fan.options.enumerated() {
+        for (index, option) in options.enumerated() {
             let rect: CGRect
             if index < half {
                 // Positives: index 0 is the largest (+3), sitting furthest up.
                 let stepsAbove = CGFloat(half - index)
-                let top = fan.fieldFrame.minY - Self.fieldGap - stepsAbove * Self.bandHeight
+                let top = fieldFrame.minY - Self.fieldGap - stepsAbove * Self.bandHeight
                 rect = CGRect(x: x - width / 2, y: top, width: width, height: Self.bandHeight)
             } else {
                 let stepsBelow = CGFloat(index - half)
-                let top = fan.fieldFrame.maxY + Self.fieldGap + stepsBelow * Self.bandHeight
+                let top = fieldFrame.maxY + Self.fieldGap + stepsBelow * Self.bandHeight
                 rect = CGRect(x: x - width / 2, y: top, width: width, height: Self.bandHeight)
             }
             slots.append(Slot(option: option, rect: rect, isPositive: index < half))
@@ -127,9 +190,10 @@ final class QuickIncrementController {
         return positives + negatives
     }
 
-    /// Weight bands are multiples of the exercise's logical jump (2.5 lb
-    /// small / 5 lb barbell-class; 1.25 / 2.5 kg) in display units.
-    static func weightOptions(step: Double, suffix: String) -> [Option] {
+    /// Manual load nudges are native to the unit currently shown: quarter-
+    /// plate jumps in kilograms and 2.5-pound jumps in pounds.
+    static func weightOptions(unit: WeightUnit) -> [Option] {
+        let step = unit == .kg ? 1.25 : 2.5
         func label(_ multiple: Int, sign: String) -> String {
             let value = step * Double(multiple)
             let text = value.formatted(.number.precision(.fractionLength(0...2)))
@@ -137,6 +201,21 @@ final class QuickIncrementController {
         }
         return [3, 2, 1].map { Option(delta: step * Double($0), label: label($0, sign: "+")) }
             + [1, 2, 3].map { Option(delta: -step * Double($0), label: label($0, sign: "−")) }
+    }
+
+    /// Resolves the number actually visible in a field. Suggestion-backed
+    /// rows deliberately hide their routine value behind a previous-session
+    /// ghost, so that hidden value must never become the quick-picker base.
+    static func displayedBase(
+        draftValue: Double?,
+        isDraftEdited: Bool,
+        enteredValue: Double?,
+        suggestedValue: Double?,
+        isShowingSuggestion: Bool
+    ) -> Double? {
+        if isDraftEdited { return draftValue }
+        if isShowingSuggestion { return suggestedValue }
+        return enteredValue ?? suggestedValue
     }
 
     // MARK: Paired reveal order
@@ -165,6 +244,7 @@ final class QuickIncrementController {
 /// so per-frame geometry updates never invalidate the row.
 private final class FrameBox {
     var rect: CGRect = .zero
+    var transactionID: UUID?
 }
 
 /// UIKit's continuous recognizer is deliberate here. SwiftUI only calls a
@@ -179,6 +259,35 @@ private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
     let onChanged: (CGPoint) -> Void
     let onEnded: (CGPoint) -> Void
     let onCancelled: () -> Void
+
+    /// SwiftUI may reuse the underlying UIKit recognizer while replacing the
+    /// row, value, or unit closures around it. Keeping the latest callbacks in
+    /// the coordinator prevents a recycled recognizer from adjusting a field
+    /// that is no longer on screen.
+    final class Coordinator {
+        var onBegan: (CGPoint) -> Void
+        var onChanged: (CGPoint) -> Void
+        var onEnded: (CGPoint) -> Void
+        var onCancelled: () -> Void
+
+        init(gesture: QuickIncrementPressGesture) {
+            onBegan = gesture.onBegan
+            onChanged = gesture.onChanged
+            onEnded = gesture.onEnded
+            onCancelled = gesture.onCancelled
+        }
+
+        func update(from gesture: QuickIncrementPressGesture) {
+            onBegan = gesture.onBegan
+            onChanged = gesture.onChanged
+            onEnded = gesture.onEnded
+            onCancelled = gesture.onCancelled
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator(gesture: self)
+    }
 
     func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
         let recognizer = UILongPressGestureRecognizer()
@@ -195,6 +304,7 @@ private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
         _ recognizer: UILongPressGestureRecognizer,
         context: Context
     ) {
+        context.coordinator.update(from: self)
         recognizer.isEnabled = isEnabled
     }
 
@@ -205,17 +315,17 @@ private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
         let location = context.converter.location(in: .named(QuickIncrementController.spaceName))
         switch recognizer.state {
         case .began:
-            onBegan(location)
+            context.coordinator.onBegan(location)
         case .changed:
-            onChanged(location)
+            context.coordinator.onChanged(location)
         case .ended:
-            onEnded(location)
+            context.coordinator.onEnded(location)
         case .cancelled, .failed:
-            onCancelled()
+            context.coordinator.onCancelled()
         case .possible:
             break
         @unknown default:
-            onCancelled()
+            context.coordinator.onCancelled()
         }
     }
 }
@@ -227,9 +337,9 @@ private struct QuickIncrementable: ViewModifier {
     /// Clears any existing TextField focus only after the hold recognizes.
     /// A quick tap or scroll never invokes this closure.
     let onBegin: () -> Void
-    /// Resolved at apply time: entered value if present, else the ghost the
-    /// user is looking at, else 0.
-    let base: () -> Double
+    /// Resolved once when the hold recognizes: entered value if present, else
+    /// the ghost the user is looking at, else 0.
+    let base: () -> Double?
     /// Receives the new value (base + chosen delta, floored at 0).
     let apply: (Double) -> Void
 
@@ -242,10 +352,12 @@ private struct QuickIncrementable: ViewModifier {
             } action: { frameBox.rect = $0 }
             .gesture(fanGesture)
             .accessibilityAdjustableAction { direction in
-                guard let smallest = options.map(\.delta).filter({ $0 > 0 }).min() else { return }
+                guard let smallest = options.map(\.delta).filter({ $0 > 0 }).min(),
+                      let baseValue = base(),
+                      baseValue.isFinite else { return }
                 switch direction {
-                case .increment: apply(max(0, base() + smallest))
-                case .decrement: apply(max(0, base() - smallest))
+                case .increment: apply(max(0, baseValue + smallest))
+                case .decrement: apply(max(0, baseValue - smallest))
                 @unknown default: break
                 }
             }
@@ -255,28 +367,41 @@ private struct QuickIncrementable: ViewModifier {
         QuickIncrementPressGesture(
             isEnabled: isEnabled && controller != nil,
             onBegan: { location in
-                beginIfNeeded()
-                controller?.updateHover(at: location)
+                beginIfNeeded(at: location)
             },
             onChanged: { location in
-                controller?.updateHover(at: location)
+                guard let transactionID = frameBox.transactionID else { return }
+                controller?.updateHover(at: location, transactionID: transactionID)
             },
             onEnded: { location in
-                controller?.updateHover(at: location)
-                controller?.finish()
+                guard let transactionID = frameBox.transactionID else { return }
+                frameBox.transactionID = nil
+                controller?.finish(at: location, transactionID: transactionID)
             },
             onCancelled: {
-                controller?.cancel()
+                guard let transactionID = frameBox.transactionID else { return }
+                frameBox.transactionID = nil
+                controller?.cancel(transactionID: transactionID)
             }
         )
     }
 
-    private func beginIfNeeded() {
-        guard controller?.isActive != true else { return }
+    private func beginIfNeeded(at location: CGPoint) {
+        guard let controller, !controller.isActive else { return }
+        // Snapshot what the user sees before clearing focus. Clearing focus
+        // commits drafts and can synchronously change which fallback value a
+        // field exposes; resolving `base()` on release made adjustments use
+        // stale/ghost values instead of the held value.
+        guard let baseValue = base(), baseValue.isFinite,
+              let transactionID = controller.begin(
+            fieldFrame: frameBox.rect,
+            options: options,
+            baseValue: baseValue,
+            applyValue: apply
+        ) else { return }
+        frameBox.transactionID = transactionID
         onBegin()
-        controller?.begin(fieldFrame: frameBox.rect, options: options) { [base, apply] delta in
-            apply(max(0, base() + delta))
-        }
+        controller.updateHover(at: location, transactionID: transactionID)
     }
 }
 
@@ -285,7 +410,7 @@ extension View {
         options: [QuickIncrementController.Option],
         isEnabled: Bool = true,
         onBegin: @escaping () -> Void = {},
-        base: @escaping () -> Double,
+        base: @escaping () -> Double?,
         apply: @escaping (Double) -> Void
     ) -> some View {
         modifier(

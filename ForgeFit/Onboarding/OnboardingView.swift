@@ -70,7 +70,7 @@ struct OnboardingView: View {
         connecting = true
         Task {
             _ = await HealthService.shared.requestAuthorization()
-            await HealthWorkoutImporter.shared.importRecent(in: modelContext)
+            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
             HealthMetricsStore.shared.refresh(force: true)
             finish()
         }

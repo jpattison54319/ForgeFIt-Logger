@@ -15,28 +15,31 @@ struct DailyStrainInfoSheet: View {
                     CircleIconButton(systemImage: "xmark", label: "Close") { dismiss() }
                 }
 
-                Text("Recovery is your capacity at the start of the day; strain is the movement and training you accumulate after midnight. Finishing a workout raises strain without rewriting the morning recovery measurement.")
+                Text("Daily strain is a relative activity-load index. It shows how today's movement and completed training compare with your recent history; it is not fatigue accumulated since midnight.")
                     .font(.system(size: 15))
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    takeawayRow("Your score is relative to the prior 28 days. Walking, exercise minutes, and active energy count; recorded workouts add duration and intensity through session RPE or heart rate.")
-                    takeawayRow("Today's target uses 70% daily readiness and 30% recovery trend. The adjustment is capped, because a green morning should not authorize a sudden load spike.")
+                    sectionTitle("Reading the gauge")
+                    scoreRow("Loading today", detail: "Today's data is still syncing.")
+                    scoreRow("Collecting baseline", detail: "No personal score yet; ForgeFit is gathering comparable history.")
+                    scoreRow("More history needed", detail: "Today's score is ready, but your personal usual range needs more comparable history.")
+                    scoreRow("In your usual range", detail: "Inside your personal usual range — the middle 80% of comparable recent days, not one exact score.")
+                    scoreRow("Below or above usual", detail: "Outside your usual range. The arc fills left for lower activity load and right for higher activity load.")
+                    scoreRow("Far below or above usual", detail: "Farther from your usual range toward either end of the 0–10 scale.")
                 }
 
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Grounded in")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(theme.textTertiary)
-                        .textCase(.uppercase)
-                    evidenceRow("Foster et al. 2001 (JSCR) — session RPE combines duration and perceived intensity into a practical internal training-load measure.")
-                    evidenceRow("Lee et al. 2019 (JAMA Internal Medicine) — device-measured step volume showed a graded association with health outcomes; everyday movement should not count as zero.")
-                    evidenceRow("Vesterinen et al. 2016 (Medicine & Science in Sports & Exercise) — HRV-guided training supports adapting training timing, while not validating an exact universal target.")
-                    evidenceRow("Impellizzeri et al. 2020 (IJSPP) — acute:chronic workload ratios have conceptual and mathematical pitfalls, so ForgeFit does not use a ratio threshold as injury prediction.")
+                    sectionTitle("How the score is built")
+                    takeawayRow("Movement is 35%: steps so far are ranked against your steps at the same local time across up to 56 prior days.")
+                    takeawayRow("Training is 65%: whole-session CR10 is preferred. Without it, ForgeFit estimates load from completed strength sets, set RPE or RIR, cardio effort, duration, and recorded heart-rate zones.")
+                    takeawayRow("Fallback sessions are labeled Estimated. Missing set effort uses a neutral RPE 6 convention; equipment type does not add a fatigue multiplier.")
+                    takeawayRow("A score near 5 means near the middle of your history — not zero activity or half of a daily limit. Missing source data reduces coverage and pulls the score toward 5.")
+                    takeawayRow("Active minutes, calories, and recovery may provide context, but they do not change this score. Heart rate is used only inside the unrated-workout fallback.")
                 }
 
-                Text("This is a coaching guide, not a measure of physiological damage or injury risk. The 0–10 scale and target range are transparent heuristics built on personal trends, not clinical cutoffs.")
+                Text("The score appears after at least 14 comparable days. It describes activity load relative to your history; it does not measure physiological fatigue, damage, readiness, or injury risk. The 0–10 scale and 35/65 weights are product settings, not clinical cutoffs.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -44,6 +47,31 @@ struct DailyStrainInfoSheet: View {
             .padding(Space.lg)
         }
         .background(theme.background)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(theme.textTertiary)
+            .textCase(.uppercase)
+    }
+
+    private func scoreRow(_ title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: Space.sm) {
+            Circle()
+                .fill(title == "In your usual range" ? theme.success : theme.secondaryAccent)
+                .frame(width: 8, height: 8)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                Text(detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func takeawayRow(_ text: String) -> some View {
@@ -59,16 +87,4 @@ struct DailyStrainInfoSheet: View {
         }
     }
 
-    private func evidenceRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: Space.sm) {
-            Image(systemName: "book.closed.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(theme.textTertiary)
-                .padding(.top, 2)
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
 }

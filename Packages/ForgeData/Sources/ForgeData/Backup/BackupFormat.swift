@@ -83,6 +83,13 @@ public struct BackupWorkout: Codable, Sendable {
     public var endedAt: Date?
     public var sourceDevice: String?
     public var notes: String?
+    public var conditioningPlanSnapshotJSON: String? = nil
+    public var conditioningProgressJSON: String? = nil
+    public var conditioningResultJSON: String? = nil
+    /// User-entered training data, safe for the sanitized workout backup.
+    public var wholeSessionRPE: Double? = nil
+    public var wholeSessionRPERatedAt: Date? = nil
+    public var wholeSessionRPEProtocolVersion: String? = nil
     public var externalSource: String?
     /// Named to match the import format's key.
     public var externalID: String?

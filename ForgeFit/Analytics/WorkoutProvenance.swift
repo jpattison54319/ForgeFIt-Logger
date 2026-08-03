@@ -6,7 +6,7 @@ extension WorkoutModel {
     /// but the Apple Health and GPX importers only stamp `sourceDevice` — so
     /// anything gated on training actually logged in ForgeFit (XP, trophies)
     /// must check this one property, not the provenance fields alone.
-    var isImportedHistory: Bool {
+    nonisolated var isImportedHistory: Bool {
         if externalSource != nil || importFingerprint != nil || importBatchID != nil {
             return true
         }

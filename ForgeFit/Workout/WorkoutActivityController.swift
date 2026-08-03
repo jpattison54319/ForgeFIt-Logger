@@ -165,15 +165,16 @@ final class WorkoutActivityController {
         if pureCardio, let session = workout.cardioSessions.first(where: { !$0.isYogaSession }) {
             let kind = CardioKind.from(modality: session.modality)
             let duration = session.durationSeconds ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
-            // Prefer live distance (watch stream / phone GPS) so the lock screen
-            // and Dynamic Island tick in real time; treadmills stay manual-only.
+            // Use the same authoritative live distance as the logger and
+            // speech so the lock screen never races ahead of the wrist.
             let library = workout.exercises.first { $0.id == session.workoutExerciseID }
                 .flatMap { we in exercises.first { $0.id == we.exerciseID } }
             let providesGPS = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
             let liveDist: Double? = providesGPS
-                ? (LiveMetricsHub.shared.liveMetrics?.distanceMeters
-                    ?? CardioRouteRecorder.shared.liveDistanceMeters(for: session.id)
-                    ?? session.distanceMeters)
+                ? CardioRouteRecorder.shared.authoritativeLiveDistance(
+                    for: session.id,
+                    storedMeters: session.distanceMeters
+                )
                 : session.distanceMeters
             let paceOrSpeed = kind.usesPace
                 ? CardioMetrics.paceString(distanceMeters: liveDist, durationSeconds: duration, kind: kind)

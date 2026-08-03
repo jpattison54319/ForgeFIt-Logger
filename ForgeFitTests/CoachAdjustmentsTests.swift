@@ -9,6 +9,15 @@ import Testing
 struct CoachAdjustmentsTests {
     private let userID = ForgeFitDemo.userID
 
+    private func voluntaryReduceVolumePlan() -> CoachAdjustments.Plan {
+        CoachAdjustments.Plan(
+            action: .reduceVolume,
+            affectedExerciseIDs: nil,
+            summary: "1 set less per lift · cap RPE 8",
+            changes: ["User-reviewed voluntary adjustment"]
+        )
+    }
+
     /// Workout with one exercise: 1 warmup + 4 working sets at 100, RPE 9.
     private func workout(in context: ModelContext, exerciseID: UUID = UUID()) -> WorkoutModel {
         let sets = [SetModel(userID: userID, position: 0, setType: .warmup, reps: 10, weight: 50)]
@@ -49,10 +58,10 @@ struct CoachAdjustmentsTests {
         return (routine, libraryExercise)
     }
 
-    @Test func noPlanForGreenDays() {
+    @Test func noAutomaticPlanFromNumericRecoveryBands() {
         #expect(CoachAdjustments.plan(for: .push) == nil)
         #expect(CoachAdjustments.plan(for: .trainAsPlanned) == nil)
-        #expect(CoachAdjustments.plan(for: .reduceVolume) != nil)
+        #expect(CoachAdjustments.plan(for: .reduceVolume) == nil)
         #expect(CoachAdjustments.plan(for: .deloadRecover) != nil)
     }
 
@@ -60,7 +69,7 @@ struct CoachAdjustmentsTests {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let w = workout(in: context)
-        let plan = CoachAdjustments.plan(for: .reduceVolume)!
+        let plan = voluntaryReduceVolumePlan()
 
         CoachAdjustments.apply(plan, to: w, in: context)
 
@@ -112,7 +121,7 @@ struct CoachAdjustmentsTests {
         let w2 = WorkoutModel(userID: userID, exercises: [two])
         context2.insert(w2)
         try context2.save()
-        CoachAdjustments.apply(CoachAdjustments.plan(for: .reduceVolume)!, to: w2, in: context2)
+        CoachAdjustments.apply(voluntaryReduceVolumePlan(), to: w2, in: context2)
         #expect(w2.exercises[0].sets.count == 2)
     }
 
@@ -153,7 +162,7 @@ struct CoachAdjustmentsTests {
         let idA = UUID()
         let idB = UUID()
         let w = twoExerciseWorkout(in: context, idA: idA, idB: idB)
-        let plan = CoachAdjustments.plan(for: .reduceVolume)!
+        let plan = voluntaryReduceVolumePlan()
 
         let draft = CoachAdjustments.AdjustmentDraft(
             plan: plan,
@@ -179,7 +188,7 @@ struct CoachAdjustmentsTests {
         let context = ModelContext(container)
         let exerciseID = UUID()
         let w = workout(in: context, exerciseID: exerciseID)
-        let plan = CoachAdjustments.plan(for: .reduceVolume)!
+        let plan = voluntaryReduceVolumePlan()
 
         // Ask for far more than there are — the floor keeps 1 remaining
         // working set no matter how the user drags the stepper.
@@ -200,7 +209,7 @@ struct CoachAdjustmentsTests {
         let w = workout(in: context, exerciseID: exerciseID)
         // reduceVolume never scales weight by default — the review screen's
         // edited weight cut must still take effect.
-        let plan = CoachAdjustments.plan(for: .reduceVolume)!
+        let plan = voluntaryReduceVolumePlan()
 
         let draft = CoachAdjustments.AdjustmentDraft(
             plan: plan,
@@ -218,7 +227,7 @@ struct CoachAdjustmentsTests {
 
     @Test func notesStampReflectsEditedVsDefault() throws {
         let exerciseID = UUID()
-        let plan = CoachAdjustments.plan(for: .reduceVolume)!
+        let plan = voluntaryReduceVolumePlan()
         let (routine, libraryExercise) = matchingRoutine(exerciseID: exerciseID)
         let baseDraft = CoachAdjustments.draft(for: plan, routine: routine, exercises: [libraryExercise])
 
@@ -226,7 +235,7 @@ struct CoachAdjustmentsTests {
         let defaultContext = ModelContext(defaultContainer)
         let defaultWorkout = workout(in: defaultContext, exerciseID: exerciseID)
         CoachAdjustments.apply(draft: baseDraft, to: defaultWorkout, in: defaultContext)
-        #expect(defaultWorkout.notes?.hasPrefix("Coach-adjusted (reduce volume):") == true)
+        #expect(defaultWorkout.notes?.hasPrefix("Coach-adjusted (begin conservatively):") == true)
 
         let editedContainer = try TestStore.makeContainer()
         let editedContext = ModelContext(editedContainer)

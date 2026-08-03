@@ -54,6 +54,7 @@ enum AppPreferenceKeys {
         "autoStartRoutine",
         "openSettings",
         LaunchSeedPolicy.defaultsKey,
+        PlanMaintenancePolicy.defaultsKey,
         "lastActiveDate",
         "hasCompletedFirstLaunch",
         "welcomeBackPendingGapDays",
@@ -62,6 +63,9 @@ enum AppPreferenceKeys {
         "morningReadinessLastFiredDay",
         "storeSplitMigration.v1.done",
         "backupLastSuccessAt",
+        HealthWorkoutImporter.lastAutomaticAttemptKey,
+        ExperimentNotificationRoute.pendingURLDefaultsKey,
+        ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
     ]
 
     /// Retired preferences kept only so Erase All Data also cleans installs

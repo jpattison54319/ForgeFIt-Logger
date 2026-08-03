@@ -10,7 +10,7 @@ struct MetricPoint: Identifiable {
     let value: Double
 }
 
-enum TimeChartRange: String, CaseIterable, Identifiable {
+nonisolated enum TimeChartRange: String, CaseIterable, Identifiable, Sendable {
     case fourWeeks
     case twelveWeeks
     case oneYear
@@ -131,9 +131,8 @@ struct LineTrendChart: View {
     }
 }
 
-/// Daily HRV against a shaded ±1 SD "normal" band and a dashed baseline mean,
-/// with today's reading called out — so a single noisy night reads as "within
-/// my range" rather than an alarming isolated number.
+/// Daily HRV against a shaded 10th–90th percentile usual observed band and a
+/// dashed median. This is personal descriptive history, not a medical range.
 struct HRVBaselineBandChart: View {
     struct Point: Identifiable {
         let id = UUID()
@@ -142,8 +141,9 @@ struct HRVBaselineBandChart: View {
     }
 
     let points: [Point]
-    let mean: Double
-    let sd: Double
+    let median: Double
+    let lowerBound: Double
+    let upperBound: Double
 
     @Environment(\.theme) private var theme
 
@@ -151,11 +151,11 @@ struct HRVBaselineBandChart: View {
         Chart {
             ForEach(points) { point in
                 AreaMark(x: .value("Date", point.date),
-                         yStart: .value("Low", mean - sd),
-                         yEnd: .value("High", mean + sd))
+                         yStart: .value("Low", lowerBound),
+                         yEnd: .value("High", upperBound))
                     .foregroundStyle(theme.success.opacity(0.12))
             }
-            RuleMark(y: .value("Baseline", mean))
+            RuleMark(y: .value("Baseline median", median))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 .foregroundStyle(theme.textTertiary)
             ForEach(points) { point in

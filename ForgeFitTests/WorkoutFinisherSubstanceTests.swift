@@ -57,6 +57,18 @@ struct WorkoutFinisherSubstanceTests {
         let withNotes = WorkoutModel(userID: userID, exercises: [noted])
         context.insert(withNotes)
         #expect(WorkoutFinisher.hasSubstance(withNotes))
+
+        let withWorkoutNote = WorkoutModel(userID: userID, notes: "Low energy, kept the session easy")
+        context.insert(withWorkoutNote)
+        #expect(WorkoutFinisher.hasSubstance(withWorkoutNote))
+
+        let legacyCardioLabel = WorkoutModel(
+            userID: userID,
+            sourceDevice: "iphone-cardio-row",
+            notes: "Cardio workout"
+        )
+        context.insert(legacyCardioLabel)
+        #expect(!WorkoutFinisher.hasSubstance(legacyCardioLabel))
     }
 
     /// The behavioral guarantee: finish() on an empty workout tombstones it

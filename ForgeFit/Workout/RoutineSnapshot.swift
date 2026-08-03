@@ -67,11 +67,13 @@ struct RoutineSnapshot: Equatable {
 
     let name: String
     let notes: String?
+    let conditioningPlanJSON: String?
     let exercises: [ExerciseSnapshot]
 
     init(of routine: RoutineModel) {
         name = routine.name
         notes = routine.notes
+        conditioningPlanJSON = routine.conditioningPlanJSON
         exercises = routine.exercises.sorted { $0.position < $1.position }.map(ExerciseSnapshot.init)
     }
 
@@ -82,6 +84,7 @@ struct RoutineSnapshot: Equatable {
     func restore(onto routine: RoutineModel, in context: ModelContext) {
         routine.name = name
         routine.notes = notes
+        routine.conditioningPlanJSON = conditioningPlanJSON
 
         let existingByID = Dictionary(routine.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let keptExerciseIDs = Set(exercises.map(\.id))

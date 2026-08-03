@@ -14,13 +14,13 @@ enum DataExportService {
         var id: String { rawValue }
     }
 
-    /// Snapshot on the main actor (models are main-bound; the nightly backup
-    /// proves this fetch is tolerable), then encode and write off it.
+    /// Snapshot the training log on the backup worker, collect the explicit
+    /// export-only graphs here, then encode and write off the main actor.
     @MainActor
     static func export(format: Format, container: ModelContainer) async throws -> [URL] {
         let context = container.mainContext
         let trainingLog = ExportMapper.filteringTombstones(
-            try BackupExporter.snapshotFile(container: container)
+            try await BackupExporter.snapshotFile(container: container)
         )
         let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
         let folders = try context.fetch(FetchDescriptor<RoutineFolderModel>())

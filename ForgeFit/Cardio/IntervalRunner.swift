@@ -71,8 +71,8 @@ final class IntervalRunner {
     /// step's own covered distance is the delta from here.
     @ObservationIgnored private var stepStartMeters: Double?
     @ObservationIgnored private var paceWindow = RollingPaceWindow()
-    /// Injected in tests; live builds read the watch stream first (it also
-    /// covers treadmills via wrist estimation), then phone GPS.
+    /// Injected in tests; live builds read the recorder's shared authoritative
+    /// source so interval progress cannot disagree with speech or the logger.
     @ObservationIgnored var liveDistanceMeters: () -> Double?
 
     init?(planJSON: String?, session: CardioSessionModel, context: ModelContext) {
@@ -90,8 +90,7 @@ final class IntervalRunner {
             : now.addingTimeInterval(TimeInterval(first.seconds))
         let sessionID = session.id
         self.liveDistanceMeters = {
-            if let watch = LiveMetricsHub.shared.liveMetrics?.distanceMeters, watch > 0 { return watch }
-            return CardioRouteRecorder.shared.liveDistanceMeters(for: sessionID)
+            CardioRouteRecorder.shared.authoritativeLiveDistance(for: sessionID)
         }
     }
 

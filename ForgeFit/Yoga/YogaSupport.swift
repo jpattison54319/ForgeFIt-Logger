@@ -91,7 +91,7 @@ extension YogaFlowPlan {
 extension CardioSessionModel {
     /// The style driving XP weighting and recovery classification; hatha is
     /// the neutral default for sessions logged before styles existed.
-    var resolvedYogaStyle: YogaStyle { yogaStyle ?? .hatha }
+    nonisolated var resolvedYogaStyle: YogaStyle { yogaStyle ?? .hatha }
 }
 
 /// One completion path for guided, watch-started, finish-workout, and manual

@@ -11,6 +11,7 @@ private struct ProfileStats {
 /// Hevy-style profile: identity + lifetime stats, a weekly activity chart with a
 /// metric toggle, a dashboard grid, and the workout feed.
 struct ProfileView: View {
+    @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -137,6 +138,7 @@ struct ProfileView: View {
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showProfileEditor) { ProfileEditSheet() }
         }
+        .id(tabRootRequestID)
         .interactiveBackSwipeEnabled()
     }
 

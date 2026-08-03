@@ -10,13 +10,22 @@ struct WatchActiveWorkoutView: View {
     @State private var selection = 1
 
     var body: some View {
+        Group {
+            if let plan = workout.conditioningPlan,
+               let progress = workout.conditioningProgress {
+                WatchConditioningWorkoutView(store: store, workout: workout, plan: plan, progress: progress)
+            } else {
+                standardWorkout
+            }
+        }
+        .task { await store.recoverOrStartWorkoutSession() }
+    }
+
+    private var standardWorkout: some View {
         TabView(selection: $selection) {
-            WatchMetricsPage(store: store, workout: workout)
-                .tag(0)
-            WatchExercisesPage(store: store, workout: workout)
-                .tag(1)
-            WatchControlsPage(store: store)
-                .tag(2)
+            WatchMetricsPage(store: store, workout: workout).tag(0)
+            WatchExercisesPage(store: store, workout: workout).tag(1)
+            WatchControlsPage(store: store).tag(2)
         }
         .tabViewStyle(.verticalPage)
         .overlay(alignment: .top) {
@@ -28,9 +37,127 @@ struct WatchActiveWorkoutView: View {
                 WatchRestBanner(workout: workout)
             }
         }
-        .task {
-            await store.recoverOrStartWorkoutSession()
+    }
+}
+
+private struct WatchConditioningWorkoutView: View {
+    let store: WatchStore
+    let workout: WatchWorkoutSnapshot
+    let plan: ConditioningPlan
+    let progress: ConditioningProgress
+
+    @State private var page = 0
+
+    private var section: ConditioningSection? {
+        plan.sections.indices.contains(progress.sectionIndex) ? plan.sections[progress.sectionIndex] : nil
+    }
+
+    var body: some View {
+        TabView(selection: $page) {
+            workPage.tag(0)
+            controlPage.tag(1)
         }
+        .tabViewStyle(.verticalPage)
+        .task {
+            if progress.status == .ready { store.applyConditioning(.start) }
+        }
+    }
+
+    private var workPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(section?.format.title ?? "WORKOUT")
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundStyle(WTheme.accent)
+                        Text(clock(at: context.date))
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(WTheme.gold)
+                            .contentTransition(.numericText())
+                    }
+                }
+
+                HStack {
+                    Text("Round \(progress.round)")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                    Spacer()
+                    Text("\(progress.fullRounds) done")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                if let section {
+                    ForEach(section.movements) { movement in
+                        Button {
+                            store.applyConditioning(.toggleMovement(movement.id))
+                        } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: progress.completedMovementIDs.contains(movement.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(progress.completedMovementIDs.contains(movement.id) ? WTheme.teal : .secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(name(for: movement)).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                                    Text(target(for: movement, in: section))
+                                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button {
+                    store.applyConditioning(.completeRound)
+                } label: {
+                    Label(section?.format == .emom ? "Complete Interval" : "Complete Round", systemImage: "checkmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(WTheme.accent)
+            }
+            .padding(.horizontal, 5)
+        }
+    }
+
+    private var controlPage: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "stopwatch.fill").font(.system(size: 30)).foregroundStyle(WTheme.gold)
+            Text(section?.name ?? workout.title ?? "Conditioning")
+                .font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
+            Button(progress.status == .paused ? "Resume" : "Pause") {
+                store.applyConditioning(progress.status == .paused ? .resume : .pause)
+            }
+            .buttonStyle(.bordered)
+            Button("Finish Workout") { store.finishWorkout() }
+                .buttonStyle(.borderedProminent).tint(WTheme.teal)
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private func clock(at date: Date) -> String {
+        guard let section else { return "0:00" }
+        let elapsed = ConditioningProgressEngine.elapsedSeconds(for: progress, at: date)
+        let limit = section.durationSeconds ?? section.timeCapSeconds
+        if [.amrap, .emom, .intervals].contains(section.format), let limit {
+            return WFmt.rest(max(0, limit - elapsed))
+        }
+        return WFmt.elapsed(elapsed)
+    }
+
+    private func name(for movement: ConditioningMovement) -> String {
+        workout.exercises.first { $0.exerciseID == movement.exerciseID }?.name ?? "Exercise"
+    }
+
+    private func target(for movement: ConditioningMovement, in section: ConditioningSection) -> String {
+        let amount = section.target(for: movement, round: progress.round)
+            .formatted(.number.precision(.fractionLength(0...1)))
+        let load = movement.targetLoad.map {
+            " · \($0.formatted(.number.precision(.fractionLength(0...1)))) \(store.context?.unitSuffix ?? "lb")"
+        } ?? ""
+        return "\(amount) \(movement.targetUnit.shortLabel)\(load)"
     }
 }
 

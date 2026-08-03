@@ -208,8 +208,8 @@ struct CoachCornerView: View {
                         Spacer()
                         // Mirrors `RecoveryHeroCard`: a number only once an
                         // evidence-based score exists behind it.
-                        if recovery.baselineReady {
-                            Text("\(Int(recovery.displayScore * 100)) ready")
+                        if let score = recovery.displayScore {
+                            Text("\(Int((score * 100).rounded())) index")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)
                         }

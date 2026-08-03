@@ -50,20 +50,30 @@ struct ScrollSafeMenuItem {
 /// scroll surface; `Menu` remains fine for toolbars and sheets.
 struct ScrollSafeMenu<Label: View>: View {
     let sections: [[ScrollSafeMenuItem]]
+    let primaryAction: (() -> Void)?
     @ViewBuilder let label: () -> Label
 
-    init(sections: [[ScrollSafeMenuItem]], @ViewBuilder label: @escaping () -> Label) {
+    init(
+        sections: [[ScrollSafeMenuItem]],
+        primaryAction: (() -> Void)? = nil,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
         self.sections = sections
+        self.primaryAction = primaryAction
         self.label = label
     }
 
-    init(items: [ScrollSafeMenuItem], @ViewBuilder label: @escaping () -> Label) {
-        self.init(sections: [items], label: label)
+    init(
+        items: [ScrollSafeMenuItem],
+        primaryAction: (() -> Void)? = nil,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.init(sections: [items], primaryAction: primaryAction, label: label)
     }
 
     var body: some View {
         label()
-            .overlay { MenuButtonOverlay(sections: sections) }
+            .overlay { MenuButtonOverlay(sections: sections, primaryAction: primaryAction) }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
     }
@@ -73,14 +83,24 @@ struct ScrollSafeMenu<Label: View>: View {
 /// the UIMenu; the SwiftUI label carries the visuals and accessibility.
 private struct MenuButtonOverlay: UIViewRepresentable {
     let sections: [[ScrollSafeMenuItem]]
+    let primaryAction: (() -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(primaryAction: primaryAction)
+    }
 
     func makeUIView(context: Context) -> UIButton {
         let button = UIButton(type: .custom)
-        button.showsMenuAsPrimaryAction = true
+        button.showsMenuAsPrimaryAction = primaryAction == nil
         button.preferredMenuElementOrder = .fixed
         // The SwiftUI wrapper is the accessibility element; a second, blank
         // UIKit element here would double up the VoiceOver focus order.
         button.isAccessibilityElement = false
+        button.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.performPrimaryAction),
+            for: .primaryActionTriggered
+        )
         button.menu = builtMenu
         return button
     }
@@ -88,7 +108,21 @@ private struct MenuButtonOverlay: UIViewRepresentable {
     func updateUIView(_ button: UIButton, context: Context) {
         // Rebuild every update: checkmark state (current set type, picked
         // rest) must track the model.
+        context.coordinator.primaryAction = primaryAction
+        button.showsMenuAsPrimaryAction = primaryAction == nil
         button.menu = builtMenu
+    }
+
+    final class Coordinator: NSObject {
+        var primaryAction: (() -> Void)?
+
+        init(primaryAction: (() -> Void)?) {
+            self.primaryAction = primaryAction
+        }
+
+        @objc func performPrimaryAction() {
+            primaryAction?()
+        }
     }
 
     private var builtMenu: UIMenu {

@@ -146,6 +146,10 @@ struct WorkoutDetailView: View {
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
                 }
 
+                if let note = WorkoutNotePolicy.userText(in: workout) {
+                    LoggedNoteView(title: "Workout note", text: note)
+                }
+
                 // Likes only exist for workouts shared through an opted-in
                 // community profile.
                 if social.isOptedIn, SocialBackfill.isEligible(workout) {
@@ -183,9 +187,9 @@ struct WorkoutDetailView: View {
                 ForEach(workout.exercises.sorted { $0.position < $1.position }) { we in
                     if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
                         if session.isYogaSession {
-                            yogaCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                            yogaCard(session, workoutExercise: we, exercise: exercises.first { $0.id == we.exerciseID })
                         } else {
-                            cardioCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                            cardioCard(session, workoutExercise: we, exercise: exercises.first { $0.id == we.exerciseID })
                         }
                     } else {
                         exerciseCard(we)
@@ -193,11 +197,11 @@ struct WorkoutDetailView: View {
                 }
                 // Yoga sessions without an anchor exercise (Health imports).
                 ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && $0.isYogaSession }) { session in
-                    yogaCard(session, exercise: nil)
+                    yogaCard(session, workoutExercise: nil, exercise: nil)
                 }
                 // Legacy cardio sessions not linked to an exercise.
                 ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && !$0.isYogaSession }) { session in
-                    cardioCard(session, exercise: nil)
+                    cardioCard(session, workoutExercise: nil, exercise: nil)
                 }
             }
             .padding(.horizontal, Space.lg)
@@ -567,6 +571,9 @@ struct WorkoutDetailView: View {
                 } else {
                     Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
+                if let note = nonemptyNote(we.notes) {
+                    LoggedNoteView(title: "Exercise note", text: note)
+                }
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                     historicalSetRow(set, index: index, sets: sets, unit: unit)
                 }
@@ -691,7 +698,11 @@ struct WorkoutDetailView: View {
 
     /// A completed yoga session: style, duration/poses/HR, and the pose-by-
     /// pose hold list — the history mirror of the live yoga card.
-    private func yogaCard(_ session: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
+    private func yogaCard(
+        _ session: CardioSessionModel,
+        workoutExercise: WorkoutExerciseModel?,
+        exercise: ExerciseLibraryModel?
+    ) -> some View {
         let style = session.resolvedYogaStyle
         let name = exercise.map { ex in
             YogaFlowPlan.decode(from: workout.exercises.first { $0.exerciseID == ex.id }?.yogaFlowJSON)?.steps.count ?? 1 > 1
@@ -713,6 +724,9 @@ struct WorkoutDetailView: View {
                     }
                     Spacer()
                     Tag(text: "\(style.title) Yoga", color: theme.accent, background: theme.accentSoft)
+                }
+                if let note = nonemptyNote(workoutExercise?.notes) {
+                    LoggedNoteView(title: "Exercise note", text: note)
                 }
                 HStack {
                     StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
@@ -742,7 +756,11 @@ struct WorkoutDetailView: View {
         }
     }
 
-    private func cardioCard(_ cardio: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
+    private func cardioCard(
+        _ cardio: CardioSessionModel,
+        workoutExercise: WorkoutExerciseModel?,
+        exercise: ExerciseLibraryModel?
+    ) -> some View {
         let kind = CardioKind.from(modality: cardio.modality)
         let name = exercise?.name ?? kind.title
         return Card {
@@ -754,6 +772,9 @@ struct WorkoutDetailView: View {
                     let isExpanded = expandedCardioIDs.contains(cardio.id)
                     cardioBlockHeader(cardio, kind: kind, name: name, isExpanded: isExpanded)
                     if isExpanded {
+                        if let note = nonemptyNote(workoutExercise?.notes) {
+                            LoggedNoteView(title: "Exercise note", text: note)
+                        }
                         cardioDetailContent(cardio, kind: kind, showPerBlockHR: true)
                         if let exercise {
                             cardioLibraryLink(exercise, name: name)
@@ -773,10 +794,21 @@ struct WorkoutDetailView: View {
                         }
                     }
 
+                    if let note = nonemptyNote(workoutExercise?.notes) {
+                        LoggedNoteView(title: "Exercise note", text: note)
+                    }
+
                     cardioDetailContent(cardio, kind: kind, showPerBlockHR: false)
                 }
             }
         }
+    }
+
+    private func nonemptyNote(_ note: String?) -> String? {
+        guard let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty else {
+            return nil
+        }
+        return note
     }
 
     /// Compact collapsed row for a cardio block in a mixed workout:

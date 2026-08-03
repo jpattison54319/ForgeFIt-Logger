@@ -66,11 +66,11 @@ struct DailyStrainCard: View {
 
             VStack(alignment: .trailing, spacing: 3) {
                 if let target = report.targetRange {
-                    Text("Target \(formatted(target.lowerBound))–\(formatted(target.upperBound))")
+                    Text("Usual \(formatted(target.lowerBound))–\(formatted(target.upperBound))")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
                 } else {
-                    Text("Target building")
+                    Text("More history needed")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(theme.textSecondary)
                 }
@@ -116,10 +116,10 @@ struct DailyStrainCard: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text("Building your strain baseline")
+                Text("Collecting baseline")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(theme.textPrimary)
-                Text("Seven days of movement data unlocks a personal score and target.")
+                Text("Fourteen comparable days unlock a personal score; rated workouts add training load.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -140,18 +140,7 @@ struct DailyStrainCard: View {
     }
 
     private func statusText(_ score: Double) -> String {
-        switch report.status {
-        case .building: "Building baseline"
-        case .targetBuilding: "Recovery target building"
-        case .belowTarget:
-            if let lower = report.targetRange?.lowerBound {
-                "\(formatted(max(0, lower - score))) to target"
-            } else {
-                "Below target"
-            }
-        case .inTarget: "Target reached"
-        case .aboveTarget: "Above today's range"
-        }
+        DailyStrainGaugePresentation(score: score, usualRange: report.targetRange).band.title
     }
 
     private func formatted(_ value: Double) -> String {

@@ -119,6 +119,10 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
     /// True when this is a yoga session — the watch engine records the
     /// HKWorkout as `.yoga`. Additive-optional so older snapshots decode.
     public var isYogaWorkout: Bool?
+    /// Shared conditioning state. Additive optionals keep mixed-version phone
+    /// and watch installations compatible.
+    public var conditioningPlan: ConditioningPlan?
+    public var conditioningProgress: ConditioningProgress?
 
     public init(
         workoutID: UUID,
@@ -134,7 +138,9 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         intervalNextName: String? = nil,
         intervalRound: String? = nil,
         hrZoneTarget: Int? = nil,
-        isYogaWorkout: Bool? = nil
+        isYogaWorkout: Bool? = nil,
+        conditioningPlan: ConditioningPlan? = nil,
+        conditioningProgress: ConditioningProgress? = nil
     ) {
         self.workoutID = workoutID
         self.title = title
@@ -150,6 +156,8 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         self.intervalRound = intervalRound
         self.hrZoneTarget = hrZoneTarget
         self.isYogaWorkout = isYogaWorkout
+        self.conditioningPlan = conditioningPlan
+        self.conditioningProgress = conditioningProgress
     }
 
     public var completedSets: Int {
@@ -167,6 +175,8 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
 
     /// The `WorkoutExerciseModel` id.
     public var id: UUID
+    /// The library id used by conditioning-plan movements. Additive-optional.
+    public var exerciseID: UUID?
     public var name: String
     public var isCardio: Bool
     /// Yoga sessions share cardio's start/complete lifecycle on the wrist but
@@ -184,6 +194,7 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
 
     public init(
         id: UUID,
+        exerciseID: UUID? = nil,
         name: String,
         isCardio: Bool = false,
         isYoga: Bool? = nil,
@@ -194,6 +205,7 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
         sets: [WatchSetSnapshot] = []
     ) {
         self.id = id
+        self.exerciseID = exerciseID
         self.name = name
         self.isCardio = isCardio
         self.isYoga = isYoga
@@ -375,10 +387,13 @@ public enum WatchCommand: Codable, Sendable {
     case startCardio(workoutExerciseID: UUID)
     case completeCardio(workoutExerciseID: UUID)
     case liveMetrics(WatchLiveMetrics)
+    case conditioningEvent(ConditioningProgressEvent)
     /// `savedToHealth` is true when the watch's HKLiveWorkoutBuilder already
     /// wrote the HKWorkout — the phone then skips its own write to avoid
     /// double-counting in Apple Health.
     case finishWorkout(metrics: WatchLiveMetrics?, savedToHealth: Bool)
+    /// Bidirectional terminal command: whichever device receives it cancels
+    /// and discards its local live workout resources.
     case discardWorkout
 
     // phone → watch

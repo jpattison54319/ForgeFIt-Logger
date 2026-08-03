@@ -20,6 +20,7 @@ struct RoutineShareCard: View {
         exercises.first { $0.id == re.exerciseID }
     }
     private var totalSets: Int { sortedExercises.reduce(0) { $0 + $1.sets.count } }
+    private var conditioningPlan: ConditioningPlan? { ConditioningPlan.decode(from: routine.conditioningPlanJSON) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -30,15 +31,20 @@ struct RoutineShareCard: View {
                 theme: theme
             )
             statBlock
+            if let conditioningPlan {
+                ConditioningShareBlock(plan: conditioningPlan, exercises: exercises, theme: theme)
+            }
             if let notes = routine.notes, !notes.isEmpty {
                 Text(notes).font(.system(size: 13)).foregroundStyle(theme.textSecondary)
             }
-            Rectangle().fill(theme.separator).frame(height: 1)
-            if sortedExercises.isEmpty {
-                Text("No exercises yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textSecondary)
-            } else {
-                ForEach(sortedExercises) { re in
-                    exerciseBlock(re)
+            if conditioningPlan == nil {
+                Rectangle().fill(theme.separator).frame(height: 1)
+                if sortedExercises.isEmpty {
+                    Text("No exercises yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                } else {
+                    ForEach(sortedExercises) { re in
+                        exerciseBlock(re)
+                    }
                 }
             }
             ShareCardFooter(theme: theme)
@@ -50,8 +56,18 @@ struct RoutineShareCard: View {
 
     private var statBlock: some View {
         HStack(spacing: 12) {
-            RoutineShareStat(value: "\(sortedExercises.count)", label: "Exercises", color: theme.accent, theme: theme)
-            RoutineShareStat(value: "\(totalSets)", label: "Sets", color: theme.secondaryAccent, theme: theme)
+            if let conditioningPlan {
+                RoutineShareStat(value: "\(conditioningPlan.sections.count)", label: "Sections", color: theme.accent, theme: theme)
+                RoutineShareStat(
+                    value: conditioningPlan.sections.first?.format.title ?? "Workout",
+                    label: "Format",
+                    color: theme.secondaryAccent,
+                    theme: theme
+                )
+            } else {
+                RoutineShareStat(value: "\(sortedExercises.count)", label: "Exercises", color: theme.accent, theme: theme)
+                RoutineShareStat(value: "\(totalSets)", label: "Sets", color: theme.secondaryAccent, theme: theme)
+            }
         }
     }
 

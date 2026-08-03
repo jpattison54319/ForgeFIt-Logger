@@ -2,9 +2,20 @@ import Foundation
 
 /// A flagged night surfaced to the user for correction: the readiness day and
 /// the fragment of sleep that was actually captured.
-struct SleepIntegrityAlert: Equatable {
+nonisolated struct SleepIntegrityAlert: Equatable, Sendable {
     let day: Date
     let capturedMinutes: Int
+
+    /// Builds a review prompt only for a currently flagged, uncorrected night.
+    /// Keeping this projection beside the detector ensures the prompt duration
+    /// always comes from the same metric that was just re-evaluated.
+    init?(metric: RecoveryEngine.DailyHealthMetric) {
+        guard metric.sleepLikelyPartial,
+              !metric.sleepUserCorrected,
+              let capturedMinutes = metric.sleepTotalMinutes else { return nil }
+        day = metric.date
+        self.capturedMinutes = capturedMinutes
+    }
 }
 
 /// Detects nights whose sleep data is a partial-wear fragment rather than a
@@ -20,7 +31,7 @@ struct SleepIntegrityAlert: Equatable {
 /// early. We flag a night low-integrity only when its duration is well below
 /// the user's own baseline AND (its samples are sparse OR its window is
 /// anchored far from habitual) — real insomnia keeps both anchors and coverage.
-enum SleepIntegrity {
+nonisolated enum SleepIntegrity {
     /// Marker strings stamped into `DailyHealthMetric.integrityFlags`.
     enum Flag {
         /// Probable partial-wear capture — present but untrustworthy sleep.
@@ -68,6 +79,10 @@ enum SleepIntegrity {
         let sorted = metrics.sorted { $0.date < $1.date }
         var result = sorted
         for index in result.indices {
+            // This is a derived judgment, not durable source data. Clear the
+            // previous result before evaluating again so a later HealthKit
+            // update can retire the prompt or replace its captured duration.
+            result[index].integrityFlags.remove(Flag.partialWear)
             // Baseline = every OTHER night with sleep. Nights already carrying a
             // user correction stay in the baseline via their corrected value;
             // auto-flagged partial nights are dropped so they can't recalibrate

@@ -7,8 +7,9 @@ import SwiftData
 /// re-seed race or a sync round-trip can leave several `ExerciseLibraryModel`
 /// (or `ExerciseAliasModel`) rows sharing one logical `id`. The rest of the app
 /// tolerates this with "first wins" folds, but the rows still accumulate. This
-/// runs at launch (after `ExerciseSeedRepository.seedGlobalLibrary`) and keeps a
-/// single deterministic survivor per `id`, hard-deleting the others.
+/// runs on the app's private plan-maintenance context after a catalog seed or a
+/// CloudKit row-count change and keeps a single deterministic survivor per
+/// `id`, hard-deleting the others.
 ///
 /// The delete is a real `ModelContext.delete`, so it propagates to other
 /// devices through CloudKit. Survivor selection depends only on synced
@@ -18,7 +19,6 @@ import SwiftData
 /// to one row there is nothing left to delete — and self-healing: because it
 /// runs *after* the seed, if a group were ever emptied the next launch's seed
 /// re-inserts the missing built-in.
-@MainActor
 public enum ExerciseLibraryDeduplicator {
 
     public struct Summary: Equatable, Sendable {
@@ -34,13 +34,13 @@ public enum ExerciseLibraryDeduplicator {
     /// deterministic survivor each. Saves only when something was deleted.
     @discardableResult
     public static func removeDuplicates(in context: ModelContext) throws -> Summary {
-        let exercisesDeleted = collapse(
+        let exercisesDeleted = try collapse(
             try context.fetch(FetchDescriptor<ExerciseLibraryModel>()),
             id: { $0.id },
             prefers: exercisePrefers,
             in: context
         )
-        let aliasesDeleted = collapse(
+        let aliasesDeleted = try collapse(
             try context.fetch(FetchDescriptor<ExerciseAliasModel>()),
             id: { $0.id },
             prefers: aliasPrefers,
@@ -66,11 +66,12 @@ public enum ExerciseLibraryDeduplicator {
         id: (Model) -> UUID,
         prefers: (Model, Model) -> Bool,
         in context: ModelContext
-    ) -> Int {
+    ) throws -> Int {
         var survivors: [UUID: Model] = [:]
         var doomed: [Model] = []
 
         for row in rows {
+            try Task.checkCancellation()
             let key = id(row)
             guard let incumbent = survivors[key] else {
                 survivors[key] = row

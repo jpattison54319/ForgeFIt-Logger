@@ -37,7 +37,9 @@ public enum ExportMapper {
                 maxHR: workout.maxHR,
                 activeEnergyKcal: workout.activeEnergyKcal,
                 hrZoneSeconds: workout.hrZoneSeconds.contains(where: { $0 > 0 }) ? workout.hrZoneSeconds : nil,
-                readinessAtStart: workout.readinessAtStart
+                readinessAtStart: workout.readinessAtStart,
+                readinessMethodID: workout.readinessMethodID,
+                readinessCoverageAtStart: workout.readinessCoverageAtStart
             )
             if !health.isEmpty { workoutHealth[workout.id.uuidString] = health }
 
@@ -47,7 +49,7 @@ public enum ExportMapper {
                     maxHR: session.maxHR,
                     activeEnergyKcal: session.activeEnergyKcal,
                     hrZoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
-                    tss: session.tss,
+                    estimatedZoneDurationLoad: session.tss,
                     totalSteps: session.totalSteps,
                     floorsClimbed: session.floorsClimbed
                 )
@@ -80,6 +82,7 @@ public enum ExportMapper {
                     folderID: routine.folderID,
                     position: routine.position,
                     archivedAt: routine.archivedAt,
+                    conditioningPlanJSON: routine.conditioningPlanJSON,
                     exercises: routine.exercises
                         .sorted { $0.position < $1.position }
                         .map { exercise in

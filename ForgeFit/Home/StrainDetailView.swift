@@ -49,38 +49,18 @@ struct StrainDetailView: View {
     private var todayContent: some View {
         if let score = report.score {
             strainSummary(score)
-            activityInputs
-            sourceBreakdown
+            scoreBreakdown
         } else {
             MetricEmptyCard(
-                title: "Strain baseline is building",
-                message: "Seven days of movement data unlocks a personal score and a recovery-adjusted daily target.",
+                title: "Collecting baseline",
+                message: "Fourteen comparable days unlock a personal score. Rate the whole workout for the best training estimate; otherwise ForgeFit uses its logged components.",
                 systemImage: "chart.line.uptrend.xyaxis"
             )
         }
 
-        Button {
+        MetricInfoLink(title: "How strain is calculated") {
             showingInfo = true
-        } label: {
-            Card(padding: Space.md) {
-                HStack(spacing: Space.md) {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundStyle(theme.secondaryAccent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("How strain works")
-                            .font(.bodyStrong)
-                            .foregroundStyle(theme.textPrimary)
-                        Text("Recovery sets today's target; activity and training build the score.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundStyle(theme.textTertiary)
-                }
-            }
         }
-        .buttonStyle(.plain)
         .accessibilityIdentifier("daily-strain-info")
     }
 
@@ -91,7 +71,7 @@ struct StrainDetailView: View {
                 VStack(alignment: .leading, spacing: Space.md) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Strain and target")
+                            Text("Strain and usual range")
                                 .font(.bodyStrong)
                                 .foregroundStyle(theme.textPrimary)
                             Text("Last 30 days")
@@ -107,11 +87,11 @@ struct StrainDetailView: View {
                     HStack(spacing: Space.lg) {
                         Label("Daily strain", systemImage: "line.diagonal")
                             .foregroundStyle(theme.secondaryAccent)
-                        Label("Target range", systemImage: "rectangle.fill")
+                        Label("Usual range", systemImage: "rectangle.fill")
                             .foregroundStyle(theme.accent.opacity(0.55))
                     }
                     .font(.system(size: 11, weight: .semibold))
-                    Text("Targets move modestly with that morning's recovery. They guide the day; they are not an injury-risk threshold.")
+                    Text("The shaded range is descriptive history. It is not an optimized target or injury-risk threshold.")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -121,119 +101,133 @@ struct StrainDetailView: View {
             Card {
                 HStack {
                     trendStat("Tracked days", "\(trendPoints.count)")
-                    trendStat("In target", "\(daysInTarget)")
+                    trendStat("Within usual", "\(daysInTarget)")
                     trendStat("Average", averageStrain.formatted(.number.precision(.fractionLength(1))))
                 }
             }
         } else {
             MetricEmptyCard(
                 title: "Strain trend is building",
-                message: "Keep Apple Health connected and log workouts to see strain against each day's target.",
+                message: "Keep Apple Health connected and log workouts to compare each day with your usual range.",
                 systemImage: "chart.xyaxis.line"
             )
         }
     }
 
     private func strainSummary(_ score: Double) -> some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                HStack(alignment: .lastTextBaseline, spacing: Space.sm) {
-                    Text(score.formatted(.number.precision(.fractionLength(1))))
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
-                        .foregroundStyle(strainTint)
-                    Text("/ 10")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.textTertiary)
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 3) {
-                        if let target = report.targetRange {
-                            Text("Target \(formatted(target.lowerBound))-\(formatted(target.upperBound))")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(theme.textPrimary)
-                        } else {
-                            Text("Target building")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                        Text(statusText(score))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(statusTint)
+        let presentation = DailyStrainGaugePresentation(
+            score: score,
+            usualRange: report.targetRange
+        )
+        return Card {
+            VStack(spacing: Space.md) {
+                StrainSemicircleGauge(
+                    position: presentation.position,
+                    label: presentation.band.title,
+                    tint: strainTint,
+                    showsDirectionLabels: true
+                )
+                .frame(height: 92)
+
+                HStack(spacing: Space.lg) {
+                    summaryMetric(
+                        label: "Today",
+                        value: "\(score.formatted(.number.precision(.fractionLength(1)))) / 10",
+                        valueColor: strainTint,
+                        isTrailing: false
+                    )
+
+                    Divider()
+                        .overlay(theme.separator)
+                        .frame(height: 34)
+
+                    if let range = report.targetRange {
+                        summaryMetric(
+                            label: "Usual range",
+                            value: "\(formatted(range.lowerBound))–\(formatted(range.upperBound))",
+                            valueColor: theme.textPrimary,
+                            isTrailing: true
+                        )
+                    } else {
+                        summaryMetric(
+                            label: "Usual range",
+                            value: "More history needed",
+                            valueColor: theme.textTertiary,
+                            isTrailing: true
+                        )
                     }
                 }
-                StrainTargetBar(score: score, target: report.targetRange, color: strainTint)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(strainSummaryAccessibility(score, presentation: presentation))
         .accessibilityIdentifier("strain-today-summary")
     }
 
-    private var activityInputs: some View {
+    private func summaryMetric(
+        label: String,
+        value: String,
+        valueColor: Color,
+        isTrailing: Bool
+    ) -> some View {
+        VStack(alignment: isTrailing ? .trailing : .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(theme.textTertiary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(valueColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(
+            maxWidth: .infinity,
+            alignment: isTrailing ? .trailing : .leading
+        )
+    }
+
+    private var scoreBreakdown: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Today's activity")
+                Text("Score breakdown")
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
-                if let steps = report.steps {
-                    MetricReadingRow(title: "Steps", value: steps.formatted(), systemImage: "shoeprints.fill", tint: theme.secondaryAccent)
-                }
-                if report.steps != nil, report.exerciseMinutes != nil { Divider().overlay(theme.separator) }
-                if let minutes = report.exerciseMinutes {
-                    MetricReadingRow(title: "Active minutes", value: "\(minutes) min", systemImage: "figure.walk", tint: theme.zone2)
-                }
-                if (report.steps != nil || report.exerciseMinutes != nil), report.activeEnergyKcal != nil { Divider().overlay(theme.separator) }
-                if let energy = report.activeEnergyKcal {
-                    MetricReadingRow(title: "Active energy", value: "\(energy) kcal", systemImage: "bolt.fill", tint: theme.warmup)
-                }
-                if report.workoutMinutes > 0 {
-                    Divider().overlay(theme.separator)
-                    MetricReadingRow(title: "Logged training", value: "\(report.workoutMinutes) min", systemImage: "dumbbell.fill", tint: theme.accent)
-                }
+                MetricReadingRow(
+                    title: "Movement · 35%",
+                    value: percentileText(report.movementRatio),
+                    systemImage: "shoeprints.fill",
+                    detail: report.steps.map { "\($0.formatted()) steps by this time" }
+                        ?? "Same-time steps unavailable",
+                    tint: theme.zone2
+                )
+                Divider().overlay(theme.separator)
+                MetricReadingRow(
+                    title: "Training · 65%",
+                    value: percentileText(report.workoutRatio),
+                    systemImage: "dumbbell.fill",
+                    detail: trainingDetail,
+                    tint: theme.accent
+                )
             }
         }
     }
 
-    private var sourceBreakdown: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                Text("Against your norm")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.textPrimary)
-                if let ratio = report.movementRatio {
-                    ratioRow("Movement", ratio: ratio, systemImage: "figure.walk", tint: theme.zone2)
-                }
-                if report.movementRatio != nil, report.workoutRatio != nil { Divider().overlay(theme.separator) }
-                if let ratio = report.workoutRatio {
-                    ratioRow("Training", ratio: ratio, systemImage: "dumbbell.fill", tint: theme.accent)
-                }
-                if report.movementRatio == nil, report.workoutRatio == nil {
-                    Text("More activity history is needed before ForgeFit can compare today with your norm.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                }
-            }
+    private var trainingDetail: String {
+        guard report.workoutRatio != nil else {
+            return "Needs comparable workout history"
         }
+        guard report.workoutLoad > 0 else { return "No training load today" }
+        let load = Int(report.workoutLoad.rounded()).formatted()
+        let detail = report.workoutMinutes > 0
+            ? "\(load) load · \(report.workoutMinutes) min"
+            : "\(load) load"
+        return report.workoutLoadWasEstimated ? "Estimated · \(detail)" : detail
     }
 
-    private func ratioRow(_ title: String, ratio: Double, systemImage: String, tint: Color) -> some View {
-        VStack(spacing: 6) {
-            HStack {
-                Label(title, systemImage: systemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                Spacer()
-                Text("\(ratio.formatted(.number.precision(.fractionLength(1))))x")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(tint)
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(theme.surfaceElevated)
-                    Capsule().fill(tint).frame(width: max(5, proxy.size.width * min(2, ratio) / 2))
-                    Rectangle().fill(theme.textTertiary).frame(width: 1, height: 8)
-                        .position(x: proxy.size.width / 2, y: 4)
-                }
-            }
-            .frame(height: 6)
-        }
+    private func percentileText(_ ratio: Double?) -> String {
+        guard let ratio else { return "Unavailable" }
+        return "Percentile \(Int((ratio * 100).rounded()))"
     }
 
     private var strainTrendChart: some View {
@@ -241,8 +235,8 @@ struct StrainDetailView: View {
             if let target = point.target {
                 AreaMark(
                     x: .value("Date", point.date),
-                    yStart: .value("Target low", target.lowerBound),
-                    yEnd: .value("Target high", target.upperBound)
+                    yStart: .value("Usual low", target.lowerBound),
+                    yEnd: .value("Usual high", target.upperBound)
                 )
                 .foregroundStyle(theme.accent.opacity(0.13))
             }
@@ -268,6 +262,8 @@ struct StrainDetailView: View {
             }
         }
         .frame(height: 190)
+        .accessibilityLabel("Daily strain over the last 30 days")
+        .accessibilityValue("Average \(averageStrain.formatted(.number.precision(.fractionLength(1)))); \(daysInTarget) days within the usual range.")
     }
 
     private func trendStat(_ label: String, _ value: String) -> some View {
@@ -294,26 +290,27 @@ struct StrainDetailView: View {
     }
 
     private var strainTint: Color {
-        report.status == .aboveTarget ? theme.warmup : theme.secondaryAccent
-    }
-
-    private var statusTint: Color {
-        switch report.status {
-        case .inTarget: theme.success
-        case .aboveTarget: theme.warmup
-        default: theme.textSecondary
+        let band = DailyStrainGaugePresentation(
+            score: report.score,
+            usualRange: report.targetRange
+        ).band
+        return switch band {
+        case .usual: theme.success
+        case .aboveUsual, .muchHigher: theme.warmup
+        case .belowUsual, .muchLower: theme.zone2
+        case .collectingBaseline, .rangePending: theme.textTertiary
         }
     }
 
-    private func statusText(_ score: Double) -> String {
-        switch report.status {
-        case .building: "Building baseline"
-        case .targetBuilding: "Recovery target building"
-        case .belowTarget:
-            report.targetRange.map { "\(formatted(max(0, $0.lowerBound - score))) to target" } ?? "Below target"
-        case .inTarget: "Target reached"
-        case .aboveTarget: "Above today's range"
+    private func strainSummaryAccessibility(
+        _ score: Double,
+        presentation: DailyStrainGaugePresentation
+    ) -> String {
+        let scoreText = score.formatted(.number.precision(.fractionLength(1)))
+        guard let range = report.targetRange else {
+            return "Strain index \(scoreText) out of 10. More history needed to show your usual range."
         }
+        return "Strain index \(scoreText) out of 10. \(presentation.band.title). Usual range \(formatted(range.lowerBound)) to \(formatted(range.upperBound))."
     }
 
     private func formatted(_ value: Double) -> String {

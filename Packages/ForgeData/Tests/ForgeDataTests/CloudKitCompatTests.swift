@@ -89,6 +89,48 @@ import Testing
         #expect(empty.tags.isEmpty)
     }
 
+    @Test func experimentModelsHaveCloudKitSafeDefaultsAndScalarReferences() {
+        let userID = UUID()
+        let experiment = ExperimentModel(
+            userID: userID,
+            name: "Protocol",
+            plannedEndAt: Date().addingTimeInterval(86_400)
+        )
+        let tracker = ExperimentTrackerModel(
+            userID: userID,
+            experimentID: experiment.id,
+            label: "Dose",
+            type: .number
+        )
+        let entry = ExperimentEntryModel(
+            userID: userID,
+            experimentID: experiment.id,
+            trackerID: tracker.id,
+            value: .number(5)
+        )
+
+        #expect(experiment.stateRaw == "active")
+        #expect(experiment.headlineMetricSelectionsJSON == "[]")
+        #expect(experiment.reminderEnabled == false)
+        #expect(experiment.schemaVersion == 1)
+        #expect(tracker.optionsJSON == "[]")
+        #expect(tracker.cadenceRaw == "daily")
+        #expect(tracker.selectedWeekdaysJSON == "[]")
+        #expect(tracker.definitionVersion == 1)
+        #expect(entry.valueTypeRaw == "number")
+        #expect(entry.definitionSnapshotJSON == "{}")
+
+        let experimentEntities = Set([
+            "ExperimentModel",
+            "ExperimentTrackerModel",
+            "ExperimentEntryModel",
+        ])
+        let schema = Schema(ForgeDataSchema.models)
+        for entity in schema.entities where experimentEntities.contains(entity.name) {
+            #expect(entity.relationships.isEmpty)
+        }
+    }
+
     @Test func intervalPresetModelHasCloudKitSafeDefaults() {
         let preset = IntervalPresetModel(userID: UUID(), name: "My VO2")
 

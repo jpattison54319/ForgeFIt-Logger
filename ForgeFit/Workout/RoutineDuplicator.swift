@@ -21,7 +21,8 @@ enum RoutineDuplicator {
             name: "\(source.name) Copy",
             notes: source.notes,
             folderID: source.folderID,
-            position: position
+            position: position,
+            conditioningPlanJSON: source.conditioningPlanJSON
         )
         copy.exercises = source.exercises
             .sorted { $0.position < $1.position }

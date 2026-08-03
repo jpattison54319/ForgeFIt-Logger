@@ -13,8 +13,9 @@ struct YogaExerciseCard: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Bindable var workout: WorkoutModel
-    let workoutExercise: WorkoutExerciseModel
+    @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
+    let pinnedNote: UserExerciseNoteModel?
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -46,6 +47,13 @@ struct YogaExerciseCard: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 header
+                if workoutExercise.notes != nil {
+                    StickyNoteView(
+                        workoutExercise: workoutExercise,
+                        exerciseID: workoutExercise.exerciseID,
+                        pinnedNote: pinnedNote
+                    )
+                }
                 if let session {
                     content(session)
                 } else {
@@ -347,6 +355,7 @@ struct YogaExerciseCard: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Exercise options")
+            .accessibilityIdentifier("exercise-overflow-menu")
         }
     }
 
@@ -359,13 +368,21 @@ struct YogaExerciseCard: View {
                 onShowExerciseDetail(exercise)
             })
         }
-        var actions = SupersetUI.scrollSafeMenuItems(
+        var actions: [ScrollSafeMenuItem] = []
+        if workoutExercise.notes == nil {
+            actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
+                workoutExercise.notes = ""
+                workoutExercise.updatedAt = .now
+                try? modelContext.save()
+            })
+        }
+        actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
             currentGroup: workoutExercise.supersetGroup,
             availableGroups: availableSupersetGroups,
             onAssign: onAssignSuperset,
             onCreate: onCreateSuperset,
             onUngroup: onUngroupSuperset
-        )
+        ))
         actions.append(ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace))
         let remove = [ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)]
         return [details, actions, remove].filter { !$0.isEmpty }
@@ -407,7 +424,7 @@ struct YogaExerciseCard: View {
             showFlowBuilder = true
             return
         }
-        Task { await HealthService.shared.requestAuthorization() }
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
         session.liveStartedAt = now
         session.startedAt = now

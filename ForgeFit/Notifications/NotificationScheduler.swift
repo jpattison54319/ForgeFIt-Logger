@@ -1,9 +1,45 @@
 import Foundation
 import Observation
+import OSLog
 import UserNotifications
 #if canImport(UIKit)
 import UIKit
 #endif
+
+actor RestAlertDeliveryCoordinator {
+    enum Owner {
+        case inApp
+        case system
+        case cancelled
+    }
+
+    static let shared = RestAlertDeliveryCoordinator()
+
+    private struct Claim {
+        let owner: Owner
+        let createdAt: Date
+    }
+    private var claims: [String: Claim] = [:]
+
+    /// Exactly one foreground sound path owns a primary rest alert.
+    func claim(_ identifier: String, owner: Owner, now: Date = Date()) -> Bool {
+        purgeExpired(now: now)
+        guard claims[identifier] == nil else { return false }
+        claims[identifier] = Claim(owner: owner, createdAt: now)
+        return true
+    }
+
+    /// A cancelled/replaced timer must suppress a request that was already in
+    /// flight to UserNotifications and could otherwise arrive stale.
+    func cancel(_ identifier: String, now: Date = Date()) {
+        purgeExpired(now: now)
+        claims[identifier] = Claim(owner: .cancelled, createdAt: now)
+    }
+
+    private func purgeExpired(now: Date) {
+        claims = claims.filter { now.timeIntervalSince($0.value.createdAt) < 300 }
+    }
+}
 
 /// Single owner of every local notification the app sends:
 /// - the rest-timer's lock-screen alert (scheduled by RestTimerController),
@@ -16,8 +52,23 @@ import UIKit
 final class NotificationScheduler: NSObject {
     static let shared = NotificationScheduler()
 
+    nonisolated enum ForegroundDelivery: Equatable {
+        case bannerAndSystemSound
+        case inAppRestChime
+        case systemSound
+    }
+
     nonisolated enum NotificationID {
         static let restTimer = "forgefit.rest-timer"
+        static func restTimerAlert(_ alertID: UUID) -> String {
+            "\(restTimer).alert.\(alertID.uuidString)"
+        }
+        static func isPrimaryRestTimer(_ identifier: String) -> Bool {
+            identifier.hasPrefix("\(restTimer).alert.")
+        }
+        static func isRestTimer(_ identifier: String) -> Bool {
+            identifier.hasPrefix(restTimer)
+        }
         /// RestAlarm's opt-in "loud" follow-ups: a couple of extra
         /// time-sensitive pings after the primary rest-end notification.
         /// Prefixed with `restTimer` so the foreground-suppression check
@@ -36,7 +87,20 @@ final class NotificationScheduler: NSObject {
         static let allReminderIDs = (1...7).map { reminder(weekday: $0) }
     }
 
+    /// Foreground rest completion must use the app's `.playback` audio session:
+    /// unlike a notification sound, it follows the current media route, ducks
+    /// Spotify, and remains audible with the ringer switch off. Only background
+    /// delivery and the opt-in follow-up pings stay system-owned.
+    nonisolated static func foregroundDelivery(for identifier: String) -> ForegroundDelivery {
+        guard NotificationID.isRestTimer(identifier) else { return .bannerAndSystemSound }
+        return NotificationID.isPrimaryRestTimer(identifier) ? .inAppRestChime : .systemSound
+    }
+
     private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    @ObservationIgnored private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "ForgeFit",
+        category: "NotificationScheduler"
+    )
 
     // Persisted preferences (read by Settings too).
     var reminderWeekdays: Set<Int> {   // 1 = Sunday … 7 = Saturday (Calendar convention)
@@ -105,30 +169,92 @@ final class NotificationScheduler: NSObject {
 
     // MARK: - Rest timer (scheduled by RestTimerController)
 
-    func scheduleRestEnd(at endsAt: Date, title: String = "Rest over", body: String = "Time for your next set.") {
-        cancelRestEnd()
-        Task {
-            let settings = await UNUserNotificationCenter.current().notificationSettings()
-            guard settings.authorizationStatus == .authorized else { return }
-            let interval = endsAt.timeIntervalSinceNow
-            guard interval > 1 else { return }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            // Same forge-strike chime as the in-app timer, so the locked
-            // phone sounds like ForgeFit, not like every other app.
+    /// Returns true only when the system accepted an audible request. Foreground
+    /// ownership is arbitrated separately by `RestAlertDeliveryCoordinator`.
+    func scheduleRestEnd(
+        alertID: UUID,
+        at endsAt: Date,
+        title: String = "Rest over",
+        body: String = "Time for your next set."
+    ) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        authorizationStatus = settings.authorizationStatus
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            break
+        default:
+            return false
+        }
+        let interval = endsAt.timeIntervalSinceNow
+        guard interval > 1 else { return false }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        // Same forge-strike chime as the in-app timer, so the locked phone
+        // sounds like ForgeFit. Respect the app-level timer-sound toggle on
+        // both foreground and background delivery paths.
+        if TimerChime.isEnabled {
             content.sound = UNNotificationSound(named: UNNotificationSoundName(TimerChime.soundFileName))
-            content.interruptionLevel = .timeSensitive
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-            try? await UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: NotificationID.restTimer, content: content, trigger: trigger)
+        }
+        content.interruptionLevel = .timeSensitive
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+        do {
+            try await center.add(
+                UNNotificationRequest(
+                    identifier: NotificationID.restTimerAlert(alertID),
+                    content: content,
+                    trigger: trigger
+                )
             )
+            return TimerChime.isEnabled
+                && settings.authorizationStatus == .authorized
+                && settings.soundSetting == .enabled
+        } catch {
+            logger.error("Failed to schedule rest alert: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
-    func cancelRestEnd() {
+    func cancelRestEnd(alertID: UUID) {
         UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [NotificationID.restTimer])
+            .removePendingNotificationRequests(withIdentifiers: [NotificationID.restTimerAlert(alertID)])
+    }
+
+    func hasDeliveredRestEnd(alertID: UUID) async -> Bool {
+        let identifier = NotificationID.restTimerAlert(alertID)
+        return await UNUserNotificationCenter.current()
+            .deliveredNotifications()
+            .contains { $0.request.identifier == identifier }
+    }
+
+    func cancelAllRestEnds() {
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let pendingIdentifiers = await center.pendingNotificationRequests()
+                .map(\.identifier)
+                .filter(NotificationID.isRestTimer)
+            let deliveredIdentifiers = await center.deliveredNotifications()
+                .map(\.request.identifier)
+                .filter(NotificationID.isRestTimer)
+            center.removePendingNotificationRequests(withIdentifiers: pendingIdentifiers)
+            center.removeDeliveredNotifications(withIdentifiers: deliveredIdentifiers)
+        }
+    }
+
+    /// Remove every workout-scoped notification. Safe to call repeatedly from
+    /// overlapping terminal paths.
+    func cancelWorkoutCues() {
+        cancelAllRestEnds()
+        cancelLoudRestEndFollowUps()
+        cancelCardioCues()
+    }
+
+    func cancelCardioCues() {
+        cancelYogaCueSchedule()
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [NotificationID.intervalCue])
+        center.removeDeliveredNotifications(withIdentifiers: [NotificationID.intervalCue])
     }
 
     // MARK: - Loud rest-timer backstop (opt-in, RestAlarm)
@@ -260,9 +386,8 @@ final class NotificationScheduler: NSObject {
 
     // MARK: - Morning readiness (scheduled by ReadinessDelivery)
 
-    /// One-shot 7 AM readiness alert. Replaced — not appended — every time
-    /// fresher overnight data lands, so the pending content converges on the
-    /// score the user would see on Home.
+    /// One-shot, data-ready morning alert. Replaced — not appended — when
+    /// fresher overnight data lands so its content matches Home.
     func scheduleMorningReadiness(at fireDate: Date, title: String, body: String) {
         Task {
             let center = UNUserNotificationCenter.current()
@@ -317,16 +442,54 @@ final class NotificationScheduler: NSObject {
     }
 }
 
-extension NotificationScheduler: UNUserNotificationCenterDelegate {
-    /// Foreground presentation: reminders and alerts show a banner; the
-    /// rest-timer alert (and its opt-in loud follow-ups, prefix-matched)
-    /// stays suppressed — the in-app haptic + forge-strike chime cover it,
-    /// and RestAlarm.cancel() already pulls any pending follow-ups the
-    /// moment the foreground completion fires.
-    nonisolated func userNotificationCenter(
+// The SDK protocol predates strict concurrency. `@preconcurrency` lets this
+// @MainActor class own the callbacks; nonisolated witnesses can resume UIKit's
+// cold-launch scene restoration from a worker thread and trigger an assertion.
+extension NotificationScheduler: @preconcurrency UNUserNotificationCenterDelegate {
+    /// A primary rest alert that reaches a foreground app always uses the
+    /// ringer-switch-independent in-app player. Returning `.sound` here created
+    /// a race with `RestTimerController`: the system could claim the alert just
+    /// before the controller and silently replace the working media-audio path.
+    /// Background delivery never calls this method and retains the scheduled
+    /// custom notification sound. Loud follow-ups remain system-owned.
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        notification.request.identifier.hasPrefix(NotificationID.restTimer) ? [] : [.banner, .sound]
+        let identifier = notification.request.identifier
+        switch Self.foregroundDelivery(for: identifier) {
+        case .bannerAndSystemSound:
+            return [.banner, .sound]
+        case .systemSound:
+            return [.sound]
+        case .inAppRestChime:
+            let ownsSound = await RestAlertDeliveryCoordinator.shared.claim(identifier, owner: .inApp)
+            if ownsSound {
+                TimerChime.shared.play()
+            }
+            return []
+        }
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard let rawURL = response.notification.request.content.userInfo[
+            ExperimentNotificationRoute.userInfoURLKey
+        ] as? String,
+              URL(string: rawURL) != nil else {
+            return
+        }
+        // Persist first so a cold launch cannot lose the route before
+        // ContentView subscribes to the in-process notification.
+        UserDefaults.standard.set(
+            rawURL,
+            forKey: ExperimentNotificationRoute.pendingURLDefaultsKey
+        )
+        NotificationCenter.default.post(
+            name: ExperimentNotificationRoute.openRequested,
+            object: nil
+        )
     }
 }

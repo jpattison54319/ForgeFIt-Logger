@@ -120,6 +120,23 @@ final class BLEHeartRateService: NSObject {
         }
     }
 
+    /// End the workout-scoped connection without forgetting the paired
+    /// monitor. The next workout can reconnect explicitly.
+    func stopWorkoutConnection() {
+        wantsScan = false
+        wantsAutoConnect = false
+        clearPairingCandidate()
+        central?.stopScan()
+        if let peripheral, let central {
+            central.cancelPeripheralConnection(peripheral)
+        }
+        peripheral = nil
+        discovered = []
+        lastReadingAt = nil
+        lastConnectFailed = false
+        state = .idle
+    }
+
     /// Drop and forget the remembered monitor.
     func forget() {
         UserDefaults.standard.removeObject(forKey: Self.rememberedIDKey)
@@ -180,7 +197,7 @@ final class BLEHeartRateService: NSObject {
     /// a pending connect open so it re-attaches the moment broadcast returns.
     private func handleDrop() {
         lastReadingAt = nil
-        guard hasRememberedMonitor else {
+        guard wantsAutoConnect, hasRememberedMonitor else {
             peripheral = nil
             state = .idle
             return
@@ -288,8 +305,10 @@ extension BLEHeartRateService: CBCentralManagerDelegate {
                 UserDefaults.standard.set(candidate.id.uuidString, forKey: Self.rememberedIDKey)
                 UserDefaults.standard.set(candidate.name, forKey: Self.rememberedNameKey)
                 clearPairingCandidate()
-            } else if peripheral.identifier != rememberedID {
-                // Stray connect for a monitor we no longer care about.
+                wantsAutoConnect = true
+            } else if !wantsAutoConnect || peripheral.identifier != rememberedID {
+                // A cancelled/stale connect completed after workout teardown,
+                // or it belongs to a monitor we no longer care about.
                 central.cancelPeripheralConnection(peripheral)
                 return
             }

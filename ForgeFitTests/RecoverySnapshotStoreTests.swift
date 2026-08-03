@@ -1,4 +1,6 @@
 import Foundation
+import ForgeCore
+import ForgeData
 import Testing
 @testable import ForgeFit
 
@@ -93,6 +95,28 @@ struct RecoverySnapshotStoreTests {
         #expect(store.snapshot(for: d2)?.trend == 0.60)
     }
 
+    @Test func backgroundBackfillMergesWithoutOverwritingCapturedScores() {
+        let store = freshStore()
+        let yesterday = cal.date(byAdding: .day, value: -1, to: Date())!
+        store.captureIfAbsent(day: yesterday, daily: 0.82, trend: nil)
+
+        store.mergeBackfill([
+            yesterday: RecoverySnapshot(
+                daily: 0.21,
+                trend: 0.63,
+                strain: 5.4,
+                strainTargetLower: 4.8,
+                strainTargetUpper: 5.8
+            )
+        ])
+
+        let snapshot = store.snapshot(for: yesterday)
+        #expect(snapshot?.daily == 0.82)
+        #expect(snapshot?.trend == 0.63)
+        #expect(snapshot?.strain == 5.4)
+        #expect(snapshot?.strainTargetRange == 4.8...5.8)
+    }
+
     // MARK: - Same-day dashboard cache
 
     private func demoDashboard(recommendation: String = "Green light — push today.") -> HomeDashboardCache {
@@ -109,7 +133,10 @@ struct RecoverySnapshotStoreTests {
             healthHeadline: "All in range",
             healthCaption: "4 health signals checked",
             healthEvaluatedCount: 4,
-            healthOutsideRangeCount: 0)
+            healthOutsideRangeCount: 0,
+            preWorkoutAdjustment: "Train as planned.",
+            readinessMethodID: "recovery-index-v2",
+            readinessCoverage: 0.91)
     }
 
     @Test func dashboardRidesAlongWithTodaysScores() {
@@ -160,6 +187,29 @@ struct RecoverySnapshotStoreTests {
         let snapshot = try JSONDecoder().decode(RecoverySnapshot.self, from: data)
         #expect(snapshot.daily == 0.81)
         #expect(snapshot.dashboard == nil)
+    }
+
+    @Test func dashboardFromBeforeCrossSurfaceFieldsStillDecodes() throws {
+        let data = Data(#"{"recoveryDisplayScore":0.82,"baselineReady":true,"actionRaw":"push","recommendation":"Go","reasonTexts":[],"sleepValue":"7h","sleepCaption":"Good","sleepProgress":0.9,"sleepLooksPartial":false,"healthHeadline":"All in range","healthCaption":"4 checked","healthEvaluatedCount":4,"healthOutsideRangeCount":0}"#.utf8)
+        let dashboard = try JSONDecoder().decode(HomeDashboardCache.self, from: data)
+        #expect(dashboard.recoveryDisplayScore == 0.82)
+        #expect(dashboard.preWorkoutAdjustment == nil)
+        #expect(dashboard.readinessMethodID == nil)
+        #expect(dashboard.readinessCoverage == nil)
+    }
+
+    @Test func cachedDashboardBuildsWidgetAndWorkoutStartWithoutHistoryFetch() {
+        let dashboard = demoDashboard()
+        let widget = ReadinessSurfacePublisher.idleSnapshot(from: dashboard)
+        #expect(widget.readinessScore == 82)
+        #expect(widget.readinessAction == RecoveryEngine.Action.push.title)
+        #expect(widget.readinessDetail == "Train as planned.")
+
+        let workout = WorkoutModel(userID: ForgeFitDemo.userID, startedAt: Date())
+        #expect(ReadinessSurfacePublisher.apply(dashboard, to: workout))
+        #expect(workout.readinessAtStart == 82)
+        #expect(workout.readinessMethodID == "recovery-index-v2")
+        #expect(workout.readinessCoverageAtStart == 0.91)
     }
 }
 

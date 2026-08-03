@@ -40,6 +40,12 @@ public enum BackupMapper {
             endedAt: workout.endedAt,
             sourceDevice: workout.sourceDevice,
             notes: workout.notes,
+            conditioningPlanSnapshotJSON: workout.conditioningPlanSnapshotJSON,
+            conditioningProgressJSON: workout.conditioningProgressJSON,
+            conditioningResultJSON: workout.conditioningResultJSON,
+            wholeSessionRPE: workout.wholeSessionRPE,
+            wholeSessionRPERatedAt: workout.wholeSessionRPERatedAt,
+            wholeSessionRPEProtocolVersion: workout.wholeSessionRPEProtocolVersion,
             externalSource: workout.externalSource,
             externalID: workout.externalWorkoutID,
             importFingerprint: workout.importFingerprint,
@@ -204,6 +210,12 @@ public enum BackupMapper {
         workout.endedAt = backup.endedAt
         workout.sourceDevice = backup.sourceDevice
         workout.notes = backup.notes
+        workout.conditioningPlanSnapshotJSON = backup.conditioningPlanSnapshotJSON
+        workout.conditioningProgressJSON = backup.conditioningProgressJSON
+        workout.conditioningResultJSON = backup.conditioningResultJSON
+        workout.wholeSessionRPE = backup.wholeSessionRPE
+        workout.wholeSessionRPERatedAt = backup.wholeSessionRPERatedAt
+        workout.wholeSessionRPEProtocolVersion = backup.wholeSessionRPEProtocolVersion
         workout.externalSource = backup.externalSource
         workout.externalWorkoutID = backup.externalID
         workout.importFingerprint = backup.importFingerprint

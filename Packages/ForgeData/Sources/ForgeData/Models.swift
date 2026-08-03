@@ -45,7 +45,10 @@ public enum ForgeDataSchema {
             CardioSplitModel.self,
             WrappedReportModel.self,
             ProgressionSuggestionModel.self,
-            DailyCheckinModel.self
+            DailyCheckinModel.self,
+            ExperimentModel.self,
+            ExperimentTrackerModel.self,
+            ExperimentEntryModel.self
         ]
     }
 
@@ -341,6 +344,10 @@ public final class RoutineModel {
     /// owning folder's stamp when archived as part of a folder — see
     /// `RoutineFolderModel.archivedAt`. Additive-optional for CloudKit.
     public var archivedAt: Date?
+    /// Optional structured conditioning plan. Nil keeps the routine on the
+    /// existing set-based path. JSON mirrors interval/yoga plans and remains
+    /// additive for CloudKit stores created by older app versions.
+    public var conditioningPlanJSON: String?
     // CloudKit requires relationships to be optional; the optional storage is
     // private and the public face stays non-optional. `originalName` keeps
     // existing local stores migrating in place.
@@ -363,6 +370,7 @@ public final class RoutineModel {
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
         archivedAt: Date? = nil,
+        conditioningPlanJSON: String? = nil,
         exercises: [RoutineExerciseModel] = []
     ) {
         self.id = id
@@ -376,6 +384,7 @@ public final class RoutineModel {
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
         self.archivedAt = archivedAt
+        self.conditioningPlanJSON = conditioningPlanJSON
         self.exercises = exercises
     }
 }
@@ -528,6 +537,12 @@ public final class WorkoutModel {
     public var sourceDevice: String?
     public var totalVolume: Double?
     public var notes: String?
+    /// Frozen plan, live reducer state, and final score for conditioning or
+    /// mixed workouts. Training data only; Health-derived values stay in the
+    /// existing local health fields.
+    public var conditioningPlanSnapshotJSON: String?
+    public var conditioningProgressJSON: String?
+    public var conditioningResultJSON: String?
     // Session health metrics captured live from the Apple Watch (or filled
     // from HealthKit at finish) — stored with the workout so the user can
     // reflect on prior sessions.
@@ -536,9 +551,18 @@ public final class WorkoutModel {
     public var activeEnergyKcal: Double?
     /// Seconds spent in each of the 5 HR zones during the session.
     public var hrZoneSeconds: [Int] = []
+    /// Optional whole-session CR10 rating. Unlike per-set RPE, this describes
+    /// the complete workout and is eligible for same-method session load.
+    public var wholeSessionRPE: Double?
+    public var wholeSessionRPERatedAt: Date?
+    public var wholeSessionRPEProtocolVersion: String?
     /// Readiness score (0–100) when the session started — "trained at 45%
     /// ready" is context worth keeping.
     public var readinessAtStart: Int?
+    /// Method and coverage make future workout-outcome calibration compare
+    /// like with like. These stay local with the Health-derived score.
+    public var readinessMethodID: String?
+    public var readinessCoverageAtStart: Double?
     /// Provenance for non-HealthKit historical imports (Hevy, Strong, generic CSV,
     /// ForgeFit JSON). These fields make repeated imports idempotent and let the
     /// app explain where old history came from.
@@ -577,11 +601,19 @@ public final class WorkoutModel {
         sourceDevice: String? = nil,
         totalVolume: Double? = nil,
         notes: String? = nil,
+        conditioningPlanSnapshotJSON: String? = nil,
+        conditioningProgressJSON: String? = nil,
+        conditioningResultJSON: String? = nil,
         avgHR: Int? = nil,
         maxHR: Int? = nil,
         activeEnergyKcal: Double? = nil,
         hrZoneSeconds: [Int] = [],
+        wholeSessionRPE: Double? = nil,
+        wholeSessionRPERatedAt: Date? = nil,
+        wholeSessionRPEProtocolVersion: String? = nil,
         readinessAtStart: Int? = nil,
+        readinessMethodID: String? = nil,
+        readinessCoverageAtStart: Double? = nil,
         externalSource: String? = nil,
         externalWorkoutID: String? = nil,
         importFingerprint: String? = nil,
@@ -604,11 +636,19 @@ public final class WorkoutModel {
         self.sourceDevice = sourceDevice
         self.totalVolume = totalVolume
         self.notes = notes
+        self.conditioningPlanSnapshotJSON = conditioningPlanSnapshotJSON
+        self.conditioningProgressJSON = conditioningProgressJSON
+        self.conditioningResultJSON = conditioningResultJSON
         self.avgHR = avgHR
         self.maxHR = maxHR
         self.activeEnergyKcal = activeEnergyKcal
         self.hrZoneSeconds = hrZoneSeconds
+        self.wholeSessionRPE = wholeSessionRPE
+        self.wholeSessionRPERatedAt = wholeSessionRPERatedAt
+        self.wholeSessionRPEProtocolVersion = wholeSessionRPEProtocolVersion
         self.readinessAtStart = readinessAtStart
+        self.readinessMethodID = readinessMethodID
+        self.readinessCoverageAtStart = readinessCoverageAtStart
         self.externalSource = externalSource
         self.externalWorkoutID = externalWorkoutID
         self.importFingerprint = importFingerprint
@@ -1887,5 +1927,345 @@ public final class SavedInsightModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
+    }
+}
+
+// MARK: - Experiments
+
+/// Persisted lifecycle for a local personal experiment. Deletion/discard is
+/// represented separately by `ExperimentModel.deletedAt`, so it cannot be
+/// confused with a completed observation window.
+public enum ExperimentState: String, Codable, CaseIterable, Sendable {
+    case active
+    case completed
+}
+
+/// The shape of values a custom experiment tracker accepts.
+public enum ExperimentTrackerType: String, Codable, CaseIterable, Sendable {
+    case number
+    case boolean
+    case rating
+    case choice
+    case note
+}
+
+/// When an experiment tracker is eligible to collect an observation.
+public enum ExperimentTrackerCadence: String, Codable, CaseIterable, Sendable {
+    case daily
+    case selectedWeekdays
+    case perWorkout
+    case anytime
+}
+
+/// Typed view over the scalar value columns on `ExperimentEntryModel`.
+public enum ExperimentEntryValue: Equatable, Sendable {
+    case number(Double)
+    case boolean(Bool)
+    case rating(Int)
+    case choice(String)
+    case note(String)
+}
+
+/// A local-only, time-bounded personal experiment.
+///
+/// This model deliberately owns no SwiftData relationships. Workouts,
+/// trackers, and comparison selections are connected by UUID/JSON scalars so
+/// the experiment graph cannot cross the local LOG and CloudKit PLAN stores.
+@Model
+public final class ExperimentModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var name: String = ""
+    public var protocolDescription: String?
+    public var question: String?
+    /// Start-inclusive observation boundary.
+    public var startedAt: Date = Date()
+    /// Scheduled end-exclusive observation boundary.
+    public var plannedEndAt: Date = Date()
+    /// Actual end-exclusive boundary after completion or an early stop.
+    public var endedAt: Date?
+    /// IANA identifier frozen at start for DST-safe daily aggregation.
+    public var timeZoneIdentifier: String = "UTC"
+    public var stateRaw: String = ExperimentState.active.rawValue
+    /// Versioned JSON selections owned by the analytics/domain layer.
+    public var headlineMetricSelectionsJSON: String = "[]"
+    /// Versioned JSON comparison selection owned by the analytics/domain layer.
+    public var savedComparisonJSON: String?
+    public var reminderEnabled: Bool = false
+    /// Local wall-clock minutes after midnight, 0...1439.
+    public var reminderTimeMinutes: Int?
+    public var resultsViewedAt: Date?
+    public var schemaVersion: Int = 1
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        name: String,
+        protocolDescription: String? = nil,
+        question: String? = nil,
+        startedAt: Date = Date(),
+        plannedEndAt: Date,
+        endedAt: Date? = nil,
+        timeZoneIdentifier: String = TimeZone.current.identifier,
+        state: ExperimentState = .active,
+        headlineMetricSelectionsJSON: String = "[]",
+        savedComparisonJSON: String? = nil,
+        reminderEnabled: Bool = false,
+        reminderTimeMinutes: Int? = nil,
+        resultsViewedAt: Date? = nil,
+        schemaVersion: Int = 1,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.name = name
+        self.protocolDescription = protocolDescription
+        self.question = question
+        self.startedAt = startedAt
+        self.plannedEndAt = plannedEndAt
+        self.endedAt = endedAt
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.stateRaw = state.rawValue
+        self.headlineMetricSelectionsJSON = headlineMetricSelectionsJSON
+        self.savedComparisonJSON = savedComparisonJSON
+        self.reminderEnabled = reminderEnabled
+        self.reminderTimeMinutes = reminderTimeMinutes
+        self.resultsViewedAt = resultsViewedAt
+        self.schemaVersion = schemaVersion
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    /// Unknown future states fail closed as completed so an old app never
+    /// resumes collecting into a lifecycle it does not understand.
+    public var state: ExperimentState {
+        get { ExperimentState(rawValue: stateRaw) ?? .completed }
+        set { stateRaw = newValue.rawValue }
+    }
+
+    public var isActive: Bool {
+        state == .active && endedAt == nil && deletedAt == nil
+    }
+
+    /// The end of data that can be observed as of `date`. This never extends
+    /// beyond either an explicit completion or the scheduled boundary.
+    public func observationEnd(asOf date: Date = Date()) -> Date {
+        min(endedAt ?? plannedEndAt, date)
+    }
+
+    /// Start-inclusive/end-exclusive membership over data observable so far.
+    public func contains(_ date: Date, asOf referenceDate: Date = Date()) -> Bool {
+        date >= startedAt && date < observationEnd(asOf: referenceDate)
+    }
+}
+
+/// A user-defined value collected during an experiment.
+///
+/// The tracker references its experiment by UUID instead of a relationship so
+/// all experiment data remains independently routable to the local LOG store.
+@Model
+public final class ExperimentTrackerModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var experimentID: UUID = UUID()
+    public var label: String = ""
+    public var typeRaw: String = ExperimentTrackerType.note.rawValue
+    public var unit: String?
+    public var scaleMinimumLabel: String?
+    public var scaleMaximumLabel: String?
+    public var optionsJSON: String = "[]"
+    public var cadenceRaw: String = ExperimentTrackerCadence.daily.rawValue
+    /// JSON-encoded Calendar weekday numbers (Sunday = 1 ... Saturday = 7).
+    public var selectedWeekdaysJSON: String = "[]"
+    public var position: Int = 0
+    /// Increment when the persisted tracker-definition shape changes.
+    public var definitionVersion: Int = 1
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var archivedAt: Date?
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        experimentID: UUID,
+        label: String,
+        type: ExperimentTrackerType,
+        unit: String? = nil,
+        scaleMinimumLabel: String? = nil,
+        scaleMaximumLabel: String? = nil,
+        options: [String] = [],
+        cadence: ExperimentTrackerCadence = .daily,
+        selectedWeekdays: [Int] = [],
+        position: Int = 0,
+        definitionVersion: Int = 1,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        archivedAt: Date? = nil,
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.experimentID = experimentID
+        self.label = label
+        self.typeRaw = type.rawValue
+        self.unit = unit
+        self.scaleMinimumLabel = scaleMinimumLabel
+        self.scaleMaximumLabel = scaleMaximumLabel
+        self.cadenceRaw = cadence.rawValue
+        self.position = position
+        self.definitionVersion = definitionVersion
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.archivedAt = archivedAt
+        self.deletedAt = deletedAt
+        self.options = options
+        self.selectedWeekdays = selectedWeekdays
+    }
+
+    /// Unknown future tracker types render as notes instead of coercing a
+    /// stored value into a numeric or boolean meaning.
+    public var type: ExperimentTrackerType {
+        get { ExperimentTrackerType(rawValue: typeRaw) ?? .note }
+        set { typeRaw = newValue.rawValue }
+    }
+
+    /// Unknown future cadences do not auto-prompt in older apps.
+    public var cadence: ExperimentTrackerCadence {
+        get { ExperimentTrackerCadence(rawValue: cadenceRaw) ?? .anytime }
+        set { cadenceRaw = newValue.rawValue }
+    }
+
+    public var options: [String] {
+        get { Self.decodeStringArray(optionsJSON) }
+        set { optionsJSON = Self.encodeArray(newValue) }
+    }
+
+    public var selectedWeekdays: [Int] {
+        get { Self.decodeIntArray(selectedWeekdaysJSON) }
+        set { selectedWeekdaysJSON = Self.encodeArray(newValue) }
+    }
+
+    public var isArchived: Bool { archivedAt != nil }
+
+    private static func decodeStringArray(_ json: String) -> [String] {
+        guard let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+    }
+
+    private static func decodeIntArray(_ json: String) -> [Int] {
+        guard let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([Int].self, from: data)) ?? []
+    }
+
+    private static func encodeArray<T: Encodable>(_ values: T) -> String {
+        guard let data = try? JSONEncoder().encode(values),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
+}
+
+/// One custom observation inside an experiment.
+///
+/// Values occupy scalar columns rather than an opaque payload so filtering
+/// and aggregation remain deterministic. `definitionSnapshotJSON` freezes the
+/// tracker label/unit/options needed to explain historical rows after edits.
+@Model
+public final class ExperimentEntryModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var experimentID: UUID = UUID()
+    public var trackerID: UUID = UUID()
+    public var workoutID: UUID?
+    public var observedAt: Date = Date()
+    public var valueTypeRaw: String = ""
+    public var numericValue: Double?
+    public var booleanValue: Bool?
+    public var ratingValue: Int?
+    public var choiceValue: String?
+    public var textValue: String?
+    public var definitionSnapshotJSON: String = "{}"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        experimentID: UUID,
+        trackerID: UUID,
+        workoutID: UUID? = nil,
+        observedAt: Date = Date(),
+        value: ExperimentEntryValue,
+        definitionSnapshotJSON: String = "{}",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.experimentID = experimentID
+        self.trackerID = trackerID
+        self.workoutID = workoutID
+        self.observedAt = observedAt
+        self.definitionSnapshotJSON = definitionSnapshotJSON
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+        self.value = value
+    }
+
+    /// Setting a typed value clears every sibling column, preserving the
+    /// one-value-per-entry invariant without a SwiftData relationship.
+    public var value: ExperimentEntryValue? {
+        get {
+            switch ExperimentTrackerType(rawValue: valueTypeRaw) {
+            case .number:
+                return numericValue.map(ExperimentEntryValue.number)
+            case .boolean:
+                return booleanValue.map(ExperimentEntryValue.boolean)
+            case .rating:
+                return ratingValue.map(ExperimentEntryValue.rating)
+            case .choice:
+                return choiceValue.map(ExperimentEntryValue.choice)
+            case .note:
+                return textValue.map(ExperimentEntryValue.note)
+            case nil:
+                return nil
+            }
+        }
+        set {
+            numericValue = nil
+            booleanValue = nil
+            ratingValue = nil
+            choiceValue = nil
+            textValue = nil
+
+            switch newValue {
+            case let .number(value):
+                valueTypeRaw = ExperimentTrackerType.number.rawValue
+                numericValue = value
+            case let .boolean(value):
+                valueTypeRaw = ExperimentTrackerType.boolean.rawValue
+                booleanValue = value
+            case let .rating(value):
+                valueTypeRaw = ExperimentTrackerType.rating.rawValue
+                ratingValue = value
+            case let .choice(value):
+                valueTypeRaw = ExperimentTrackerType.choice.rawValue
+                choiceValue = value
+            case let .note(value):
+                valueTypeRaw = ExperimentTrackerType.note.rawValue
+                textValue = value
+            case nil:
+                valueTypeRaw = ""
+            }
+        }
     }
 }

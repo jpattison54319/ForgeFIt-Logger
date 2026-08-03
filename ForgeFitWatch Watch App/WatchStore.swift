@@ -156,13 +156,28 @@ final class WatchStore: NSObject {
         WKInterfaceDevice.current().play(.stop)
     }
 
+    func applyConditioning(_ action: ConditioningProgressEvent.Action) {
+        guard let workout = activeWorkout, let plan = workout.conditioningPlan else { return }
+        let event = ConditioningProgressEvent(timestamp: .now, action: action)
+        mutateWorkout { workout in
+            let current = workout.conditioningProgress ?? ConditioningProgress()
+            workout.conditioningProgress = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+        }
+        send(.conditioningEvent(event))
+        if case .completeRound = action {
+            WKInterfaceDevice.current().play(.success)
+        } else {
+            WKInterfaceDevice.current().play(.click)
+        }
+    }
+
     /// Finish from the wrist: the watch saves the HKWorkout (richest data),
     /// the phone closes out the workout with the final metrics.
     func finishWorkout() {
         guard let workout = activeWorkout else { return }
         captureSummary(for: workout, metrics: engine.currentMetrics())
         Task {
-            let result = await engine.finish()
+            let result = await engine.finish(workoutName: workout.title)
             summary?.metrics = result.metrics
             send(.finishWorkout(metrics: result.metrics, savedToHealth: result.savedToHealth))
         }
@@ -318,6 +333,10 @@ final class WatchStore: NSObject {
                 engine.cancel()
             }
             clearWorkoutLocally()
+        case .discardWorkout:
+            engine.cancel()
+            clearWorkoutLocally()
+            summary = nil
         default:
             break // watch → phone commands
         }

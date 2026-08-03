@@ -16,6 +16,10 @@ struct ForgeFitApp: App {
         // BGTaskScheduler requires registration before the app finishes
         // launching; the rest of ReadinessDelivery is wired in launchTasks.
         ReadinessDelivery.shared.register()
+        // UserNotifications can deliver a response while iOS is restoring the
+        // scene after a cold-launch tap, so its main-actor delegate must exist
+        // before launch completes.
+        NotificationScheduler.shared.activate()
         // UI-test hook. Seeding the pref via a `-quickActionBubble.v1 <json>`
         // launch argument shadows application-domain writes for the whole
         // process (the argument domain wins every read), so write-then-read

@@ -101,7 +101,7 @@ struct ReminderSettingsCard: View {
             Toggle(isOn: $morningReadiness) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Morning readiness").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    Text("Your score and the day's call (7 AM), computed from last night's sleep and HRV.")
+                    Text("Your score and the day's call when overnight data is ready by 10:30 AM.")
                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 }
             }

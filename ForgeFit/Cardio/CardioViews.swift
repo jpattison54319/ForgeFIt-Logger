@@ -9,7 +9,7 @@ import UIKit
 /// Heart-rate zone helper. Classifies single readings (and, via
 /// `CardioMetrics.measuredZoneSecondsArray`, the per-10s series a completed
 /// session stores) against the user's configured zone model.
-enum HRZone {
+nonisolated enum HRZone {
     /// The user's configured zone model (personalized max HR + boundaries),
     /// loaded from the shared store. Defaults to the classic 190/60-90% model.
     static var config: HRZoneConfig { HRZoneConfigStore.load() }
@@ -43,8 +43,9 @@ struct CardioExerciseCard: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Bindable var workout: WorkoutModel
-    let workoutExercise: WorkoutExerciseModel
+    @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
+    let pinnedNote: UserExerciseNoteModel?
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -77,14 +78,14 @@ struct CardioExerciseCard: View {
         CardioKind.providesGPSDistance(name: exercise?.name ?? "", equipment: exercise?.equipment)
     }
 
-    /// Best live distance while recording: the Apple Watch's streamed distance
-    /// if it's flowing, else the phone's GPS running total, else whatever the
-    /// session already holds. Treadmills / indoor machines stay manual-only.
+    /// One authoritative distance for UI and audio. Treadmills / indoor
+    /// machines stay manual-only.
     private func liveDistance(_ session: CardioSessionModel) -> Double? {
         guard providesGPSDistance else { return session.distanceMeters }
-        if let watch = LiveMetricsHub.shared.liveMetrics?.distanceMeters, watch > 0 { return watch }
-        if let gps = CardioRouteRecorder.shared.liveDistanceMeters(for: session.id), gps > 0 { return gps }
-        return session.distanceMeters
+        return CardioRouteRecorder.shared.authoritativeLiveDistance(
+            for: session.id,
+            storedMeters: session.distanceMeters
+        )
     }
 
     private var currentZoneTarget: Int {
@@ -253,6 +254,13 @@ struct CardioExerciseCard: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 header
+                if workoutExercise.notes != nil {
+                    StickyNoteView(
+                        workoutExercise: workoutExercise,
+                        exerciseID: workoutExercise.exerciseID,
+                        pinnedNote: pinnedNote
+                    )
+                }
                 if let session {
                     content(session)
                 } else {
@@ -563,13 +571,13 @@ struct CardioExerciseCard: View {
     // MARK: - Segment lifecycle
 
     private func start(_ session: CardioSessionModel) {
-        Task { await HealthService.shared.requestAuthorization() }
-        if providesGPSDistance {
-            CardioRouteRecorder.shared.start(session: session)
-        }
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
         session.liveStartedAt = now
         session.startedAt = now
+        if providesGPSDistance {
+            CardioRouteRecorder.shared.start(session: session)
+        }
         try? modelContext.save()
         // Structured session: begin the step engine with the segment. The
         // runner drives the zone guard per step (work Z4, recover Z3...).
@@ -587,6 +595,8 @@ struct CardioExerciseCard: View {
     private func complete(_ session: CardioSessionModel) {
         IntervalRunnerHub.shared.stop(for: session.id)
         HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
+        NotificationScheduler.shared.cancelCardioCues()
         let end = Date()
         let start = session.liveStartedAt ?? session.startedAt
         session.endedAt = end
@@ -666,6 +676,7 @@ struct CardioExerciseCard: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Exercise options")
+            .accessibilityIdentifier("exercise-overflow-menu")
         }
     }
 
@@ -678,13 +689,21 @@ struct CardioExerciseCard: View {
                 onShowExerciseDetail(exercise)
             })
         }
-        var actions = SupersetUI.scrollSafeMenuItems(
+        var actions: [ScrollSafeMenuItem] = []
+        if workoutExercise.notes == nil {
+            actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
+                workoutExercise.notes = ""
+                workoutExercise.updatedAt = .now
+                try? modelContext.save()
+            })
+        }
+        actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
             currentGroup: workoutExercise.supersetGroup,
             availableGroups: availableSupersetGroups,
             onAssign: onAssignSuperset,
             onCreate: onCreateSuperset,
             onUngroup: onUngroupSuperset
-        )
+        ))
         actions.append(ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace))
         let remove = [ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)]
         return [details, actions, remove].filter { !$0.isEmpty }
@@ -1346,9 +1365,7 @@ struct CardioSummaryCard: View {
 
 // MARK: - Cardio zone distribution + adaptations (Insights tab)
 
-/// Evidence-based reference for what training in each HR zone develops. The
-/// configured zone model may be %HRmax or %HRR/Karvonen; adaptations reflect
-/// established endurance-training physiology, not the specific percentage basis.
+/// Plain-language descriptions shown beside each heart-rate zone.
 struct CardioZoneInfo: Identifiable {
     let zone: Int
     let name: String
@@ -1444,7 +1461,7 @@ struct CardioZoneInsightsCard: View {
                     if showAdaptations {
                         VStack(alignment: .leading, spacing: Space.md) {
                             ForEach(CardioZoneInfo.all) { adaptationRow($0) }
-                            Text("Zones are % of \(zoneBasis); adaptations reflect established endurance-training science (Seiler intensity model, ACSM guidance).")
+                            Text("Zones use \(zoneBasis). Your time in each zone comes from recorded heart-rate samples.")
                                 .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

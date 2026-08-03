@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Missing-data handling is by construction: a page whose data doesn't exist
 /// for the period simply isn't in `pages`.
-struct WrappedPayload: Codable, Equatable {
+nonisolated struct WrappedPayload: Codable, Equatable {
     // v2: TrainingMix gained the yoga bucket.
     var version: Int = 2
     /// "June Wrapped" / "2026 Wrapped".
@@ -20,7 +20,7 @@ struct WrappedPayload: Codable, Equatable {
 
 /// One story page. Enum-with-payload so each page carries exactly what its
 /// screen renders; Codable is synthesized (type-discriminated).
-enum WrappedPage: Codable, Equatable {
+nonisolated enum WrappedPage: Codable, Equatable {
     case cover(Cover)
     case identity(Identity)
     case bigStats(BigStats)
@@ -213,12 +213,12 @@ enum WrappedPage: Codable, Equatable {
 }
 
 extension WrappedPayload {
-    func encodedJSON() -> String {
+    nonisolated func encodedJSON() -> String {
         guard let data = try? JSONEncoder().encode(self) else { return "{}" }
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    static func decode(from json: String) -> WrappedPayload? {
+    nonisolated static func decode(from json: String) -> WrappedPayload? {
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(WrappedPayload.self, from: data)
     }

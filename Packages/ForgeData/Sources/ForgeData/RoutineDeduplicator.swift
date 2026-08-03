@@ -11,7 +11,7 @@ import SwiftData
 /// so the same logical entity can appear as several SwiftData rows. The rest of
 /// the app tolerates this with "first wins" folds, but the rows still accumulate.
 ///
-/// This runs at launch (after `ExerciseLibraryDeduplicator`) and keeps a single
+/// This runs on the app's private plan-maintenance context and keeps a single
 /// deterministic survivor per `id`, hard-deleting the rest. The cascade
 /// `@Relationship(deleteRule: .cascade)` on `RoutineModel.exercises` and
 /// `RoutineExerciseModel.sets` ensures child rows collapse automatically — no
@@ -24,7 +24,6 @@ import SwiftData
 /// concurrently converge on the same survivor instead of racing to delete each
 /// other's copy. A soft-deleted row (`deletedAt != nil`) wins over a live one so
 /// the tombstone propagates and the user's deletion intent is preserved.
-@MainActor
 public enum RoutineDeduplicator {
 
     public struct Summary: Equatable, Sendable {
@@ -40,13 +39,13 @@ public enum RoutineDeduplicator {
     /// deterministic survivor each. Saves only when something was deleted.
     @discardableResult
     public static func removeDuplicates(in context: ModelContext) throws -> Summary {
-        let routinesDeleted = collapse(
+        let routinesDeleted = try collapse(
             try context.fetch(FetchDescriptor<RoutineModel>()),
             id: { $0.id },
             prefers: routinePrefers,
             in: context
         )
-        let foldersDeleted = collapse(
+        let foldersDeleted = try collapse(
             try context.fetch(FetchDescriptor<RoutineFolderModel>()),
             id: { $0.id },
             prefers: folderPrefers,
@@ -68,11 +67,12 @@ public enum RoutineDeduplicator {
         id: (Model) -> UUID,
         prefers: (Model, Model) -> Bool,
         in context: ModelContext
-    ) -> Int {
+    ) throws -> Int {
         var survivors: [UUID: Model] = [:]
         var doomed: [Model] = []
 
         for row in rows {
+            try Task.checkCancellation()
             let key = id(row)
             guard let incumbent = survivors[key] else {
                 survivors[key] = row

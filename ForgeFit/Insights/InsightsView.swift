@@ -1,11 +1,13 @@
 import ForgeCore
 import ForgeData
+import Foundation
 import SwiftData
 import SwiftUI
 
 /// Analytics hub: training trends, weekly muscle-group volume, personal records,
 /// and cardio. Everything is derived from `TrainingAnalytics`.
 struct InsightsView: View {
+    @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
@@ -17,6 +19,7 @@ struct InsightsView: View {
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var range: TimeChartRange = .twelveWeeks
     @State private var infoTopic: InsightsInfoTopic?
+    @State private var path: [InsightsRoute] = []
     // Full-history rollups, memoized: this tab stays alive behind the others
     // and must not recompute on every unrelated @Query re-render.
     @State private var muscleMemo = Memo<String, [MuscleVolumeBars.Row]>()
@@ -30,8 +33,14 @@ struct InsightsView: View {
         let muscleRows = muscleMemo(fingerprint) { analytics.weeklyMuscleVolume() }
         let records = recordsMemo(fingerprint) { analytics.records() }
 
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScreenScaffold("Insights") {
+                NavigationLink(value: InsightsRoute.experiments) {
+                    ExperimentsEntryCard()
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("insight-experiments-entry")
+
                 if insightsBuilderEnabled {
                     NavigationLink(value: InsightsRoute.myInsights) {
                         MyInsightsEntryCard()
@@ -91,6 +100,14 @@ struct InsightsView: View {
                     RecordsListView(records: records, workouts: workouts, exercises: exercises)
                 case .myInsights:
                     MyInsightsView(workouts: workouts, exercises: exercises)
+                case .experiments:
+                    ExperimentsDestinationView(workouts: workouts, exercises: exercises)
+                case .experimentResults(let experimentID):
+                    ExperimentsDestinationView(
+                        workouts: workouts,
+                        exercises: exercises,
+                        initialResultsExperimentID: experimentID
+                    )
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -99,7 +116,28 @@ struct InsightsView: View {
                 InsightsInfoSheet(topic: topic)
             }
         }
+        .id(tabRootRequestID)
+        .onAppear(perform: consumeExperimentRoute)
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: ExperimentNotificationRoute.routeReady
+            )
+        ) { _ in
+            consumeExperimentRoute()
+        }
         .interactiveBackSwipeEnabled()
+    }
+
+    private func consumeExperimentRoute() {
+        guard let rawID = UserDefaults.standard.string(
+            forKey: ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
+        ), let experimentID = UUID(uuidString: rawID) else {
+            return
+        }
+        UserDefaults.standard.removeObject(
+            forKey: ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
+        )
+        path = [.experimentResults(experimentID)]
     }
 
     private func trendCard(analytics: TrainingAnalytics, fingerprint: String) -> some View {
@@ -140,6 +178,8 @@ private enum InsightsRoute: Hashable {
     case exercise(UUID)
     case records
     case myInsights
+    case experiments
+    case experimentResults(UUID)
 }
 
 private enum InsightsInfoTopic: Identifiable {

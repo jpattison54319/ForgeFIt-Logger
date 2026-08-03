@@ -2,10 +2,9 @@ import Foundation
 import Testing
 @testable import ForgeFit
 
-/// Verifies the two-score recovery model: the acute daily score reacts to one
-/// bad night, the chronic trend doesn't; training load remains descriptive;
-/// sleep need personalizes upward only; and the guidance text always agrees
-/// with the flags that shaped the number.
+/// Verifies the source-locked recovery-signal index: adverse nights move it,
+/// missingness reduces coverage, and observed sleep never silently rewrites
+/// the user's target.
 struct DailyReadinessTests {
     private let cal: Calendar = {
         var c = Calendar(identifier: .gregorian)
@@ -92,8 +91,8 @@ struct DailyReadinessTests {
         // 69 vs a 67 bpm daytime baseline is within normal range — no HR
         // flag at all, and the part is labeled resting (not sleeping) HR.
         #expect(!daily.flags.contains("Resting HR elevated"))
-        let hrPart = daily.parts.first { $0.name == "Resting HR" || $0.name == "Sleeping HR" }
-        #expect(hrPart?.name == "Resting HR")
+        let hrPart = daily.parts.first { $0.name == "Heart rate" }
+        #expect(hrPart?.state.value == nil)
     }
 
     /// The 1am bug, HRV edition: Apple samples awake HRV around the clock,
@@ -163,10 +162,9 @@ struct DailyReadinessTests {
     }
 
     /// A genuinely elevated daytime resting HR (vs the daytime baseline)
-    /// still flags — as resting HR, never as sleeping HR. Run mid-afternoon:
-    /// by then a missing overnight record means the night was missed (watch
-    /// died), so the score degrades to daytime signals rather than waiting.
-    @Test func daytimeRestingHRElevationFlagsHonestly() {
+    /// A mature sleeping-HR channel stays locked when tonight is missing. A
+    /// daytime value cannot silently substitute and create an apparent event.
+    @Test func daytimeRestingHRDoesNotReplaceLockedSleepingChannel() {
         let m = metrics(todayHRV: nil, todaySleepingHR: nil, todaySleepMinutes: nil).map { metric in
             var copy = metric
             copy.restingHR = cal.startOfDay(for: copy.date) == cal.startOfDay(for: now) ? 80 : 65
@@ -175,8 +173,9 @@ struct DailyReadinessTests {
         let afternoon = now.addingTimeInterval(6 * 3600)
         let daily = RecoveryEngine(workouts: [], healthMetrics: m, calendar: cal, now: afternoon)
             .recoverySnapshot().daily
-        #expect(daily.flags.contains("Resting HR elevated"))
+        #expect(!daily.flags.contains("Resting HR elevated"))
         #expect(!daily.flags.contains("Sleeping HR elevated"))
+        #expect(daily.parts.first { $0.name == "Heart rate" }?.state.value == nil)
     }
 
     @Test func guidanceNamesShortSleepWhenScoreStillTrainable() {
@@ -226,16 +225,14 @@ struct DailyReadinessTests {
         // different command based on an independent flag. The policy owns the
         // action now, so all green scores use the same band.
         let report = engine(metrics(todayHRV: 71, todaySleepMinutes: 450)).report()
-        if report.displayScore >= 0.7 && report.displayScore < 0.85 {
+        if let score = report.displayScore, score >= 0.7 && score < 0.85 {
             #expect(report.action == .trainAsPlanned)
         }
     }
 
-    @Test func sleepNeedPersonalizesUpwardOnly() {
-        // Habitual 9 h sleeper → need rises toward 9 h.
+    @Test func observedSleepDoesNotRewriteEditableTarget() {
         let long = engine(metrics(historySleepMinutes: 540))
-        #expect(long.personalizedSleepNeedMinutes() >= 520)
-        // Habitual 6 h sleeper → need stays at 8 h (short sleep stays flagged).
+        #expect(long.personalizedSleepNeedMinutes() == 480)
         let short = engine(metrics(historySleepMinutes: 360))
         #expect(short.personalizedSleepNeedMinutes() == 480)
     }

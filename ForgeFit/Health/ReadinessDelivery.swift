@@ -10,29 +10,53 @@ import HealthKit
 import UIKit
 #endif
 
+/// Pure timing gate for the morning readiness alert. The notification is a
+/// delivery surface for a complete score, never a reminder that Health data is
+/// missing. Seven is the preferred time; 10:30 is the end of the useful
+/// morning window.
+nonisolated enum MorningReadinessDeliveryPolicy {
+    static let notifyHour = 7
+    static let cutoffHour = 10
+    static let cutoffMinute = 30
+
+    static func fireDate(
+        now: Date,
+        calendar: Calendar,
+        hasCompleteSleep: Bool,
+        hasDailyScore: Bool
+    ) -> Date? {
+        guard hasCompleteSleep, hasDailyScore,
+              let preferred = calendar.date(
+                bySettingHour: notifyHour,
+                minute: 0,
+                second: 0,
+                of: now
+              ),
+              let cutoff = calendar.date(
+                bySettingHour: cutoffHour,
+                minute: cutoffMinute,
+                second: 0,
+                of: now
+              )
+        else { return nil }
+
+        let candidate = max(now.addingTimeInterval(2), preferred)
+        return candidate <= cutoff ? candidate : nil
+    }
+}
+
 /// Delivers the morning readiness score before the user opens the app:
 /// a pre-dawn `BGAppRefreshTask` plus HealthKit observer wake-ups (sleep /
-/// HRV syncing from the watch overnight) re-query Health, recompute the
-/// score, and keep a 7 AM local notification's content fresh. Every wake
-/// path is best-effort — iOS grants none of them deterministically — so the
-/// notification is scheduled with the latest known score and simply
-/// re-scheduled with fresher numbers each time a wake actually lands.
+/// HRV syncing from the watch overnight) re-query Health and recompute the
+/// score. Every wake path is best-effort — iOS grants none deterministically —
+/// so an alert is scheduled only when today's complete score is ready during
+/// the useful morning window. No wake or incomplete data means no alert.
 @MainActor
 final class ReadinessDelivery {
     static let shared = ReadinessDelivery()
 
     /// Must match Info.plist's BGTaskSchedulerPermittedIdentifiers.
     nonisolated static let refreshTaskID = "org.xpetsllc.ForgeFit.readiness-refresh"
-    /// Delivery is gated on last night's data EXISTING, not on the clock:
-    /// the watch writes sleep only after the user wakes and syncs, so a
-    /// fixed-time push while they're still asleep would carry a score
-    /// computed without last night. Synced before 7 → fire at 7. Synced
-    /// after 7 → the observer wake fires it immediately (which, because the
-    /// sync follows wake-up, means right after they're up). Nothing synced
-    /// by 10:30 → push with honest "sleep hasn't synced yet" copy.
-    private static let notifyHour = 7
-    private static let fallbackHour = 10
-    private static let fallbackMinute = 30
     private static let refreshHour = 5
     private static let refreshMinute = 45
     /// The fire date of the currently armed notification.
@@ -43,6 +67,7 @@ final class ReadinessDelivery {
 
     private var container: ModelContainer?
     private var observersStarted = false
+    private var refreshTask: Task<Void, Never>?
     /// Keeps the observing HKHealthStore alive — observer queries stop if
     /// their store deallocates. AnyObject so the property compiles where
     /// HealthKit can't be imported.
@@ -77,8 +102,10 @@ final class ReadinessDelivery {
     private func handleRefresh(_ task: BGAppRefreshTask) {
         scheduleNextRefresh()   // one-shot: always re-arm tomorrow's first
         let work = Task { @MainActor in
+            refreshTask?.cancel()
+            refreshTask = nil
             await HealthMetricsStore.shared.refreshNow()
-            refreshMorningNotification()
+            await refreshMorningNotificationNow()
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = { work.cancel() }
@@ -93,9 +120,9 @@ final class ReadinessDelivery {
     // MARK: - HealthKit background delivery (overnight sync wake-ups)
 
     /// Observer queries on sleep + HRV: when the watch syncs overnight data,
-    /// iOS wakes the app briefly and the score/notification refresh with the
-    /// real morning numbers — this is the reliable path; BGAppRefresh is the
-    /// fallback.
+    /// iOS may wake the app briefly so the score and pending notification can
+    /// refresh with the real morning numbers. This is the preferred path;
+    /// BGAppRefresh is another best-effort opportunity.
     private func startHealthObservers() {
         #if canImport(HealthKit)
         guard !observersStarted, HKHealthStore.isHealthDataAvailable() else { return }
@@ -112,8 +139,10 @@ final class ReadinessDelivery {
                     return
                 }
                 Task { @MainActor in
+                    ReadinessDelivery.shared.refreshTask?.cancel()
+                    ReadinessDelivery.shared.refreshTask = nil
                     await HealthMetricsStore.shared.refreshNow()
-                    ReadinessDelivery.shared.refreshMorningNotification()
+                    await ReadinessDelivery.shared.refreshMorningNotificationNow()
                     completion()
                 }
             }
@@ -126,12 +155,21 @@ final class ReadinessDelivery {
     // MARK: - Morning notification
 
     /// Called from every data-refresh path (pre-dawn BG task, HealthKit
-    /// observer wakes, app foreground). Decides whether today's readiness
-    /// push should fire now, at 7, at the honest fallback, or not at all —
-    /// see the delivery-gating comment on the hour constants above.
+    /// observer wakes, app foreground). A push is scheduled only when today's
+    /// daily score includes complete sleep and is ready before the cutoff.
     func refreshMorningNotification() {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await refreshMorningNotificationNow()
+            guard !Task.isCancelled else { return }
+            refreshTask = nil
+        }
+    }
+
+    private func refreshMorningNotificationNow() async {
         guard NotificationScheduler.shared.morningReadinessEnabled else {
-            NotificationScheduler.shared.cancelMorningReadiness()
+            cancelPendingMorningReadiness()
             return
         }
         let calendar = Calendar.current
@@ -148,50 +186,54 @@ final class ReadinessDelivery {
            let fiveAM = calendar.date(bySettingHour: 5, minute: 0, second: 0, of: now),
            now >= fiveAM {
             defaults.set(today, forKey: Self.lastFiredDayKey)
-            NotificationScheduler.shared.cancelMorningReadiness()
-            armFallbackForTomorrow(calendar: calendar, now: now)
+            cancelPendingMorningReadiness()
             return
         }
         #endif
 
         if deliveredToday(now: now, calendar: calendar) {
             defaults.set(today, forKey: Self.lastFiredDayKey)
-            armFallbackForTomorrow(calendar: calendar, now: now)
+            cancelPendingMorningReadiness()
             return
         }
 
-        guard let report = computeReport() else { return }
-        let score = Int(report.displayScore * 100)
+        let report = await computeReport()
+        guard !Task.isCancelled else { return }
+        let dailyScore = report?.recovery.daily.state.value
 
-        // Sleep is attributed to the day it ENDED, so a metric dated today
-        // carrying sleep or nocturnal HRV means last night has truly synced —
-        // the score reflects this morning, not the previous one.
-        let hasOvernightData = HealthMetricsStore.shared.metrics.contains {
+        // Sleep is attributed to the day it ended. Require today's trustworthy
+        // duration and the ready sleep component so a score built from two
+        // autonomic domains cannot masquerade as complete readiness.
+        let sleepContributed = report?.recovery.daily.parts.contains {
+            $0.name == "Sleep (last night)" && $0.state.value != nil
+        } ?? false
+        let hasCompleteSleep = sleepContributed && HealthMetricsStore.shared.metrics.contains {
             calendar.isDate($0.date, inSameDayAs: today)
-                && ($0.sleepTotalMinutes != nil || $0.nocturnalHRV != nil)
+                && $0.sleepTotalMinutes != nil
+                && $0.sleepIsTrustworthy
+                && $0.sleepOverrideStatus != .notTracked
         }
 
-        let sevenAM = calendar.date(bySettingHour: Self.notifyHour, minute: 0, second: 0, of: now) ?? now
-        let fallback = calendar.date(bySettingHour: Self.fallbackHour, minute: Self.fallbackMinute, second: 0, of: now) ?? now
-
-        let fireDate: Date
-        let body: String
-        if hasOvernightData {
-            // Real overnight numbers: 7 AM, or immediately when the sync
-            // (which follows wake-up) arrived later than that.
-            fireDate = max(now.addingTimeInterval(2), sevenAM)
-            body = report.preWorkoutAdjustment
-        } else {
-            // Still asleep or the watch hasn't synced — hold for the observer
-            // wake to upgrade this; if nothing lands by mid-morning, say so.
-            fireDate = max(now.addingTimeInterval(2), fallback)
-            body = report.preWorkoutAdjustment + " (Last night's sleep hasn't synced yet.)"
+        guard
+            let fireDate = MorningReadinessDeliveryPolicy.fireDate(
+                now: now,
+                calendar: calendar,
+                hasCompleteSleep: hasCompleteSleep,
+                hasDailyScore: dailyScore != nil
+            ),
+            let report,
+            let dailyScore
+        else {
+            cancelPendingMorningReadiness()
+            return
         }
+
+        let score = Int((dailyScore * 100).rounded())
         defaults.set(fireDate, forKey: Self.scheduledFireKey)
         NotificationScheduler.shared.scheduleMorningReadiness(
             at: fireDate,
             title: "Readiness \(score) — \(report.action.title)",
-            body: body
+            body: report.preWorkoutAdjustment
         )
     }
 
@@ -210,39 +252,23 @@ final class ReadinessDelivery {
         return false
     }
 
-    /// Guaranteed baseline once today is done: tomorrow's fallback-time push
-    /// with the caveat copy, computed from what's known now. Every overnight
-    /// wake path upgrades it to the real thing before it ever fires — it only
-    /// survives untouched when no background wake happened all night, in
-    /// which case the caveat is accurate. Stamping its fire date is safe:
-    /// both call sites persist today's delivery in `lastFiredDayKey` first,
-    /// and the stamp is what stops a later wake from double-pushing after
-    /// the fallback fired unattended.
-    private func armFallbackForTomorrow(calendar: Calendar, now: Date) {
-        guard let report = computeReport(),
-              let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
-              let fireDate = calendar.date(bySettingHour: Self.fallbackHour, minute: Self.fallbackMinute, second: 0, of: tomorrow)
-        else { return }
-        let score = Int(report.displayScore * 100)
-        UserDefaults.standard.set(fireDate, forKey: Self.scheduledFireKey)
-        NotificationScheduler.shared.scheduleMorningReadiness(
-            at: fireDate,
-            title: "Readiness \(score) — \(report.action.title)",
-            body: report.preWorkoutAdjustment + " (Last night's sleep hasn't synced yet.)"
-        )
+    private func cancelPendingMorningReadiness() {
+        UserDefaults.standard.removeObject(forKey: Self.scheduledFireKey)
+        NotificationScheduler.shared.cancelMorningReadiness()
     }
 
-    private func computeReport() -> RecoveryEngine.Report? {
+    private func computeReport() async -> RecoveryEngine.Report? {
         guard let container else { return nil }
-        let context = container.mainContext
-        let workouts = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
-        guard !workouts.isEmpty || !HealthMetricsStore.shared.metrics.isEmpty else { return nil }
-        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        return ReadinessReportFactory.report(
-            workouts: workouts,
-            exercises: exercises,
-            in: context
+        let metricsStore = HealthMetricsStore.shared
+        let input = HomeAnalyticsInput(
+            healthMetrics: metricsStore.metrics,
+            supplementalSignals: metricsStore.extraSignals,
+            activityMetrics: metricsStore.activityMetrics,
+            todayCheckinTags: ReadinessReportFactory.todayCheckinTags(in: container.mainContext),
+            now: Date()
         )
+        let worker = HomeAnalyticsWorker(modelContainer: container)
+        return try? await worker.calculateCurrent(input).recovery
     }
 
     private func nextOccurrence(hour: Int, minute: Int) -> Date {

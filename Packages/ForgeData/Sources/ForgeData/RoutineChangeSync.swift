@@ -191,7 +191,12 @@ public enum RoutineChangeSync {
         }()
 
         let routineSets = re.sets.sorted { $0.position < $1.position }
-        let isCardio = routineSets.allSatisfy { $0.targetDurationSeconds != nil }
+        // AMRAP is a strength set with a time window, not a session-based
+        // cardio target. Treating every duration target as cardio made later
+        // AMRAP type changes invisible to the routine sync.
+        let isCardio = routineSets.allSatisfy {
+            $0.targetDurationSeconds != nil && $0.setType != .amrap
+        }
         if isCardio {
             return Plan.ExercisePlan(
                 workoutExerciseID: we.id,
@@ -339,6 +344,7 @@ public enum RoutineChangeSync {
             if let rs = routineSetByID[changedID],
                let ws = we.sets.first(where: { $0.sourceRoutineSetID == changedID }) {
                 rs.setType = ws.setType
+                applyTypeSpecificPlan(from: ws, to: rs)
             }
         }
 
@@ -361,6 +367,31 @@ public enum RoutineChangeSync {
         re.sets = rebuilt
     }
 
+    /// Type-specific shape is structural routine intent. When a flat set is
+    /// converted live, preserve the performed block shape (or seed the same
+    /// usable defaults as the routine editor) while leaving standing load,
+    /// rep-range, and effort targets untouched.
+    private static func applyTypeSpecificPlan(from workoutSet: SetModel, to routineSet: RoutineSetModel) {
+        routineSet.plannedMiniSetCount = nil
+        routineSet.plannedMiniRepsJSON = nil
+        routineSet.targetDurationSeconds = nil
+
+        switch workoutSet.setType {
+        case .myoRep:
+            routineSet.plannedMiniSetCount = max(
+                1,
+                max(workoutSet.miniReps.count, workoutSet.plannedMiniSetCount ?? 0)
+            )
+        case .cluster:
+            let plan = workoutSet.miniReps.isEmpty ? workoutSet.plannedMiniReps : workoutSet.miniReps
+            routineSet.plannedMiniReps = plan.isEmpty ? [3, 3, 3, 3] : plan
+        case .amrap:
+            routineSet.targetDurationSeconds = workoutSet.durationSeconds ?? 60
+        default:
+            break
+        }
+    }
+
     /// Maps a performed `SetModel` onto a `RoutineSetModel` target. Performed
     /// reps collapse to a single-value range (`low == high`), and performed
     /// weight/rpe/duration carry through. Structured sets carry their shape:
@@ -378,15 +409,7 @@ public enum RoutineChangeSync {
             targetRIR: ws.rir,
             targetDurationSeconds: ws.durationSeconds
         )
-        switch ws.setType {
-        case .myoRep:
-            let performed = ws.miniReps.count
-            target.plannedMiniSetCount = performed > 0 ? performed : ws.plannedMiniSetCount
-        case .cluster:
-            target.plannedMiniRepsJSON = ws.miniRepsJSON ?? ws.plannedMiniRepsJSON
-        default:
-            break
-        }
+        applyTypeSpecificPlan(from: ws, to: target)
         return target
     }
 }

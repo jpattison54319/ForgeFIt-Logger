@@ -3,6 +3,52 @@ import ForgeData
 import Foundation
 import Observation
 
+/// The complete value-only HealthKit refresh result. No HealthKit object or
+/// SwiftData model crosses this boundary.
+nonisolated struct HealthMetricsRefreshResult: Sendable {
+    let daily: [RecoveryEngine.DailyHealthMetric]
+    let extras: [RecoveryEngine.Signal]
+    let activity: [DailyActivityMetric]
+    let bodyweight: [(date: Date, value: Double)]
+    let hrvGapDetected: Bool
+}
+
+/// HealthKit queries are asynchronous, but the substantial work begins after
+/// they answer: sorting raw samples, grouping 60–90 days into buckets, and
+/// deriving nocturnal readings. The app target defaults to MainActor, so this
+/// explicit worker boundary is what keeps that post-query work away from touch
+/// and scroll handling.
+nonisolated struct HealthMetricsWorker: Sendable {
+    func load() async -> HealthMetricsRefreshResult {
+        async let daily = HealthService.shared.dailyMetrics()
+        async let extras = HealthService.shared.todaySignals()
+        async let activity = HealthService.shared.dailyActivityMetrics()
+        async let bodyweight = HealthService.shared.bodyMassSeries()
+        async let hrvGap = HealthService.shared.detectGarminHRVGap()
+        return await HealthMetricsRefreshResult(
+            daily: daily,
+            extras: extras,
+            activity: activity,
+            bodyweight: bodyweight,
+            hrvGapDetected: hrvGap
+        )
+    }
+
+    #if DEBUG
+    func isExecutingOnMainThreadForTesting() async -> Bool {
+        Self.currentThreadIsMain()
+    }
+
+    private static func currentThreadIsMain() -> Bool { Thread.isMainThread }
+    #endif
+}
+
+nonisolated protocol HealthMetricsLoading: Sendable {
+    func load() async -> HealthMetricsRefreshResult
+}
+
+extension HealthMetricsWorker: HealthMetricsLoading {}
+
 /// App-wide cache of the daily HealthKit recovery series. Every readiness
 /// computation reads from here, so HRV / resting HR / sleep baselines feed the
 /// score the moment Health is connected — refreshed on launch, on
@@ -11,6 +57,8 @@ import Observation
 @Observable
 final class HealthMetricsStore {
     static let shared = HealthMetricsStore()
+
+    @ObservationIgnored private let worker: any HealthMetricsLoading
 
     /// 60-day daily series for RecoveryEngine and Health personal ranges,
     /// already annotated for sleep integrity and with the user's per-night
@@ -35,13 +83,16 @@ final class HealthMetricsStore {
     /// Connect doesn't sync it) — the recovery screen explains the gap.
     private(set) var hrvGapDetected = false
     private(set) var lastRefreshed: Date?
-    /// In-flight HealthKit re-queries. A count rather than a flag because a
-    /// pull-to-refresh can overlap the foreground refresh; Home keeps showing
-    /// the current numbers with a subtle activity indicator while this is > 0.
+    /// In-flight HealthKit refresh state. All triggers now join one shared task;
+    /// the integer remains API-compatible with Home's existing activity state.
     private(set) var activeRefreshCount = 0
     var isRefreshing: Bool { activeRefreshCount > 0 }
 
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+
+    init(worker: any HealthMetricsLoading = HealthMetricsWorker()) {
+        self.worker = worker
+    }
 
     #if DEBUG
     /// When a demo seed is active, real HealthKit refreshes are suppressed so
@@ -54,11 +105,8 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
-        if !force, let lastRefreshed, Date().timeIntervalSince(lastRefreshed) < 300 { return }
-        guard refreshTask == nil else { return }
-        refreshTask = Task { [weak self] in
-            await self?.performRefresh()
-            self?.refreshTask = nil
+        Task { @MainActor [weak self] in
+            await self?.refreshCoalesced(force: force)
         }
     }
 
@@ -69,26 +117,61 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
-        await performRefresh()
+        await refreshCoalesced(force: true)
+    }
+
+    /// Foreground maintenance variant: preserves the five-minute freshness gate
+    /// and honors cancellation before publishing observable results. This keeps
+    /// a just-started live workout from inheriting an idle-screen refresh.
+    func refreshIfStaleNow() async {
+        #if DEBUG
+        if demoSeeded { return }
+        #endif
+        await refreshCoalesced(force: false)
+    }
+
+    /// Every trigger joins one shared query instead of starting another set of
+    /// five HealthKit reads while launch's refresh is still in flight.
+    private func refreshCoalesced(force: Bool) async {
+        if let refreshTask {
+            await refreshTask.value
+            return
+        }
+        if !force,
+           let lastRefreshed,
+           Date().timeIntervalSince(lastRefreshed) < 300 {
+            return
+        }
+
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performRefresh()
+        }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
     }
 
     private func performRefresh() async {
         activeRefreshCount += 1
         defer { activeRefreshCount -= 1 }
-        async let daily = HealthService.shared.dailyMetrics()
-        async let extras = HealthService.shared.todaySignals()
-        async let activity = HealthService.shared.dailyActivityMetrics()
-        async let bodyweight = HealthService.shared.bodyMassSeries()
-        async let hrvGap = HealthService.shared.detectGarminHRVGap()
-        let (dailyResult, extrasResult, activityResult, bodyweightResult, hrvGapResult) =
-            await (daily, extras, activity, bodyweight, hrvGap)
-        rawMetrics = dailyResult
-        metrics = SleepOverrideStore.shared.process(dailyResult)
+
+        let worker = worker
+        let workerTask = Task.detached(priority: .utility) {
+            await worker.load()
+        }
+        let result = await withTaskCancellationHandler(
+            operation: { await workerTask.value },
+            onCancel: { workerTask.cancel() }
+        )
+        guard !Task.isCancelled else { return }
+        rawMetrics = result.daily
+        metrics = SleepOverrideStore.shared.process(result.daily)
         metricsRevision &+= 1
-        extraSignals = extrasResult
-        activityMetrics = activityResult
-        bodyweightSeries = bodyweightResult
-        hrvGapDetected = hrvGapResult
+        extraSignals = result.extras
+        activityMetrics = result.activity
+        bodyweightSeries = result.bodyweight
+        hrvGapDetected = result.hrvGapDetected
         lastRefreshed = Date()
     }
 
@@ -100,15 +183,11 @@ final class HealthMetricsStore {
         metricsRevision &+= 1
     }
 
-    /// The most recent night flagged as probable partial-wear that the user
-    /// hasn't corrected yet — drives the Home "Sleep looks off" affordance.
-    /// Nil once corrected or when nothing is flagged.
+    /// The latest measured night when it is still flagged after processing.
+    /// Older unresolved nights never replace the sleep currently shown on Home.
     var partialSleepAlert: SleepIntegrityAlert? {
-        guard let flagged = metrics
-            .filter({ $0.sleepLikelyPartial && !$0.sleepUserCorrected })
-            .max(by: { $0.date < $1.date }),
-              let minutes = flagged.sleepTotalMinutes else { return nil }
-        return SleepIntegrityAlert(day: flagged.date, capturedMinutes: minutes)
+        guard let latest = metrics.max(by: { $0.date < $1.date }) else { return nil }
+        return SleepIntegrityAlert(metric: latest)
     }
 
     #if DEBUG

@@ -92,11 +92,21 @@ struct WorkoutShareCard: View {
     }
 
     private var logEntries: [ShareLogEntry] { ShareLogEntry.entries(for: sortedExercises) }
+    private var conditioningPlan: ConditioningPlan? { ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON) }
+    private var conditioningResult: ConditioningResult? { ConditioningResult.decode(from: workout.conditioningResultJSON) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
             statBlock
+            if let conditioningPlan {
+                ConditioningShareBlock(
+                    plan: conditioningPlan,
+                    result: conditioningResult,
+                    exercises: exercises,
+                    theme: theme
+                )
+            }
             if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
                 sessionMetricsBlock
             }
@@ -145,7 +155,14 @@ struct WorkoutShareCard: View {
     private var statBlock: some View {
         HStack(spacing: 12) {
             chrome.stat("Duration", Fmt.durationShort(summary.durationSeconds), theme.textPrimary)
-            if summary.isCardio {
+            if let score = conditioningResult?.sectionResults.first {
+                chrome.stat("Score", ConditioningSharePresentation.score(score), theme.accent)
+                if summary.volume > 0 {
+                    chrome.stat("Volume", Fmt.volume(summary.volume), theme.secondaryAccent)
+                } else {
+                    chrome.stat("Sections", "\(conditioningPlan?.sections.count ?? 1)", theme.secondaryAccent)
+                }
+            } else if summary.isCardio {
                 chrome.stat("Distance", Fmt.distance(workout.cardioSessions.first?.distanceMeters), theme.secondaryAccent)
                 chrome.stat("Avg HR", summary.avgHR.map { "\($0)" } ?? "—", theme.danger)
             } else {
