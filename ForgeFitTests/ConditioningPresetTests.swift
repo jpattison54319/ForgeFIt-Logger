@@ -29,6 +29,33 @@ struct ConditioningPresetTests {
         }
     }
 
+    @Test func hundredsChipperDefaultsToTenRoundsOfTen() throws {
+        let preset = ConditioningPreset.hundredsChipper
+        let section = try #require(
+            preset.makePlan(exerciseIDs: preset.movements.map { _ in UUID() }).sections.first
+        )
+
+        #expect(section.format == .forTime)
+        #expect(preset.menuTitle == "100s Chipper · 10 rounds × 10")
+        #expect(section.rounds == 10)
+        #expect(section.movements.map(\.targetValue) == [10, 10, 10, 10])
+        #expect(section.movements.map { section.target(for: $0, round: 10) } == [10, 10, 10, 10])
+    }
+
+    @Test func twentyOneFifteenNineIsAnExplicitDescendingLadderForTime() throws {
+        let preset = ConditioningPreset.twentyOneFifteenNine
+        let section = try #require(
+            preset.makePlan(exerciseIDs: preset.movements.map { _ in UUID() }).sections.first
+        )
+        let movement = try #require(section.movements.first)
+
+        #expect(section.format == .ladder)
+        #expect(section.scoreKind == .elapsedTime)
+        #expect(section.repScheme == [21, 15, 9])
+        #expect(section.prescribedRounds == 3)
+        #expect((1...3).map { section.target(for: movement, round: $0) } == [21, 15, 9])
+    }
+
     @Test func applyingPresetChangesOnlyItsSectionAndPreservesExistingRowIdentity() throws {
         let (container, context) = try TestStore.make()
         defer { withExtendedLifetime(container) {} }

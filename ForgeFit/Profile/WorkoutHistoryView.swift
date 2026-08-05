@@ -456,12 +456,8 @@ private struct WorkoutHistoryRow: View {
                     Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
                 }
                 HStack {
-                    StatColumn(label: "Time", value: Fmt.durationShort(entry.durationSeconds))
-                    if entry.kind == .cardio || entry.kind == .yoga {
-                        StatColumn(label: "Avg HR", value: Fmt.bpm(entry.avgHR))
-                    } else {
-                        StatColumn(label: "Volume", value: Fmt.volume(entry.volume))
-                        StatColumn(label: "Sets", value: Fmt.sets(entry.effectiveSets))
+                    ForEach(Array(entry.facts.prefix(3).enumerated()), id: \.offset) { _, fact in
+                        StatColumn(label: fact.label, value: fact.value)
                     }
                 }
             }

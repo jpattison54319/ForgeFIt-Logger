@@ -65,6 +65,7 @@ struct CardioExerciseCard: View {
     @State private var showManual = false
     @State private var importing = false
     @State private var showIntervalEditor = false
+    @State private var activeSegmentMessage: String?
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
@@ -270,6 +271,13 @@ struct CardioExerciseCard: View {
             }
         }
         .onAppear(perform: ensureSession)
+        .alert("Another Segment Is Active", isPresented: Binding(
+            get: { activeSegmentMessage != nil },
+            set: { if !$0 { activeSegmentMessage = nil } }
+        )) {
+        } message: {
+            Text(activeSegmentMessage ?? "Complete the current segment first.")
+        }
     }
 
     @ViewBuilder
@@ -571,6 +579,10 @@ struct CardioExerciseCard: View {
     // MARK: - Segment lifecycle
 
     private func start(_ session: CardioSessionModel) {
+        if let active = WorkoutTimedSegmentPolicy.activeSegment(in: workout) {
+            activeSegmentMessage = "\(active) is already recording. Complete it before starting cardio."
+            return
+        }
         Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
         session.liveStartedAt = now

@@ -50,7 +50,7 @@ struct WorkoutLiveActivity: Widget {
                                     .foregroundStyle(WActivityTheme.accent)
                             }
                         }
-                    } else if context.state.mode == .cardio {
+                    } else if context.state.mode == .cardio || context.state.mode == .conditioning {
                         Text(context.state.cardioMetric ?? "Recording")
                             .font(.system(size: 16, weight: .semibold, design: .rounded))
                             .monospacedDigit()
@@ -124,7 +124,7 @@ struct WorkoutLiveActivity: Widget {
 
     private func headerTitle(_ context: ActivityViewContext<WorkoutActivityAttributes>) -> String {
         switch context.state.mode {
-        case .cardio, .yoga: context.state.cardioTitle ?? context.attributes.workoutTitle
+        case .cardio, .conditioning, .yoga: context.state.cardioTitle ?? context.attributes.workoutTitle
         case .strength: context.attributes.workoutTitle
         }
     }
@@ -132,6 +132,7 @@ struct WorkoutLiveActivity: Widget {
     private func detailLine(_ context: ActivityViewContext<WorkoutActivityAttributes>) -> String {
         switch context.state.mode {
         case .cardio: context.state.cardioDetail ?? "Cardio"
+        case .conditioning: context.state.cardioDetail ?? "Conditioning"
         case .yoga: context.state.cardioDetail ?? "Yoga"
         case .strength: "\(context.state.completedSets)/\(context.state.totalSets) sets"
         }
@@ -156,7 +157,7 @@ private struct LockScreenWorkoutView: View {
     let context: ActivityViewContext<WorkoutActivityAttributes>
 
     private var isSessionMode: Bool {
-        context.state.mode == .cardio || context.state.mode == .yoga
+        context.state.mode == .cardio || context.state.mode == .conditioning || context.state.mode == .yoga
     }
 
     var body: some View {
@@ -244,6 +245,7 @@ private struct LockScreenWorkoutView: View {
     private var detailLine: String {
         switch context.state.mode {
         case .cardio: context.state.cardioDetail ?? "Cardio"
+        case .conditioning: context.state.cardioDetail ?? "Conditioning"
         case .yoga: context.state.cardioDetail ?? "Yoga"
         case .strength: "\(context.state.completedSets)/\(context.state.totalSets) sets"
         }
@@ -266,6 +268,7 @@ enum WActivityTheme {
         switch mode {
         case .strength: "dumbbell.fill"
         case .cardio: "figure.run"
+        case .conditioning: "figure.cross.training"
         case .yoga: "figure.yoga"
         }
     }

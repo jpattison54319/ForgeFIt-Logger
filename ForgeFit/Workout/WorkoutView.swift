@@ -1043,13 +1043,16 @@ private struct RoutineCard: View {
     private var sortedRoutineExercises: [RoutineExerciseModel] {
         routine.exercises.sorted { $0.position < $1.position }
     }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
 
     private func exerciseName(for re: RoutineExerciseModel) -> String {
         exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise"
     }
 
     private var conditioningSummary: String? {
-        guard let plan = ConditioningPlan.decode(from: routine.conditioningPlanJSON),
+        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
+            ?? routine.conditioningPlanJSON
+        guard let plan = ConditioningPlan.decode(from: json),
               let first = plan.sections.first else { return nil }
         switch first.format {
         case .amrap:
@@ -1090,7 +1093,7 @@ private struct RoutineCard: View {
                         .buttonBorderShape(.capsule)
                         // An empty routine has nothing to start — starting it
                         // would just open a blank freestyle session.
-                        .disabled(sortedRoutineExercises.isEmpty)
+                        .disabled(orderedItems.isEmpty)
                         .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
                             Button("Edit Routine", systemImage: "pencil", action: onEdit)
@@ -1124,23 +1127,23 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
-                    if sortedRoutineExercises.isEmpty {
-                        Text("No exercises yet — add some to start")
+                    if orderedItems.isEmpty {
+                        Text("Nothing added yet — add an exercise or block to start")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
-                        if let conditioningSummary {
+                        if routine.blocks.isEmpty, let conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
                                 .foregroundStyle(theme.accent)
                         }
                         VStack(alignment: .leading, spacing: 3) {
-                            ForEach(sortedRoutineExercises) { re in
+                            ForEach(orderedItems) { item in
                                 HStack(spacing: 6) {
                                     Circle()
                                         .fill(theme.textTertiary)
                                         .frame(width: 4, height: 4)
-                                    Text(exerciseName(for: re))
+                                    Text(itemName(item))
                                         .font(.system(size: 14))
                                         .foregroundStyle(theme.textSecondary)
                                         .lineLimit(1)
@@ -1153,6 +1156,13 @@ private struct RoutineCard: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func itemName(_ item: OrderedRoutineItem) -> String {
+        switch item {
+        case .exercise(let exercise): exerciseName(for: exercise)
+        case .block(let block): block.kind.title
+        }
     }
 }
 

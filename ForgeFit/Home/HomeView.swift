@@ -1620,10 +1620,16 @@ struct WorkoutFeedRow: View {
 
     var body: some View {
         let s = analytics.summary(for: workout)
+        let shape = WorkoutShareShape.of(workout: workout, summary: s)
+        let facts = WorkoutOverviewPresentation.make(
+            workout: workout,
+            exercises: analytics.exercises,
+            durationSeconds: s.durationSeconds
+        ).facts
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
-                    Image(systemName: s.isCardio ? "figure.run" : "dumbbell.fill")
+                    Image(systemName: shape.systemImage)
                         .foregroundStyle(theme.accent)
                         .frame(width: 34, height: 34)
                         .background(theme.surfaceElevated).clipShape(Circle())
@@ -1636,12 +1642,8 @@ struct WorkoutFeedRow: View {
                     Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
                 }
                 HStack {
-                    StatColumn(label: "Time", value: Fmt.durationShort(s.durationSeconds))
-                    if s.isCardio {
-                        StatColumn(label: "Avg HR", value: Fmt.bpm(s.avgHR))
-                    } else {
-                        StatColumn(label: "Volume", value: Fmt.volume(s.volume))
-                        StatColumn(label: "Sets", value: Fmt.sets(s.sets))
+                    ForEach(Array(facts.prefix(3).enumerated()), id: \.offset) { _, fact in
+                        StatColumn(label: fact.label, value: fact.value)
                     }
                 }
             }

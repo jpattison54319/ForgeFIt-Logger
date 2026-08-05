@@ -336,6 +336,116 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(sorted.last?.exerciseID, exerciseA)
         XCTAssertEqual(sorted.last?.position, 1)
     }
+
+    func testBlockChangesSyncAndGeneratedMovementRowsStayOutOfRoutine() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let (routine, workout) = try seed(userID: userID, exerciseID: UUID(), in: context)
+
+        let matchedRoutineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 1,
+            planJSON: #"{"name":"Original"}"#
+        )
+        let removedRoutineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 2,
+            planJSON: #"{"name":"Removed"}"#
+        )
+        context.insert(matchedRoutineBlock)
+        context.insert(removedRoutineBlock)
+        routine.blocks = [matchedRoutineBlock, removedRoutineBlock]
+
+        let matchedWorkoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 0,
+            planSnapshotJSON: #"{"name":"Edited"}"#,
+            sourceRoutineBlockID: matchedRoutineBlock.id
+        )
+        let addedWorkoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 2,
+            planSnapshotJSON: #"{"name":"Added"}"#
+        )
+        context.insert(matchedWorkoutBlock)
+        context.insert(addedWorkoutBlock)
+        workout.blocks = [matchedWorkoutBlock, addedWorkoutBlock]
+
+        // Conditioning movement rows are execution detail, not visible
+        // routine items. Sync must not turn one into a normal exercise.
+        let generated = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 1,
+            generatedByWorkoutBlockID: matchedWorkoutBlock.id
+        )
+        context.insert(generated)
+        workout.exercises.append(generated)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertTrue(plan.hasChanges)
+        XCTAssertEqual(plan.addedBlockIDs, [addedWorkoutBlock.id])
+        XCTAssertEqual(plan.removedRoutineBlockIDs, [removedRoutineBlock.id])
+        XCTAssertFalse(plan.addedExerciseIDs.contains(generated.id))
+        XCTAssertEqual(plan.blockPlans.first?.movedPosition, true)
+        XCTAssertEqual(plan.blockPlans.first?.planChanged, true)
+        XCTAssertTrue(plan.summary.contains("order changed"))
+        XCTAssertTrue(plan.summary.contains("block plan updated"))
+
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let synced = routine.blocks.sorted { $0.position < $1.position }
+        XCTAssertEqual(synced.count, 2)
+        XCTAssertEqual(synced.first?.id, matchedRoutineBlock.id)
+        XCTAssertEqual(synced.first?.position, 0)
+        XCTAssertEqual(synced.first?.planJSON, #"{"name":"Edited"}"#)
+        XCTAssertEqual(synced.last?.kind, .yoga)
+        XCTAssertEqual(synced.last?.planJSON, #"{"name":"Added"}"#)
+        XCTAssertEqual(routine.exercises.count, 1)
+    }
+
+    func testSyncingYogaBlockDoesNotEraseLegacyConditioningPlan() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let legacyConditioning = #"{"legacy":true}"#
+        let routineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 0,
+            planJSON: #"{"flow":"original"}"#
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Hybrid",
+            conditioningPlanJSON: legacyConditioning,
+            blocks: [routineBlock]
+        )
+        let workoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 0,
+            planSnapshotJSON: #"{"flow":"edited"}"#,
+            sourceRoutineBlockID: routineBlock.id
+        )
+        let workout = WorkoutModel(userID: userID, blocks: [workoutBlock])
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+
+        XCTAssertEqual(routine.conditioningPlanJSON, legacyConditioning)
+        XCTAssertEqual(routine.blocks.first?.planJSON, #"{"flow":"edited"}"#)
+    }
 }
 
 // MARK: - Yoga flow drift

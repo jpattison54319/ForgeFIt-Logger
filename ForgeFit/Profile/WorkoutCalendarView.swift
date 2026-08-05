@@ -203,13 +203,10 @@ struct WorkoutCalendarView: View {
         return parts.joined(separator: ", ")
     }
 
-    /// Strength = accent, cardio = secondary accent, mixed = a two-tone dot.
+    /// Each pure modality gets its own marker; mixed sessions use a compact
+    /// multi-tone dot rather than pretending they were strength or cardio.
     private func markerDot(for workout: WorkoutModel) -> some View {
-        let kind = WorkoutCalendarSupport.workoutKind(
-            exerciseIDs: workout.exercises.map(\.id),
-            cardioLinkedExerciseIDs: Set(workout.cardioSessions.compactMap(\.workoutExerciseID)),
-            cardioSessionCount: workout.cardioSessions.count
-        )
+        let kind = WorkoutCalendarSupport.workoutKind(for: workout)
         return Circle()
             .fill(dotStyle(for: kind))
             .frame(width: 5, height: 5)
@@ -221,9 +218,13 @@ struct WorkoutCalendarView: View {
             AnyShapeStyle(theme.accent)
         case .cardio:
             AnyShapeStyle(theme.secondaryAccent)
+        case .conditioning:
+            AnyShapeStyle(theme.warmup)
+        case .yoga:
+            AnyShapeStyle(theme.success)
         case .mixed:
             AnyShapeStyle(LinearGradient(
-                colors: [theme.accent, theme.secondaryAccent],
+                colors: [theme.accent, theme.secondaryAccent, theme.warmup],
                 startPoint: .leading, endPoint: .trailing))
         }
     }

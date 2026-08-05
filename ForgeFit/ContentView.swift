@@ -220,7 +220,7 @@ struct ContentView: View {
                 // No `injectedHistory:` — the logger snapshots history itself,
                 // so the per-save re-fetch of `workouts` never hands the
                 // logger a new array identity mid-session.
-                if activeWorkout.conditioningPlanSnapshotJSON != nil {
+                if activeWorkout.conditioningPlanSnapshotJSON != nil && activeWorkout.blocks.isEmpty {
                     ConditioningWorkoutView(
                         workout: activeWorkout,
                         exercises: exercises,

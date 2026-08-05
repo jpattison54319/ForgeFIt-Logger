@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 #if canImport(HealthKit)
 import HealthKit
 #endif
@@ -136,15 +137,22 @@ nonisolated final class HealthService: @unchecked Sendable {
         #if canImport(HealthKit)
         guard isAvailable else { return false }
         guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return false }
+        // Starting a workout is not a permission-management surface. In
+        // particular, a newly reported Workout Routes read type must not
+        // reopen the full sheet for an already-connected user.
+        guard !isConnected else { return true }
         do {
             let status = try await store.statusForAuthorizationRequest(
                 toShare: shareTypes,
                 read: readTypes
             )
-            guard status == .shouldRequest else { return isConnected }
+            guard WorkoutAuthorizationPromptPolicy.shouldRequestAtWorkoutStart(
+                hasWorkoutWriteAccess: isConnected,
+                hasUndecidedTypes: status == .shouldRequest
+            ) else { return false }
             return await requestAuthorization()
         } catch {
-            return isConnected
+            return false
         }
         #else
         return false

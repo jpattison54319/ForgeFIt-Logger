@@ -16,6 +16,7 @@ public enum ForgeDataSchema {
             UserExerciseNoteModel.self,
             RoutineFolderModel.self,
             RoutineModel.self,
+            RoutineBlockModel.self,
             RoutineExerciseModel.self,
             RoutineSetModel.self,
             UserProgressModel.self,
@@ -37,6 +38,7 @@ public enum ForgeDataSchema {
     public static var logModels: [any PersistentModel.Type] {
         [
             WorkoutModel.self,
+            WorkoutBlockModel.self,
             WorkoutExerciseModel.self,
             SetModel.self,
             WorkoutImportBatchModel.self,
@@ -357,6 +359,12 @@ public final class RoutineModel {
         get { storedExercises ?? [] }
         set { storedExercises = newValue }
     }
+    @Relationship(deleteRule: .cascade, inverse: \RoutineBlockModel.routine)
+    private var storedBlocks: [RoutineBlockModel]?
+    public var blocks: [RoutineBlockModel] {
+        get { storedBlocks ?? [] }
+        set { storedBlocks = newValue }
+    }
 
     public init(
         id: UUID = UUID(),
@@ -371,7 +379,8 @@ public final class RoutineModel {
         deletedAt: Date? = nil,
         archivedAt: Date? = nil,
         conditioningPlanJSON: String? = nil,
-        exercises: [RoutineExerciseModel] = []
+        exercises: [RoutineExerciseModel] = [],
+        blocks: [RoutineBlockModel] = []
     ) {
         self.id = id
         self.userID = userID
@@ -386,6 +395,7 @@ public final class RoutineModel {
         self.archivedAt = archivedAt
         self.conditioningPlanJSON = conditioningPlanJSON
         self.exercises = exercises
+        self.blocks = blocks
     }
 }
 
@@ -583,6 +593,12 @@ public final class WorkoutModel {
         get { storedExercises ?? [] }
         set { storedExercises = newValue }
     }
+    @Relationship(deleteRule: .cascade, inverse: \WorkoutBlockModel.workout)
+    private var storedBlocks: [WorkoutBlockModel]?
+    public var blocks: [WorkoutBlockModel] {
+        get { storedBlocks ?? [] }
+        set { storedBlocks = newValue }
+    }
     @Relationship(deleteRule: .cascade, originalName: "cardioSessions", inverse: \CardioSessionModel.workout)
     private var storedCardioSessions: [CardioSessionModel]?
     public var cardioSessions: [CardioSessionModel] {
@@ -624,7 +640,8 @@ public final class WorkoutModel {
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
         exercises: [WorkoutExerciseModel] = [],
-        cardioSessions: [CardioSessionModel] = []
+        cardioSessions: [CardioSessionModel] = [],
+        blocks: [WorkoutBlockModel] = []
     ) {
         self.id = id
         self.userID = userID
@@ -660,6 +677,7 @@ public final class WorkoutModel {
         self.deletedAt = deletedAt
         self.exercises = exercises
         self.cardioSessions = cardioSessions
+        self.blocks = blocks
     }
 
     public func recomputeTotalVolume() {
@@ -795,6 +813,9 @@ public final class WorkoutExerciseModel {
     /// Guided yoga sequence (JSON-encoded `YogaFlowPlan`), copied from the
     /// routine at start. Additive-optional.
     public var yogaFlowJSON: String?
+    /// Conditioning movement rows materialized by a workout block remain in
+    /// exercise analytics but are not independent, reorderable logger rows.
+    public var generatedByWorkoutBlockID: UUID?
     /// The `RoutineExerciseModel.id` this exercise was seeded from when the
     /// workout was started from a routine. Nil for ad-hoc exercises added
     /// mid-session or workouts not started from a routine. Used by
@@ -822,6 +843,7 @@ public final class WorkoutExerciseModel {
         microRestSeconds: Int? = nil,
         intervalPlanJSON: String? = nil,
         yogaFlowJSON: String? = nil,
+        generatedByWorkoutBlockID: UUID? = nil,
         sourceRoutineExerciseID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -838,6 +860,7 @@ public final class WorkoutExerciseModel {
         self.microRestSeconds = microRestSeconds
         self.intervalPlanJSON = intervalPlanJSON
         self.yogaFlowJSON = yogaFlowJSON
+        self.generatedByWorkoutBlockID = generatedByWorkoutBlockID
         self.sourceRoutineExerciseID = sourceRoutineExerciseID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -1144,6 +1167,9 @@ public final class CardioSessionModel {
     /// The workout exercise this cardio effort belongs to (nil for legacy
     /// whole-workout cardio sessions).
     public var workoutExerciseID: UUID?
+    /// Timed-session owner for first-class yoga/conditioning blocks. Nil for
+    /// exercise-backed cardio and legacy yoga rows.
+    public var workoutBlockID: UUID?
     public var modality: String = ""
     public var startedAt: Date = Date()
     /// When the user tapped "Start" on this segment (nil = not started yet). The
@@ -1217,6 +1243,7 @@ public final class CardioSessionModel {
         id: UUID = UUID(),
         userID: UUID,
         workoutExerciseID: UUID? = nil,
+        workoutBlockID: UUID? = nil,
         modality: String,
         startedAt: Date = Date(),
         liveStartedAt: Date? = nil,
@@ -1259,6 +1286,7 @@ public final class CardioSessionModel {
         self.id = id
         self.userID = userID
         self.workoutExerciseID = workoutExerciseID
+        self.workoutBlockID = workoutBlockID
         self.modality = modality
         self.startedAt = startedAt
         self.liveStartedAt = liveStartedAt
@@ -1302,6 +1330,8 @@ public final class CardioSessionModel {
     /// Yoga rides the cardio session model; every cardio-specific analytics
     /// or UI path must exclude sessions where this is true.
     public var isYogaSession: Bool { modality == Self.yogaModality }
+    public var isConditioningSession: Bool { modality == Self.conditioningModality }
+    public var isWorkoutBlockSession: Bool { workoutBlockID != nil }
 
     public var yogaStyle: YogaStyle? {
         get { yogaStyleRaw.flatMap(YogaStyle.init(rawValue:)) }
@@ -1310,6 +1340,7 @@ public final class CardioSessionModel {
 
     /// The `modality` string marking a yoga session (vs a `CardioKind` raw).
     public static let yogaModality = "yoga"
+    public static let conditioningModality = "conditioning"
     /// `sourceDevice` marker for a deliberate unguided (manual) yoga log —
     /// distinguishes it from an untouched planned session at finish time.
     public static let yogaManualSource = "iphone-yoga-manual"

@@ -50,6 +50,16 @@ enum RoutineDuplicator {
                 duplicated.progressionRuleJSON = sourceExercise.progressionRuleJSON
                 return duplicated
             }
+        copy.blocks = source.blocks
+            .sorted { $0.position < $1.position }
+            .map { block in
+                RoutineBlockModel(
+                    userID: source.userID,
+                    kind: block.kind,
+                    position: block.position,
+                    planJSON: block.planJSON
+                )
+            }
         context.insert(copy)
         return copy
     }

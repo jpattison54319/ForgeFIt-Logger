@@ -319,6 +319,23 @@ public struct ConditioningProgressEvent: Codable, Equatable, Identifiable, Senda
 }
 
 public enum ConditioningProgressEngine {
+    /// Fixed-work conditioning without a time cap is "for time": the clock
+    /// keeps running until every prescribed round is complete. Returning the
+    /// remaining rounds here gives phone, Watch, and the shared finish path
+    /// one rule instead of letting a generic Finish button save a DNF.
+    public static func requiredRoundsRemaining(
+        for progress: ConditioningProgress,
+        plan: ConditioningPlan
+    ) -> Int {
+        guard plan.sections.indices.contains(progress.sectionIndex) else { return 0 }
+        let section = plan.sections[progress.sectionIndex]
+        guard section.format == .forTime || section.format == .ladder,
+              section.timeCapSeconds == nil,
+              let prescribedRounds = section.prescribedRounds,
+              prescribedRounds > 0 else { return 0 }
+        return max(0, prescribedRounds - progress.fullRounds)
+    }
+
     public static func apply(
         _ event: ConditioningProgressEvent,
         to progress: ConditioningProgress,
@@ -334,6 +351,10 @@ public enum ConditioningProgressEngine {
         switch event.action {
         case .start:
             guard next.status == .ready else { return next }
+            // Partial reps are retained in the wire/storage schema so older
+            // builds and saved workouts still decode, but they are no longer a
+            // supported logging state. A new run always starts clean.
+            next.partialValues.removeAll()
             next.startedAt = event.timestamp
             next.sectionStartedAt = event.timestamp
             next.status = .active
@@ -358,10 +379,10 @@ public enum ConditioningProgressEngine {
             }
             finishRound(&next, section: section, at: event.timestamp)
             advanceCompletedSectionIfNeeded(&next, plan: plan, section: section, at: event.timestamp)
-        case .setPartial(let movementID, let value):
-            guard section.movements.contains(where: { $0.id == movementID }) else { return next }
-            next.partialValues[movementID] = max(0, value)
-        case .setScore(let rounds, let partialMovementID, let partialValue, let load):
+        case .setPartial:
+            // Compatibility no-op for an event sent by an older paired build.
+            next.partialValues.removeAll()
+        case .setScore(let rounds, _, _, let load):
             let completedRounds = max(0, rounds)
             next.round = completedRounds + 1
             next.completedMovementIDs.removeAll()
@@ -374,11 +395,6 @@ public enum ConditioningProgressEngine {
                 }
             }
             next.partialValues.removeAll()
-            if let partialMovementID,
-               section.movements.contains(where: { $0.id == partialMovementID }),
-               partialValue > 0 {
-                next.partialValues[partialMovementID] = partialValue
-            }
             next.recordedLoad = load.map { max(0, $0) }
         case .pause:
             guard next.status == .active else { return next }
@@ -431,9 +447,8 @@ public enum ConditioningProgressEngine {
             let index = progress.sectionIndex
             let section = plan.sections[index]
             let isCurrent = index == progress.sectionIndex
-            let partial = isCurrent ? section.movements.first(where: { (progress.partialValues[$0.id] ?? 0) > 0 }) : nil
             let totals = isCurrent ? section.movements.reduce(0.0) {
-                $0 + (progress.movementTotals[$1.id] ?? 0) + (progress.partialValues[$1.id] ?? 0)
+                $0 + (progress.movementTotals[$1.id] ?? 0)
             } : 0
             results.append(ConditioningSectionResult(
                 id: section.id,
@@ -441,8 +456,8 @@ public enum ConditioningProgressEngine {
                 scoreKind: section.scoreKind,
                 elapsedSeconds: isCurrent ? elapsed : nil,
                 fullRounds: isCurrent ? progress.fullRounds : nil,
-                partialMovementID: partial?.id,
-                partialValue: partial.flatMap { progress.partialValues[$0.id] },
+                partialMovementID: nil,
+                partialValue: nil,
                 totalReps: section.movements.allSatisfy { $0.targetUnit == .reps } ? Int(totals) : nil,
                 completedIntervals: section.format == .emom && isCurrent ? progress.fullRounds : nil,
                 load: section.scoreKind == .load && isCurrent ? progress.recordedLoad : nil,
@@ -491,9 +506,8 @@ public enum ConditioningProgressEngine {
         at date: Date,
         completed: Bool
     ) {
-        let partial = section.movements.first { (progress.partialValues[$0.id] ?? 0) > 0 }
         let total = section.movements.reduce(0.0) {
-            $0 + (progress.movementTotals[$1.id] ?? 0) + (progress.partialValues[$1.id] ?? 0)
+            $0 + (progress.movementTotals[$1.id] ?? 0)
         }
         let paused = progress.sectionAccumulatedPauseSeconds ?? 0
         let sectionElapsed = max(0, Int(date.timeIntervalSince(progress.sectionStartedAt ?? progress.startedAt ?? date) - paused))
@@ -504,8 +518,8 @@ public enum ConditioningProgressEngine {
             scoreKind: section.scoreKind,
             elapsedSeconds: sectionElapsed,
             fullRounds: progress.fullRounds,
-            partialMovementID: partial?.id,
-            partialValue: partial.flatMap { progress.partialValues[$0.id] },
+            partialMovementID: nil,
+            partialValue: nil,
             totalReps: section.movements.allSatisfy { $0.targetUnit == .reps } ? Int(total) : nil,
             completedIntervals: section.format == .emom ? progress.fullRounds : nil,
             load: section.scoreKind == .load ? progress.recordedLoad : nil,

@@ -64,23 +64,86 @@ enum WorkoutFactory {
             userID: ForgeFitDemo.userID,
             routineID: routine.id,
             title: routine.name,
-            sourceDevice: "iphone",
-            conditioningPlanSnapshotJSON: routine.conditioningPlanJSON,
-            conditioningProgressJSON: routine.conditioningPlanJSON == nil ? nil : ConditioningProgress().encodedJSON()
+            sourceDevice: "iphone"
         )
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
         let effortPreferences = WorkoutEffortPolicy.current()
         var cardioSessions: [CardioSessionModel] = []
+        var workoutBlocks = routine.blocks.map { routineBlock in
+            WorkoutBlockModel(
+                userID: workout.userID,
+                kind: routineBlock.kind,
+                position: routineBlock.position,
+                planSnapshotJSON: routineBlock.planJSON,
+                progressJSON: routineBlock.kind == .conditioning ? ConditioningProgress().encodedJSON() : nil,
+                sourceRoutineBlockID: routineBlock.id
+            )
+        }
+
+        // Legacy whole-routine conditioning becomes one first-class block in
+        // newly started workouts. The source routine remains untouched until
+        // the user explicitly saves it from the editor.
+        let usesLegacyConditioning = routine.conditioningPlanJSON != nil
+            && !routine.blocks.contains { $0.kind == .conditioning }
+        let legacyConditioningPlan = usesLegacyConditioning
+            ? ConditioningPlan.decode(from: routine.conditioningPlanJSON)
+            : nil
+        let legacyConditioningMovementIDs = Set(
+            legacyConditioningPlan?.sections.flatMap(\.movements).map(\.exerciseID) ?? []
+        )
+        if usesLegacyConditioning, let planJSON = routine.conditioningPlanJSON {
+            workoutBlocks.append(WorkoutBlockModel(
+                userID: workout.userID,
+                kind: .conditioning,
+                position: routine.exercises
+                    .filter { legacyConditioningMovementIDs.contains($0.exerciseID) }
+                    .map(\.position).min()
+                    ?? routine.exercises.count,
+                planSnapshotJSON: planJSON,
+                progressJSON: ConditioningProgress().encodedJSON()
+            ))
+        }
+
+        // Legacy Yoga Session exercise rows project into real blocks at the
+        // same visible position. Poses stay in the flow plan, not the general
+        // exercise sequence.
+        for routineExercise in routine.exercises {
+            guard !(usesLegacyConditioning && legacyConditioningMovementIDs.contains(routineExercise.exerciseID)),
+                  let exercise = exerciseByID[routineExercise.exerciseID], exercise.isYoga else { continue }
+            let flow = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
+                ?? (YogaPoseCatalog.isSessionExercise(exercise) ? nil : .singlePose(from: exercise))
+            workoutBlocks.append(WorkoutBlockModel(
+                userID: workout.userID,
+                kind: .yoga,
+                position: routineExercise.position,
+                planSnapshotJSON: flow?.encodedJSON(),
+                sourceRoutineBlockID: nil
+            ))
+        }
+
+        workout.blocks = workoutBlocks
+        for block in workoutBlocks {
+            cardioSessions.append(makeBlockSession(for: block, workoutStartedAt: workout.startedAt))
+        }
+
         workout.exercises = routine.exercises
+            .filter { routineExercise in
+                if usesLegacyConditioning,
+                   legacyConditioningMovementIDs.contains(routineExercise.exerciseID) {
+                    return false
+                }
+                return exerciseByID[routineExercise.exerciseID]?.isYoga != true
+            }
             .sorted { $0.position < $1.position }
             .map { routineExercise in
                 let exercise = exerciseByID[routineExercise.exerciseID]
                 let setupNote = resolvedSetupNotes.first {
                     $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID
                 }
-                // Cardio and yoga exercises log as sessions, not set rows.
-                let isSessionBased = exercise?.isCardio == true || exercise?.isYoga == true
+                // Cardio exercises log as sessions, not set rows. Yoga now
+                // lives in first-class blocks and is filtered above.
+                let isSessionBased = exercise?.isCardio == true
                 // The set must carry the exercise's weight mode, and the
                 // routine target must land in that mode's field — a target
                 // seeded into `weight` on a bodyweight-family set is invisible
@@ -88,7 +151,7 @@ enum WorkoutFactory {
                 // tonnage treat the raw number as the lifted load (assistance
                 // × reps for assisted work) instead of the effective load.
                 let weightMode = exercise?.defaultWeightMode ?? .external
-                let pendingSets: [SetModel] = (isSessionBased || routine.conditioningPlanJSON != nil) ? [] : routineExercise.sets
+                let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
                         let effort = WorkoutEffortPolicy.initialEffort(
@@ -130,24 +193,7 @@ enum WorkoutFactory {
                     sourceRoutineExerciseID: routineExercise.id,
                     sets: pendingSets
                 )
-                if let exercise, exercise.isYoga {
-                    // Legacy pose rows still synthesize a runnable hold. The
-                    // new Yoga Session row can stay empty until configured.
-                    let plan = YogaFlowPlan.decode(from: routineExercise.yogaFlowJSON)
-                        ?? (YogaPoseCatalog.isSessionExercise(exercise) ? nil : .singlePose(from: exercise))
-                    if workoutExercise.yogaFlowJSON == nil {
-                        workoutExercise.yogaFlowJSON = plan?.encodedJSON()
-                    }
-                    cardioSessions.append(CardioSessionModel(
-                        userID: ForgeFitDemo.userID,
-                        workoutExerciseID: workoutExercise.id,
-                        modality: CardioSessionModel.yogaModality,
-                        startedAt: workout.startedAt,
-                        sourceDevice: "iphone-yoga",
-                        durationSeconds: plan.flatMap { $0.totalSeconds > 0 ? $0.totalSeconds : nil },
-                        yogaStyleRaw: plan?.styleRaw
-                    ))
-                } else if let exercise, exercise.isCardio {
+                if let exercise, exercise.isCardio {
                     let target = routineExercise.sets.sorted { $0.position < $1.position }.first
                     let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
                     // Routine targets start as live goals, never pre-filled
@@ -175,6 +221,9 @@ enum WorkoutFactory {
                 return workoutExercise
             }
         workout.cardioSessions = cardioSessions
+        for (index, item) in OrderedWorkoutItem.ordered(in: workout).enumerated() {
+            item.position = index
+        }
         context.insert(workout)
         // Progression: advance pending targets from each exercise's last
         // session and record the explained suggestions. Single choke point —
@@ -192,9 +241,23 @@ enum WorkoutFactory {
         return workout
     }
 
+    private static func makeBlockSession(
+        for block: WorkoutBlockModel,
+        workoutStartedAt: Date
+    ) -> CardioSessionModel {
+        let yogaPlan = block.kind == .yoga ? YogaFlowPlan.decode(from: block.planSnapshotJSON) : nil
+        return CardioSessionModel(
+            userID: block.userID,
+            workoutBlockID: block.id,
+            modality: block.kind == .yoga ? CardioSessionModel.yogaModality : CardioSessionModel.conditioningModality,
+            startedAt: workoutStartedAt,
+            sourceDevice: block.kind == .yoga ? "iphone-yoga" : "iphone-conditioning",
+            durationSeconds: yogaPlan.flatMap { $0.totalSeconds > 0 ? $0.totalSeconds : nil },
+            yogaStyleRaw: yogaPlan?.styleRaw
+        )
+    }
+
     /// Quick-start a guided yoga class from a flow (built-in or user-saved).
-    /// The workout exercise anchors on the Yoga Session row; poses live inside
-    /// the flow, not as nested workout exercises.
     @discardableResult
     static func startYoga(
         flow: YogaFlowPlan,
@@ -203,17 +266,15 @@ enum WorkoutFactory {
         in context: ModelContext
     ) -> WorkoutModel {
         let startedAt = Date()
-        let anchor = exercises.first { YogaPoseCatalog.isSessionExercise($0) && $0.deletedAt == nil }
-            ?? YogaPoseCatalog.sessionExercise(in: context)
-        let workoutExercise = WorkoutExerciseModel(
+        let block = WorkoutBlockModel(
             userID: ForgeFitDemo.userID,
-            exerciseID: anchor.id,
+            kind: .yoga,
             position: 0,
-            yogaFlowJSON: flow.encodedJSON()
+            planSnapshotJSON: flow.encodedJSON()
         )
         let session = CardioSessionModel(
             userID: ForgeFitDemo.userID,
-            workoutExerciseID: workoutExercise.id,
+            workoutBlockID: block.id,
             modality: CardioSessionModel.yogaModality,
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
@@ -225,8 +286,8 @@ enum WorkoutFactory {
             title: title,
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
-            exercises: [workoutExercise],
-            cardioSessions: [session]
+            cardioSessions: [session],
+            blocks: [block]
         )
         context.insert(workout)
         try? context.save()

@@ -68,6 +68,22 @@ enum ShareLogEntry: Identifiable {
 /// `hrSamples` / `recoveryPoints`) so it renders correctly off-screen where the
 /// environment and async loads aren't available.
 struct WorkoutShareCard: View {
+    private enum OrderedEntry: Identifiable {
+        case log(ShareLogEntry)
+        case block(WorkoutBlockModel)
+        case legacyConditioning(WorkoutPresentationPlan.LegacyConditioning)
+        case session(CardioSessionModel)
+
+        var id: String {
+            switch self {
+            case .log(let entry): entry.id
+            case .block(let block): "block-\(block.id.uuidString)"
+            case .legacyConditioning(let conditioning): "conditioning-\(conditioning.id.uuidString)"
+            case .session(let session): "session-\(session.id.uuidString)"
+            }
+        }
+    }
+
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
@@ -83,58 +99,80 @@ struct WorkoutShareCard: View {
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
     private var summary: TrainingAnalytics.Summary { analytics.summary(for: workout) }
+    private var shape: WorkoutShareShape { .of(workout: workout, summary: summary) }
     private var chrome: ShareCardChrome { ShareCardChrome(theme: theme) }
-    private var sortedExercises: [WorkoutExerciseModel] {
-        workout.exercises.sorted { $0.position < $1.position }
-    }
+    private var presentationPlan: WorkoutPresentationPlan { .make(for: workout) }
+    private var sortedExercises: [WorkoutExerciseModel] { presentationPlan.visibleExercises }
     private func library(_ we: WorkoutExerciseModel) -> ExerciseLibraryModel? {
         exercises.first { $0.id == we.exerciseID }
     }
 
-    private var logEntries: [ShareLogEntry] { ShareLogEntry.entries(for: sortedExercises) }
-    private var conditioningPlan: ConditioningPlan? { ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON) }
-    private var conditioningResult: ConditioningResult? { ConditioningResult.decode(from: workout.conditioningResultJSON) }
+    private var orderedEntries: [OrderedEntry] {
+        var result: [OrderedEntry] = []
+        var pendingExercises: [WorkoutExerciseModel] = []
+        func flush() {
+            result.append(contentsOf: ShareLogEntry.entries(for: pendingExercises).map(OrderedEntry.log))
+            pendingExercises.removeAll()
+        }
+        for item in presentationPlan.items {
+            switch item {
+            case .exercise(let exercise): pendingExercises.append(exercise)
+            case .block(let block):
+                flush()
+                result.append(.block(block))
+            case .legacyConditioning(let conditioning):
+                flush()
+                result.append(.legacyConditioning(conditioning))
+            case .session(let session, _):
+                flush()
+                result.append(.session(session))
+            }
+        }
+        flush()
+        return result
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
             statBlock
-            if let conditioningPlan {
-                ConditioningShareBlock(
-                    plan: conditioningPlan,
-                    result: conditioningResult,
-                    exercises: exercises,
-                    theme: theme
-                )
-            }
             if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
                 sessionMetricsBlock
             }
             if !hrSamples.isEmpty {
                 heartRateBlock
             }
-            if recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
+            if shape.supportsBetweenSetRecovery,
+               recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
                 recoveryBlock
             }
-            if !summary.isCardio {
-                let muscles = analytics.muscleVolume(for: workout)
+            if presentationPlan.modalities.contains(.strength) {
+                let muscles = analytics.muscleVolume(
+                    for: workout,
+                    exerciseRows: presentationPlan.strengthExercises
+                )
                 if !muscles.isEmpty { muscleBlock(muscles) }
             }
             Rectangle().fill(theme.separator).frame(height: 1)
-            ForEach(logEntries) { entry in
+            ForEach(orderedEntries) { entry in
                 switch entry {
-                case .single(let we):
-                    exerciseBlock(we)
-                case .superset(let group, let members):
-                    supersetContainer(group: group, members: members)
-                }
-            }
-            // Sessions not linked to an exercise (Health/GPX imports).
-            ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil }) { session in
-                if session.isYogaSession {
-                    yogaBlock(nil, session)
-                } else {
-                    cardioBlock(nil, session)
+                case .log(let log):
+                    switch log {
+                    case .single(let exercise): exerciseBlock(exercise)
+                    case .superset(let group, let members): supersetContainer(group: group, members: members)
+                    }
+                case .block(let block):
+                    workoutBlock(block)
+                case .legacyConditioning(let conditioning):
+                    conditioningBlock(plan: conditioning.plan, result: conditioning.result)
+                case .session(let session):
+                    if session.isYogaSession {
+                        yogaBlock(nil, session, plan: nil)
+                    } else if session.isConditioningSession {
+                        conditioningSessionBlock(session)
+                    } else {
+                        cardioBlock(nil, session)
+                    }
                 }
             }
             footer
@@ -147,27 +185,112 @@ struct WorkoutShareCard: View {
     // MARK: - Header
 
     private var header: some View {
-        chrome.header(title: workout.title ?? "Workout", date: workout.startedAt)
+        chrome.header(
+            title: workout.title ?? "Workout",
+            date: workout.startedAt,
+            systemImage: shape.systemImage
+        )
     }
 
     // MARK: - Stat block
 
     private var statBlock: some View {
-        HStack(spacing: 12) {
-            chrome.stat("Duration", Fmt.durationShort(summary.durationSeconds), theme.textPrimary)
-            if let score = conditioningResult?.sectionResults.first {
-                chrome.stat("Score", ConditioningSharePresentation.score(score), theme.accent)
-                if summary.volume > 0 {
-                    chrome.stat("Volume", Fmt.volume(summary.volume), theme.secondaryAccent)
-                } else {
-                    chrome.stat("Sections", "\(conditioningPlan?.sections.count ?? 1)", theme.secondaryAccent)
+        let overview = WorkoutOverviewPresentation.make(
+            workout: workout,
+            exercises: exercises,
+            durationSeconds: summary.durationSeconds
+        )
+        return HStack(spacing: 12) {
+            ForEach(Array(overview.facts.prefix(3).enumerated()), id: \.offset) { _, fact in
+                chrome.stat(fact.label, fact.value, overviewColor(fact.label))
+            }
+        }
+    }
+
+    private func overviewColor(_ label: String) -> Color {
+        switch label {
+        case "Time", "Score", "Conditioning": theme.accent
+        case "Work", "Volume", "Distance", "Cardio": theme.secondaryAccent
+        case "Avg HR": theme.danger
+        default: theme.textPrimary
+        }
+    }
+
+    @ViewBuilder
+    private func workoutBlock(_ block: WorkoutBlockModel) -> some View {
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            conditioningBlock(
+                plan: plan,
+                result: ConditioningResult.decode(from: block.resultJSON)
+            )
+        } else if block.kind == .yoga,
+                  let session = workout.cardioSessions.first(where: { $0.workoutBlockID == block.id }),
+                  session.endedAt != nil {
+            let anchor = workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }
+            yogaBlock(anchor, session, plan: YogaFlowPlan.decode(from: block.planSnapshotJSON))
+        } else {
+            chrome.surfaceBlock {
+                chrome.blockTitle(block.kind.title, systemImage: block.kind == .yoga ? "figure.yoga" : "stopwatch", color: theme.accent) {
+                    Text("Skipped").font(.tag).foregroundStyle(theme.textTertiary)
                 }
-            } else if summary.isCardio {
-                chrome.stat("Distance", Fmt.distance(workout.cardioSessions.first?.distanceMeters), theme.secondaryAccent)
-                chrome.stat("Avg HR", summary.avgHR.map { "\($0)" } ?? "—", theme.danger)
-            } else {
-                chrome.stat("Volume", Fmt.volume(summary.volume), theme.secondaryAccent)
-                chrome.stat("Sets", ShareCardChrome.setCount(summary.sets), theme.textPrimary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func conditioningBlock(
+        plan: ConditioningPlan,
+        result: ConditioningResult?
+    ) -> some View {
+        if let result {
+            ConditioningShareBlock(
+                plan: plan,
+                result: result,
+                exercises: exercises,
+                theme: theme,
+                showsResult: shape != .conditioning,
+                showsModalityHeader: true,
+                showsSectionName: false
+            )
+        } else {
+            chrome.surfaceBlock {
+                chrome.blockTitle(
+                    "Conditioning",
+                    systemImage: "figure.cross.training",
+                    color: theme.warmup
+                ) {
+                    Text("Skipped").font(.tag).foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+    }
+
+    /// Imported and early conditioning logs can carry a completed timed
+    /// session without a frozen prescription. Preserve the honest session
+    /// facts instead of dropping the modality or inventing rounds/reps.
+    private func conditioningSessionBlock(_ session: CardioSessionModel) -> some View {
+        chrome.surfaceBlock {
+            chrome.blockTitle(
+                "Conditioning",
+                systemImage: "figure.cross.training",
+                color: theme.warmup
+            ) {
+                Text("Completed").font(.tag).foregroundStyle(theme.success)
+            }
+            if shape != .conditioning {
+                WrapLayout(spacing: 8) {
+                    chrome.chip("Time", Fmt.durationShort(session.durationSeconds))
+                    if let avgHR = session.avgHR { chrome.chip("Avg HR", "\(avgHR)") }
+                    if let energy = session.activeEnergyKcal, energy > 0 {
+                        chrome.chip("Energy", "\(Int(energy)) kcal")
+                    }
+                }
+            }
+            let zones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: session.sampleSeriesJSON)
+                ?? session.hrZoneSeconds
+            if zones.contains(where: { $0 > 0 }) {
+                ZoneSecondsBar(zoneSeconds: zones, totalDurationSeconds: session.durationSeconds)
             }
         }
     }
@@ -303,10 +426,21 @@ struct WorkoutShareCard: View {
     private func exerciseBlock(_ we: WorkoutExerciseModel, showsSupersetBadge: Bool = true) -> some View {
         if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
             if session.isYogaSession {
-                yogaBlock(we, session, showsSupersetBadge: showsSupersetBadge)
+                if session.endedAt != nil {
+                    yogaBlock(
+                        we,
+                        session,
+                        plan: YogaFlowPlan.decode(from: we.yogaFlowJSON),
+                        showsSupersetBadge: showsSupersetBadge
+                    )
+                } else if let plan = YogaFlowPlan.decode(from: we.yogaFlowJSON) {
+                    plannedYogaBlock(we, plan: plan, showsSupersetBadge: showsSupersetBadge)
+                }
             } else {
                 cardioBlock(we, session, showsSupersetBadge: showsSupersetBadge)
             }
+        } else if let plan = YogaFlowPlan.decode(from: we.yogaFlowJSON) {
+            plannedYogaBlock(we, plan: plan, showsSupersetBadge: showsSupersetBadge)
         } else {
             strengthBlock(we, showsSupersetBadge: showsSupersetBadge)
         }
@@ -492,15 +626,43 @@ struct WorkoutShareCard: View {
 
     // MARK: - Yoga
 
+    private func plannedYogaBlock(
+        _ we: WorkoutExerciseModel,
+        plan: YogaFlowPlan,
+        showsSupersetBadge: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: plan.style.systemImage)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(theme.accent)
+            Text(plan.steps.count == 1 ? plan.steps[0].name : "\(plan.style.title) Yoga")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(theme.textPrimary)
+            supersetBadge(we, enabled: showsSupersetBadge)
+            Spacer(minLength: 0)
+            Text("Skipped").font(.tag).foregroundStyle(theme.textTertiary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
     /// Yoga logs as a session like cardio but shares none of its vocabulary:
     /// the mat doesn't move, so there's no distance or pace — the honest
     /// metrics are time, poses, and style. Previously these rendered through
     /// `cardioBlock`, which stamped a running figure and a "Pace" chip on a
     /// yin practice.
-    private func yogaBlock(_ we: WorkoutExerciseModel?, _ session: CardioSessionModel, showsSupersetBadge: Bool = true) -> some View {
+    private func yogaBlock(
+        _ we: WorkoutExerciseModel?,
+        _ session: CardioSessionModel,
+        plan: YogaFlowPlan?,
+        showsSupersetBadge: Bool = true
+    ) -> some View {
         let style = session.resolvedYogaStyle
-        let name = we.flatMap { library($0)?.name } ?? "Yoga"
-        let poses = session.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
+        let exercise = we.flatMap(library)
+        let name = YogaHistoryPresentation.title(session: session, plan: plan, exercise: exercise)
+        let poses = YogaHistoryPresentation.poses(session: session, plan: plan)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: style.systemImage)
@@ -509,19 +671,26 @@ struct WorkoutShareCard: View {
                     .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
                 if let we { supersetBadge(we, enabled: showsSupersetBadge) }
                 Spacer(minLength: 0)
-                Text("\(style.title) Yoga")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(theme.accentSoft, in: Capsule())
+                if shape != .yoga {
+                    Text("\(style.title) Yoga")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(theme.accentSoft, in: Capsule())
+                }
             }
             WrapLayout(spacing: 8) {
-                chrome.chip("Time", Fmt.durationShort(session.durationSeconds))
-                if let count = session.posesCompleted, count > 0 {
-                    chrome.chip("Poses", "\(count)")
+                let count = YogaHistoryPresentation.poseCount(session: session, plan: plan)
+                if shape != .yoga {
+                    chrome.chip("Time", Fmt.durationShort(session.durationSeconds))
+                    if count > 0 { chrome.chip("Poses", "\(count)") }
                 }
-                if let hr = session.avgHR { chrome.chip("Avg HR", "\(hr)") }
-                if let kcal = session.activeEnergyKcal, kcal > 0 {
+                if (shape != .yoga || workout.avgHR == nil), let hr = session.avgHR {
+                    chrome.chip("Avg HR", "\(hr)")
+                }
+                if (shape != .yoga || workout.activeEnergyKcal == nil),
+                   let kcal = session.activeEnergyKcal,
+                   kcal > 0 {
                     chrome.chip("Energy", "\(Int(kcal)) kcal")
                 }
             }
@@ -531,7 +700,14 @@ struct WorkoutShareCard: View {
                         .foregroundStyle(theme.textSecondary)
                     ForEach(poses) { pose in
                         HStack(spacing: 8) {
-                            Text(pose.label ?? "Pose")
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(pose.name)
+                                if let detail = pose.sideDetail {
+                                    Text(detail)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
+                            }
                                 .font(.system(size: 12)).foregroundStyle(theme.textPrimary)
                             Spacer(minLength: 0)
                             Text(Fmt.durationShort(pose.durationSeconds))

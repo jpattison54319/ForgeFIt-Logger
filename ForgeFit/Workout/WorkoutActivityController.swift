@@ -89,7 +89,7 @@ final class WorkoutActivityController {
     }
     #endif
 
-    private func contentState(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> WorkoutActivityAttributes.ContentState {
+    func contentState(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> WorkoutActivityAttributes.ContentState {
         let sorted = workout.exercises.sorted { $0.position < $1.position }
         let allSets = sorted.flatMap(\.sets)
         let hasStrengthSets = allSets.contains { $0.completedAt != nil || $0.reps != nil || $0.weight != nil }
@@ -114,6 +114,13 @@ final class WorkoutActivityController {
 
         let timer = RestTimerController.shared
         let resting = timer.isRunning && !timer.isMicro
+
+        // Conditioning is a first-class live modality. Its focused runner has
+        // no ordinary "current exercise" row, so falling through to strength
+        // produces a 0/0-set activity and makes the HR stream look absent.
+        if let conditioning = conditioningContentState(for: workout) {
+            return conditioning
+        }
 
         // Guided yoga headline: the current pose with a native countdown.
         // Any yoga session in the workout takes the lock screen while it's
@@ -213,6 +220,64 @@ final class WorkoutActivityController {
             totalSets: allSets.count,
             restEndsAt: resting ? timer.endsAt : nil,
             heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate
+        )
+    }
+
+    private func conditioningContentState(
+        for workout: WorkoutModel
+    ) -> WorkoutActivityAttributes.ContentState? {
+        let plan: ConditioningPlan
+        let progress: ConditioningProgress
+        let sessionStart: Date?
+
+        if let session = workout.cardioSessions.first(where: {
+            $0.isConditioningSession && $0.liveStartedAt != nil && $0.endedAt == nil
+        }),
+        let blockID = session.workoutBlockID,
+        let block = workout.blocks.first(where: { $0.id == blockID }),
+        let decodedPlan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            plan = decodedPlan
+            progress = ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+            sessionStart = session.liveStartedAt
+        } else if let decodedPlan = ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON),
+                  let decodedProgress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
+                  decodedProgress.status != .ready {
+            plan = decodedPlan
+            progress = decodedProgress
+            sessionStart = decodedProgress.startedAt
+        } else {
+            return nil
+        }
+
+        guard plan.sections.indices.contains(progress.sectionIndex) else { return nil }
+        let section = plan.sections[progress.sectionIndex]
+        let rounds = section.prescribedRounds
+        let roundText = rounds.map { "Round \(min(progress.round, $0)) of \($0)" }
+            ?? "Round \(progress.round)"
+        let metric = progress.status == .paused ? "Paused · \(roundText)" : roundText
+        let targets = section.movements.map { section.target(for: $0, round: progress.round) }
+        let repTargetText: String? = if !targets.isEmpty,
+                                       section.movements.allSatisfy({ $0.targetUnit == .reps }) {
+            targets
+                .map { $0.formatted(.number.precision(.fractionLength(0...1))) }
+                .joined(separator: " / ") + " reps"
+        } else {
+            nil
+        }
+        let progressText = rounds.map { "\(min(progress.fullRounds, $0))/\($0) rounds" }
+            ?? "\(progress.fullRounds) rounds"
+        let detail = [repTargetText, progressText].compactMap { $0 }.joined(separator: " · ")
+
+        return WorkoutActivityAttributes.ContentState(
+            startedAt: sessionStart ?? progress.startedAt ?? workout.startedAt,
+            completedSets: 0,
+            totalSets: 0,
+            mode: .conditioning,
+            cardioTitle: section.name.isEmpty ? "Conditioning" : section.name,
+            cardioMetric: metric,
+            cardioDetail: detail,
+            restEndsAt: nil,
+            heartRate: LiveMetricsHub.shared.liveMetrics?.freshHeartRate()
         )
     }
     #else

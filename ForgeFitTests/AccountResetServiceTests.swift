@@ -132,12 +132,16 @@ struct AccountResetServiceTests {
             context.insert(RoutineFolderModel(userID: userID, name: "Sample"))
         case is RoutineModel.Type:
             context.insert(RoutineModel(userID: userID, name: "Sample"))
+        case is RoutineBlockModel.Type:
+            context.insert(RoutineBlockModel(userID: userID, kind: .conditioning))
         case is RoutineExerciseModel.Type:
             context.insert(RoutineExerciseModel(userID: userID, exerciseID: UUID()))
         case is RoutineSetModel.Type:
             context.insert(RoutineSetModel(userID: userID, position: 0))
         case is WorkoutModel.Type:
             context.insert(WorkoutModel(userID: userID))
+        case is WorkoutBlockModel.Type:
+            context.insert(WorkoutBlockModel(userID: userID, kind: .conditioning))
         case is WorkoutExerciseModel.Type:
             context.insert(WorkoutExerciseModel(userID: userID, exerciseID: UUID()))
         case is SetModel.Type:

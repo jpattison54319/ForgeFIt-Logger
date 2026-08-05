@@ -42,17 +42,20 @@ struct WorkoutHistorySearchTests {
     @Test func kindsDeriveFromContent() async throws {
         let (container, context) = try TestStore.make()
         let bench = exercise("Bench Press", muscles: ["chest"])
+        let burpee = exercise("Burpee", muscles: ["full body"])
         context.insert(bench)
+        context.insert(burpee)
 
         let lifting = strength(daysAgo: 1, title: "Push", exercise: bench, weight: 100)
         let run = cardio(daysAgo: 2, title: "Tempo", modality: "run")
         let yoga = yogaWorkout(daysAgo: 3, title: "Evening Flow")
         let mixed = strength(daysAgo: 4, title: "Hybrid", exercise: bench, weight: 100)
         mixed.cardioSessions.append(cardioSession(modality: "row"))
+        let conditioning = conditioningWorkout(daysAgo: 5, title: "Engine", exercise: burpee)
 
         let index = await WorkoutHistoryIndexer.build(
-            workouts: [lifting, run, yoga, mixed],
-            exercises: [bench],
+            workouts: [lifting, run, yoga, mixed, conditioning],
+            exercises: [bench, burpee],
             calendar: calendar
         )
         let kinds = Dictionary(index.entries.map { ($0.title, $0.kind) }, uniquingKeysWith: { a, _ in a })
@@ -61,6 +64,11 @@ struct WorkoutHistorySearchTests {
         #expect(kinds["Tempo"] == .cardio)
         #expect(kinds["Evening Flow"] == .yoga)
         #expect(kinds["Hybrid"] == .mixed)
+        #expect(kinds["Engine"] == .conditioning)
+        let conditioningEntry = try #require(index.entries.first { $0.title == "Engine" })
+        #expect(conditioningEntry.volume == 0)
+        #expect(conditioningEntry.effectiveSets == 0)
+        #expect(!conditioningEntry.facts.map(\.label).contains("Sets"))
         _ = container
     }
 
@@ -119,6 +127,55 @@ struct WorkoutHistorySearchTests {
         _ = container
     }
 
+    @Test func yogaHistorySearchesItsPoseNamesAndMuscles() async throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let pose = exercise("Low Lunge", muscles: ["hip flexors"])
+        context.insert(pose)
+        let start = date(daysAgo: 4)
+        let plan = YogaFlowPlan(style: .yin, steps: [
+            .init(poseID: pose.id, name: pose.name, holdSeconds: 45, side: .bothSides)
+        ])
+        let block = WorkoutBlockModel(
+            userID: userID,
+            kind: .yoga,
+            planSnapshotJSON: plan.encodedJSON()
+        )
+        let session = CardioSessionModel(
+            userID: userID,
+            workoutBlockID: block.id,
+            modality: CardioSessionModel.yogaModality,
+            startedAt: start,
+            liveStartedAt: start,
+            endedAt: start.addingTimeInterval(90),
+            durationSeconds: 90,
+            yogaStyleRaw: YogaStyle.yin.rawValue,
+            posesCompleted: 2
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Evening Mobility",
+            startedAt: start,
+            endedAt: start.addingTimeInterval(90),
+            cardioSessions: [session],
+            blocks: [block]
+        )
+        context.insert(workout)
+
+        let index = await WorkoutHistoryIndexer.build(
+            workouts: [workout],
+            exercises: [pose],
+            calendar: calendar
+        )
+        var query = WorkoutHistoryQuery()
+        query.searchText = "low lunge"
+        let results = WorkoutHistoryQueryEngine.apply(query, to: index, now: now, calendar: calendar)
+
+        #expect(results.map(\.title) == ["Evening Mobility"])
+        #expect(results.first?.exerciseIDs.contains(pose.id) == true)
+        #expect(results.first?.muscles.contains("hip flexors") == true)
+    }
+
     // MARK: Filters
 
     @Test func filtersNarrowByKindMuscleExerciseSourceAndPRs() async throws {
@@ -133,9 +190,10 @@ struct WorkoutHistorySearchTests {
         let imported = strength(daysAgo: 3, title: "Hevy Push", exercise: bench, weight: 90)
         imported.externalSource = "hevy"
         let run = cardio(daysAgo: 4, title: "Run", modality: "run")
+        let conditioning = conditioningWorkout(daysAgo: 5, title: "Conditioning", exercise: squat)
 
         let index = await WorkoutHistoryIndexer.build(
-            workouts: [push, legs, imported, run],
+            workouts: [push, legs, imported, run, conditioning],
             exercises: [bench, squat],
             calendar: calendar
         )
@@ -147,9 +205,10 @@ struct WorkoutHistorySearchTests {
         }
 
         #expect(titles { $0.kind = .cardio } == ["Run"])
+        #expect(titles { $0.kind = .conditioning } == ["Conditioning"])
         #expect(titles { $0.muscle = "chest" } == ["Push", "Hevy Push"])
         #expect(titles { $0.source = .imported } == ["Hevy Push"])
-        #expect(titles { $0.source = .logged } == ["Push", "Legs", "Run"])
+        #expect(titles { $0.source = .logged } == ["Push", "Legs", "Run", "Conditioning"])
         // Imported bench (90 kg) happened FIRST chronologically? No — daysAgo 3
         // is older than daysAgo 1, so it sets the first bench PR; the 100 kg
         // push then beats it. Squat's only session is its own PR.
@@ -293,23 +352,73 @@ struct WorkoutHistorySearchTests {
 
     private func cardio(daysAgo: Int, title: String, modality: String) -> WorkoutModel {
         let start = date(daysAgo: daysAgo)
+        let session = cardioSession(modality: modality)
+        session.startedAt = start
+        session.liveStartedAt = start
+        session.endedAt = start.addingTimeInterval(1_800)
         return WorkoutModel(
             userID: userID,
             title: title,
             startedAt: start,
             endedAt: start.addingTimeInterval(1_800),
-            cardioSessions: [cardioSession(modality: modality)]
+            cardioSessions: [session]
         )
     }
 
     private func yogaWorkout(daysAgo: Int, title: String) -> WorkoutModel {
         let start = date(daysAgo: daysAgo)
+        let session = cardioSession(modality: "yoga")
+        session.startedAt = start
+        session.liveStartedAt = start
+        session.endedAt = start.addingTimeInterval(1_800)
         return WorkoutModel(
             userID: userID,
             title: title,
             startedAt: start,
             endedAt: start.addingTimeInterval(1_800),
-            cardioSessions: [cardioSession(modality: "yoga")]
+            cardioSessions: [session]
+        )
+    }
+
+    private func conditioningWorkout(
+        daysAgo: Int,
+        title: String,
+        exercise: ExerciseLibraryModel
+    ) -> WorkoutModel {
+        let start = date(daysAgo: daysAgo)
+        let section = ConditioningSection(
+            name: "Rounds",
+            format: .forTime,
+            scoreKind: .elapsedTime,
+            rounds: 10,
+            movements: [ConditioningMovement(exerciseID: exercise.id, targetValue: 10)]
+        )
+        let result = ConditioningResult(sectionResults: [
+            ConditioningSectionResult(
+                id: section.id,
+                format: .forTime,
+                scoreKind: .elapsedTime,
+                elapsedSeconds: 600,
+                fullRounds: 10,
+                totalReps: 100,
+                completed: true
+            )
+        ])
+        let row = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            sets: (0..<10).map {
+                SetModel(userID: userID, position: $0, reps: 10, completedAt: start)
+            }
+        )
+        return WorkoutModel(
+            userID: userID,
+            title: title,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(600),
+            conditioningPlanSnapshotJSON: ConditioningPlan(sections: [section]).encodedJSON(),
+            conditioningResultJSON: result.encodedJSON(),
+            exercises: [row]
         )
     }
 

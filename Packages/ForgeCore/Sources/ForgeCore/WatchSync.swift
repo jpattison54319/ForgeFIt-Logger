@@ -175,6 +175,9 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
 
     /// The `WorkoutExerciseModel` id.
     public var id: UUID
+    /// Position in the workout's shared exercise/block order. Optional for
+    /// contexts produced before workout blocks existed.
+    public var position: Int?
     /// The library id used by conditioning-plan movements. Additive-optional.
     public var exerciseID: UUID?
     public var name: String
@@ -182,6 +185,12 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
     /// Yoga sessions share cardio's start/complete lifecycle on the wrist but
     /// render with yoga iconography. Additive-optional.
     public var isYoga: Bool?
+    /// Non-nil when this row represents a first-class workout block rather
+    /// than a library exercise. Older watches safely render it as cardio.
+    public var workoutBlockKindRaw: String?
+    public var conditioningPlan: ConditioningPlan?
+    public var conditioningProgress: ConditioningProgress?
+    public var conditioningMovementNames: [UUID: String]?
     /// Raw cardio kind ("run", "cycle", etc.) so the watch can choose the
     /// correct HealthKit activity type. Additive-optional.
     public var cardioKindRaw: String?
@@ -194,10 +203,15 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
 
     public init(
         id: UUID,
+        position: Int? = nil,
         exerciseID: UUID? = nil,
         name: String,
         isCardio: Bool = false,
         isYoga: Bool? = nil,
+        workoutBlockKindRaw: String? = nil,
+        conditioningPlan: ConditioningPlan? = nil,
+        conditioningProgress: ConditioningProgress? = nil,
+        conditioningMovementNames: [UUID: String]? = nil,
         cardioKindRaw: String? = nil,
         supportsOutdoorRoute: Bool? = nil,
         supersetGroup: Int? = nil,
@@ -205,10 +219,15 @@ public struct WatchExerciseSnapshot: Codable, Sendable, Equatable, Identifiable 
         sets: [WatchSetSnapshot] = []
     ) {
         self.id = id
+        self.position = position
         self.exerciseID = exerciseID
         self.name = name
         self.isCardio = isCardio
         self.isYoga = isYoga
+        self.workoutBlockKindRaw = workoutBlockKindRaw
+        self.conditioningPlan = conditioningPlan
+        self.conditioningProgress = conditioningProgress
+        self.conditioningMovementNames = conditioningMovementNames
         self.cardioKindRaw = cardioKindRaw
         self.supportsOutdoorRoute = supportsOutdoorRoute
         self.supersetGroup = supersetGroup
@@ -388,6 +407,7 @@ public enum WatchCommand: Codable, Sendable {
     case completeCardio(workoutExerciseID: UUID)
     case liveMetrics(WatchLiveMetrics)
     case conditioningEvent(ConditioningProgressEvent)
+    case conditioningBlockEvent(blockID: UUID, event: ConditioningProgressEvent)
     /// `savedToHealth` is true when the watch's HKLiveWorkoutBuilder already
     /// wrote the HKWorkout — the phone then skips its own write to avoid
     /// double-counting in Apple Health.

@@ -43,10 +43,23 @@ struct RoutineDuplicationTests {
             userID: userID, exerciseID: UUID(), position: 2,
             yogaFlowJSON: #"{"poses":[{"name":"Balasana","holdSeconds":30}]}"#
         )
+        let conditioningBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 3,
+            planJSON: #"{"sections":[{"name":"Finisher"}]}"#
+        )
+        let yogaBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 4,
+            planJSON: #"{"styleRaw":"yin","steps":[]}"#
+        )
         let routine = RoutineModel(
             userID: userID, name: "Block A", notes: "week 3",
             folderID: UUID(), position: 2,
-            exercises: [strength, cardio, yoga]
+            exercises: [strength, cardio, yoga],
+            blocks: [conditioningBlock, yogaBlock]
         )
         context.insert(routine)
         try? context.save()
@@ -96,6 +109,15 @@ struct RoutineDuplicationTests {
                 #expect(c.plannedMiniRepsJSON == s.plannedMiniRepsJSON)
             }
         }
+
+        let sourceBlocks = source.blocks.sorted { $0.position < $1.position }
+        let copiedBlocks = copy.blocks.sorted { $0.position < $1.position }
+        #expect(copiedBlocks.count == sourceBlocks.count)
+        for (original, copied) in zip(sourceBlocks, copiedBlocks) {
+            #expect(copied.kind == original.kind)
+            #expect(copied.position == original.position)
+            #expect(copied.planJSON == original.planJSON)
+        }
     }
 
     @Test func copyUsesFreshIdentityAndLeavesSourceUntouched() throws {
@@ -103,7 +125,9 @@ struct RoutineDuplicationTests {
         let source = planHeavyRoutine(in: context)
         let sourceExerciseIDs = Set(source.exercises.map(\.id))
         let sourceSetIDs = Set(source.exercises.flatMap(\.sets).map(\.id))
+        let sourceBlockIDs = Set(source.blocks.map(\.id))
         let sourceExerciseCount = source.exercises.count
+        let sourceBlockCount = source.blocks.count
 
         let copy = RoutineDuplicator.duplicate(source, position: 3, in: context)
         try context.save()
@@ -113,9 +137,11 @@ struct RoutineDuplicationTests {
         #expect(copy.id != source.id)
         #expect(Set(copy.exercises.map(\.id)).isDisjoint(with: sourceExerciseIDs))
         #expect(Set(copy.exercises.flatMap(\.sets).map(\.id)).isDisjoint(with: sourceSetIDs))
+        #expect(Set(copy.blocks.map(\.id)).isDisjoint(with: sourceBlockIDs))
 
         // Source untouched (the old copy shared no state, keep it that way).
         #expect(source.exercises.count == sourceExerciseCount)
+        #expect(source.blocks.count == sourceBlockCount)
         #expect(source.name == "Block A")
         #expect(source.deletedAt == nil)
     }

@@ -17,21 +17,6 @@ import SwiftData
 /// `SetModel.sourceRoutineSetID`, stamped by `WorkoutFactory.start`. Sets and
 /// exercises added mid-session have nil origin IDs; routine entries whose id is
 /// no longer referenced were removed.
-/// Detects and applies structural drift between a routine and the workout that
-/// was run from it, so the user can be asked at finish: "update the routine
-/// with today's changes?"
-///
-/// Scope is **structural only**: exercises / sets added, removed, reordered,
-/// regrouped into supersets, or whose set type changed. Performed weight, reps,
-/// and RPE from the session are intentionally **not** diffed — they describe
-/// what happened today, not the routine's standing targets. Performed values
-/// are only carried onto the routine for *newly added* sets (which have no
-/// standing target to preserve).
-///
-/// Identity is preserved via `WorkoutExerciseModel.sourceRoutineExerciseID` and
-/// `SetModel.sourceRoutineSetID`, stamped by `WorkoutFactory.start`. Sets and
-/// exercises added mid-session have nil origin IDs; routine entries whose id is
-/// no longer referenced were removed.
 public enum RoutineChangeSync {
 
     // MARK: - Plan
@@ -40,6 +25,25 @@ public enum RoutineChangeSync {
     /// routine it was started from. Pure value type; safe to inspect before
     /// deciding whether to apply.
     public struct Plan: Equatable {
+        public struct BlockPlan: Equatable {
+            public let workoutBlockID: UUID
+            public let matchedRoutineBlockID: UUID?
+            public let movedPosition: Bool
+            public let planChanged: Bool
+
+            public init(
+                workoutBlockID: UUID,
+                matchedRoutineBlockID: UUID?,
+                movedPosition: Bool,
+                planChanged: Bool
+            ) {
+                self.workoutBlockID = workoutBlockID
+                self.matchedRoutineBlockID = matchedRoutineBlockID
+                self.movedPosition = movedPosition
+                self.planChanged = planChanged
+            }
+        }
+
         public struct ExercisePlan: Equatable {
             /// Workout exercise driving the change (reference; not owned).
             public let workoutExerciseID: UUID
@@ -86,20 +90,32 @@ public enum RoutineChangeSync {
         /// Routine exercise ids no longer referenced by the workout (removed).
         public let removedRoutineExerciseIDs: [UUID]
         public let exercisePlans: [ExercisePlan]
+        public let addedBlockIDs: [UUID]
+        public let removedRoutineBlockIDs: [UUID]
+        public let blockPlans: [BlockPlan]
 
         public init(
             addedExerciseIDs: [UUID],
             removedRoutineExerciseIDs: [UUID],
-            exercisePlans: [ExercisePlan]
+            exercisePlans: [ExercisePlan],
+            addedBlockIDs: [UUID] = [],
+            removedRoutineBlockIDs: [UUID] = [],
+            blockPlans: [BlockPlan] = []
         ) {
             self.addedExerciseIDs = addedExerciseIDs
             self.removedRoutineExerciseIDs = removedRoutineExerciseIDs
             self.exercisePlans = exercisePlans
+            self.addedBlockIDs = addedBlockIDs
+            self.removedRoutineBlockIDs = removedRoutineBlockIDs
+            self.blockPlans = blockPlans
         }
 
         public var hasChanges: Bool {
             !addedExerciseIDs.isEmpty
                 || !removedRoutineExerciseIDs.isEmpty
+                || !addedBlockIDs.isEmpty
+                || !removedRoutineBlockIDs.isEmpty
+                || blockPlans.contains { $0.movedPosition || $0.planChanged }
                 || exercisePlans.contains {
                     $0.movedPosition
                         || $0.supersetChanged
@@ -117,6 +133,10 @@ public enum RoutineChangeSync {
             let removedEx = removedRoutineExerciseIDs.count
             if addedEx > 0 { parts.append("\(addedEx) exercise\(addedEx == 1 ? "" : "s") added") }
             if removedEx > 0 { parts.append("\(removedEx) exercise\(removedEx == 1 ? "" : "s") removed") }
+            let addedBlocks = addedBlockIDs.count
+            let removedBlocks = removedRoutineBlockIDs.count
+            if addedBlocks > 0 { parts.append("\(addedBlocks) block\(addedBlocks == 1 ? "" : "s") added") }
+            if removedBlocks > 0 { parts.append("\(removedBlocks) block\(removedBlocks == 1 ? "" : "s") removed") }
             var addedSets = 0, removedSets = 0, typeChanged = 0
             var moved = false, regrouped = false
             for p in exercisePlans {
@@ -126,12 +146,14 @@ public enum RoutineChangeSync {
                 moved = moved || p.movedPosition
                 regrouped = regrouped || p.supersetChanged
             }
+            moved = moved || blockPlans.contains(where: \.movedPosition)
             if addedSets > 0 { parts.append("\(addedSets) set\(addedSets == 1 ? "" : "s") added") }
             if removedSets > 0 { parts.append("\(removedSets) set\(removedSets == 1 ? "" : "s") removed") }
             if typeChanged > 0 { parts.append("\(typeChanged) set type\(typeChanged == 1 ? "" : "s") changed") }
             if moved { parts.append("order changed") }
             if regrouped { parts.append("supersets changed") }
             if exercisePlans.contains(where: \.flowChanged) { parts.append("yoga flow updated") }
+            if blockPlans.contains(where: \.planChanged) { parts.append("block plan updated") }
             return parts.isEmpty ? "No changes" : parts.joined(separator: " · ")
         }
     }
@@ -141,7 +163,9 @@ public enum RoutineChangeSync {
     /// Builds a `Plan` describing how `workout` differs structurally from the
     /// `routine` it was started from. Does not mutate anything.
     public static func detect(workout: WorkoutModel, routine: RoutineModel) -> Plan {
-        let workoutExercises = workout.exercises.sorted { $0.position < $1.position }
+        let workoutExercises = workout.exercises
+            .filter { $0.generatedByWorkoutBlockID == nil }
+            .sorted { $0.position < $1.position }
         let routineExercises = routine.exercises.sorted { $0.position < $1.position }
         let routineByID = Dictionary(routineExercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
@@ -162,10 +186,36 @@ public enum RoutineChangeSync {
             .filter { !referencedRoutineIDs.contains($0.id) }
             .map(\.id)
 
+        let workoutBlocks = workout.blocks.sorted { $0.position < $1.position }
+        let routineBlocks = routine.blocks.sorted { $0.position < $1.position }
+        let routineBlocksByID = Dictionary(routineBlocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let referencedRoutineBlockIDs = Set(workoutBlocks.compactMap(\.sourceRoutineBlockID))
+        var addedBlockIDs: [UUID] = []
+        var blockPlans: [Plan.BlockPlan] = []
+        for block in workoutBlocks {
+            guard let routineID = block.sourceRoutineBlockID,
+                  let routineBlock = routineBlocksByID[routineID] else {
+                addedBlockIDs.append(block.id)
+                continue
+            }
+            blockPlans.append(Plan.BlockPlan(
+                workoutBlockID: block.id,
+                matchedRoutineBlockID: routineBlock.id,
+                movedPosition: block.position != routineBlock.position,
+                planChanged: block.planSnapshotJSON != routineBlock.planJSON
+            ))
+        }
+        let removedRoutineBlockIDs = routineBlocks
+            .filter { !referencedRoutineBlockIDs.contains($0.id) }
+            .map(\.id)
+
         return Plan(
             addedExerciseIDs: addedExerciseIDs,
             removedRoutineExerciseIDs: removedRoutineExerciseIDs,
-            exercisePlans: exercisePlans
+            exercisePlans: exercisePlans,
+            addedBlockIDs: addedBlockIDs,
+            removedRoutineBlockIDs: removedRoutineBlockIDs,
+            blockPlans: blockPlans
         )
     }
 
@@ -252,15 +302,23 @@ public enum RoutineChangeSync {
     /// `targetRPE`, setType → setType, durationSeconds →
     /// `targetDurationSeconds`). Inserts new models into `context`.
     public static func apply(_ plan: Plan, to routine: RoutineModel, from workout: WorkoutModel, in context: ModelContext) {
-        let workoutByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let workoutByID = Dictionary(
+            workout.exercises.filter { $0.generatedByWorkoutBlockID == nil }.map { ($0.id, $0) },
+            uniquingKeysWith: { a, _ in a }
+        )
         let routineExercises = routine.exercises.sorted { $0.position < $1.position }
         let routineByID = Dictionary(routineExercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let workoutBlocksByID = Dictionary(workout.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let routineBlocksByID = Dictionary(routine.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // 1. Remove exercises no longer present in the workout.
         for removedID in plan.removedRoutineExerciseIDs {
             if let re = routineByID[removedID] {
                 context.delete(re)
             }
+        }
+        for removedID in plan.removedRoutineBlockIDs {
+            if let block = routineBlocksByID[removedID] { context.delete(block) }
         }
 
         // 2. Update matched exercises + their sets.
@@ -315,6 +373,31 @@ public enum RoutineChangeSync {
                 }
                 re.sets = newSets
             }
+        }
+
+        for blockPlan in plan.blockPlans {
+            guard let workoutBlock = workoutBlocksByID[blockPlan.workoutBlockID],
+                  let routineBlockID = blockPlan.matchedRoutineBlockID,
+                  let routineBlock = routineBlocksByID[routineBlockID] else { continue }
+            if blockPlan.movedPosition { routineBlock.position = workoutBlock.position }
+            if blockPlan.planChanged { routineBlock.planJSON = workoutBlock.planSnapshotJSON }
+            routineBlock.updatedAt = .now
+        }
+
+        for addedID in plan.addedBlockIDs {
+            guard let workoutBlock = workoutBlocksByID[addedID] else { continue }
+            let block = RoutineBlockModel(
+                userID: routine.userID,
+                kind: workoutBlock.kind,
+                position: workoutBlock.position,
+                planJSON: workoutBlock.planSnapshotJSON
+            )
+            context.insert(block)
+            routine.blocks.append(block)
+        }
+
+        if routine.blocks.contains(where: { $0.kind == .conditioning }) {
+            routine.conditioningPlanJSON = nil
         }
 
         routine.updatedAt = Date()

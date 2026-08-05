@@ -171,9 +171,25 @@ nonisolated struct TrainingAnalytics {
     /// sets, biggest contributor first. Powers the "muscles worked" rollup on a
     /// logged workout.
     func muscleVolume(for workout: WorkoutModel) -> [(muscle: String, sets: Double)] {
+        muscleVolume(for: workout.exercises)
+    }
+
+    /// Presentation-scoped variant used by mixed modality history/share. A
+    /// conditioning block may persist generated set rows for analytics, but
+    /// those rows are not strength work and must not inflate its muscle card.
+    func muscleVolume(
+        for workout: WorkoutModel,
+        exerciseRows: [WorkoutExerciseModel]
+    ) -> [(muscle: String, sets: Double)] {
+        muscleVolume(for: exerciseRows)
+    }
+
+    private func muscleVolume(
+        for exerciseRows: [WorkoutExerciseModel]
+    ) -> [(muscle: String, sets: Double)] {
         let byID = exerciseByID
         var entries: [(set: SetEntry, exercise: ExerciseInfo)] = []
-        for we in workout.exercises {
+        for we in exerciseRows {
             guard let ex = byID[we.exerciseID] else { continue }
             for set in we.sets where set.completedAt != nil {
                 entries.append((set.domainEntry, ex.domainInfo))

@@ -127,7 +127,17 @@ final class WatchLink: NSObject {
         // rows, and idle readiness fetches inside its own cache-miss branch.
         var exerciseByID: [UUID: ExerciseLibraryModel] = [:]
         if let active {
-            let ids = Array(Set(active.exercises.map(\.exerciseID)))
+            var referencedIDs = Set(active.exercises.map(\.exerciseID))
+            for block in active.blocks {
+                if block.kind == .conditioning,
+                   let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+                    referencedIDs.formUnion(plan.sections.flatMap(\.movements).map(\.exerciseID))
+                } else if block.kind == .yoga,
+                          let plan = YogaFlowPlan.decode(from: block.planSnapshotJSON) {
+                    referencedIDs.formUnion(plan.steps.map(\.poseID))
+                }
+            }
+            let ids = Array(referencedIDs)
             let scoped = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(
                 predicate: #Predicate { ids.contains($0.id) && $0.deletedAt == nil }
             ))) ?? []
@@ -142,9 +152,9 @@ final class WatchLink: NSObject {
                 sortBy: [SortDescriptor(\.position)]
             ))) ?? []
             let summaries = routines
-                .filter { $0.deletedAt == nil && !$0.exercises.isEmpty }
+                .filter { $0.deletedAt == nil && (!$0.exercises.isEmpty || !$0.blocks.isEmpty) }
                 .sorted { $0.position < $1.position }
-                .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count) }
+                .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count + $0.blocks.count) }
             routineSummaryCache = summaries
             routineSummaries = summaries
         }
@@ -195,13 +205,17 @@ final class WatchLink: NSObject {
                         ? "Pose \(min(runner.currentIndex + 1, runner.steps.count)) of \(runner.steps.count)"
                         : nil
                 }
-            let isYogaWorkout = !active.cardioSessions.isEmpty
-                && active.cardioSessions.allSatisfy(\.isYogaSession)
-            snapshot = WatchWorkoutSnapshot(
-                workoutID: active.id,
-                title: active.title,
-                startedAt: active.startedAt,
-                exercises: active.exercises.sorted { $0.position < $1.position }.map { we in
+            let visibleWorkoutItems = OrderedWorkoutItem.ordered(in: active)
+            let isYogaWorkout = !visibleWorkoutItems.isEmpty
+                && visibleWorkoutItems.allSatisfy { item in
+                    switch item {
+                    case .exercise(let exercise): exerciseByID[exercise.exerciseID]?.isYoga == true
+                    case .block(let block): block.kind == .yoga
+                    }
+                }
+            let exerciseRows = active.exercises
+                .filter { $0.generatedByWorkoutBlockID == nil }
+                .map { we in
                     let library = exerciseByID[we.exerciseID]
                     let isCardio = library?.isCardio == true
                     let isYoga = library?.isYoga == true
@@ -209,6 +223,7 @@ final class WatchLink: NSObject {
                     let session = active.cardioSessions.first { $0.workoutExerciseID == we.id }
                     return WatchExerciseSnapshot(
                         id: we.id,
+                        position: we.position,
                         exerciseID: we.exerciseID,
                         name: library?.name ?? "Exercise",
                         isCardio: isCardio || isYoga,
@@ -219,6 +234,43 @@ final class WatchLink: NSObject {
                         cardioState: (isCardio || isYoga) ? cardioState(of: session) : nil,
                         sets: setSnapshots(for: we, exercise: library)
                     )
+                }
+            let blockRows = active.blocks.map { block in
+                let session = active.cardioSessions.first { $0.workoutBlockID == block.id }
+                let conditioningPlan = block.kind == .conditioning
+                    ? ConditioningPlan.decode(from: block.planSnapshotJSON)
+                    : nil
+                let movementNames = conditioningPlan.map { plan in
+                    Dictionary(
+                        plan.sections.flatMap(\.movements).compactMap { movement in
+                            exerciseByID[movement.exerciseID].map { (movement.exerciseID, $0.name) }
+                        },
+                        uniquingKeysWith: { first, _ in first }
+                    )
+                }
+                return WatchExerciseSnapshot(
+                    id: block.id,
+                    position: block.position,
+                    name: block.kind.title,
+                    isCardio: true,
+                    isYoga: block.kind == .yoga ? true : nil,
+                    workoutBlockKindRaw: block.kind.rawValue,
+                    conditioningPlan: conditioningPlan,
+                    conditioningProgress: block.kind == .conditioning
+                        ? ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+                        : nil,
+                    conditioningMovementNames: movementNames,
+                    cardioState: cardioState(of: session)
+                )
+            }
+            let rootConditioningPlan = ConditioningPlan.decode(from: active.conditioningPlanSnapshotJSON)
+            snapshot = WatchWorkoutSnapshot(
+                workoutID: active.id,
+                title: active.title,
+                startedAt: active.startedAt,
+                exercises: (exerciseRows + blockRows).sorted {
+                    if ($0.position ?? 0) != ($1.position ?? 0) { return ($0.position ?? 0) < ($1.position ?? 0) }
+                    return $0.id.uuidString < $1.id.uuidString
                 },
                 restEndsAt: timer.isRunning ? timer.endsAt : nil,
                 restTotalSeconds: timer.isRunning ? timer.totalSeconds : nil,
@@ -230,8 +282,10 @@ final class WatchLink: NSObject {
                 intervalRound: round,
                 hrZoneTarget: activeZoneTarget,
                 isYogaWorkout: isYogaWorkout ? true : nil,
-                conditioningPlan: ConditioningPlan.decode(from: active.conditioningPlanSnapshotJSON),
-                conditioningProgress: ConditioningProgress.decode(from: active.conditioningProgressJSON)
+                conditioningPlan: rootConditioningPlan,
+                conditioningProgress: rootConditioningPlan == nil
+                    ? nil
+                    : ConditioningProgress.decode(from: active.conditioningProgressJSON) ?? ConditioningProgress()
             )
         }
 
@@ -341,7 +395,17 @@ final class WatchLink: NSObject {
             publishState(policy: .immediate)
 
         case .startCardio(let workoutExerciseID):
+            if let active,
+               let block = active.blocks.first(where: { $0.id == workoutExerciseID }) {
+                startWorkoutBlock(block, in: active, context: context)
+                try? context.save()
+                publishState(policy: .immediate)
+                break
+            }
             guard let session = active?.cardioSessions.first(where: { $0.workoutExerciseID == workoutExerciseID }) else { return }
+            guard active?.cardioSessions.contains(where: {
+                $0.id != session.id && $0.liveStartedAt != nil && $0.endedAt == nil
+            }) != true else { publishState(policy: .immediate); return }
             session.liveStartedAt = Date()
             session.updatedAt = Date()
             var library: ExerciseLibraryModel?
@@ -364,6 +428,11 @@ final class WatchLink: NSObject {
             publishState(policy: .immediate)
 
         case .completeCardio(let workoutExerciseID):
+            if let active,
+               let block = active.blocks.first(where: { $0.id == workoutExerciseID }) {
+                completeWorkoutBlock(block, in: active, context: context)
+                break
+            }
             guard let session = active?.cardioSessions.first(where: { $0.workoutExerciseID == workoutExerciseID }),
                   session.endedAt == nil else { return }
             IntervalRunnerHub.shared.stop(for: session.id)
@@ -426,6 +495,11 @@ final class WatchLink: NSObject {
             guard let active,
                   let plan = ConditioningPlan.decode(from: active.conditioningPlanSnapshotJSON) else { return }
             let current = ConditioningProgress.decode(from: active.conditioningProgressJSON) ?? ConditioningProgress()
+            if case .setScore = event.action,
+               ConditioningProgressEngine.requiredRoundsRemaining(for: current, plan: plan) > 0 {
+                publishState(policy: .immediate)
+                return
+            }
             let next = ConditioningProgressEngine.apply(event, to: current, plan: plan)
             active.conditioningProgressJSON = next.encodedJSON()
             if next.status == .completed || next.status == .expired {
@@ -434,15 +508,72 @@ final class WatchLink: NSObject {
             try? context.save()
             publishState(policy: .immediate)
 
+        case .conditioningBlockEvent(let blockID, let event):
+            guard let active,
+                  let block = active.blocks.first(where: { $0.id == blockID && $0.kind == .conditioning }),
+                  let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) else { return }
+            if case .start = event.action,
+               active.cardioSessions.contains(where: {
+                   $0.workoutBlockID != blockID
+                       && $0.liveStartedAt != nil
+                       && $0.endedAt == nil
+                       && $0.deletedAt == nil
+               }) {
+                // The Watch updates optimistically. Re-publish the phone's
+                // unchanged source of truth so it cannot keep two timed
+                // segments active after this rejected start.
+                publishState(policy: .immediate)
+                return
+            }
+            let current = ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+            if case .setScore = event.action,
+               ConditioningProgressEngine.requiredRoundsRemaining(for: current, plan: plan) > 0 {
+                publishState(policy: .immediate)
+                return
+            }
+            let next = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+            guard next != current else { return }
+            materializeConditioningChanges(
+                from: current,
+                to: next,
+                plan: plan,
+                block: block,
+                workout: active,
+                context: context,
+                at: event.timestamp
+            )
+            block.progressJSON = next.encodedJSON()
+            block.resultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
+            block.updatedAt = .now
+            if current.status == .ready, next.status != .ready {
+                startWorkoutBlock(block, in: active, context: context)
+            }
+            let explicitlyFinished: Bool
+            if case .setScore = event.action {
+                explicitlyFinished = true
+            } else {
+                explicitlyFinished = false
+            }
+            if explicitlyFinished || next.status == .completed || next.status == .expired {
+                completeBlockSession(block, in: active, context: context, endedAt: event.timestamp)
+            }
+            active.recomputeTotalVolume()
+            try? context.save()
+            publishState(policy: .immediate)
+
         case .finishWorkout(let metrics, let savedToHealth):
             guard let active else { return }
-            WorkoutFinisher.finish(
+            let failure = WorkoutFinisher.finish(
                 active,
                 in: context,
                 liveMetrics: metrics ?? LiveMetricsHub.shared.liveMetrics,
                 watchSavedToHealth: savedToHealth
             )
-            onWorkoutFinishedFromWatch?()
+            if failure == nil {
+                onWorkoutFinishedFromWatch?()
+            } else {
+                publishState(policy: .immediate)
+            }
 
         case .discardWorkout:
             guard let active else { return }
@@ -451,6 +582,255 @@ final class WatchLink: NSObject {
 
         case .workoutFinished:
             break // phone → watch only
+        }
+    }
+
+    private func startWorkoutBlock(
+        _ block: WorkoutBlockModel,
+        in workout: WorkoutModel,
+        context: ModelContext
+    ) {
+        let existingSession = workout.cardioSessions.first {
+            $0.workoutBlockID == block.id && ($0.workoutExerciseID == nil || block.kind == .yoga)
+        }
+        guard workout.cardioSessions.contains(where: {
+            $0.id != existingSession?.id && $0.liveStartedAt != nil && $0.endedAt == nil
+        }) == false else { return }
+
+        let session = existingSession ?? CardioSessionModel(
+            userID: workout.userID,
+            workoutBlockID: block.id,
+            modality: block.kind == .yoga ? CardioSessionModel.yogaModality : CardioSessionModel.conditioningModality,
+            startedAt: .now,
+            sourceDevice: block.kind == .yoga ? "watch-yoga" : "watch-conditioning"
+        )
+        if existingSession == nil {
+            context.insert(session)
+            workout.cardioSessions.append(session)
+        }
+        let now = Date.now
+        session.startedAt = now
+        session.liveStartedAt = now
+        session.updatedAt = now
+
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            let current = ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+            if current.status == .ready {
+                block.progressJSON = ConditioningProgressEngine.apply(
+                    ConditioningProgressEvent(timestamp: now, action: .start),
+                    to: current,
+                    plan: plan
+                ).encodedJSON()
+            }
+        } else if block.kind == .yoga,
+                  let plan = YogaFlowPlan.decode(from: block.planSnapshotJSON),
+                  plan.hasSteps {
+            let anchor = ensureYogaAnchor(for: block, in: workout, context: context)
+            session.workoutExerciseID = anchor.id
+            session.yogaStyleRaw = plan.styleRaw
+            YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
+        }
+        block.updatedAt = now
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
+    }
+
+    private func completeWorkoutBlock(
+        _ block: WorkoutBlockModel,
+        in workout: WorkoutModel,
+        context: ModelContext
+    ) {
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            let current = ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+            guard ConditioningProgressEngine.requiredRoundsRemaining(for: current, plan: plan) == 0 else {
+                publishState(policy: .immediate)
+                return
+            }
+            let event = ConditioningProgressEvent(action: .setScore(
+                rounds: current.fullRounds,
+                partialMovementID: nil,
+                partialValue: 0,
+                load: nil
+            ))
+            let next = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+            block.progressJSON = next.encodedJSON()
+            block.resultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
+            completeBlockSession(block, in: workout, context: context, endedAt: event.timestamp)
+            try? context.save()
+            publishState(policy: .immediate)
+            return
+        }
+
+        guard let session = workout.cardioSessions.first(where: { $0.workoutBlockID == block.id }),
+              session.endedAt == nil else { return }
+        let anchor = ensureYogaAnchor(for: block, in: workout, context: context)
+        YogaFlowRunnerHub.shared.stop(for: session.id)
+        let end = Date.now
+        let start = session.liveStartedAt ?? session.startedAt
+        let exercise = exercise(for: anchor, in: context)
+        YogaSessionCompletion.complete(
+            session: session,
+            workoutExercise: anchor,
+            exercise: exercise,
+            context: context,
+            endedAt: end,
+            useClockDuration: true
+        )
+        block.updatedAt = end
+        try? context.save()
+        finishBlockHealthSession(session, start: start, end: end, modality: .other, context: context)
+        publishState(policy: .immediate)
+    }
+
+    private func ensureYogaAnchor(
+        for block: WorkoutBlockModel,
+        in workout: WorkoutModel,
+        context: ModelContext
+    ) -> WorkoutExerciseModel {
+        if let existing = workout.exercises.first(where: { $0.generatedByWorkoutBlockID == block.id }) {
+            existing.yogaFlowJSON = block.planSnapshotJSON
+            return existing
+        }
+        let library = YogaPoseCatalog.sessionExercise(in: context)
+        let anchor = WorkoutExerciseModel(
+            userID: workout.userID,
+            exerciseID: library.id,
+            position: block.position,
+            yogaFlowJSON: block.planSnapshotJSON,
+            generatedByWorkoutBlockID: block.id,
+            sets: []
+        )
+        context.insert(anchor)
+        workout.exercises.append(anchor)
+        return anchor
+    }
+
+    private func completeBlockSession(
+        _ block: WorkoutBlockModel,
+        in workout: WorkoutModel,
+        context: ModelContext,
+        endedAt: Date
+    ) {
+        let session = workout.cardioSessions.first {
+            $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
+        } ?? CardioSessionModel(
+            userID: workout.userID,
+            workoutBlockID: block.id,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: endedAt,
+            sourceDevice: "watch-conditioning"
+        )
+        if session.workout == nil {
+            context.insert(session)
+            workout.cardioSessions.append(session)
+        }
+        let start = session.liveStartedAt
+            ?? ConditioningProgress.decode(from: block.progressJSON)?.startedAt
+            ?? endedAt
+        session.startedAt = start
+        session.liveStartedAt = start
+        session.endedAt = endedAt
+        session.durationSeconds = max(1, Int(endedAt.timeIntervalSince(start)))
+        block.updatedAt = endedAt
+        finishBlockHealthSession(session, start: start, end: endedAt, modality: .other, context: context)
+    }
+
+    private func finishBlockHealthSession(
+        _ session: CardioSessionModel,
+        start: Date,
+        end: Date,
+        modality: CardioKind,
+        context: ModelContext
+    ) {
+        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
+        let container = context.container
+        Task { @MainActor in
+            defer { withExtendedLifetime(container) {} }
+            let snapshot = await HealthService.shared.importSnapshot(from: start, to: end, modality: modality)
+            if let heartRate = snapshot.avgHR ?? bleStats?.avgHR { session.avgHR = heartRate }
+            if let maxHeartRate = snapshot.maxHR ?? bleStats?.maxHR { session.maxHR = maxHeartRate }
+            if let energy = snapshot.activeEnergyKcal { session.activeEnergyKcal = energy }
+            session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(
+                avgHR: session.avgHR,
+                durationSeconds: session.durationSeconds
+            )
+            try? context.save()
+            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: context)
+        }
+    }
+
+    private func materializeConditioningChanges(
+        from old: ConditioningProgress,
+        to new: ConditioningProgress,
+        plan: ConditioningPlan,
+        block: WorkoutBlockModel,
+        workout: WorkoutModel,
+        context: ModelContext,
+        at date: Date
+    ) {
+        for movement in plan.sections.flatMap(\.movements) {
+            let delta = (new.movementTotals[movement.id] ?? 0) - (old.movementTotals[movement.id] ?? 0)
+            guard delta != 0 else { continue }
+            let workoutExercise = workout.exercises.first {
+                $0.generatedByWorkoutBlockID == block.id && $0.exerciseID == movement.exerciseID
+            } ?? {
+                let created = WorkoutExerciseModel(
+                    userID: workout.userID,
+                    exerciseID: movement.exerciseID,
+                    position: block.position,
+                    generatedByWorkoutBlockID: block.id
+                )
+                context.insert(created)
+                workout.exercises.append(created)
+                return created
+            }()
+
+            if delta < 0 {
+                if let set = workoutExercise.sets
+                    .filter({ $0.completedAt != nil })
+                    .sorted(by: { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) })
+                    .first {
+                    context.delete(set)
+                    workoutExercise.sets.removeAll { $0.id == set.id }
+                }
+                continue
+            }
+
+            let library = exercise(for: workoutExercise, in: context)
+            if library?.isCardio == true || library?.isYoga == true {
+                let session = workout.cardioSessions.first { $0.workoutExerciseID == workoutExercise.id }
+                    ?? CardioSessionModel(
+                        userID: workout.userID,
+                        workoutExerciseID: workoutExercise.id,
+                        workoutBlockID: block.id,
+                        modality: library?.isYoga == true
+                            ? CardioSessionModel.yogaModality
+                            : CardioKind.infer(name: library?.name ?? "Cardio", equipment: library?.equipment).rawValue,
+                        startedAt: date,
+                        endedAt: date,
+                        sourceDevice: "watch-conditioning"
+                    )
+                if session.workout == nil {
+                    context.insert(session)
+                    workout.cardioSessions.append(session)
+                }
+                if movement.targetUnit == .seconds { session.durationSeconds = (session.durationSeconds ?? 0) + Int(delta) }
+                if movement.targetUnit == .meters { session.distanceMeters = (session.distanceMeters ?? 0) + delta }
+                session.endedAt = date
+            } else {
+                let set = SetModel(
+                    userID: workout.userID,
+                    position: workoutExercise.sets.count,
+                    weightMode: movement.weightMode,
+                    reps: movement.targetUnit == .reps ? Int(delta) : nil,
+                    durationSeconds: movement.targetUnit == .seconds ? Int(delta) : nil,
+                    completedAt: date
+                )
+                set.setModeWeight(movement.targetLoad)
+                context.insert(set)
+                workoutExercise.sets.append(set)
+            }
         }
     }
 
@@ -466,6 +846,18 @@ final class WatchLink: NSObject {
         var d = FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == id })
         d.fetchLimit = 1
         return try? context.fetch(d).first
+    }
+
+    private func exercise(
+        for workoutExercise: WorkoutExerciseModel?,
+        in context: ModelContext
+    ) -> ExerciseLibraryModel? {
+        guard let exerciseID = workoutExercise?.exerciseID else { return nil }
+        var descriptor = FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.id == exerciseID }
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 
     private func startRestIfNeeded(after set: SetModel, in workoutExercise: WorkoutExerciseModel, active: WorkoutModel?) {

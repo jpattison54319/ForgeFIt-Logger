@@ -11,12 +11,12 @@ struct ConditioningWorkoutView: View {
     let exercises: [ExerciseLibraryModel]
     let onMinimize: () -> Void
     let onFinished: (WorkoutModel) -> Void
+    private let block: WorkoutBlockModel?
+    private let onBlockCompleted: (() -> Void)?
 
     @State private var progress: ConditioningProgress
     @State private var showScore = false
-    @State private var partialMovement: ConditioningMovement?
     @State private var saveError: String?
-    @State private var didMaterializeFinalPartials = false
 
     private let plan: ConditioningPlan
 
@@ -30,10 +30,30 @@ struct ConditioningWorkoutView: View {
         self.exercises = exercises
         self.onMinimize = onMinimize
         self.onFinished = onFinished
+        block = nil
+        onBlockCompleted = nil
         let decodedPlan = ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON)
             ?? ConditioningPlan(sections: [])
         plan = decodedPlan
         _progress = State(initialValue: ConditioningProgress.decode(from: workout.conditioningProgressJSON) ?? ConditioningProgress())
+    }
+
+    init(
+        workout: WorkoutModel,
+        block: WorkoutBlockModel,
+        exercises: [ExerciseLibraryModel],
+        onMinimize: @escaping () -> Void,
+        onCompleted: @escaping () -> Void
+    ) {
+        self.workout = workout
+        self.exercises = exercises
+        self.onMinimize = onMinimize
+        onFinished = { _ in }
+        self.block = block
+        onBlockCompleted = onCompleted
+        plan = ConditioningPlan.decode(from: block.planSnapshotJSON)
+            ?? ConditioningPlan(sections: [])
+        _progress = State(initialValue: ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress())
     }
 
     private var currentSection: ConditioningSection? {
@@ -44,6 +64,10 @@ struct ConditioningWorkoutView: View {
         Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
+    private var completionContext: ConditioningCompletionContext {
+        block == nil ? .workout : .block
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -51,7 +75,8 @@ struct ConditioningWorkoutView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: Space.lg) {
                         ConditioningLiveHeader(
-                            title: workout.title ?? "Conditioning",
+                            title: blockTitle,
+                            completionContext: completionContext,
                             onMinimize: onMinimize,
                             onFinish: { showScore = true }
                         )
@@ -61,8 +86,7 @@ struct ConditioningWorkoutView: View {
                                 section: section,
                                 progress: progress,
                                 exerciseByID: exerciseByID,
-                                onToggle: toggleMovement,
-                                onPartial: { partialMovement = $0 }
+                                onToggle: toggleMovement
                             )
                         } else {
                             EmptyStateCard(
@@ -94,25 +118,21 @@ struct ConditioningWorkoutView: View {
         }
         .interactiveDismissDisabled()
         .task { await runClock() }
-        .sheet(item: $partialMovement) { movement in
-            ConditioningPartialEditor(
-                movement: movement,
-                exerciseName: exerciseByID[movement.exerciseID]?.name ?? "Exercise",
-                initialValue: progress.partialValues[movement.id] ?? 0,
-                onSave: { value in setPartial(value, for: movement) }
-            )
-        }
         .sheet(isPresented: $showScore) {
             ConditioningScoreSheet(
                 plan: plan,
                 progress: $progress,
-                exerciseByID: exerciseByID,
+                completionContext: completionContext,
                 onKeepLogging: { showScore = false },
-                onSave: { rounds, movementID, partial, load in
+                onSave: { rounds, load in
+                    guard ConditioningProgressEngine.requiredRoundsRemaining(
+                        for: progress,
+                        plan: plan
+                    ) == 0 else { return }
                     apply(ConditioningProgressEvent(action: .setScore(
                         rounds: rounds,
-                        partialMovementID: movementID,
-                        partialValue: partial,
+                        partialMovementID: nil,
+                        partialValue: 0,
                         load: load
                     )))
                     finishWorkout()
@@ -120,10 +140,10 @@ struct ConditioningWorkoutView: View {
             )
             .interactiveDismissDisabled()
         }
-        .alert("Couldn't Save Workout", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+        .alert(completionContext.failureTitle, isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
             Button("OK", role: .cancel) { saveError = nil }
         } message: {
-            Text(saveError ?? "Your workout is still active.")
+            Text(saveError ?? completionContext.failureFallback)
         }
     }
 
@@ -166,21 +186,28 @@ struct ConditioningWorkoutView: View {
         apply(ConditioningProgressEvent(action: progress.status == .paused ? .resume : .pause))
     }
 
-    private func setPartial(_ value: Double, for movement: ConditioningMovement) {
-        apply(ConditioningProgressEvent(action: .setPartial(movement.id, value)))
-    }
-
     private func apply(_ event: ConditioningProgressEvent) {
         let before = progress
         let next = ConditioningProgressEngine.apply(event, to: before, plan: plan)
         guard next != before else { return }
         materializeChanges(from: before, to: next, at: event.timestamp)
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) { progress = next }
-        workout.conditioningProgressJSON = next.encodedJSON()
-        workout.conditioningResultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
+        let resultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
+        if let block {
+            block.progressJSON = next.encodedJSON()
+            block.resultJSON = resultJSON
+            block.updatedAt = .now
+            if before.status == .ready, next.status != .ready {
+                startBlockSessionIfNeeded(block)
+            }
+        } else {
+            workout.conditioningProgressJSON = next.encodedJSON()
+            workout.conditioningResultJSON = resultJSON
+        }
         workout.updatedAt = .now
         try? modelContext.save()
         WatchLink.shared.publishState(policy: .immediate)
+        WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
     }
 
     private func materializeChanges(from old: ConditioningProgress, to new: ConditioningProgress, at date: Date) {
@@ -197,7 +224,10 @@ struct ConditioningWorkoutView: View {
 
     private func materialize(_ movement: ConditioningMovement, value: Double, at date: Date) {
         guard let exercise = exerciseByID[movement.exerciseID] else { return }
-        let workoutExercise = workout.exercises.first { $0.exerciseID == movement.exerciseID }
+        let workoutExercise = workout.exercises.first {
+            $0.exerciseID == movement.exerciseID
+                && $0.generatedByWorkoutBlockID == block?.id
+        }
             ?? makeWorkoutExercise(for: movement.exerciseID)
         if exercise.isCardio || exercise.isYoga {
             let session = workout.cardioSessions.first { $0.workoutExerciseID == workoutExercise.id }
@@ -221,7 +251,10 @@ struct ConditioningWorkoutView: View {
     }
 
     private func undoMaterialized(_ movement: ConditioningMovement, value: Double) {
-        guard let workoutExercise = workout.exercises.first(where: { $0.exerciseID == movement.exerciseID }) else { return }
+        guard let workoutExercise = workout.exercises.first(where: {
+            $0.exerciseID == movement.exerciseID
+                && $0.generatedByWorkoutBlockID == block?.id
+        }) else { return }
         if let set = workoutExercise.sets
             .filter({ $0.completedAt != nil })
             .sorted(by: { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) })
@@ -238,7 +271,8 @@ struct ConditioningWorkoutView: View {
         let workoutExercise = WorkoutExerciseModel(
             userID: workout.userID,
             exerciseID: exerciseID,
-            position: workout.exercises.count
+            position: block?.position ?? workout.exercises.count,
+            generatedByWorkoutBlockID: block?.id
         )
         modelContext.insert(workoutExercise)
         workout.exercises.append(workoutExercise)
@@ -251,12 +285,18 @@ struct ConditioningWorkoutView: View {
         at date: Date
     ) -> CardioSessionModel {
         let modality = exercise.isYoga ? CardioSessionModel.yogaModality : CardioKind.infer(name: exercise.name, equipment: exercise.equipment).rawValue
+        let blockStart = block.flatMap { block in
+            workout.cardioSessions.first {
+                $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
+            }?.liveStartedAt
+        }
         let session = CardioSessionModel(
             userID: workout.userID,
             workoutExerciseID: workoutExercise.id,
+            workoutBlockID: block?.id,
             modality: modality,
-            startedAt: workout.startedAt,
-            liveStartedAt: workout.startedAt,
+            startedAt: block == nil ? workout.startedAt : (blockStart ?? date),
+            liveStartedAt: block == nil ? workout.startedAt : blockStart,
             endedAt: date,
             sourceDevice: "iphone-conditioning"
         )
@@ -266,16 +306,19 @@ struct ConditioningWorkoutView: View {
     }
 
     private func finishWorkout() {
-        if !didMaterializeFinalPartials {
-            for section in plan.sections {
-                for movement in section.movements {
-                    let partial = progress.partialValues[movement.id] ?? 0
-                    if partial > 0 { materialize(movement, value: partial, at: .now) }
-                }
-            }
-            didMaterializeFinalPartials = true
+        let resultJSON = ConditioningProgressEngine.result(for: progress, plan: plan).encodedJSON()
+        if let block {
+            block.progressJSON = progress.encodedJSON()
+            block.resultJSON = resultJSON
+            block.updatedAt = .now
+            completeBlockSession(block)
+            workout.updatedAt = .now
+            try? modelContext.save()
+            showScore = false
+            onBlockCompleted?()
+            return
         }
-        workout.conditioningResultJSON = ConditioningProgressEngine.result(for: progress, plan: plan).encodedJSON()
+        workout.conditioningResultJSON = resultJSON
         if let error = WorkoutFinisher.finish(workout, in: modelContext) {
             saveError = error
             return
@@ -283,20 +326,91 @@ struct ConditioningWorkoutView: View {
         showScore = false
         onFinished(workout)
     }
+
+    private var blockTitle: String {
+        guard block != nil else { return workout.title ?? "Conditioning" }
+        if plan.sections.count == 1, let name = plan.sections.first?.name, !name.isEmpty {
+            return name
+        }
+        return "Conditioning"
+    }
+
+    private func startBlockSessionIfNeeded(_ block: WorkoutBlockModel) {
+        let session = workout.cardioSessions.first {
+            $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
+        }
+            ?? makeBlockSession(block)
+        guard session.liveStartedAt == nil else { return }
+        let now = progress.startedAt ?? .now
+        session.startedAt = now
+        session.liveStartedAt = now
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
+    }
+
+    private func makeBlockSession(_ block: WorkoutBlockModel) -> CardioSessionModel {
+        let session = CardioSessionModel(
+            userID: workout.userID,
+            workoutBlockID: block.id,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: .now,
+            sourceDevice: "iphone-conditioning"
+        )
+        modelContext.insert(session)
+        workout.cardioSessions.append(session)
+        return session
+    }
+
+    private func completeBlockSession(_ block: WorkoutBlockModel) {
+        let session = workout.cardioSessions.first {
+            $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
+        }
+            ?? makeBlockSession(block)
+        let end = progress.completedAt ?? .now
+        let start = session.liveStartedAt ?? progress.startedAt ?? end
+        session.liveStartedAt = start
+        session.startedAt = start
+        session.endedAt = end
+        session.durationSeconds = max(1, Int(end.timeIntervalSince(start)))
+
+        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
+        let container = modelContext.container
+        Task { @MainActor in
+            defer { withExtendedLifetime(container) {} }
+            let snapshot = await HealthService.shared.importSnapshot(from: start, to: end, modality: .other)
+            if let heartRate = snapshot.avgHR ?? bleStats?.avgHR { session.avgHR = heartRate }
+            if let maxHeartRate = snapshot.maxHR ?? bleStats?.maxHR { session.maxHR = maxHeartRate }
+            if let energy = snapshot.activeEnergyKcal { session.activeEnergyKcal = energy }
+            session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(
+                avgHR: session.avgHR,
+                durationSeconds: session.durationSeconds
+            )
+            try? modelContext.save()
+            await CardioSeriesService.finalize(
+                session: session,
+                hadManualIntervalPlan: false,
+                in: modelContext
+            )
+        }
+    }
 }
 
 private struct ConditioningLiveHeader: View {
     @Environment(\.theme) private var theme
     let title: String
+    let completionContext: ConditioningCompletionContext
     let onMinimize: () -> Void
     let onFinish: () -> Void
 
     var body: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.down", label: "Minimize workout", action: onMinimize)
+            CircleIconButton(
+                systemImage: "chevron.down",
+                label: completionContext.minimizeAccessibilityLabel,
+                action: onMinimize
+            )
             Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
             Spacer()
-            Button("Finish", action: onFinish)
+            Button(completionContext.liveActionTitle, action: onFinish)
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)
                 .buttonBorderShape(.capsule)
@@ -332,6 +446,7 @@ private struct ConditioningClockCard: View {
                             value: "\(progress.movementTotals.values.reduce(0, +))",
                             animatesValue: true
                         )
+                        LiveWorkoutHeartRateStat()
                     }
                 }
             }
@@ -383,14 +498,13 @@ private struct ConditioningMovementList: View {
     let progress: ConditioningProgress
     let exerciseByID: [UUID: ExerciseLibraryModel]
     let onToggle: (ConditioningMovement) -> Void
-    let onPartial: (ConditioningMovement) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack {
                 Text(section.name).font(.sectionTitle).foregroundStyle(theme.textPrimary)
                 Spacer()
-                Text("Round \(progress.round)").font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(roundLabel).font(.bodyStrong).foregroundStyle(theme.accent)
             }
             Card(padding: 0) {
                 VStack(spacing: 0) {
@@ -421,11 +535,6 @@ private struct ConditioningMovementList: View {
                         .accessibilityLabel("\(exerciseByID[movement.exerciseID]?.name ?? "Exercise"), \(targetLabel(movement))")
                         .accessibilityValue(completed ? "Completed" : "Not completed")
                         .accessibilityIdentifier("conditioning-movement-\(movement.id.uuidString)")
-                        Button("Log Partial", systemImage: "plus.forwardslash.minus") { onPartial(movement) }
-                            .font(.label)
-                            .foregroundStyle(theme.accent)
-                            .padding(.horizontal, Space.md)
-                            .padding(.bottom, Space.sm)
                         if movement.id != section.movements.last?.id { Divider().overlay(theme.separator) }
                     }
                 }
@@ -436,6 +545,16 @@ private struct ConditioningMovementList: View {
     private func targetLabel(_ movement: ConditioningMovement) -> String {
         let target = section.target(for: movement, round: progress.round)
         return "\(target.formatted(.number.precision(.fractionLength(target.rounded() == target ? 0 : 1)))) \(movement.targetUnit.shortLabel)"
+    }
+
+    private var roundLabel: String {
+        guard let rounds = section.prescribedRounds else { return "Round \(progress.round)" }
+        if let target = section.repScheme.indices.contains(progress.round - 1)
+            ? section.repScheme[progress.round - 1]
+            : nil {
+            return "Round \(progress.round) of \(rounds) · \(target) reps"
+        }
+        return "Round \(progress.round) of \(rounds)"
     }
 
     private func loadLabel(_ movement: ConditioningMovement) -> String {
@@ -474,75 +593,31 @@ private struct ConditioningLiveActions: View {
     }
 }
 
-private struct ConditioningPartialEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    let movement: ConditioningMovement
-    let exerciseName: String
-    let initialValue: Double
-    let onSave: (Double) -> Void
-    @State private var value: Double
-
-    init(movement: ConditioningMovement, exerciseName: String, initialValue: Double, onSave: @escaping (Double) -> Void) {
-        self.movement = movement
-        self.exerciseName = exerciseName
-        self.initialValue = initialValue
-        self.onSave = onSave
-        _value = State(initialValue: initialValue)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                LabeledContent(exerciseName) {
-                    TextField("Completed", value: $value, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                Text(movement.targetUnit.shortLabel)
-                    .foregroundStyle(.secondary)
-            }
-            .navigationTitle("Partial Work")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(max(0, value)); dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-}
-
 private struct ConditioningScoreSheet: View {
     @Environment(\.theme) private var theme
     let plan: ConditioningPlan
     @Binding var progress: ConditioningProgress
-    let exerciseByID: [UUID: ExerciseLibraryModel]
+    let completionContext: ConditioningCompletionContext
     let onKeepLogging: () -> Void
-    let onSave: (Int, UUID?, Double, Double?) -> Void
+    let onSave: (Int, Double?) -> Void
 
     @State private var rounds: Int
-    @State private var partialMovementID: UUID?
-    @State private var partialValue: Double
     @State private var load: Double?
 
     init(
         plan: ConditioningPlan,
         progress: Binding<ConditioningProgress>,
-        exerciseByID: [UUID: ExerciseLibraryModel],
+        completionContext: ConditioningCompletionContext,
         onKeepLogging: @escaping () -> Void,
-        onSave: @escaping (Int, UUID?, Double, Double?) -> Void
+        onSave: @escaping (Int, Double?) -> Void
     ) {
         self.plan = plan
         _progress = progress
-        self.exerciseByID = exerciseByID
+        self.completionContext = completionContext
         self.onKeepLogging = onKeepLogging
         self.onSave = onSave
         let current = progress.wrappedValue
         _rounds = State(initialValue: current.fullRounds)
-        let partial = current.partialValues.first(where: { $0.value > 0 })
-        _partialMovementID = State(initialValue: partial?.key)
-        _partialValue = State(initialValue: partial?.value ?? 0)
         _load = State(initialValue: current.recordedLoad)
     }
 
@@ -550,7 +625,7 @@ private struct ConditioningScoreSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    Text("Workout Score").font(.screenTitle).foregroundStyle(theme.textPrimary)
+                    Text(completionContext.resultTitle).font(.screenTitle).foregroundStyle(theme.textPrimary)
                     ForEach(results) { result in
                         Card {
                             VStack(alignment: .leading, spacing: Space.sm) {
@@ -559,8 +634,8 @@ private struct ConditioningScoreSheet: View {
                                 Text(score(result))
                                     .font(.metricValue)
                                     .foregroundStyle(theme.accent)
-                                if !result.completed && result.format == .forTime {
-                                    Text("Time cap reached").font(.body).foregroundStyle(theme.textSecondary)
+                                if let status = statusText(for: result) {
+                                    Text(status).font(.body).foregroundStyle(theme.textSecondary)
                                 }
                             }
                         }
@@ -572,23 +647,6 @@ private struct ConditioningScoreSheet: View {
                                 Stepper(value: $rounds, in: 0...999) {
                                     LabeledContent(section.format == .emom ? "Intervals" : "Full rounds") {
                                         Text("\(rounds)").font(.rowValue).foregroundStyle(theme.accent)
-                                    }
-                                }
-                                if section.scoreKind == .roundsAndReps {
-                                    Picker("Partial movement", selection: $partialMovementID) {
-                                        Text("No partial work").tag(nil as UUID?)
-                                        ForEach(section.movements) { movement in
-                                            Text(exerciseByID[movement.exerciseID]?.name ?? "Exercise")
-                                                .tag(Optional(movement.id))
-                                        }
-                                    }
-                                    if partialMovementID != nil {
-                                        LabeledContent("Partial reps") {
-                                            TextField("0", value: $partialValue, format: .number)
-                                                .keyboardType(.decimalPad)
-                                                .multilineTextAlignment(.trailing)
-                                                .frame(width: 90)
-                                        }
                                     }
                                 }
                             }
@@ -607,10 +665,26 @@ private struct ConditioningScoreSheet: View {
                             }
                         }
                     }
-                    PrimaryButton(title: "Save Workout", systemImage: "checkmark") {
-                        onSave(rounds, partialMovementID, max(0, partialValue), load)
+                    if requiredRoundsRemaining > 0 {
+                        Card {
+                            HStack(alignment: .top, spacing: Space.sm) {
+                                Image(systemName: "target")
+                                    .foregroundStyle(theme.warmup)
+                                Text(requiredTargetMessage)
+                                    .font(.body)
+                                    .foregroundStyle(theme.textPrimary)
+                            }
+                        }
                     }
-                    SecondaryButton(title: "Keep Logging", systemImage: "arrow.uturn.backward", action: onKeepLogging)
+                    PrimaryButton(title: completionContext.commitTitle, systemImage: "checkmark") {
+                        onSave(rounds, load)
+                    }
+                    .disabled(requiredRoundsRemaining > 0)
+                    SecondaryButton(
+                        title: completionContext.returnTitle,
+                        systemImage: "arrow.uturn.backward",
+                        action: onKeepLogging
+                    )
                 }
                 .padding(Space.lg)
             }
@@ -627,11 +701,27 @@ private struct ConditioningScoreSheet: View {
         plan.sections.indices.contains(progress.sectionIndex) ? plan.sections[progress.sectionIndex] : nil
     }
 
+    private var requiredRoundsRemaining: Int {
+        ConditioningProgressEngine.requiredRoundsRemaining(for: progress, plan: plan)
+    }
+
+    private var requiredTargetMessage: String {
+        let rounds = requiredRoundsRemaining
+        return "Complete \(rounds) more round\(rounds == 1 ? "" : "s") before saving. The clock keeps running until the target is complete."
+    }
+
+    private func statusText(for result: ConditioningSectionResult) -> String? {
+        guard !result.completed else { return nil }
+        guard let section = plan.sections.first(where: { $0.id == result.id }) else {
+            return "Incomplete"
+        }
+        return ConditioningSharePresentation.completionStatus(section: section, result: result).label
+    }
+
     private func score(_ result: ConditioningSectionResult) -> String {
         switch result.scoreKind {
         case .roundsAndReps:
-            let partial = result.partialValue.map { " + \(Int($0)) \(partialUnit(result))" } ?? ""
-            return "\(result.fullRounds ?? 0) rounds\(partial)"
+            return "\(result.fullRounds ?? 0) rounds"
         case .elapsedTime: return Fmt.elapsed(result.elapsedSeconds ?? 0)
         case .totalReps: return "\(result.totalReps ?? 0) reps"
         case .completedIntervals: return "\(result.completedIntervals ?? 0) intervals"
@@ -639,9 +729,4 @@ private struct ConditioningScoreSheet: View {
         }
     }
 
-    private func partialUnit(_ result: ConditioningSectionResult) -> String {
-        guard let movementID = result.partialMovementID,
-              let movement = plan.sections.flatMap(\.movements).first(where: { $0.id == movementID }) else { return "reps" }
-        return movement.targetUnit.shortLabel
-    }
 }

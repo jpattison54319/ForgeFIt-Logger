@@ -18,7 +18,7 @@ struct YogaWorkoutPipelineTests {
 
     // MARK: - Factory
 
-    @Test func routineStartCreatesYogaSessionNotSets() throws {
+    @Test func legacyRoutineYogaRowProjectsToYogaBlock() throws {
         let (container, context) = try TestStore.make()
         let pose = makePose()
         context.insert(pose)
@@ -36,12 +36,14 @@ struct YogaWorkoutPipelineTests {
 
         let workout = WorkoutFactory.start(routine: routine, exercises: [pose], in: context)
 
-        let we = try #require(workout.exercises.first)
-        #expect(we.sets.isEmpty)
-        #expect(we.yogaFlowJSON != nil)
+        #expect(workout.exercises.isEmpty)
+        let block = try #require(workout.blocks.first)
+        #expect(block.kind == .yoga)
+        #expect(block.planSnapshotJSON != nil)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
-        #expect(session.workoutExerciseID == we.id)
+        #expect(session.workoutBlockID == block.id)
+        #expect(session.workoutExerciseID == nil)
         // Unilateral single pose expands both sides: 2 × 60s.
         #expect(session.durationSeconds == 120)
         _ = container
@@ -60,8 +62,9 @@ struct YogaWorkoutPipelineTests {
 
         let workout = WorkoutFactory.start(routine: routine, exercises: [pose], in: context)
 
-        let we = try #require(workout.exercises.first)
-        let plan = try #require(YogaFlowPlan.decode(from: we.yogaFlowJSON))
+        #expect(workout.exercises.isEmpty)
+        let block = try #require(workout.blocks.first)
+        let plan = try #require(YogaFlowPlan.decode(from: block.planSnapshotJSON))
         #expect(plan.steps.count == 1)
         #expect(plan.steps.first?.holdSeconds == 45)
         #expect(workout.cardioSessions.first?.durationSeconds == 45)
@@ -79,17 +82,18 @@ struct YogaWorkoutPipelineTests {
 
         let workout = WorkoutFactory.start(routine: routine, exercises: [sessionExercise], in: context)
 
-        let we = try #require(workout.exercises.first)
-        #expect(we.exerciseID == YogaPoseCatalog.sessionExerciseID)
-        #expect(we.sets.isEmpty)
-        #expect(we.yogaFlowJSON == nil)
+        #expect(workout.exercises.isEmpty)
+        let block = try #require(workout.blocks.first)
+        #expect(block.kind == .yoga)
+        #expect(block.planSnapshotJSON == nil)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
+        #expect(session.workoutBlockID == block.id)
         #expect(session.durationSeconds == nil)
         _ = container
     }
 
-    @Test func startYogaQuickStartAnchorsOnSessionCard() throws {
+    @Test func startYogaQuickStartCreatesBlockWithoutSyntheticExercise() throws {
         let (container, context) = try TestStore.make()
         let pose = makePose(name: "Downward-Facing Dog", hold: 30, unilateral: false)
         context.insert(pose)
@@ -99,10 +103,50 @@ struct YogaWorkoutPipelineTests {
         let workout = WorkoutFactory.startYoga(flow: flow, named: "Morning Flow", exercises: [pose], in: context)
 
         #expect(workout.title == "Morning Flow")
-        #expect(workout.exercises.first?.exerciseID == YogaPoseCatalog.sessionExerciseID)
+        #expect(workout.exercises.isEmpty)
+        let block = try #require(workout.blocks.first)
+        #expect(block.kind == .yoga)
+        #expect(YogaFlowPlan.decode(from: block.planSnapshotJSON) == flow)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
+        #expect(session.workoutBlockID == block.id)
         #expect(session.yogaStyleRaw == "vinyasa")
+        _ = container
+    }
+
+    @Test func routineBlocksAndExercisesKeepOneSharedOrder() throws {
+        let (container, context) = try TestStore.make()
+        let bench = ExerciseLibraryModel(name: "Bench Press")
+        let pushdown = ExerciseLibraryModel(name: "Triceps Pushdown")
+        context.insert(bench)
+        context.insert(pushdown)
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Mixed Modalities",
+            exercises: [
+                RoutineExerciseModel(userID: ForgeFitDemo.userID, exerciseID: bench.id, position: 0),
+                RoutineExerciseModel(userID: ForgeFitDemo.userID, exerciseID: pushdown.id, position: 3)
+            ],
+            blocks: [
+                RoutineBlockModel(userID: ForgeFitDemo.userID, kind: .conditioning, position: 1),
+                RoutineBlockModel(userID: ForgeFitDemo.userID, kind: .yoga, position: 2)
+            ]
+        )
+        context.insert(routine)
+        try context.save()
+
+        let workout = WorkoutFactory.start(routine: routine, exercises: [bench, pushdown], in: context)
+        let kinds = OrderedWorkoutItem.ordered(in: workout).map { item in
+            switch item {
+            case .exercise(let exercise): exercise.exerciseID == bench.id ? "bench" : "pushdown"
+            case .block(let block): block.kind.rawValue
+            }
+        }
+
+        #expect(kinds == ["bench", "conditioning", "yoga", "pushdown"])
+        #expect(workout.blocks.allSatisfy { block in
+            workout.cardioSessions.contains { $0.workoutBlockID == block.id }
+        })
         _ = container
     }
 

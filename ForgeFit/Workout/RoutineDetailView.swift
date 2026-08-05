@@ -24,6 +24,7 @@ struct RoutineDetailView: View {
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -36,25 +37,31 @@ struct RoutineDetailView: View {
                 }
 
                 PrimaryButton(title: "Start Routine") { start() }
+                    .disabled(orderedItems.isEmpty)
 
                 chartSection
 
                 HStack {
-                    Text("Exercises").font(.sectionTitle).foregroundStyle(theme.textPrimary)
+                    Text("Workout").font(.sectionTitle).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Button("Edit Routine") { editing = true }
                         .font(.bodyStrong).foregroundStyle(theme.accent)
                 }
 
-                if sortedExercises.isEmpty {
-                    EmptyStateCard(title: "No exercises", message: "Build this routine from your exercise library.", systemImage: "dumbbell")
+                if orderedItems.isEmpty {
+                    EmptyStateCard(title: "Nothing added", message: "Add an exercise, conditioning block, or Yoga flow.", systemImage: "plus.rectangle.on.rectangle")
                 } else {
-                    ForEach(sortedExercises) { re in
-                        RoutineExerciseSummary(
-                            routineExercise: re,
-                            exercise: exercises.first { $0.id == re.exerciseID },
-                            setupNote: setupNotes.first { $0.exerciseID == re.exerciseID && $0.userID == ForgeFitDemo.userID }
-                        )
+                    ForEach(orderedItems) { item in
+                        switch item {
+                        case .exercise(let routineExercise):
+                            RoutineExerciseSummary(
+                                routineExercise: routineExercise,
+                                exercise: exercises.first { $0.id == routineExercise.exerciseID },
+                                setupNote: setupNotes.first { $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID }
+                            )
+                        case .block(let block):
+                            RoutineBlockSummary(block: block)
+                        }
                     }
                 }
             }
@@ -151,6 +158,45 @@ struct RoutineDetailView: View {
         if let image = RoutineShareRenderer.image(for: routine, exercises: exercises, theme: theme) {
             sharePayload = ShareImagePayload(image: image)
         }
+    }
+}
+
+private struct RoutineBlockSummary: View {
+    @Environment(\.theme) private var theme
+    let block: RoutineBlockModel
+
+    var body: some View {
+        Card(padding: Space.md) {
+            HStack(spacing: Space.md) {
+                Image(systemName: block.kind == .conditioning ? "stopwatch" : "figure.yoga")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(block.kind == .conditioning ? theme.warmup : theme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(theme.surfaceElevated)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(block.kind.title)
+                        .font(.cardTitle)
+                        .foregroundStyle(theme.textPrimary)
+                    Text(summary)
+                        .font(.label)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var summary: String {
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planJSON) {
+            let movements = Set(plan.sections.flatMap(\.movements).map(\.exerciseID)).count
+            return "\(plan.sections.count) section\(plan.sections.count == 1 ? "" : "s") · \(movements) movement\(movements == 1 ? "" : "s")"
+        }
+        if let plan = YogaFlowPlan.decode(from: block.planJSON) {
+            return "\(plan.structureSummary) · \(plan.style.title)"
+        }
+        return "Not configured"
     }
 }
 

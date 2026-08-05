@@ -91,7 +91,34 @@ struct ConditioningProgressEngineTests {
         #expect(progress.movementTotals[movement.id] == 45)
     }
 
-    @Test func expiryPreservesManualPartialScore() {
+    @Test func untimedFixedWorkMustReachItsTargetBeforeFinishing() {
+        let movement = ConditioningMovement(exerciseID: pullUpID, targetValue: 10)
+        let section = ConditioningSection(
+            name: "Ten rounds",
+            format: .forTime,
+            rounds: 10,
+            movements: [movement]
+        )
+        let plan = ConditioningPlan(sections: [section])
+
+        #expect(ConditioningProgressEngine.requiredRoundsRemaining(
+            for: ConditioningProgress(round: 5, status: .active),
+            plan: plan
+        ) == 6)
+        #expect(ConditioningProgressEngine.requiredRoundsRemaining(
+            for: ConditioningProgress(round: 11, status: .completed),
+            plan: plan
+        ) == 0)
+
+        var cappedSection = section
+        cappedSection.timeCapSeconds = 600
+        #expect(ConditioningProgressEngine.requiredRoundsRemaining(
+            for: ConditioningProgress(round: 5, status: .active),
+            plan: ConditioningPlan(sections: [cappedSection])
+        ) == 0)
+    }
+
+    @Test func legacyPartialEventIsIgnored() {
         let plan = cindy
         let movement = plan.sections[0].movements[0]
         var progress = ConditioningProgress(status: .active)
@@ -100,11 +127,11 @@ struct ConditioningProgressEngineTests {
         progress = ConditioningProgressEngine.apply(ConditioningProgressEvent(action: .expire), to: progress, plan: plan)
         let result = ConditioningProgressEngine.result(for: progress, plan: plan)
         #expect(result.sectionResults[0].fullRounds == 1)
-        #expect(result.sectionResults[0].partialValue == 3)
-        #expect(result.sectionResults[0].totalReps == 33)
+        #expect(result.sectionResults[0].partialValue == nil)
+        #expect(result.sectionResults[0].totalReps == 30)
     }
 
-    @Test func manualScoreCorrectionRebuildsRoundsAndPartial() {
+    @Test func manualScoreCorrectionRebuildsOnlyFullRounds() {
         let plan = cindy
         let partial = plan.sections[0].movements[1]
         var progress = ConditioningProgress(status: .active)
@@ -116,8 +143,8 @@ struct ConditioningProgressEngineTests {
         let result = ConditioningProgressEngine.result(for: progress, plan: plan)
         #expect(progress.fullRounds == 7)
         #expect(progress.movementTotals.values.reduce(0, +) == 210)
-        #expect(result.sectionResults[0].partialMovementID == partial.id)
-        #expect(result.sectionResults[0].partialValue == 4)
-        #expect(result.sectionResults[0].totalReps == 214)
+        #expect(result.sectionResults[0].partialMovementID == nil)
+        #expect(result.sectionResults[0].partialValue == nil)
+        #expect(result.sectionResults[0].totalReps == 210)
     }
 }

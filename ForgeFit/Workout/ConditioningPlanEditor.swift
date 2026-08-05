@@ -244,7 +244,7 @@ struct ConditioningPlanEditor: View {
     }
 }
 
-private struct ConditioningSectionEditor: View {
+struct ConditioningSectionEditor: View {
     @Environment(\.theme) private var theme
     @Binding var section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
@@ -360,12 +360,19 @@ private struct ConditioningSectionEditor: View {
                 }
             }
 
-            if section.format == .forTime {
+            if section.format == .forTime || section.format == .ladder {
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    Text("Rep scheme (optional)").font(.label).foregroundStyle(theme.textSecondary)
+                    Text(section.format == .ladder ? "Rep scheme" : "Rep scheme (optional)")
+                        .font(.label)
+                        .foregroundStyle(theme.textSecondary)
                     TextField("21-15-9", text: repSchemeBinding)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
+                    if !section.repScheme.isEmpty {
+                        Text("Each round uses the next target in the scheme.")
+                            .font(.label)
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
             }
 

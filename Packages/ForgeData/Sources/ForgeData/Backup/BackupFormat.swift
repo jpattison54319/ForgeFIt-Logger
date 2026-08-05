@@ -103,7 +103,22 @@ public struct BackupWorkout: Codable, Sendable {
     /// resurrect deleted workouts on the new device.
     public var deletedAt: Date?
     public var exercises: [BackupWorkoutExercise]
+    /// First-class ordered yoga/conditioning blocks. Optional so v1 backups
+    /// written before blocks existed continue to decode unchanged.
+    public var blocks: [BackupWorkoutBlock]? = nil
     public var cardioSessions: [BackupCardioSession]
+}
+
+public struct BackupWorkoutBlock: Codable, Sendable {
+    public var id: UUID
+    public var kindRaw: String
+    public var position: Int
+    public var planSnapshotJSON: String?
+    public var progressJSON: String?
+    public var resultJSON: String?
+    public var sourceRoutineBlockID: UUID?
+    public var createdAt: Date
+    public var updatedAt: Date
 }
 
 public struct BackupWorkoutExercise: Codable, Sendable {
@@ -120,6 +135,7 @@ public struct BackupWorkoutExercise: Codable, Sendable {
     public var microRestSeconds: Int?
     public var intervalPlanJSON: String?
     public var yogaFlowJSON: String?
+    public var generatedByWorkoutBlockID: UUID? = nil
     public var sourceRoutineExerciseID: UUID?
     public var createdAt: Date
     public var updatedAt: Date
@@ -161,6 +177,7 @@ public struct BackupSet: Codable, Sendable {
 public struct BackupCardioSession: Codable, Sendable {
     public var id: UUID
     public var workoutExerciseID: UUID?
+    public var workoutBlockID: UUID? = nil
     public var modality: String
     public var startedAt: Date
     public var liveStartedAt: Date?

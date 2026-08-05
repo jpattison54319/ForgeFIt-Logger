@@ -16,6 +16,37 @@ import WidgetKit
 /// 4. kick a cloud sync.
 enum WorkoutFinisher {
 
+    /// A started, untimed fixed-work conditioning section cannot be saved as
+    /// a DNF. Planned-but-never-started blocks may still be skipped in a mixed
+    /// workout, and an explicit time cap remains an honest stopping condition.
+    @MainActor
+    static func conditioningTargetBlocker(in workout: WorkoutModel) -> String? {
+        if let plan = ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON),
+           let progress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
+           progress.status != .ready,
+           let message = conditioningTargetMessage(progress: progress, plan: plan) {
+            return message
+        }
+
+        for block in workout.blocks where block.kind == .conditioning {
+            guard let plan = ConditioningPlan.decode(from: block.planSnapshotJSON),
+                  let progress = ConditioningProgress.decode(from: block.progressJSON),
+                  progress.status != .ready,
+                  let message = conditioningTargetMessage(progress: progress, plan: plan) else { continue }
+            return message
+        }
+        return nil
+    }
+
+    private static func conditioningTargetMessage(
+        progress: ConditioningProgress,
+        plan: ConditioningPlan
+    ) -> String? {
+        let remaining = ConditioningProgressEngine.requiredRoundsRemaining(for: progress, plan: plan)
+        guard remaining > 0 else { return nil }
+        return "Complete \(remaining) more conditioning round\(remaining == 1 ? "" : "s") before saving. The clock keeps running until the target is complete."
+    }
+
     /// A workout is worth keeping when something actually happened: a
     /// completed set, a cardio/yoga session that ran live or was deliberately
     /// logged, or typed workout/exercise notes (never silently delete typed text).
@@ -23,8 +54,23 @@ enum WorkoutFinisher {
     /// auto-complete rules below, which ignore sessions that never started.
     @MainActor
     static func hasSubstance(_ workout: WorkoutModel) -> Bool {
+        if workout.blocks.contains(where: { block in
+            if let progress = ConditioningProgress.decode(from: block.progressJSON),
+               progress.status != .ready
+                    || progress.fullRounds > 0
+                    || !progress.completedMovementIDs.isEmpty {
+                return true
+            }
+            if let result = ConditioningResult.decode(from: block.resultJSON),
+               !result.sectionResults.isEmpty {
+                return true
+            }
+            return false
+        }) {
+            return true
+        }
         if let progress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
-           progress.fullRounds > 0 || !progress.completedMovementIDs.isEmpty || !progress.partialValues.isEmpty {
+           progress.fullRounds > 0 || !progress.completedMovementIDs.isEmpty {
             return true
         }
         if let result = ConditioningResult.decode(from: workout.conditioningResultJSON),
@@ -60,6 +106,9 @@ enum WorkoutFinisher {
         watchSavedToHealth: Bool = false,
         endedAt requestedEnd: Date? = nil
     ) -> String? {
+        if let blocker = conditioningTargetBlocker(in: workout) {
+            return blocker
+        }
         // Finishing an empty workout is a discard, not a completion: nothing
         // lands in history, no XP is awarded, and no phantom HKWorkout is
         // written to Apple Health. The phone UI asks before getting here;
@@ -82,6 +131,22 @@ enum WorkoutFinisher {
         // before endLiveSurfaces() drops the buffer, for the deferred fills
         // and the HealthKit write below.
         let bleSamples = LiveMetricsHub.shared.bleSamples(from: workout.startedAt, to: now)
+
+        // A minimized conditioning runner can still be active when the user
+        // finishes the surrounding workout. Preserve its completed-round
+        // score before the shared cardio session loop closes its timing window.
+        for block in workout.blocks where block.kind == .conditioning {
+            guard workout.cardioSessions.contains(where: {
+                $0.workoutBlockID == block.id
+                    && $0.workoutExerciseID == nil
+                    && $0.liveStartedAt != nil
+                    && $0.endedAt == nil
+            }),
+            let plan = ConditioningPlan.decode(from: block.planSnapshotJSON),
+            let progress = ConditioningProgress.decode(from: block.progressJSON) else { continue }
+            block.resultJSON = ConditioningProgressEngine.result(for: progress, plan: plan).encodedJSON()
+            block.updatedAt = now
+        }
 
         // 1. Auto-complete running cardio/yoga segments and finalize manual
         // yoga logs. Cardio keeps the old "only if live" behavior; yoga also
@@ -194,11 +259,26 @@ enum WorkoutFinisher {
             let distance = workout.cardioSessions.compactMap { $0.distanceMeters }.reduce(0, +).nonZero
             // The activity type comes from the first *real* cardio session;
             // a session-only workout that is all yoga writes as `.yoga`.
-            let cardioKind = workout.cardioSessions.first { !$0.isYogaSession }
+            let cardioKind = workout.cardioSessions.first {
+                !$0.isWorkoutBlockSession && !$0.isYogaSession && !$0.isConditioningSession
+            }
                 .map { CardioKind.from(modality: $0.modality) }
-            let pureSessions = !workout.exercises.isEmpty
-                && workout.exercises.allSatisfy { we in workout.cardioSessions.contains { $0.workoutExerciseID == we.id } }
-            let pureYoga = pureSessions && workout.cardioSessions.allSatisfy(\.isYogaSession)
+            let visibleExercises = workout.exercises.filter { $0.generatedByWorkoutBlockID == nil }
+            let pureSessions = !visibleExercises.isEmpty
+                && visibleExercises.allSatisfy { we in workout.cardioSessions.contains { $0.workoutExerciseID == we.id } }
+                && workout.blocks.isEmpty
+            let completedBlockKinds = workout.blocks.compactMap { block in
+                workout.cardioSessions.contains { $0.workoutBlockID == block.id && $0.endedAt != nil }
+                    ? block.kind
+                    : nil
+            }
+            let pureYogaBlocks = visibleExercises.isEmpty
+                && !completedBlockKinds.isEmpty
+                && completedBlockKinds.allSatisfy { $0 == .yoga }
+            let pureConditioningBlocks = visibleExercises.isEmpty
+                && !completedBlockKinds.isEmpty
+                && completedBlockKinds.allSatisfy { $0 == .conditioning }
+            let pureYoga = (pureSessions && workout.cardioSessions.allSatisfy(\.isYogaSession)) || pureYogaBlocks
             // A genuine whole-session rating is the preferred HealthKit
             // effort. Older workouts fall back to their directly logged
             // cardio/set ratings, never to an inferred default.
@@ -215,7 +295,9 @@ enum WorkoutFinisher {
             Task {
                 await HealthService.shared.saveWorkout(
                     from: start, to: now,
-                    isCardio: pureSessions && !pureYoga, isYoga: pureYoga, modality: cardioKind,
+                    isCardio: (pureSessions && !pureYoga) || pureConditioningBlocks,
+                    isYoga: pureYoga,
+                    modality: cardioKind ?? (pureConditioningBlocks ? .other : nil),
                     energyKcal: energy, distanceMeters: distance,
                     effortScore: effortScore,
                     workoutName: workout.title

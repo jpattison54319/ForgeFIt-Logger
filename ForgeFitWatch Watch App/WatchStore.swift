@@ -45,6 +45,24 @@ final class WatchStore: NSObject {
 
     var activeWorkout: WatchWorkoutSnapshot? { context?.workout }
 
+    var conditioningFinishBlocker: String? {
+        guard let workout = activeWorkout else { return nil }
+        if let plan = workout.conditioningPlan,
+           let progress = workout.conditioningProgress,
+           progress.status != .ready,
+           let message = conditioningTargetMessage(progress: progress, plan: plan) {
+            return message
+        }
+        for exercise in workout.exercises where exercise.workoutBlockKindRaw == "conditioning" {
+            guard let plan = exercise.conditioningPlan,
+                  let progress = exercise.conditioningProgress,
+                  progress.status != .ready,
+                  let message = conditioningTargetMessage(progress: progress, plan: plan) else { continue }
+            return message
+        }
+        return nil
+    }
+
     func ensureWorkoutSessionRunning() {
         guard let workout = activeWorkout, !engine.hasActiveSession else { return }
         engine.start(configuration: workoutConfiguration(for: workout), startDate: workout.startedAt, isYoga: workout.isYogaWorkout == true)
@@ -156,14 +174,29 @@ final class WatchStore: NSObject {
         WKInterfaceDevice.current().play(.stop)
     }
 
-    func applyConditioning(_ action: ConditioningProgressEvent.Action) {
-        guard let workout = activeWorkout, let plan = workout.conditioningPlan else { return }
+    func applyConditioning(_ action: ConditioningProgressEvent.Action, blockID: UUID? = nil) {
+        guard let workout = activeWorkout else { return }
+        let plan: ConditioningPlan?
+        if let blockID {
+            plan = workout.exercises.first { $0.id == blockID }?.conditioningPlan
+        } else {
+            plan = workout.conditioningPlan
+        }
+        guard let plan else { return }
         let event = ConditioningProgressEvent(timestamp: .now, action: action)
         mutateWorkout { workout in
-            let current = workout.conditioningProgress ?? ConditioningProgress()
-            workout.conditioningProgress = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+            if let blockID,
+               let index = workout.exercises.firstIndex(where: { $0.id == blockID }) {
+                let current = workout.exercises[index].conditioningProgress ?? ConditioningProgress()
+                workout.exercises[index].conditioningProgress = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+                workout.exercises[index].cardioState = .running
+            } else {
+                let current = workout.conditioningProgress ?? ConditioningProgress()
+                workout.conditioningProgress = ConditioningProgressEngine.apply(event, to: current, plan: plan)
+            }
         }
-        send(.conditioningEvent(event))
+        if let blockID { send(.conditioningBlockEvent(blockID: blockID, event: event)) }
+        else { send(.conditioningEvent(event)) }
         if case .completeRound = action {
             WKInterfaceDevice.current().play(.success)
         } else {
@@ -171,10 +204,39 @@ final class WatchStore: NSObject {
         }
     }
 
+    func finishConditioningBlock(_ blockID: UUID) {
+        guard let block = activeWorkout?.exercises.first(where: { $0.id == blockID }),
+              let plan = block.conditioningPlan,
+              let progress = block.conditioningProgress,
+              ConditioningProgressEngine.requiredRoundsRemaining(for: progress, plan: plan) == 0 else {
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
+        applyConditioning(
+            .setScore(
+                rounds: progress.fullRounds,
+                partialMovementID: nil,
+                partialValue: 0,
+                load: nil
+            ),
+            blockID: blockID
+        )
+        mutateWorkout { workout in
+            if let index = workout.exercises.firstIndex(where: { $0.id == blockID }) {
+                workout.exercises[index].cardioState = .completed
+            }
+        }
+        WKInterfaceDevice.current().play(.success)
+    }
+
     /// Finish from the wrist: the watch saves the HKWorkout (richest data),
     /// the phone closes out the workout with the final metrics.
     func finishWorkout() {
         guard let workout = activeWorkout else { return }
+        guard conditioningFinishBlocker == nil else {
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
         captureSummary(for: workout, metrics: engine.currentMetrics())
         Task {
             let result = await engine.finish(workoutName: workout.title)
@@ -183,6 +245,15 @@ final class WatchStore: NSObject {
         }
         clearWorkoutLocally()
         WKInterfaceDevice.current().play(.success)
+    }
+
+    private func conditioningTargetMessage(
+        progress: ConditioningProgress,
+        plan: ConditioningPlan
+    ) -> String? {
+        let remaining = ConditioningProgressEngine.requiredRoundsRemaining(for: progress, plan: plan)
+        guard remaining > 0 else { return nil }
+        return "\(remaining) conditioning round\(remaining == 1 ? "" : "s") left"
     }
 
     func discardWorkout() {
@@ -346,6 +417,16 @@ final class WatchStore: NSObject {
         if workout.isYogaWorkout == true {
             let config = HKWorkoutConfiguration()
             config.activityType = .yoga
+            config.locationType = .indoor
+            return config
+        }
+        let isConditioningWorkout = workout.conditioningPlan != nil
+            || (!workout.exercises.isEmpty && workout.exercises.allSatisfy {
+                $0.workoutBlockKindRaw == "conditioning"
+            })
+        if isConditioningWorkout {
+            let config = HKWorkoutConfiguration()
+            config.activityType = .crossTraining
             config.locationType = .indoor
             return config
         }

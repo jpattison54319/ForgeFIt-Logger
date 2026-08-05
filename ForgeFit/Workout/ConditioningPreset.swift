@@ -26,7 +26,7 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .cindy: "Cindy"
         case .hundredsChipper: "100s Chipper"
-        case .twentyOneFifteenNine: "21–15–9"
+        case .twentyOneFifteenNine: "21–15–9 Ladder"
         case .emom: "10-Minute EMOM"
         case .tabata: "Tabata Squats"
         case .ladder: "Push-Up + Sit-Up Ladder"
@@ -37,8 +37,8 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
     var menuTitle: String {
         switch self {
         case .cindy: "Cindy · 20 min AMRAP"
-        case .hundredsChipper: "100s Chipper · For Time"
-        case .twentyOneFifteenNine: "21–15–9 · For Time"
+        case .hundredsChipper: "100s Chipper · 10 rounds × 10"
+        case .twentyOneFifteenNine: "21–15–9 · Descending Ladder"
         case .emom: "Kettlebell Thrusters · EMOM"
         case .tabata: "Bodyweight Squats · Tabata"
         case .ladder: "Push-Ups + Sit-Ups · Ladder"
@@ -56,10 +56,10 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
             ]
         case .hundredsChipper:
             [
-                .init(catalogName: "Pushups", targetValue: 100, weightMode: .bodyweight),
-                .init(catalogName: "Inverted Row", targetValue: 100, weightMode: .bodyweight),
-                .init(catalogName: "Sit-Up", targetValue: 100, weightMode: .bodyweight),
-                .init(catalogName: "Bodyweight Squat", targetValue: 100, weightMode: .bodyweight),
+                .init(catalogName: "Pushups", targetValue: 10, weightMode: .bodyweight),
+                .init(catalogName: "Inverted Row", targetValue: 10, weightMode: .bodyweight),
+                .init(catalogName: "Sit-Up", targetValue: 10, weightMode: .bodyweight),
+                .init(catalogName: "Bodyweight Squat", targetValue: 10, weightMode: .bodyweight),
             ]
         case .twentyOneFifteenNine:
             [
@@ -95,9 +95,16 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
         case .cindy:
             ConditioningSection(id: id, name: title, format: .amrap, durationSeconds: 1_200, movements: resolvedMovements)
         case .hundredsChipper:
-            ConditioningSection(id: id, name: title, format: .forTime, ordering: .inOrder, rounds: 1, movements: resolvedMovements)
+            ConditioningSection(id: id, name: title, format: .forTime, ordering: .inOrder, rounds: 10, movements: resolvedMovements)
         case .twentyOneFifteenNine:
-            ConditioningSection(id: id, name: title, format: .forTime, repScheme: [21, 15, 9], movements: resolvedMovements)
+            ConditioningSection(
+                id: id,
+                name: title,
+                format: .ladder,
+                scoreKind: .elapsedTime,
+                repScheme: [21, 15, 9],
+                movements: resolvedMovements
+            )
         case .emom:
             ConditioningSection(id: id, name: title, format: .emom, rounds: 10, intervalSeconds: 60, movements: resolvedMovements)
         case .tabata:
@@ -141,9 +148,7 @@ enum ConditioningPlanCoordinator {
         _ preset: ConditioningPreset,
         to sectionID: UUID,
         in plan: inout ConditioningPlan,
-        to routine: RoutineModel,
-        catalog: [ExerciseLibraryModel],
-        in context: ModelContext
+        catalog: [ExerciseLibraryModel]
     ) throws {
         guard let sectionIndex = plan.sections.firstIndex(where: { $0.id == sectionID }) else {
             throw ApplyError.missingSection
@@ -160,11 +165,21 @@ enum ConditioningPlanCoordinator {
             }
             return exercise
         }
-
         plan.sections[sectionIndex] = preset.makeSection(
             exerciseIDs: resolved.map(\.id),
             id: sectionID
         )
+    }
+
+    static func apply(
+        _ preset: ConditioningPreset,
+        to sectionID: UUID,
+        in plan: inout ConditioningPlan,
+        to routine: RoutineModel,
+        catalog: [ExerciseLibraryModel],
+        in context: ModelContext
+    ) throws {
+        try apply(preset, to: sectionID, in: &plan, catalog: catalog)
         reconcileRoutineExercises(with: plan, routine: routine, in: context)
         routine.conditioningPlanJSON = plan.encodedJSON()
         routine.updatedAt = .now

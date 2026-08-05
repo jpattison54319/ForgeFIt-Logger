@@ -1,4 +1,6 @@
 import Foundation
+import ForgeCore
+import ForgeData
 import Testing
 @testable import ForgeFit
 
@@ -101,6 +103,51 @@ struct WorkoutCalendarSupportTests {
         // Legacy unlinked cardio alongside strength is still a mixed session.
         #expect(WorkoutCalendarSupport.workoutKind(
             exerciseIDs: [strength], cardioLinkedExerciseIDs: [], cardioSessionCount: 1) == .mixed)
+    }
+
+    @MainActor
+    @Test func classifiesAuthoredConditioningYogaAndMixedWorkouts() {
+        let userID = UUID()
+        let burpeeID = UUID()
+        let conditioning = ConditioningPlan(sections: [
+            ConditioningSection(
+                name: "Rounds",
+                format: .forTime,
+                rounds: 10,
+                movements: [ConditioningMovement(exerciseID: burpeeID, targetValue: 10)]
+            )
+        ])
+        let conditioningWorkout = WorkoutModel(
+            userID: userID,
+            startedAt: Date(),
+            conditioningPlanSnapshotJSON: conditioning.encodedJSON(),
+            exercises: [WorkoutExerciseModel(userID: userID, exerciseID: burpeeID)]
+        )
+        #expect(WorkoutCalendarSupport.workoutKind(for: conditioningWorkout) == .conditioning)
+
+        let yoga = YogaFlowPlan(style: .yin, steps: [
+            YogaFlowPlan.PoseStep(poseID: UUID(), name: "Butterfly", holdSeconds: 90)
+        ])
+        let yogaWorkout = WorkoutModel(
+            userID: userID,
+            startedAt: Date(),
+            blocks: [
+                WorkoutBlockModel(
+                    userID: userID,
+                    kind: .yoga,
+                    planSnapshotJSON: yoga.encodedJSON()
+                )
+            ]
+        )
+        #expect(WorkoutCalendarSupport.workoutKind(for: yogaWorkout) == .yoga)
+
+        let mixedWorkout = WorkoutModel(
+            userID: userID,
+            startedAt: Date(),
+            exercises: [WorkoutExerciseModel(userID: userID, exerciseID: UUID())],
+            blocks: [WorkoutBlockModel(userID: userID, kind: .conditioning)]
+        )
+        #expect(WorkoutCalendarSupport.workoutKind(for: mixedWorkout) == .mixed)
     }
 
     // MARK: weekday symbols

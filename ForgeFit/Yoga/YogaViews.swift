@@ -34,6 +34,7 @@ struct YogaExerciseCard: View {
     @State private var importing = false
     @State private var showFlowBuilder = false
     @State private var showPlayer = false
+    @State private var activeSegmentMessage: String?
 
     private var plan: YogaFlowPlan? {
         YogaFlowPlan.resolved(for: workoutExercise, exercise: exercise)
@@ -84,6 +85,13 @@ struct YogaExerciseCard: View {
                     complete(session)
                 })
             }
+        }
+        .alert("Another Segment Is Active", isPresented: Binding(
+            get: { activeSegmentMessage != nil },
+            set: { if !$0 { activeSegmentMessage = nil } }
+        )) {
+        } message: {
+            Text(activeSegmentMessage ?? "Complete the current segment first.")
         }
     }
 
@@ -422,6 +430,10 @@ struct YogaExerciseCard: View {
     private func start(_ session: CardioSessionModel) {
         guard let plan, plan.hasSteps else {
             showFlowBuilder = true
+            return
+        }
+        if let active = WorkoutTimedSegmentPolicy.activeSegment(in: workout) {
+            activeSegmentMessage = "\(active) is already recording. Complete it before starting Yoga."
             return
         }
         Task { await HealthService.shared.requestAuthorizationIfNeeded() }

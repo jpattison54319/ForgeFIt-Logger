@@ -37,6 +37,7 @@ import Testing
         exercise.microRestSeconds = 15
         exercise.intervalPlanJSON = #"{"steps":[1]}"#
         exercise.yogaFlowJSON = #"{"steps":[2]}"#
+        exercise.generatedByWorkoutBlockID = UUID()
         exercise.sourceRoutineExerciseID = UUID()
         workout.exercises.append(exercise)
 
@@ -104,6 +105,18 @@ import Testing
         session.flexibilityExposureJSON = #"{"hips":999993}"#
         workout.cardioSessions.append(session)
 
+        let block = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 1,
+            planSnapshotJSON: #"{"sections":[]}"#,
+            progressJSON: #"{"status":"ready"}"#,
+            resultJSON: #"{"sectionResults":[]}"#,
+            sourceRoutineBlockID: UUID()
+        )
+        workout.blocks.append(block)
+        session.workoutBlockID = block.id
+
         let split = CardioSplitModel(
             userID: userID, cardioSessionID: session.id, index: 0,
             distanceMeters: 1000, durationSeconds: 360, paceSecondsPerKm: 360,
@@ -144,17 +157,19 @@ import Testing
         "workout": ["id", "routineID", "title", "startedAt", "endedAt", "sourceDevice", "notes",
                     "externalSource", "externalID", "importFingerprint", "importBatchID",
                     "xpAwardedAmount", "xpAwardedAt", "createdAt", "updatedAt", "deletedAt",
-                    "exercises", "cardioSessions"],
+                    "exercises", "cardioSessions", "blocks"],
         "exercise": ["id", "exerciseID", "name", "position", "supersetGroup", "notes", "notePinned",
                      "restSeconds", "microRestSeconds", "intervalPlanJSON", "yogaFlowJSON",
-                     "sourceRoutineExerciseID", "createdAt", "updatedAt", "sets"],
+                     "generatedByWorkoutBlockID", "sourceRoutineExerciseID", "createdAt", "updatedAt", "sets"],
+        "block": ["id", "kindRaw", "position", "planSnapshotJSON", "progressJSON", "resultJSON",
+                  "sourceRoutineBlockID", "createdAt", "updatedAt"],
         "set": ["id", "position", "setType", "weightMode", "reps", "weightKg", "rpe", "rir",
                 "durationSeconds", "holdSeconds", "partialReps", "addedWeight", "assistanceWeight",
                 "isUnilateral", "implementWeight", "limbCount", "isEccentric", "isPaused",
                 "machineSettingsJSON", "sourceRoutineSetID", "miniRepsJSON", "side2Reps",
                 "side2MiniRepsJSON", "plannedMiniSetCount", "plannedMiniRepsJSON",
                 "completedAt", "createdAt", "updatedAt"],
-        "session": ["id", "workoutExerciseID", "modality", "startedAt", "liveStartedAt", "endedAt",
+        "session": ["id", "workoutExerciseID", "workoutBlockID", "modality", "startedAt", "liveStartedAt", "endedAt",
                     "sourceDevice", "durationSeconds", "distanceMeters", "effort",
                     "avgPaceSecondsPerKm", "split500mSeconds", "strokeRate", "avgPowerWatts",
                     "avgCadence", "resistanceLevel", "inclinePercent", "elevationGainMeters",
@@ -212,6 +227,9 @@ import Testing
                 check(exercise, level: "exercise")
                 for set in exercise["sets"] as? [[String: Any]] ?? [] { check(set, level: "set") }
             }
+            for block in workoutObject["blocks"] as? [[String: Any]] ?? [] {
+                check(block, level: "block")
+            }
             for session in workoutObject["cardioSessions"] as? [[String: Any]] ?? [] {
                 check(session, level: "session")
                 for split in session["splits"] as? [[String: Any]] ?? [] { check(split, level: "split") }
@@ -249,6 +267,13 @@ import Testing
         #expect(workout.readinessAtStart == nil)
         #expect(workout.hkWorkoutUUID == nil)
 
+        let block = try #require(restored.blocks.first)
+        #expect(block.id == original.blocks[0].id)
+        #expect(block.kind == .conditioning)
+        #expect(block.planSnapshotJSON == original.blocks[0].planSnapshotJSON)
+        #expect(block.progressJSON == original.blocks[0].progressJSON)
+        #expect(block.resultJSON == original.blocks[0].resultJSON)
+
         let set = try #require(restored.sets.first)
         let originalSet = original.exercises[0].sets[0]
         #expect(set.id == originalSet.id)
@@ -279,6 +304,7 @@ import Testing
         let originalSession = original.cardioSessions[0]
         #expect(session.id == originalSession.id)
         #expect(session.modality == originalSession.modality)
+        #expect(session.workoutBlockID == originalSession.workoutBlockID)
         #expect(session.distanceMeters == originalSession.distanceMeters)
         #expect(session.effort == originalSession.effort)
         #expect(session.avgPaceSecondsPerKm == originalSession.avgPaceSecondsPerKm)

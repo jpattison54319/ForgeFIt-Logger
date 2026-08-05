@@ -3,21 +3,24 @@ import SwiftUI
 
 // MARK: - Workout shape
 
-/// The four workout shapes the share cards adapt to. Computed once and passed
+/// The workout shapes the share cards adapt to. Computed once and passed
 /// around so hero rows, module picks, and page availability can never drift
 /// apart across the card styles.
 enum WorkoutShareShape {
-    case strength, cardio, yoga, hybrid
+    case strength, cardio, conditioning, yoga, hybrid
 
     static func of(workout: WorkoutModel, summary: TrainingAnalytics.Summary) -> WorkoutShareShape {
-        let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
-        let allYoga = !sessions.isEmpty && sessions.allSatisfy(\.isYogaSession)
-        switch (summary.hasStrength, summary.hasCardio) {
-        case (true, true): return .hybrid
-        case (true, false): return .strength
-        case (false, true): return allYoga ? .yoga : .cardio
-        // Empty or notes-only workout — the set-list layout degrades fine.
-        case (false, false): return .strength
+        let modalities = WorkoutPresentationPlan.make(for: workout).modalities
+        guard modalities.count == 1, let modality = modalities.first else {
+            // Empty / notes-only workouts retain the strength log's graceful
+            // empty state; two or more authored modalities are always hybrid.
+            return modalities.isEmpty ? .strength : .hybrid
+        }
+        return switch modality {
+        case .strength: .strength
+        case .cardio: .cardio
+        case .conditioning: .conditioning
+        case .yoga: .yoga
         }
     }
 
@@ -26,9 +29,17 @@ enum WorkoutShareShape {
         switch self {
         case .strength: "dumbbell.fill"
         case .cardio: "figure.run"
+        case .conditioning: "figure.cross.training"
         case .yoga: "figure.yoga"
         case .hybrid: "figure.cross.training"
         }
+    }
+
+    /// Between-set recovery is derived from strength-set completion timestamps.
+    /// Conditioning, cardio, and yoga have continuous modality-specific effort
+    /// instead of discrete strength-set recovery windows.
+    var supportsBetweenSetRecovery: Bool {
+        self == .strength || self == .hybrid
     }
 }
 
@@ -79,11 +90,16 @@ enum ShareCardStyle: String, CaseIterable, Identifiable {
 struct ShareCardChrome {
     let theme: AppTheme
 
-    func header(title: String, date: Date, compact: Bool = false) -> some View {
+    func header(
+        title: String,
+        date: Date,
+        compact: Bool = false,
+        systemImage: String = "dumbbell.fill"
+    ) -> some View {
         HStack(alignment: .center, spacing: compact ? 10 : 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous).fill(theme.accent)
-                Image(systemName: "dumbbell.fill")
+                Image(systemName: systemImage)
                     .font(.system(size: compact ? 16 : 20, weight: .bold)).foregroundStyle(.white)
             }
             .frame(width: compact ? 36 : 44, height: compact ? 36 : 44)

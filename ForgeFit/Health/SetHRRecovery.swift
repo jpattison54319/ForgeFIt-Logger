@@ -19,7 +19,7 @@ struct SetRecoveryPoint: Equatable {
 ///
 /// Why *recovery between sets* and not "HR during the set": HR is a poor proxy
 /// for lifting intensity (a heavy triple can read lower than a light set of 20),
-/// but how far HR drops during rest is a real conditioning/readiness signal.
+    /// but how far HR drops during rest is useful strength-session recovery context.
 enum SetHRRecovery {
 
     /// - Parameters:
