@@ -31,7 +31,7 @@ final class WorkoutHeartsUITests: XCTestCase {
         app.launchArguments = [
             "--reset-store", "-didOnboard", "YES",
             "--auto-start-routine",
-            "--mock-social", "--seed-social-hearts",
+            "--mock-social", "--seed-social-hearts", "-social", "YES",
             "-weightUnitRaw", "kg",
         ]
         app.launch()
@@ -58,7 +58,7 @@ final class WorkoutHeartsUITests: XCTestCase {
         app.terminate()
         app.launchArguments = [
             "-didOnboard", "YES",
-            "--mock-social", "--seed-social-hearts",
+            "--mock-social", "--seed-social-hearts", "-social", "YES",
             "-weightUnitRaw", "kg",
         ]
         app.launch()

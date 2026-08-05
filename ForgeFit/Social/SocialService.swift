@@ -35,23 +35,55 @@ final class SocialService {
     private var drainInFlight = false
     private var lastCleanReconcileAt: Date?
 
-    init(backend: SocialBackend, isDemo: Bool, defaults: UserDefaults = .standard) {
+    /// Whether Community is switched on for this build. Injected rather than
+    /// read from `FeatureFlags` inside the service so tests can exercise the
+    /// social logic without touching global defaults — the app decides in
+    /// `make()`, which is the only composition root.
+    let isEnabled: Bool
+
+    init(
+        backend: SocialBackend,
+        isDemo: Bool,
+        isEnabled: Bool = true,
+        defaults: UserDefaults = .standard
+    ) {
         self.backend = backend
         self.isDemo = isDemo
+        self.isEnabled = isEnabled
         self.defaults = defaults
     }
 
     /// Chooses the backend. The mock is seeded lazily in `bootstrap()`.
+    ///
+    /// With Community off the CloudKit backend is never constructed. That is
+    /// not just tidiness: `CKContainer(identifier:)` traps when the process
+    /// lacks the `com.apple.developer.icloud-services` entitlement, so building
+    /// it for a feature nobody can reach is a crash waiting for a build without
+    /// full entitlements. The inert mock keeps the environment object's shape
+    /// while `isEnabled == false` stops anything from calling it.
     static func make() -> SocialService {
-        if ProcessInfo.processInfo.arguments.contains("--mock-social") {
-            return SocialService(backend: MockSocialBackend(me: SocialUserID("demo-me")), isDemo: true)
+        let isEnabled = FeatureFlags.social
+        if !isEnabled || ProcessInfo.processInfo.arguments.contains("--mock-social") {
+            return SocialService(
+                backend: MockSocialBackend(me: SocialUserID("demo-me")),
+                isDemo: isEnabled,
+                isEnabled: isEnabled
+            )
         }
-        return SocialService(backend: CloudKitSocialBackend(), isDemo: false)
+        return SocialService(
+            backend: CloudKitSocialBackend(),
+            isDemo: false,
+            isEnabled: isEnabled
+        )
     }
 
-    var isOptedIn: Bool { myProfile != nil }
+    /// The single gate every publish, reconcile, and hearts path checks. With
+    /// Community off it stays false, so nothing reaches CloudKit even if a
+    /// profile were somehow present locally.
+    var isOptedIn: Bool { isEnabled && myProfile != nil }
 
     func bootstrap() async {
+        guard isEnabled else { return }
         guard !didBootstrap else { return }
         didBootstrap = true
         if isDemo, let mock = backend as? MockSocialBackend {

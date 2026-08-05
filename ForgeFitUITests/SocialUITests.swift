@@ -30,7 +30,7 @@ final class SocialUITests: XCTestCase {
     @MainActor
     func testOptInThenVisitFriendProfile() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--mock-social", "-didOnboard", "YES", "-weightUnitRaw", "lb"]
+        app.launchArguments = ["--reset-store", "--mock-social", "-social", "YES", "-didOnboard", "YES", "-weightUnitRaw", "lb"]
         app.launch()
 
         // Profile tab → Community tile.

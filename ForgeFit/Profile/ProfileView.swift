@@ -310,9 +310,11 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
-            NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("dashboard-community")
+            if FeatureFlags.social {
+                NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("dashboard-community")
+            }
         }
     }
 

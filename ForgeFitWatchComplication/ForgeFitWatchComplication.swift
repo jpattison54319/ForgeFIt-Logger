@@ -7,10 +7,12 @@ import WidgetKit
 // WatchStore.publishComplicationSnapshot) and shows readiness when idle, live
 // set progress mid-workout. Tapping opens the watch app.
 //
-// TARGET SETUP (must match, or the complication shows placeholder data):
-//   • This file belongs to a watchOS Widget Extension target.
-//   • That target must join the "group.org.xpetsllc.ForgeFit" App Group.
-//   • That target must link the ForgeCore package (for the snapshot types).
+// Ships in the ForgeFitWatchComplication widget-extension target, embedded in
+// the watch app. Three things have to stay true or it silently falls back to
+// placeholder data: the target links ForgeCore (for the snapshot types), and
+// BOTH it and the watch app carry the group.org.xpetsllc.ForgeFit app group —
+// `UserDefaults(suiteName:)` fails soft to `.standard`, so a missing
+// entitlement on either side loses the write with no error anywhere.
 
 struct ForgeFitComplicationEntry: TimelineEntry {
     let date: Date

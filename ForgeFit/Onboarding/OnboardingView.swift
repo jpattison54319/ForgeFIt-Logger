@@ -65,14 +65,20 @@ struct OnboardingView: View {
         showHistoryImporter = true
     }
 
+    /// Leaves onboarding as soon as Apple's permission sheet resolves. The
+    /// 60-day catch-up scan that follows can take a while on a phone with years
+    /// of Health workouts, and holding the last onboarding screen for it — under
+    /// a button that just says "Connecting…" — reads as a hang on first launch.
+    /// The scan finishes in the background and Home fills in as it lands.
     private func connectHealth() {
         guard !connecting else { return }
         connecting = true
+        let container = modelContext.container
         Task {
             _ = await HealthService.shared.requestAuthorization()
-            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-            HealthMetricsStore.shared.refresh(force: true)
             finish()
+            await HealthWorkoutImporter.shared.importRecent(in: container)
+            HealthMetricsStore.shared.refresh(force: true)
         }
     }
 

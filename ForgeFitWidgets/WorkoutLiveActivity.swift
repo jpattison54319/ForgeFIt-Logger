@@ -120,6 +120,11 @@ struct WorkoutLiveActivity: Widget {
             }
             .keylineTint(WActivityTheme.accent)
         }
+        // The wrist is where a lifter actually glances mid-set. Without this
+        // the watch Smart Stack falls back to a generic presentation;
+        // `LockScreenWorkoutView` reads `\.activityFamily` and draws the one
+        // number that matters — rest, hold, or elapsed — at watch scale.
+        .supplementalActivityFamilies([.small])
     }
 
     private func headerTitle(_ context: ActivityViewContext<WorkoutActivityAttributes>) -> String {
@@ -155,12 +160,70 @@ struct WorkoutLiveActivity: Widget {
 
 private struct LockScreenWorkoutView: View {
     let context: ActivityViewContext<WorkoutActivityAttributes>
+    @Environment(\.activityFamily) private var family
 
     private var isSessionMode: Bool {
         context.state.mode == .cardio || context.state.mode == .conditioning || context.state.mode == .yoga
     }
 
     var body: some View {
+        switch family {
+        case .small: watchBody
+        default: phoneBody
+        }
+    }
+
+    /// Apple Watch Smart Stack. A wrist glance mid-set is worth exactly one
+    /// number, so the countdown or elapsed clock takes the whole card and the
+    /// exercise name rides underneath it.
+    private var watchBody: some View {
+        VStack(spacing: 1) {
+            HStack(spacing: 4) {
+                Image(systemName: WActivityTheme.icon(for: context.state.mode))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(WActivityTheme.accent)
+                Text(headline)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+            if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
+                watchTimer(until: restEndsAt, tint: WActivityTheme.accent)
+            } else if context.state.mode == .yoga,
+                      let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
+                watchTimer(until: poseEndsAt, tint: WActivityTheme.accent)
+            } else {
+                Text(context.state.startedAt, style: .timer)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(WActivityTheme.gold)
+            }
+            Text(detailLine)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(WActivityTheme.accent)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var headline: String {
+        if let restEndsAt = context.state.restEndsAt, restEndsAt > .now { return "Rest" }
+        if context.state.mode == .yoga,
+           let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now { return "Hold" }
+        if isSessionMode { return context.state.cardioTitle ?? context.attributes.workoutTitle }
+        return context.state.exerciseName ?? context.attributes.workoutTitle
+    }
+
+    private func watchTimer(until endsAt: Date, tint: Color) -> some View {
+        Text(timerInterval: Date.now...endsAt, countsDown: true)
+            .font(.system(size: 26, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .multilineTextAlignment(.center)
+            .foregroundStyle(tint)
+    }
+
+    private var phoneBody: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {

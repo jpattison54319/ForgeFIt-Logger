@@ -31,7 +31,7 @@ final class WorkoutActivityController {
             activity = current
             Task {
                 await Self.withBackgroundTask(named: "UpdateWorkoutLiveActivity") {
-                    await current.update(ActivityContent(state: state, staleDate: nil))
+                    await current.update(ActivityContent(state: state, staleDate: Self.staleDate()))
                     for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current.id {
                         await stale.end(nil, dismissalPolicy: .immediate)
                     }
@@ -40,9 +40,21 @@ final class WorkoutActivityController {
         } else {
             activity = try? Activity.request(
                 attributes: WorkoutActivityAttributes(workoutTitle: workout.title ?? "Workout"),
-                content: ActivityContent(state: state, staleDate: nil)
+                content: ActivityContent(state: state, staleDate: Self.staleDate())
             )
         }
+    }
+
+    /// When the system should stop presenting this content as current.
+    ///
+    /// Updates arrive on set completion, rest start/stop, and heart-rate
+    /// changes, so a live workout refreshes this window long before it lapses.
+    /// It matters when the app is force-quit mid-session: without a stale date
+    /// the lock screen keeps showing a frozen exercise, set count, and heart
+    /// rate as though they were current, for hours. Thirty minutes clears a
+    /// genuinely slow set-and-rest cycle while still catching a dead app.
+    private static func staleDate() -> Date {
+        Date().addingTimeInterval(30 * 60)
     }
 
     /// Ends the Live Activity. Wrapped in a background task assertion because

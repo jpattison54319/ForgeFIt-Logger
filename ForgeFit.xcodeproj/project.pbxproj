@@ -13,6 +13,8 @@
 		FF0000000000000000000011 /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FF0000000000000000000012 /* ForgeCore */; };
 		FFA000000000000000000B /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FFA0000000000000000007 /* ForgeCore */; };
 		FFA000000000000000000C /* ForgeFitWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FFA0000000000000000006 /* ForgeFitWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		FFB000000000000000000A /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FFB0000000000000000007 /* ForgeCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +60,13 @@
 			remoteGlobalIDString = FFA0000000000000000002;
 			remoteInfo = ForgeFitWidgets;
 		};
+		FFB000000000000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 11D5DEE82FF3739900F018A9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FFB0000000000000000002;
+			remoteInfo = ForgeFitWatchComplication;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -70,6 +79,17 @@
 				11D5DF402FF3743200F018A9 /* ForgeFitWatch Watch App.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FFB000000000000000000C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		FFA000000000000000000D /* Embed Foundation Extensions */ = {
@@ -93,6 +113,7 @@
 		11D5DF2C2FF3743200F018A9 /* ForgeFitWatch Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ForgeFitWatch Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		11D5DF362FF3743200F018A9 /* ForgeFitWatch Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "ForgeFitWatch Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FFA0000000000000000006 /* ForgeFitWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ForgeFitWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFB0000000000000000006 /* ForgeFitWatchComplication.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ForgeFitWatchComplication.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -129,6 +150,11 @@
 		FFA0000000000000000001 /* ForgeFitWidgets */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ForgeFitWidgets;
+			sourceTree = "<group>";
+		};
+		FFB0000000000000000001 /* ForgeFitWatchComplication */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ForgeFitWatchComplication;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -187,6 +213,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FFB0000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FFB000000000000000000A /* ForgeCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -198,6 +232,7 @@
 				11D5DF0C2FF3739A00F018A9 /* ForgeFitUITests */,
 				11D5DF212FF3743000F018A9 /* ForgeFitWatch Watch App */,
 				FFA0000000000000000001 /* ForgeFitWidgets */,
+				FFB0000000000000000001 /* ForgeFitWatchComplication */,
 				11D5DF2F2FF3743200F018A9 /* ForgeFitWatch Watch AppTests */,
 				11D5DF392FF3743200F018A9 /* ForgeFitWatch Watch AppUITests */,
 				11D5DEF12FF3739900F018A9 /* Products */,
@@ -212,6 +247,7 @@
 				11D5DF092FF3739A00F018A9 /* ForgeFitUITests.xctest */,
 				11D5DF202FF3743000F018A9 /* ForgeFitWatch Watch App.app */,
 				FFA0000000000000000006 /* ForgeFitWidgets.appex */,
+				FFB0000000000000000006 /* ForgeFitWatchComplication.appex */,
 				11D5DF2C2FF3743200F018A9 /* ForgeFitWatch Watch AppTests.xctest */,
 				11D5DF362FF3743200F018A9 /* ForgeFitWatch Watch AppUITests.xctest */,
 			);
@@ -302,10 +338,12 @@
 				11D5DF1C2FF3743000F018A9 /* Sources */,
 				11D5DF1D2FF3743000F018A9 /* Frameworks */,
 				11D5DF1E2FF3743000F018A9 /* Resources */,
+				FFB000000000000000000C /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				FFB000000000000000000D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				11D5DF212FF3743000F018A9 /* ForgeFitWatch Watch App */,
@@ -363,6 +401,29 @@
 			productName = "ForgeFitWatch Watch AppUITests";
 			productReference = 11D5DF362FF3743200F018A9 /* ForgeFitWatch Watch AppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		FFB0000000000000000002 /* ForgeFitWatchComplication */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */;
+			buildPhases = (
+				FFB0000000000000000003 /* Sources */,
+				FFB0000000000000000004 /* Frameworks */,
+				FFB0000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FFB0000000000000000001 /* ForgeFitWatchComplication */,
+			);
+			name = ForgeFitWatchComplication;
+			packageProductDependencies = (
+				FFB0000000000000000007 /* ForgeCore */,
+			);
+			productName = ForgeFitWatchComplication;
+			productReference = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		FFA0000000000000000002 /* ForgeFitWidgets */ = {
 			isa = PBXNativeTarget;
@@ -449,6 +510,7 @@
 				11D5DF2B2FF3743200F018A9 /* ForgeFitWatch Watch AppTests */,
 				11D5DF352FF3743200F018A9 /* ForgeFitWatch Watch AppUITests */,
 				FFA0000000000000000002 /* ForgeFitWidgets */,
+				FFB0000000000000000002 /* ForgeFitWatchComplication */,
 			);
 		};
 /* End PBXProject section */
@@ -497,6 +559,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		FFA0000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FFB0000000000000000005 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -555,6 +624,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FFB0000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -587,6 +663,11 @@
 			isa = PBXTargetDependency;
 			target = FFA0000000000000000002 /* ForgeFitWidgets */;
 			targetProxy = FFA000000000000000000F /* PBXContainerItemProxy */;
+		};
+		FFB000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FFB0000000000000000002 /* ForgeFitWatchComplication */;
+			targetProxy = FFB000000000000000000E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -730,7 +811,6 @@
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -746,7 +826,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -770,7 +850,6 @@
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -786,7 +865,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -807,7 +886,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ForgeFit.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ForgeFit";
 			};
 			name = Debug;
@@ -829,7 +908,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ForgeFit.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ForgeFit";
 			};
 			name = Release;
@@ -849,7 +928,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = ForgeFit;
 			};
 			name = Debug;
@@ -869,7 +948,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				TEST_TARGET_NAME = ForgeFit;
 			};
 			name = Release;
@@ -1042,6 +1121,62 @@
 			};
 			name = Release;
 		};
+		FFB0000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 42;
+				DEVELOPMENT_TEAM = 8USAFADYCA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ComplicationInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.complication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		FFB000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 42;
+				DEVELOPMENT_TEAM = 8USAFADYCA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ComplicationInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.complication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 		FFA0000000000000000009 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1067,7 +1202,7 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -1094,7 +1229,7 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -1164,6 +1299,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FFB0000000000000000009 /* Debug */,
+				FFB000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		FFA0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWidgets" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1215,6 +1359,11 @@
 			productName = ForgeCore;
 		};
 		FFA0000000000000000007 /* ForgeCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FF0000000000000000000003 /* XCLocalSwiftPackageReference "Packages/ForgeCore" */;
+			productName = ForgeCore;
+		};
+		FFB0000000000000000007 /* ForgeCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = FF0000000000000000000003 /* XCLocalSwiftPackageReference "Packages/ForgeCore" */;
 			productName = ForgeCore;

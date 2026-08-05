@@ -121,7 +121,13 @@ struct HomeMetricGrid: View {
             systemImage: "moon.zzz.fill",
             value: value,
             caption: caption,
-            tint: looksPartial ? theme.warmup : theme.zone2,
+            // No progress means no measurement to plot — an untracked night, a
+            // night with no sleep recorded, or Health not connected at all.
+            // Those read as "No data" / "Not tracked", and tinting them like a
+            // reading made the absence of data the loudest thing on Home.
+            tint: progress == nil
+                ? theme.textTertiary
+                : looksPartial ? theme.warmup : theme.zone2,
             progress: progress,
             isRefreshing: isRefreshing
         )

@@ -833,7 +833,7 @@ struct ContentView: View {
                 object: nil
             )
         case "u":   // forgefit://u/<handle> — visit a friend's profile
-            if let handle = SocialLinks.handle(from: url) {
+            if FeatureFlags.social, let handle = SocialLinks.handle(from: url) {
                 social.pendingFollowHandle = handle
                 appState.selectedTab = .profile
             }

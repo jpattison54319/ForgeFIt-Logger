@@ -39,6 +39,11 @@ struct ForgeTabBar: View {
         }
         .shadow(color: .black.opacity(0.28), radius: 22, y: 10)
         .padding(.horizontal, Space.xl)
+        // The bar is fixed chrome over scrolling content, so it can't be
+        // allowed to grow without bound: at the accessibility sizes the labels
+        // pushed it tall enough to cover the card behind it. Body copy still
+        // scales — this caps the shell so the two don't fight.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
     private func item(_ tab: AppTab) -> some View {
@@ -53,7 +58,8 @@ struct ForgeTabBar: View {
                     .symbolEffect(.bounce, value: isSelected)
                 Text(tab.title)
                     .font(.caption.weight(.semibold))
-                    .fixedSize()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .overlay(alignment: .topTrailing) {
                 if badgeCount > 0 {

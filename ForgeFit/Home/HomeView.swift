@@ -67,6 +67,11 @@ struct HomeView: View {
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
     @State private var connectingHealth = false
+    /// Mirrors `HealthService.isConnected`. Held in state rather than read in
+    /// `body`: the authorization lookup would otherwise run on every render,
+    /// including every frame of a scroll. Re-read whenever the app returns to
+    /// the foreground, which is where a Settings-app permission change lands.
+    @State private var healthConnected = false
     // Keeps the check-in strip visible while the user is mid-selection —
     // without it the row would vanish on the first tap. Resets when Home
     // reloads, so an answered check-in stays collapsed on later visits.
@@ -365,34 +370,45 @@ struct HomeView: View {
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
-                    if hasReadinessSignal {
-                        RecoveryHeroCard(
-                            report: recovery,
+                    // Without Health there is no recovery surface to show, only
+                    // four tiles explaining their own emptiness. In that state
+                    // training leads and the dashboard collapses to one row
+                    // that says what's missing and offers to fix it.
+                    if !showsRecoveryDashboard {
+                        trainingSurface
+                        connectHealthPrompt
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    } else {
+                        if hasReadinessSignal {
+                            RecoveryHeroCard(
+                                report: recovery,
+                                source: dashboardSource,
+                                isRefreshing: dashboardIsRefreshing
+                            )
+                            .accessibilityIdentifier("home-guidance")
+                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                        } else {
+                            readinessEmptyState
+                                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                        }
+
+                        HomeMetricGrid(
+                            recovery: recovery,
+                            strain: dailyStrain,
+                            sleep: latestHealthMetric,
+                            health: healthAssessment,
                             source: dashboardSource,
                             isRefreshing: dashboardIsRefreshing
                         )
-                        .accessibilityIdentifier("home-guidance")
                         .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                    } else {
-                        readinessEmptyState
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                    }
 
-                    HomeMetricGrid(
-                        recovery: recovery,
-                        strain: dailyStrain,
-                        sleep: latestHealthMetric,
-                        health: healthAssessment,
-                        source: dashboardSource,
-                        isRefreshing: dashboardIsRefreshing
-                    )
-                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-
-                    // A night flagged as partial-wear capture: offer a one-tap
-                    // correction so a data gap never reads as lost sleep.
-                    if let sleepAlert = todayAnalytics?.sleepIntegrityAlert {
-                        SleepIntegrityCard(alert: sleepAlert)
-                        .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                        // A night flagged as partial-wear capture: offer a
+                        // one-tap correction so a data gap never reads as
+                        // lost sleep.
+                        if let sleepAlert = todayAnalytics?.sleepIntegrityAlert {
+                            SleepIntegrityCard(alert: sleepAlert)
+                                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                        }
                     }
 
                     if showsCheckinStrip {
@@ -422,20 +438,9 @@ struct HomeView: View {
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
-                    // "Jump back in" only when there is something to jump back
-                    // into — a brand-new user gets "Get started" and a route
-                    // into the program library instead of a dangling header.
-                    SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
-                    if let suggestion {
-                        suggestionCard(suggestion.routine, reason: suggestion.reason)
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                            .transition(.opacity)
-                    } else {
-                        explorePromptCard
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                            .transition(.opacity)
+                    if showsRecoveryDashboard {
+                        trainingSurface
                     }
-                    quickStart
 
                     if !recentCompleted.isEmpty {
                         SectionHeader("Recent")
@@ -539,6 +544,7 @@ struct HomeView: View {
             // Screenshot/UI-test hook, same family as -initialTab (unset in
             // production).
             .onAppear {
+                healthConnected = HealthService.shared.isConnected
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
                 #if DEBUG
                 // UI automation keeps exercising the dormant coach surfaces
@@ -556,6 +562,14 @@ struct HomeView: View {
             // screen goes away (the 400 ms debounce may not have fired yet).
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { commitCheckinDraft() }
+                // Granting or revoking access happens in Apple's Health app,
+                // so the answer can only have changed while we were away.
+                if phase == .active { healthConnected = HealthService.shared.isConnected }
+            }
+            // In-app grant: the prompt's own button flips this the moment the
+            // permission sheet resolves, without waiting for a foreground trip.
+            .onChange(of: connectingHealth) { _, isConnecting in
+                if !isConnecting { healthConnected = HealthService.shared.isConnected }
             }
             .onDisappear { commitCheckinDraft() }
             .sheet(isPresented: $showExploreLibrary) {
@@ -606,6 +620,80 @@ struct HomeView: View {
             }
         }
         .buttonStyle(PressableButtonStyle())
+    }
+
+    /// Whether the recovery dashboard (hero + four tiles) earns its place at
+    /// the top of Home. Recovery, sleep, and the health readings all come from
+    /// Apple Health — with no authorization they can never populate, so the
+    /// dashboard becomes four cards each explaining that it has nothing, above
+    /// the fold, every launch. Strain and the week card still carry the
+    /// training-derived numbers further down.
+    private var showsRecoveryDashboard: Bool {
+        healthConnected || !healthMetrics.metrics.isEmpty || todayDashboardCache != nil
+    }
+
+    /// The workout entry point: what to do next, then the quick-start tiles.
+    /// Rendered near the top when the recovery dashboard is suppressed, in its
+    /// usual place below the week card otherwise.
+    @ViewBuilder
+    private var trainingSurface: some View {
+        // "Jump back in" only when there is something to jump back
+        // into — a brand-new user gets "Get started" and a route
+        // into the program library instead of a dangling header.
+        SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
+        if let suggestion {
+            suggestionCard(suggestion.routine, reason: suggestion.reason)
+                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                .transition(.opacity)
+        } else {
+            explorePromptCard
+                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                .transition(.opacity)
+        }
+        quickStart
+    }
+
+    /// One row standing in for the whole recovery dashboard while Health is
+    /// disconnected. States the consequence rather than selling the feature —
+    /// what ForgeFit can and can't tell you until it has the data.
+    private var connectHealthPrompt: some View {
+        Card {
+            HStack(spacing: Space.md) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 36, height: 36)
+                    .background(theme.accentSoft)
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Readiness needs Apple Health")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    Text("Sleep, HRV, and resting heart rate come from Health. Until it's connected, ForgeFit tracks your training only.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: Space.sm)
+                Button(connectingHealth ? "…" : "Connect") {
+                    connectingHealth = true
+                    Task {
+                        _ = await HealthService.shared.requestAuthorization()
+                        await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
+                        healthMetrics.refresh(force: true)
+                        connectingHealth = false
+                    }
+                }
+                .font(.bodyStrong)
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.capsule)
+                .tint(theme.accent)
+                .disabled(connectingHealth)
+                .accessibilityIdentifier("home-connect-health")
+            }
+        }
+        .accessibilityIdentifier("home-connect-health-prompt")
     }
 
     private var readinessEmptyState: some View {
@@ -778,6 +866,10 @@ struct HomeView: View {
             Text("How do you feel?")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
+            // Six tags never fit. Bled out to the true screen edge so the next
+            // chip is visibly cut by the display rather than by the content
+            // margin — a chip that stops short of the edge reads as a clipping
+            // bug, one that runs off it reads as a row you can push.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(CheckinTags.all, id: \.id) { tag in
@@ -804,6 +896,11 @@ struct HomeView: View {
                     }
                 }
             }
+            // Widen past the scaffold's gutter so the row clips at the display
+            // edge, then put the gutter back as a content margin so the first
+            // chip still lines up with the cards above it.
+            .padding(.horizontal, -Space.lg)
+            .contentMargins(.horizontal, Space.lg, for: .scrollContent)
         }
     }
 

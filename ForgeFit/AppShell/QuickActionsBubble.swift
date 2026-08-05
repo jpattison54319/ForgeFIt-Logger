@@ -84,6 +84,11 @@ struct QuickActionsBubble: View {
         }
         .sensoryFeedback(.impact(weight: .light), trigger: expandedMirror)
         .sensoryFeedback(.selection, trigger: actionTick)
+        // Floating chrome pinned above the tab bar, with a fan whose geometry
+        // is tuned in points (`gap`, `labelMaxWidth`). Left unclamped the
+        // trigger grew into the card behind it at accessibility sizes and the
+        // captions overran their 88pt budget. Matches `ForgeTabBar`.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
     private func item(for action: AppQuickAction) -> GlassDivisionItem {
