@@ -50,6 +50,11 @@ public enum RoutineChangeSync {
             /// Matching routine exercise, nil when the exercise was added
             /// mid-session.
             public let matchedRoutineExerciseID: UUID?
+            /// The row was swapped to a different exercise mid-session
+            /// (in-place replace keeps the routine lineage but changes
+            /// `exerciseID`). Without this the swap was invisible: every other
+            /// change applied and the routine silently kept the old movement.
+            public let exerciseChanged: Bool
             public let movedPosition: Bool
             public let supersetChanged: Bool
             /// Workout set ids whose origin is nil (added mid-session) — these
@@ -67,6 +72,7 @@ public enum RoutineChangeSync {
             public init(
                 workoutExerciseID: UUID,
                 matchedRoutineExerciseID: UUID?,
+                exerciseChanged: Bool = false,
                 movedPosition: Bool,
                 supersetChanged: Bool,
                 addedWorkoutSetIDs: [UUID],
@@ -76,6 +82,7 @@ public enum RoutineChangeSync {
             ) {
                 self.workoutExerciseID = workoutExerciseID
                 self.matchedRoutineExerciseID = matchedRoutineExerciseID
+                self.exerciseChanged = exerciseChanged
                 self.movedPosition = movedPosition
                 self.supersetChanged = supersetChanged
                 self.addedWorkoutSetIDs = addedWorkoutSetIDs
@@ -117,7 +124,8 @@ public enum RoutineChangeSync {
                 || !removedRoutineBlockIDs.isEmpty
                 || blockPlans.contains { $0.movedPosition || $0.planChanged }
                 || exercisePlans.contains {
-                    $0.movedPosition
+                    $0.exerciseChanged
+                        || $0.movedPosition
                         || $0.supersetChanged
                         || !$0.addedWorkoutSetIDs.isEmpty
                         || !$0.removedRoutineSetIDs.isEmpty
@@ -133,6 +141,8 @@ public enum RoutineChangeSync {
             let removedEx = removedRoutineExerciseIDs.count
             if addedEx > 0 { parts.append("\(addedEx) exercise\(addedEx == 1 ? "" : "s") added") }
             if removedEx > 0 { parts.append("\(removedEx) exercise\(removedEx == 1 ? "" : "s") removed") }
+            let swapped = exercisePlans.count(where: \.exerciseChanged)
+            if swapped > 0 { parts.append("\(swapped) exercise\(swapped == 1 ? "" : "s") swapped") }
             let addedBlocks = addedBlockIDs.count
             let removedBlocks = removedRoutineBlockIDs.count
             if addedBlocks > 0 { parts.append("\(addedBlocks) block\(addedBlocks == 1 ? "" : "s") added") }
@@ -227,6 +237,10 @@ public enum RoutineChangeSync {
         for we: WorkoutExerciseModel,
         matchedTo re: RoutineExerciseModel
     ) -> Plan.ExercisePlan {
+        // In-place replace keeps the routine lineage and changes only the
+        // exercise identity — the one structural change the diff used to
+        // ignore entirely.
+        let exerciseChanged = we.exerciseID != re.exerciseID
         let movedPosition = we.position != re.position
         let supersetChanged = we.supersetGroup != re.supersetGroup
 
@@ -251,6 +265,7 @@ public enum RoutineChangeSync {
             return Plan.ExercisePlan(
                 workoutExerciseID: we.id,
                 matchedRoutineExerciseID: re.id,
+                exerciseChanged: exerciseChanged,
                 movedPosition: movedPosition,
                 supersetChanged: supersetChanged,
                 addedWorkoutSetIDs: [],
@@ -285,6 +300,7 @@ public enum RoutineChangeSync {
         return Plan.ExercisePlan(
             workoutExerciseID: we.id,
             matchedRoutineExerciseID: re.id,
+            exerciseChanged: exerciseChanged,
             movedPosition: movedPosition,
             supersetChanged: supersetChanged,
             addedWorkoutSetIDs: addedWorkoutSetIDs,
@@ -325,11 +341,34 @@ public enum RoutineChangeSync {
         for ep in plan.exercisePlans {
             guard let we = workoutByID[ep.workoutExerciseID],
                   let re = ep.matchedRoutineExerciseID.flatMap({ routineByID[$0] }) else { continue }
+            if ep.exerciseChanged { re.exerciseID = we.exerciseID }
             if ep.movedPosition { re.position = we.position }
             if ep.supersetChanged { re.supersetGroup = we.supersetGroup }
             if ep.flowChanged { re.yogaFlowJSON = we.yogaFlowJSON }
             re.updatedAt = Date()
             applySets(ep, workoutExercise: we, routineExercise: re, in: context)
+
+            // A swap across modalities empties the row's set list (the work
+            // moved into a cardio/yoga session), leaving the routine exercise
+            // with its old-shaped or no targets. Reseed the same target shape
+            // the added-exercise path uses so the routine stays editable.
+            if ep.exerciseChanged, we.sets.isEmpty,
+               let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
+                if session.modality == CardioSessionModel.yogaModality {
+                    re.yogaFlowJSON = we.yogaFlowJSON
+                    for rs in re.sets { context.delete(rs) }
+                    re.sets = []
+                } else if re.sets.contains(where: { $0.targetDurationSeconds == nil }) || re.sets.isEmpty {
+                    for rs in re.sets { context.delete(rs) }
+                    let cardioTarget = RoutineSetModel(
+                        userID: routine.userID,
+                        position: 0,
+                        targetDurationSeconds: session.durationSeconds ?? 1_800
+                    )
+                    context.insert(cardioTarget)
+                    re.sets = [cardioTarget]
+                }
+            }
         }
 
         // 3. Add exercises created mid-session.
@@ -412,6 +451,15 @@ public enum RoutineChangeSync {
         routineExercise re: RoutineExerciseModel,
         in context: ModelContext
     ) {
+        // A session-based row (cardio target, yoga flow) carries no workout
+        // sets at all — its work lives in a CardioSessionModel. `detect`
+        // already skips set-level diffing for these; the rebuild below must
+        // skip them too, or it "rebuilds" the routine's target list from an
+        // empty workout list and silently wipes every cardio duration target
+        // in the routine on any accepted update.
+        let workoutSets = we.sets.sorted { $0.position < $1.position }
+        guard !(workoutSets.isEmpty && ep.removedRoutineSetIDs.isEmpty) else { return }
+
         let routineSets = re.sets.sorted { $0.position < $1.position }
         let routineSetByID = Dictionary(routineSets.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
@@ -433,7 +481,6 @@ public enum RoutineChangeSync {
 
         // Rebuild the sets array in workout order, repositioning matched sets
         // and creating new targets for added sets.
-        let workoutSets = we.sets.sorted { $0.position < $1.position }
         var rebuilt: [RoutineSetModel] = []
         for ws in workoutSets {
             if let routineSetID = ws.sourceRoutineSetID,

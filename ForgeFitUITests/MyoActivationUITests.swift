@@ -122,6 +122,11 @@ final class MyoActivationUITests: XCTestCase {
         // the block's working-set number — match by prefix, first row wins.
         tapWhenHittable(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")).firstMatch)
         tapWhenHittable(element(app, "finish-workout-button"))
+        // The block leaves later working sets unticked, so finishing now
+        // raises the unfinished-sets warning. Acknowledging it is the point
+        // of this flow, not an obstacle to route around.
+        let finishAnyway = app.buttons["Finish Anyway"].firstMatch
+        if finishAnyway.waitForExistence(timeout: 3) { finishAnyway.tap() }
         tapWhenHittable(element(app, "save-workout-button"))
 
         // PHASE 2 — a fresh myo block on the same exercise sees the ghost.

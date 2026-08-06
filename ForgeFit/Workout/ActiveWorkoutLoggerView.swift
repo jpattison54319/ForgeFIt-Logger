@@ -73,6 +73,10 @@ struct ActiveWorkoutLoggerView: View {
     @State private var showPostWorkoutSummary = false
     @State private var showEmptyDiscardConfirm = false
     @State private var conditioningFinishMessage: String?
+    /// Non-nil while the "unfinished sets" warning is up. Populated at Finish,
+    /// never during logging — an in-progress workout is *supposed* to have
+    /// unticked sets.
+    @State private var incompleteWorkSummary: IncompleteWorkSummary?
     @State private var detailExercise: ExerciseLibraryModel?
     /// Best prior values per exercise — the bar a set must clear to earn a
     /// record award. Computed once; history doesn't change mid-session.
@@ -235,6 +239,24 @@ struct ActiveWorkoutLoggerView: View {
             Button("Keep Logging", role: .cancel) { conditioningFinishMessage = nil }
         } message: {
             Text(conditioningFinishMessage ?? "Complete the conditioning target before saving.")
+        }
+        // Unlike the conditioning blocker above, this one is dismissible in
+        // both directions: stopping short is a legitimate way to end a
+        // session, so the warning informs rather than gates.
+        .alert(
+            "Unfinished sets",
+            isPresented: Binding(
+                get: { incompleteWorkSummary != nil },
+                set: { if !$0 { incompleteWorkSummary = nil } }
+            )
+        ) {
+            Button("Keep Logging", role: .cancel) { incompleteWorkSummary = nil }
+            Button("Finish Anyway") {
+                incompleteWorkSummary = nil
+                showPostWorkoutSummary = true
+            }
+        } message: {
+            Text(incompleteWorkSummary?.message ?? "")
         }
         .sheet(isPresented: $showAddPicker) {
             ExercisePickerView(
@@ -575,6 +597,12 @@ struct ActiveWorkoutLoggerView: View {
                         // (WorkoutFinisher's empty-workout guard) — ask
                         // the one honest question instead.
                         showEmptyDiscardConfirm = true
+                    } else if let incomplete = pendingIncompleteWork() {
+                        // A set skipped by mistake, or an exercise that
+                        // scrolled off the bottom and never got started, is
+                        // silently dropped at finish. Say so once; finishing
+                        // early on purpose stays one tap away.
+                        incompleteWorkSummary = incomplete
                     } else {
                         // Straight to the summary — it IS the confirmation
                         // (Save Workout / Keep Logging live there). The old
@@ -1110,6 +1138,17 @@ struct ActiveWorkoutLoggerView: View {
         for (index, item) in orderedItems.filter({ $0.id != excludedID }).enumerated() {
             item.position = index
         }
+    }
+
+    /// The unfinished-work warning for this Finish tap, or nil when there is
+    /// nothing unticked worth interrupting for.
+    private func pendingIncompleteWork() -> IncompleteWorkSummary? {
+        let names = Dictionary(
+            liveExerciseLibrary.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let summary = IncompleteWorkSummary.make(for: workout, exerciseNames: names)
+        return summary.isEmpty ? nil : summary
     }
 
     private func replace(_ target: WorkoutExerciseModel, with exercise: ExerciseLibraryModel) {

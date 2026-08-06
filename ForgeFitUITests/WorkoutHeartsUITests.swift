@@ -44,6 +44,10 @@ final class WorkoutHeartsUITests: XCTestCase {
         let finish = element(app, "finish-workout-button")
         XCTAssertTrue(finish.waitForExistence(timeout: 15), "Expected the live logger's Finish button.")
         tapWhenReady(finish)
+        // The auto-started routine is finished without ticking every set, so
+        // the unfinished-sets warning stands between Finish and the summary.
+        let finishAnyway = app.buttons["Finish Anyway"].firstMatch
+        if finishAnyway.waitForExistence(timeout: 3) { finishAnyway.tap() }
         tapWhenReady(element(app, "save-workout-button"))
 
         XCTAssertTrue(
