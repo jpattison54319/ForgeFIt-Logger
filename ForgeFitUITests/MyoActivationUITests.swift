@@ -60,26 +60,48 @@ final class MyoActivationUITests: XCTestCase {
     /// Myo-reps. Ends with the activation row on screen.
     @MainActor
     private func startMyoBlock(in app: XCUIApplication) {
-        let trigger = app.buttons.matching(identifier: "quick-actions-trigger").firstMatch
-        if trigger.waitForExistence(timeout: 4) {
-            trigger.tap()
-            let emptyAction = app.buttons.matching(identifier: "quick-action-empty").firstMatch
-            XCTAssertTrue(emptyAction.waitForExistence(timeout: 3))
-            tapWhenHittable(emptyAction)
-        } else {
-            // A clean install can open directly on the expanded quick-start
-            // panel instead of first showing the floating trigger.
-            let emptyAction = app.buttons.matching(identifier: "start-empty-workout").firstMatch
-            XCTAssertTrue(emptyAction.waitForExistence(timeout: 4))
-            for _ in 0..<4 where !emptyAction.isHittable {
-                app.swipeUp()
-            }
-            tapWhenHittable(emptyAction)
+        // Start from Home's inline "Empty" tile, never the floating bubble.
+        //
+        // This used to branch on whether the quick-actions trigger existed,
+        // with `-quickActionBubble.v1 ""` meant to suppress it. That launch
+        // argument cannot do that: `AppQuickActionStore.load` treats an empty
+        // stored list as "unconfigured" and returns `defaultActions`, so the
+        // bubble has been present regardless since it shipped. The branch
+        // therefore opened the fan, and when its tap missed, the fan's
+        // backdrop sat over Home swallowing everything that followed —
+        // failing here and in the sibling tests for reasons that had nothing
+        // to do with myo-reps.
+        //
+        // The inline tile is a fixed, always-rendered part of `quickStart`,
+        // so it needs no branch. The bubble has its own coverage in
+        // QuickActionsBubbleUITests.
+        let emptyAction = element(app, "start-empty-workout")
+        XCTAssertTrue(emptyAction.waitForExistence(timeout: 10),
+                      "Expected Home's inline Empty quick-start tile.")
+        // Phase 2 arrives here straight off `save-workout-button`, so Home can
+        // still be behind a dismissing summary sheet — the tile exists but is
+        // not yet hittable. Waiting on existence alone raced that dismissal and
+        // made this test flaky; wait on hittability, and only scroll if the
+        // tile is genuinely off-screen rather than merely covered.
+        if !emptyAction.isHittable, !emptyAction.frame.intersects(app.frame) {
+            for _ in 0..<3 where !emptyAction.isHittable { app.swipeUp() }
         }
+        let deadline = Date().addingTimeInterval(15)
+        while !emptyAction.isHittable && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(emptyAction.isHittable,
+                      "Empty tile never became tappable — Home is still covered.")
+        emptyAction.tap()
 
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
-        addExercise.tap()
+        // The logger's empty state offers "Add to Workout" (id `add-to-workout`)
+        // alongside quick picks. It was matched by the literal label
+        // "Add Exercise", which no longer exists — match the identifier so a
+        // future copy change can't silently break this again.
+        let addExercise = element(app, "add-to-workout")
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 8),
+                      "Expected the logger's Add to Workout button.")
+        tapWhenHittable(addExercise, timeout: 5)
         let row = element(app, "exercise-row-Machine Chest Press")
         if !row.waitForExistence(timeout: 2) {
             let search = app.searchFields.firstMatch.exists ? app.searchFields.firstMatch : app.textFields.firstMatch
