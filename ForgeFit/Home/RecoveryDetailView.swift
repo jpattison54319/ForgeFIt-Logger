@@ -344,18 +344,26 @@ private struct RecoverySummaryCard: View {
             VStack(alignment: .leading, spacing: Space.lg) {
                 HStack(alignment: .center, spacing: Space.lg) {
                     if let score = report.displayScore {
+                        // Readiness green is a statement about today. When the
+                        // ring is falling back to the seven-day trend there is
+                        // no acute read to be green about, so the number goes
+                        // neutral — it stays informative without the colour
+                        // vouching for a morning it has no data on.
+                        let tint = isDailyScore ? theme.readinessColor(score) : theme.textSecondary
                         ZStack {
                             Circle()
-                                .fill(theme.readinessColor(score).opacity(0.14))
+                                .fill(tint.opacity(0.14))
                             Circle()
-                                .stroke(theme.readinessColor(score).opacity(0.45), lineWidth: 2)
+                                .stroke(tint.opacity(0.45), lineWidth: 2)
                                 .frame(width: 132, height: 132)
                             Text("\(Int((score * 100).rounded()))")
                                 .font(.system(size: 48, weight: .bold))
-                                .foregroundStyle(theme.readinessColor(score))
+                                .foregroundStyle(tint)
                         }
                         .frame(width: 132, height: 132)
-                        .accessibilityLabel("Recovery-signal index \(Int((score * 100).rounded()))")
+                        .accessibilityLabel(isDailyScore
+                            ? "Recovery-signal index \(Int((score * 100).rounded()))"
+                            : "Seven-day recovery trend \(Int((score * 100).rounded())); today's index is still building")
                     } else {
                         ZStack {
                             Circle().fill(theme.surfaceElevated)

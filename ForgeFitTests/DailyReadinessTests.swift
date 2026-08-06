@@ -226,7 +226,36 @@ struct DailyReadinessTests {
         // action now, so all green scores use the same band.
         let report = engine(metrics(todayHRV: 71, todaySleepMinutes: 450)).report()
         if let score = report.displayScore, score >= 0.7 && score < 0.85 {
-            #expect(report.action == .trainAsPlanned)
+            #expect(report.recovery.daily.state.value == nil || report.action == .trainAsPlanned)
+        }
+    }
+
+    /// Reported from a 1 a.m. screenshot: the card showed a green 81 and
+    /// "Proceed as planned" above three dashes and "Baseline building".
+    /// The user simply hadn't slept yet, so today had no HRV, no sleep, and
+    /// no comparable heart rate — and the verdict was being computed from the
+    /// seven-day trend standing in for the missing acute score.
+    ///
+    /// The trend may still be *shown* (labelled as the trend). It may never
+    /// issue a verdict about today.
+    @Test func trendNeverIssuesATodayVerdictWhenAcuteScoreIsMissing() {
+        let report = engine(metrics(
+            todayHRV: nil,
+            todaySleepingHR: nil,
+            todaySleepMinutes: nil
+        )).report()
+
+        #expect(report.recovery.daily.state.value == nil,
+                "Today has no comparable readings, so there is no acute score.")
+        #expect(report.action == .insufficientData,
+                "A day with no inputs must not inherit a verdict from last week's trend.")
+        #expect(!report.preWorkoutAdjustment.lowercased().contains("proceed as planned"),
+                "Copy must not tell the user to proceed on evidence it doesn't have.")
+
+        // The trend itself stays available for display — the fix removes the
+        // false claim, not the number.
+        if report.recovery.systemic.state.value != nil {
+            #expect(report.displayScore != nil)
         }
     }
 

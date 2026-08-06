@@ -340,8 +340,23 @@ nonisolated struct RecoveryEngine {
 
         let muscles = muscleFreshness()
         let snapshot = recoverySnapshot()
-        let effectiveScore = snapshot.daily.state.value ?? snapshot.systemic.state.value
-        let verdict = TodayVerdict.make(score: effectiveScore, checkinTags: todayCheckinTags)
+        // The verdict answers "what should I do TODAY", so only today's acute
+        // score may produce one. This used to fall back to the seven-day trend
+        // — which meant a night with no HRV, no sleep, and no comparable heart
+        // rate still rendered "Proceed as planned", stated with a checkmark,
+        // directly above three dashes and "Baseline building". Last week's data
+        // cannot vouch for this morning. With nil, `TodayVerdict` returns
+        // `.insufficientData` and says so.
+        //
+        // The trend still has a place — `Report.displayScore` keeps showing it,
+        // labelled "7-day trend" — it just no longer issues a command.
+        let verdict = TodayVerdict.make(score: snapshot.daily.state.value, checkinTags: todayCheckinTags)
+
+        // The number on the ring, which may be the trend standing in for a
+        // still-building acute score. Kept deliberately separate from the
+        // value that produced `verdict` above: showing the trend is honest as
+        // long as it's labelled, but it must never speak for today.
+        let displayedScore = snapshot.daily.state.value ?? snapshot.systemic.state.value
         let chips = reasonChips(acuteFlags: snapshot.daily.flags)
         let inputSignals = recoveryInputSignals(snapshot.daily.parts)
         let missingInputs = recoveryMissingInputs(snapshot.daily.parts)
@@ -360,7 +375,7 @@ nonisolated struct RecoveryEngine {
             : snapshot.systemic.coverage
 
         return Report(
-            score: effectiveScore,
+            score: displayedScore,
             confidence: coverage,
             verdict: verdict,
             trainingLoad: trainingLoad,
