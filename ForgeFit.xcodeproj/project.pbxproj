@@ -13,8 +13,8 @@
 		FF0000000000000000000011 /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FF0000000000000000000012 /* ForgeCore */; };
 		FFA000000000000000000B /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FFA0000000000000000007 /* ForgeCore */; };
 		FFA000000000000000000C /* ForgeFitWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FFA0000000000000000006 /* ForgeFitWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FFB000000000000000000A /* ForgeCore in Frameworks */ = {isa = PBXBuildFile; productRef = FFB0000000000000000007 /* ForgeCore */; };
+		FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,17 +81,6 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		FFB000000000000000000C /* Embed Foundation Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */,
-			);
-			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		FFA000000000000000000D /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -99,6 +88,17 @@
 			dstSubfolderSpec = 13;
 			files = (
 				FFA000000000000000000C /* ForgeFitWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FFB000000000000000000C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FFB000000000000000000B /* ForgeFitWatchComplication.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -402,29 +402,6 @@
 			productReference = 11D5DF362FF3743200F018A9 /* ForgeFitWatch Watch AppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
-		FFB0000000000000000002 /* ForgeFitWatchComplication */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */;
-			buildPhases = (
-				FFB0000000000000000003 /* Sources */,
-				FFB0000000000000000004 /* Frameworks */,
-				FFB0000000000000000005 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				FFB0000000000000000001 /* ForgeFitWatchComplication */,
-			);
-			name = ForgeFitWatchComplication;
-			packageProductDependencies = (
-				FFB0000000000000000007 /* ForgeCore */,
-			);
-			productName = ForgeFitWatchComplication;
-			productReference = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		FFA0000000000000000002 /* ForgeFitWidgets */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FFA0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWidgets" */;
@@ -446,6 +423,29 @@
 			);
 			productName = ForgeFitWidgets;
 			productReference = FFA0000000000000000006 /* ForgeFitWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		FFB0000000000000000002 /* ForgeFitWatchComplication */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */;
+			buildPhases = (
+				FFB0000000000000000003 /* Sources */,
+				FFB0000000000000000004 /* Frameworks */,
+				FFB0000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FFB0000000000000000001 /* ForgeFitWatchComplication */,
+			);
+			name = ForgeFitWatchComplication;
+			packageProductDependencies = (
+				FFB0000000000000000007 /* ForgeCore */,
+			);
+			productName = ForgeFitWatchComplication;
+			productReference = FFB0000000000000000006 /* ForgeFitWatchComplication.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -1121,62 +1121,6 @@
 			};
 			name = Release;
 		};
-		FFB0000000000000000009 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
-				DEVELOPMENT_TEAM = 8USAFADYCA;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ComplicationInfo.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.ForgeFitWatchComplication;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Debug;
-		};
-		FFB000000000000000000F /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 43;
-				DEVELOPMENT_TEAM = 8USAFADYCA;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ComplicationInfo.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.ForgeFitWatchComplication;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Release;
-		};
 		FFA0000000000000000009 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1230,6 +1174,62 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		FFB0000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 43;
+				DEVELOPMENT_TEAM = 8USAFADYCA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ComplicationInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.ForgeFitWatchComplication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		FFB000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ForgeFitWatchComplication/ForgeFitWatchComplication.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 43;
+				DEVELOPMENT_TEAM = 8USAFADYCA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ComplicationInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ForgeFit;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.xpetsllc.ForgeFit.watchkitapp.ForgeFitWatchComplication;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -1299,20 +1299,20 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				FFB0000000000000000009 /* Debug */,
-				FFB000000000000000000F /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		FFA0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWidgets" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				FFA0000000000000000009 /* Debug */,
 				FFA000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FFB0000000000000000008 /* Build configuration list for PBXNativeTarget "ForgeFitWatchComplication" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FFB0000000000000000009 /* Debug */,
+				FFB000000000000000000F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
