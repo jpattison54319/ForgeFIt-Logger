@@ -30,4 +30,17 @@ enum FeatureFlags {
     nonisolated static var social: Bool {
         UserDefaults.standard.bool(forKey: "social")
     }
+
+    /// Launching a coach-adjusted version of a routine from Home — the
+    /// "Review coach's version" button under Up next, and the welcome-back
+    /// card's "Ease back in". Held OFF: ForgeFit shows you your training and
+    /// gets out of the way; it doesn't prescribe a modified dose.
+    ///
+    /// The machinery stays intact (`CoachAdjustments`, `RoutineDoseContext`,
+    /// `CoachAdjustmentReviewView`) — this only removes Home's entry points, so
+    /// turning it back on is a one-key change. `CoachCornerView` has its own
+    /// review entry and is gated separately by `coachCorner`.
+    nonisolated static var coachDoseReview: Bool {
+        UserDefaults.standard.bool(forKey: "coach_dose_review")
+    }
 }

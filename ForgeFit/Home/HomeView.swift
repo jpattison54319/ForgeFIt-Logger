@@ -365,7 +365,12 @@ struct HomeView: View {
                 }
             ) {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    if welcomeBackGapDays >= 7, !trainedToday {
+                    // Gated with the coach dose review it exists to launch:
+                    // the card's whole content is "a lighter first session is
+                    // the fastest way back" plus a button that starts one. With
+                    // no modified dose to offer there is nothing left to say
+                    // that Up next doesn't already say.
+                    if FeatureFlags.coachDoseReview, welcomeBackGapDays >= 7, !trainedToday {
                         welcomeBackCard
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
@@ -989,7 +994,15 @@ struct HomeView: View {
         )
     }
 
-    private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
+    /// Today's coach-adjusted dose for `routine`, or nil when there is nothing
+    /// to offer — or when `coachDoseReview` is off, in which case none of the
+    /// work runs at all. `RoutineDoseContext.make` walks the training history,
+    /// so computing it for a button that isn't drawn is pure waste on every
+    /// Home render.
+    private func coachReview(
+        for routine: RoutineModel
+    ) -> (plan: CoachAdjustments.Plan, sourceLabel: String, isLocalized: Bool, affectedMuscles: String)? {
+        guard FeatureFlags.coachDoseReview else { return nil }
         let doseContext = targetRecoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(todayCheckinTags.joined(separator: ","))|\(dashboardAnalyticsKey ?? "pending")|\(routine.id)|\(routine.updatedAt.timeIntervalSince1970)") {
             RoutineDoseContext.make(
                 routine: routine,
@@ -1006,9 +1019,20 @@ struct HomeView: View {
         // daily call — see `CoachAdjustments.effectivePlan` — so the
         // "lighter localized version" framing only applies when nothing
         // weekly is overriding it.
-        let effective = CoachAdjustments.effectivePlan(daily: globalCoachPlan ?? localCoachPlan, weeklyDeloadActive: weeklyDeloadActive)
-        let coachPlan = effective?.plan
-        let isLocalizedCoachPlan = !weeklyDeloadActive && globalCoachPlan == nil && localCoachPlan != nil
+        guard let effective = CoachAdjustments.effectivePlan(
+            daily: globalCoachPlan ?? localCoachPlan,
+            weeklyDeloadActive: weeklyDeloadActive
+        ) else { return nil }
+        return (
+            plan: effective.plan,
+            sourceLabel: effective.sourceLabel,
+            isLocalized: !weeklyDeloadActive && globalCoachPlan == nil && localCoachPlan != nil,
+            affectedMuscles: doseContext.affectedMuscleNames
+        )
+    }
+
+    private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
+        let coach = coachReview(for: routine)
         // This is THE answer to "what should I do today" — the one card on
         // Home that should visually outrank everything else, so its Start
         // button is a full-width PrimaryButton, not a small corner capsule.
@@ -1046,17 +1070,17 @@ struct HomeView: View {
 
                 // Advice→action, review-first: today's dose is fully
                 // editable before anything starts (Coach's Corner review).
-                if let coachPlan, let effective {
+                if let coach {
                     Button {
-                        reviewRequest = CoachReviewRequest(plan: coachPlan, routine: routine, sourceLabel: effective.sourceLabel)
+                        reviewRequest = CoachReviewRequest(plan: coach.plan, routine: routine, sourceLabel: coach.sourceLabel)
                     } label: {
                         HStack(spacing: Space.sm) {
                             Image(systemName: "wand.and.stars")
                                 .font(.system(size: 13, weight: .bold))
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(isLocalizedCoachPlan ? "Review lighter \(doseContext.affectedMuscleNames) version" : "Review coach's version")
+                                Text(coach.isLocalized ? "Review lighter \(coach.affectedMuscles) version" : "Review coach's version")
                                     .font(.system(size: 14, weight: .bold))
-                                Text("\(effective.sourceLabel) · \(coachPlan.summary) · routine unchanged")
+                                Text("\(coach.sourceLabel) · \(coach.plan.summary) · routine unchanged")
                                     .font(.system(size: 11, weight: .medium))
                                     .opacity(0.85)
                             }
