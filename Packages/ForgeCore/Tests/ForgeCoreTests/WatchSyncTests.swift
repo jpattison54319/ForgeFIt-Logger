@@ -69,6 +69,7 @@ struct WatchSyncTests {
         let routineID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
         let setID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
         let cardioID = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
+        let blockID = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
         let metrics = WatchLiveMetrics(
             heartRate: 151,
             avgHR: 143,
@@ -105,6 +106,18 @@ struct WatchSyncTests {
         try expectCommand(.liveMetrics(metrics)) {
             guard case .liveMetrics(let decodedMetrics) = $0 else { return false }
             return decodedMetrics == metrics
+        }
+        let conditioningEvent = ConditioningProgressEvent(
+            timestamp: Date(timeIntervalSince1970: 1_800_000_500),
+            action: .completeRound
+        )
+        try expectCommand(.conditioningEvent(conditioningEvent)) {
+            guard case .conditioningEvent(let decodedEvent) = $0 else { return false }
+            return decodedEvent == conditioningEvent
+        }
+        try expectCommand(.conditioningBlockEvent(blockID: blockID, event: conditioningEvent)) {
+            guard case .conditioningBlockEvent(let decodedID, let decodedEvent) = $0 else { return false }
+            return decodedID == blockID && decodedEvent == conditioningEvent
         }
         try expectCommand(.finishWorkout(metrics: metrics, savedToHealth: true)) {
             guard case .finishWorkout(let decodedMetrics, let savedToHealth) = $0 else { return false }
@@ -211,6 +224,50 @@ extension WatchSyncTests {
 // MARK: - Yoga mirroring
 
 extension WatchSyncTests {
+    @Test func workoutSnapshotRoundTripsConditioningBlockFields() throws {
+        let blockID = UUID()
+        let exerciseID = UUID()
+        let movement = ConditioningMovement(exerciseID: exerciseID, targetValue: 10)
+        let plan = ConditioningPlan(sections: [
+            ConditioningSection(name: "Finisher", format: .amrap, durationSeconds: 600, movements: [movement])
+        ])
+        let progress = ConditioningProgressEngine.apply(
+            ConditioningProgressEvent(
+                timestamp: Date(timeIntervalSinceReferenceDate: 1_000),
+                action: .start
+            ),
+            to: ConditioningProgress(),
+            plan: plan
+        )
+        let snapshot = WatchWorkoutSnapshot(
+            workoutID: UUID(),
+            startedAt: Date(timeIntervalSinceReferenceDate: 900),
+            exercises: [
+                WatchExerciseSnapshot(
+                    id: blockID,
+                    position: 2,
+                    name: "Conditioning",
+                    isCardio: true,
+                    workoutBlockKindRaw: "conditioning",
+                    conditioningPlan: plan,
+                    conditioningProgress: progress,
+                    conditioningMovementNames: [exerciseID: "Burpee"]
+                )
+            ]
+        )
+
+        let data = try #require(WatchWire.encode(WatchAppContext(workout: snapshot)))
+        let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
+        let block = try #require(decoded.workout?.exercises.first)
+
+        #expect(block.id == blockID)
+        #expect(block.position == 2)
+        #expect(block.workoutBlockKindRaw == "conditioning")
+        #expect(block.conditioningPlan == plan)
+        #expect(block.conditioningProgress == progress)
+        #expect(block.conditioningMovementNames?[exerciseID] == "Burpee")
+    }
+
     @Test func workoutSnapshotRoundTripsYogaFields() throws {
         let snapshot = WatchWorkoutSnapshot(
             workoutID: UUID(),

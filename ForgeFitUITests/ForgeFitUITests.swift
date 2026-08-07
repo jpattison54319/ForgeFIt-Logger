@@ -85,6 +85,28 @@ final class ForgeFitUITests: XCTestCase {
         return element.waitForExistence(timeout: 5)
     }
 
+    private func numericValue(in element: XCUIElement) -> Double? {
+        guard let value = element.value as? String else { return nil }
+        return Double(value.replacingOccurrences(of: ",", with: ""))
+    }
+
+    private func waitForNumericValue(
+        _ expectedValue: Double,
+        in element: XCUIElement,
+        tolerance: Double = 0.02,
+        timeout: TimeInterval = 4
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let actual = numericValue(in: element), abs(actual - expectedValue) <= tolerance {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard let actual = numericValue(in: element) else { return false }
+        return abs(actual - expectedValue) <= tolerance
+    }
+
     @MainActor
     func testRoutineStartLogSetCompleteAndShowsSetupNotes() throws {
         throw XCTSkip("Routine auto-start presentation is still being stabilized; setup-note propagation is covered by ForgeFitTests.")
@@ -143,17 +165,34 @@ final class ForgeFitUITests: XCTestCase {
         // Finish opens the review summary directly (no intermediate
         // "Finish this workout?" dialog).
         app.descendants(matching: .any)["finish-workout-button"].tap()
-        app.descendants(matching: .any)["save-workout-button"].tap()
+
+        let keepLogging = app.buttons["post-workout-keep-logging-button"].firstMatch
+        let share = app.buttons["post-workout-share-button"].firstMatch
+        let save = app.buttons["save-workout-button"].firstMatch
+        XCTAssertTrue(keepLogging.waitForExistence(timeout: 5), "Expected Keep Logging in the floating summary actions.")
+        XCTAssertTrue(share.exists, "Expected Share in the floating summary actions.")
+        XCTAssertTrue(save.exists, "Expected Save in the floating summary actions.")
+        XCTAssertTrue(keepLogging.isHittable && share.isHittable && save.isHittable,
+                      "Every summary action should be reachable without scrolling.")
+
+        app.swipeUp(velocity: .fast)
+        XCTAssertTrue(keepLogging.isHittable && share.isHittable && save.isHittable,
+                      "The summary actions should remain available after a scroll gesture.")
+        attachScreenshot(app, name: "Post-workout floating actions")
+        tapWhenReady(save)
 
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
     }
 
-    /// The complete quick-input contract: a stationary hold cancels, a tap
-    /// edits normally, and repeated hold-drags each apply one logical step.
+    /// Recreates the production failure with two different values in one row:
+    /// the routine stores 70 kg while seeded history visibly ghosts 97.5 kg.
+    /// A fast drag onto the middle positive band must use that visible ghost,
+    /// keep the highlighted positive band on release, remain reusable, and
+    /// switch immediately to the other unit's native bands when the header changes.
     @MainActor
     func testQuickIncrementFanAdjustsGhostWeight() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "--seed-quick-increment-history", "--skip-onboarding", "--auto-start-routine", "-weightUnitRaw", "kg"]
         app.launch()
 
         let weightField = app.textFields.matching(NSPredicate(format: "label == %@", "Weight")).firstMatch
@@ -161,6 +200,17 @@ final class ForgeFitUITests: XCTestCase {
             waitForLiveLogger(containing: weightField, in: app),
             "Expected the live logger's weight field."
         )
+        let previousKilograms = app.buttons["97.5 × 10"].firstMatch
+        let previousPounds = app.buttons["215 × 10"].firstMatch
+        let previousDeadline = Date().addingTimeInterval(4)
+        while !previousKilograms.exists && !previousPounds.exists, Date() < previousDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(
+            previousKilograms.exists || previousPounds.exists,
+            "Expected the seeded previous set beside the ghost field in the row's current unit."
+        )
+        let startsInKilograms = previousKilograms.exists
 
         // A recognized hold that never leaves the field is the neutral path:
         // release closes the fan, does not focus the field, and changes
@@ -175,38 +225,66 @@ final class ForgeFitUITests: XCTestCase {
             "Releasing without choosing should close the fan."
         )
 
-        // A regular tap still owns the normal editing path after the neutral
-        // hold. Dismiss it before starting the continuous hold-drag below.
+        // Slot centers are roughly 50 / 94 / 138 pt from field center. Use
+        // XCUITest's fast velocity to cover the user's quick hold-drag-lift.
+        func chooseBand(field: XCUIElement, yOffset: CGFloat) {
+            let start = field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(
+                forDuration: 0.55,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: yOffset)),
+                withVelocity: .fast,
+                thenHoldForDuration: 0
+            )
+        }
+
+        chooseBand(field: weightField, yOffset: -94) // Middle positive band.
+        let firstDelta = startsInKilograms ? 2.5 : 5.0
+        let firstExpected = (startsInKilograms ? 97.5 : 215.0) + firstDelta
+        XCTAssertTrue(
+            waitForNumericValue(firstExpected, in: weightField),
+            "The visible ghost plus the highlighted middle band must be applied, never a hidden value or negative band."
+        )
+
+        // A regular tap still owns the normal editing path after a quick
+        // adjustment. The now-explicit value must survive keyboard focus.
         tapWhenReady(weightField)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "A tap should still open the keyboard.")
-        weightField.typeText("70")
         let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
         XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3))
         dismissKeyboard.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
-        XCTAssertEqual(weightField.value as? String, "70")
+        XCTAssertTrue(waitForNumericValue(firstExpected, in: weightField), "Keyboard focus must preserve the adjusted value.")
 
-        // Band 1 center sits fieldHeight/2 + gap + bandHeight/2 ≈ 50 pt above
-        // the field's center. Stationary hold (0.7 s > the 0.45 s trigger),
-        // then drag — one continuous touch.
-        func choosePlusOne() {
-            let start = weightField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            let target = start.withOffset(CGVector(dx: 0, dy: -50))
-            start.press(forDuration: 0.7, thenDragTo: target)
-        }
+        chooseBand(field: weightField, yOffset: -50) // Nearest positive band.
+        let secondExpected = firstExpected + (startsInKilograms ? 1.25 : 2.5)
+        XCTAssertTrue(
+            waitForNumericValue(secondExpected, in: weightField),
+            "The picker must remain reusable without recycling units."
+        )
 
-        choosePlusOne()
+        // Changing the exercise header unit must update the already-mounted
+        // recognizer; no extra unit recycle is allowed.
+        let switchUnit = app.buttons["Switch Machine Chest Press weight unit"].firstMatch
+        XCTAssertTrue(switchUnit.waitForExistence(timeout: 3), "Expected the visible unit switch control.")
+        tapWhenReady(switchUnit)
+        let switchedHeader = startsInKilograms ? app.staticTexts["LBS"].firstMatch : app.staticTexts["KG"].firstMatch
+        XCTAssertTrue(switchedHeader.waitForExistence(timeout: 3), "Expected the row to switch units immediately.")
+        let poundsPerKilogram = 2.2046226218
+        let convertedExpected = startsInKilograms
+            ? secondExpected * poundsPerKilogram
+            : secondExpected / poundsPerKilogram
+        XCTAssertTrue(
+            waitForNumericValue(convertedExpected, in: weightField, tolerance: 0.06),
+            "Expected the adjusted value converted into the switched unit."
+        )
+        let convertedDisplay = try XCTUnwrap(numericValue(in: weightField))
 
-        XCTAssertEqual(weightField.value as? String, "72.5", "Expected 70 kg + one 2.5 kg band applied on release.")
-
-        // Both input modes must remain reusable after applying an option.
-        tapWhenReady(weightField)
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3), "Keyboard should still open after quick adjustment.")
-        dismissKeyboard.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
-
-        choosePlusOne()
-        XCTAssertEqual(weightField.value as? String, "75", "A second hold-drag should apply normally.")
+        chooseBand(field: weightField, yOffset: -50) // New unit's nearest band.
+        let switchedNearestDelta = startsInKilograms ? 2.5 : 1.25
+        XCTAssertTrue(
+            waitForNumericValue(convertedDisplay + switchedNearestDelta, in: weightField),
+            "The mounted recognizer must immediately use the switched unit's nearest band."
+        )
     }
 
     /// A fast vertical drag that originates on a weight field belongs to the
@@ -215,7 +293,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testQuickIncrementDoesNotHijackScrollFromField() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "--skip-onboarding", "--auto-start-routine", "-weightUnitRaw", "kg"]
         app.launch()
 
         let weightField = app.textFields.matching(NSPredicate(format: "label == %@", "Weight")).firstMatch
@@ -234,6 +312,124 @@ final class ForgeFitUITests: XCTestCase {
             app.descendants(matching: .any)["quick-increment-option-0"].exists,
             "Scrolling from the field must not open the quick picker."
         )
+    }
+
+    /// A regular row can show a previous-session ghost while retaining a
+    /// different hidden routine target. Converting it to Myo-reps must carry
+    /// the value the lifter actually saw into the activation field.
+    @MainActor
+    func testChangingGhostedWorkingSetToMyoKeepsVisibleActivationWeight() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-block-prefill-history",
+            "--skip-onboarding",
+            "--auto-start-routine",
+            "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let workingWeight = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Weight")
+        ).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: workingWeight, in: app),
+            "Expected the live Working row."
+        )
+        let previousWorking = app.buttons["72.5 × 10"].firstMatch
+        XCTAssertTrue(
+            previousWorking.waitForExistence(timeout: 5),
+            "Expected the seeded 72.5 kg Working history beside the row."
+        )
+        XCTAssertTrue(
+            app.staticTexts["72.5"].firstMatch.waitForExistence(timeout: 3),
+            "Expected 72.5 kg to render as the row's non-destructive ghost."
+        )
+
+        tapWhenReady(app.descendants(matching: .any)["set-type-menu"].firstMatch)
+        tapWhenReady(app.buttons["Myo-reps"].firstMatch)
+
+        let activationWeight = app.textFields["activation-weight"].firstMatch
+        XCTAssertTrue(
+            activationWeight.waitForExistence(timeout: 5),
+            "Expected the Myo-rep activation weight field."
+        )
+        XCTAssertTrue(
+            waitForNumericValue(72.5, in: activationWeight),
+            "The Myo-rep activation must keep the visible 72.5 kg value, not expose the hidden 22.68 kg routine target."
+        )
+        attachScreenshot(app, name: "myo-activation-prefill")
+    }
+
+    /// Myo activation fields use the logger's one shared keyboard accessory:
+    /// weight offers Next into reps, and both fields retain Dismiss plus an
+    /// activation-scoped log action instead of completing the whole block.
+    @MainActor
+    func testMyoActivationFieldsRenderKeyboardActions() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-block-prefill-history",
+            "--skip-onboarding",
+            "--auto-start-routine",
+            "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let workingWeight = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Weight")
+        ).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: workingWeight, in: app),
+            "Expected the live Working row."
+        )
+
+        tapWhenReady(app.descendants(matching: .any)["set-type-menu"].firstMatch)
+        tapWhenReady(app.buttons["Myo-reps"].firstMatch)
+
+        let activationWeight = app.textFields["activation-weight"].firstMatch
+        XCTAssertTrue(activationWeight.waitForExistence(timeout: 5))
+        tapWhenReady(activationWeight)
+
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.buttons["Dismiss keyboard"].firstMatch.waitForExistence(timeout: 3),
+            "Activation weight should render the shared keyboard dismiss action."
+        )
+        let next = app.buttons["Next"].firstMatch
+        XCTAssertTrue(
+            next.waitForExistence(timeout: 3),
+            "Activation weight should offer Next into activation reps."
+        )
+        XCTAssertTrue(
+            app.buttons["Log Activation"].firstMatch.waitForExistence(timeout: 3),
+            "Activation weight should expose the activation-scoped log action."
+        )
+        attachScreenshot(app, name: "myo-activation-weight-keyboard-actions")
+
+        next.tap()
+
+        let activationReps = app.textFields["activation-reps-1"].firstMatch
+        XCTAssertTrue(activationReps.waitForExistence(timeout: 3))
+        let nextDeadline = Date().addingTimeInterval(3)
+        while next.exists, Date() < nextDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(next.exists, "A bilateral activation reps field is the final keyboard field.")
+        XCTAssertTrue(app.buttons["Dismiss keyboard"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["Log Activation"].firstMatch.exists)
+
+        let repsBeforeTyping = activationReps.value as? String ?? ""
+        let nineKey = app.keys["9"].firstMatch
+        XCTAssertTrue(nineKey.waitForExistence(timeout: 3))
+        nineKey.tap()
+        XCTAssertEqual(
+            activationReps.value as? String,
+            "\(repsBeforeTyping)9",
+            "Next should move keyboard input from activation weight into activation reps."
+        )
+
+        attachScreenshot(app, name: "myo-activation-reps-keyboard-actions")
     }
 
     /// End-to-end pass over Profile → See all workouts: seeded 120-session
@@ -443,25 +639,9 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         newRoutine.tap()
 
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
-        tapWhenReady(addExercise)
-
-        let searchField = app.searchFields.firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
-        searchField.tap()
-        searchField.typeText("Yoga Session")
-
-        let yogaSession = app.descendants(matching: .any)["exercise-row-Yoga Session"].firstMatch
-        XCTAssertTrue(yogaSession.waitForExistence(timeout: 5), "Expected the Yoga Session exercise row.")
-        tapWhenReady(yogaSession)
-        let commitSession = app.buttons["Add 1 exercise"].firstMatch
-        XCTAssertTrue(commitSession.waitForExistence(timeout: 3))
-        tapWhenReady(commitSession)
-
-        let flowBuilder = app.descendants(matching: .any)["routine-yoga-flow-builder"].firstMatch
-        XCTAssertTrue(flowBuilder.waitForExistence(timeout: 5), "Expected the Yoga Session flow builder entry.")
-        tapWhenReady(flowBuilder)
+        let addYoga = app.buttons["add-yoga-format"].firstMatch
+        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga beside Conditioning in the routine editor.")
+        tapWhenReady(addYoga)
 
         let addPose = app.descendants(matching: .any)["add-pose-to-flow"].firstMatch
         XCTAssertTrue(addPose.waitForExistence(timeout: 5), "Expected Add Pose in the yoga flow builder.")
@@ -492,9 +672,60 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Pigeon Pose"].waitForExistence(timeout: 5), "Expected selected pose in the flow builder.")
         app.buttons["Save"].firstMatch.tap()
 
+        let flowBuilder = app.descendants(matching: .any)["routine-yoga-flow-builder"].firstMatch
         XCTAssertTrue(flowBuilder.waitForExistence(timeout: 5), "Expected to return to the routine editor after saving the flow.")
         let configured = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] '1 pose'")).firstMatch
         XCTAssertTrue(configured.waitForExistence(timeout: 3), "Expected the Yoga Session row to show the saved pose flow.")
+    }
+
+    /// New and existing routines use the same editor row as the live logger:
+    /// creating Superset A promises purple in the menu, then renders the same
+    /// compact lettered marker after assignment.
+    @MainActor
+    func testRoutineEditorUsesSharedSupersetIdentity() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(newRoutine)
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("squat")
+
+        let exercise = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        ).firstMatch
+        XCTAssertTrue(exercise.waitForExistence(timeout: 4))
+        tapWhenReady(exercise)
+
+        let commit = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commit.waitForExistence(timeout: 3))
+        tapWhenReady(commit)
+
+        let menu = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
+        ).firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        tapWhenReady(menu)
+
+        let createSuperset = app.buttons["Create Superset A · Purple"].firstMatch
+        XCTAssertTrue(createSuperset.waitForExistence(timeout: 3))
+        tapWhenReady(createSuperset)
+
+        let marker = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Superset A")
+        ).firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+        XCTAssertEqual(marker.value as? String, "Purple")
     }
 
     /// Routine editor: exercises can be reordered (mirrors the live logger's
@@ -539,15 +770,14 @@ final class ForgeFitUITests: XCTestCase {
         )
         XCTAssertEqual(menus.count, 2, "Expected two exercises in the routine before reordering.")
 
-        // Reorder mode: only offered once there's something to reorder.
-        let reorderButton = app.buttons["reorder-exercises-button"].firstMatch
-        XCTAssertTrue(reorderButton.waitForExistence(timeout: 5), "Expected the Reorder button with 2+ exercises.")
-        tapWhenReady(reorderButton)
-        XCTAssertTrue(app.staticTexts["Reorder"].waitForExistence(timeout: 3), "Expected the Reorder screen.")
-        let reorderDone = app.buttons["reorder-done-button"].firstMatch
-        XCTAssertTrue(reorderDone.waitForExistence(timeout: 3))
-        tapWhenReady(reorderDone)
-        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to return to normal editing after Done.")
+        // Reorder is a hold-and-drag on each row's handle now (no mode/button)
+        // — the drag itself can't be synthesized by XCUITest (see the
+        // scroll-from-control limitation), so this test only asserts the
+        // handles exist; the interaction is verified by hand on device.
+        let reorderHandle = app.descendants(matching: .any)
+            .matching(identifier: "hold-to-reorder-exercises").firstMatch
+        XCTAssertTrue(reorderHandle.waitForExistence(timeout: 3),
+                      "Expected per-exercise reorder handles in the editor.")
 
         // Replace: swap one exercise for another without changing the count.
         let firstMenu = menus.firstMatch
@@ -557,8 +787,12 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(replaceItem.waitForExistence(timeout: 3))
         replaceItem.tap()
 
+        let searchAll = app.buttons["Search all exercises"].firstMatch
+        XCTAssertTrue(searchAll.waitForExistence(timeout: 5), "Expected ranked replacement suggestions before the full picker.")
+        tapWhenReady(searchAll)
         let replaceSearch = app.searchFields.firstMatch
         XCTAssertTrue(replaceSearch.waitForExistence(timeout: 5), "Expected the replace picker's search field.")
+        XCTAssertTrue(app.navigationBars["Replace Exercise"].exists, "The fallback picker must remain a replace flow.")
         replaceSearch.tap()
         replaceSearch.typeText("press")
         let replacementRow = app.descendants(matching: .any).matching(
@@ -572,6 +806,172 @@ final class ForgeFitUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
         )
         XCTAssertEqual(menusAfterReplace.count, 2, "Replacing should swap the exercise, not add or remove one.")
+    }
+
+    /// Live and routine replacement share the ranked swap sheet. This pins the
+    /// live entry point and keeps the ranked choices immediately visible
+    /// without an instructional paragraph above them.
+    @MainActor
+    func testLiveWorkoutReplaceOpensRankedSwapSheet() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--skip-onboarding", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let weightField = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Weight")
+        ).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: weightField, in: app, timeout: 10),
+            "Expected the live logger before opening replacement."
+        )
+
+        let menu = app.buttons["Exercise options"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "Expected the live exercise options menu.")
+        tapWhenReady(menu)
+
+        let replace = app.buttons["Replace Exercise"].firstMatch
+        XCTAssertTrue(replace.waitForExistence(timeout: 3))
+        tapWhenReady(replace)
+
+        XCTAssertTrue(app.buttons["Search all exercises"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(
+            app.staticTexts[
+                "Set structure stays for similar exercises. Unfinished values and exercise-specific targets reset; completed sets remain logged."
+            ].exists,
+            "The ranked swap choices should not be pushed down by explanatory copy."
+        )
+        attachScreenshot(app, name: "live-replacement-sheet-without-explanation")
+    }
+
+    /// Regression: keyboard clearance belongs inside the routine editor's
+    /// scrollable content. Applying it to the ScrollView itself shrinks the
+    /// editor by the full keyboard height and exposes a large black band.
+    @MainActor
+    func testRoutineEditorKeyboardDoesNotShrinkEditorOrRaiseBottomChrome() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected New Routine button.")
+        tapWhenReady(newRoutine)
+
+        let addExercise = app.buttons["Add Exercise"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected Add Exercise in the routine editor.")
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the exercise picker search field.")
+        searchField.tap()
+        searchField.typeText("squat")
+
+        let exercise = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        ).firstMatch
+        XCTAssertTrue(exercise.waitForExistence(timeout: 5), "Expected a squat search result.")
+        tapWhenReady(exercise)
+
+        let commit = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commit.waitForExistence(timeout: 3), "Expected the picker commit button.")
+        tapWhenReady(commit)
+
+        let weightField = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-set-weight-'")
+        ).firstMatch
+        XCTAssertTrue(weightField.waitForExistence(timeout: 5), "Expected a routine target-weight field.")
+        tapWhenReady(weightField)
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 3), "Expected the number pad.")
+
+        let editorScroll = app.scrollViews["routine-editor-scroll"].firstMatch
+        XCTAssertTrue(editorScroll.exists, "Expected the routine editor scroll view.")
+        let uncoveredGap = keyboard.frame.minY - editorScroll.frame.maxY
+        XCTAssertLessThan(
+            uncoveredGap,
+            80,
+            "The editor ended \(Int(uncoveredGap)) pt above the keyboard; keyboard clearance must not shrink the ScrollView."
+        )
+
+        for chrome in [
+            app.buttons["tab-workout"].firstMatch,
+            app.buttons["quick-actions-trigger"].firstMatch,
+        ] where chrome.exists {
+            XCTAssertTrue(
+                !chrome.isHittable || chrome.frame.minY >= keyboard.frame.minY,
+                "Bottom chrome must remain hidden by the keyboard instead of being lifted above it."
+            )
+        }
+
+        attachScreenshot(app, name: "routine-editor-keyboard")
+    }
+
+    @MainActor
+    func testConditioningPresetCreatesItsWorkoutAndUsesOneRoutineEntryPoint() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+
+        let newRoutine = app.buttons["new-routine-button"].firstMatch
+        let explore = app.buttons["explore-routines-button"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected one New Routine action.")
+        XCTAssertTrue(explore.waitForExistence(timeout: 5), "Expected Explore beside New Routine.")
+        XCTAssertEqual(newRoutine.frame.width, explore.frame.width, accuracy: 1)
+        XCTAssertFalse(app.buttons["New Conditioning"].exists, "Conditioning belongs inside the routine editor.")
+
+        tapWhenReady(newRoutine)
+        XCTAssertFalse(app.buttons["conditioning-presets"].exists, "Presets must belong to individual sections.")
+        let addFormat = app.buttons["add-conditioning-format"].firstMatch
+        let addYoga = app.buttons["add-yoga-format"].firstMatch
+        XCTAssertTrue(addFormat.waitForExistence(timeout: 5), "Expected conditioning to be available inside a routine.")
+        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga beside Conditioning inside a routine.")
+        XCTAssertGreaterThanOrEqual(addFormat.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(addYoga.frame.height, 44)
+        tapWhenReady(addFormat)
+
+        let presets = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'conditioning-section-preset-'")
+        ).firstMatch
+        XCTAssertTrue(presets.waitForExistence(timeout: 2), "Expected a preset menu inside the section.")
+        tapWhenReady(presets)
+        tapWhenReady(app.buttons["Cindy · 20 min AMRAP"].firstMatch)
+
+        for exercise in ["Pullups", "Pushups", "Bodyweight Squat"] {
+            XCTAssertTrue(
+                app.staticTexts[exercise].waitForExistence(timeout: 2),
+                "Expected Cindy to add \(exercise)."
+            )
+        }
+        for (exercise, reps) in [("Pullups", 5.0), ("Pushups", 10.0), ("Bodyweight Squat", 15.0)] {
+            let target = app.textFields["conditioning-target-\(exercise)"].firstMatch
+            XCTAssertTrue(target.waitForExistence(timeout: 5), "Expected an editable target for \(exercise).")
+            XCTAssertTrue(waitForNumericValue(reps, in: target), "Expected \(Int(reps)) reps for \(exercise).")
+        }
+        XCTAssertFalse(app.staticTexts["Movements"].exists, "Movement editing must stay inside its section.")
+        XCTAssertTrue(
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'add-conditioning-movement-'")).firstMatch.exists,
+            "Expected the section to own its Add Movement action."
+        )
+        XCTAssertTrue(app.buttons["Replace Pullups"].exists, "Expected a visible in-section replacement action.")
+        attachScreenshot(app, name: "conditioning-cindy-plan")
+
+        let addSection = app.buttons["add-conditioning-section"].firstMatch
+        scrollUntilHittable(addSection, in: app)
+        tapWhenReady(addSection)
+        let secondPreset = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'conditioning-section-preset-'")
+        ).element(boundBy: 1)
+        XCTAssertTrue(secondPreset.waitForExistence(timeout: 2), "Expected each section to have its own preset menu.")
+        tapWhenReady(secondPreset)
+        tapWhenReady(app.buttons["Bodyweight Squats · Tabata"].firstMatch)
+        let sectionNames = app.textFields.matching(identifier: "Section name")
+        XCTAssertTrue(sectionNames.matching(NSPredicate(format: "value == 'Cindy'")).firstMatch.exists)
+        XCTAssertTrue(sectionNames.matching(NSPredicate(format: "value == 'Tabata Squats'")).firstMatch.exists)
+        attachScreenshot(app, name: "conditioning-cindy-editor")
     }
 
     /// Regression: the keyboard accessory's Complete button used to stop
@@ -689,6 +1089,15 @@ final class ForgeFitUITests: XCTestCase {
         app.launch()
 
         let trigger = app.buttons["sleep-integrity-trigger"].firstMatch
+        if !trigger.waitForExistence(timeout: 20) {
+            // A forced SwiftData reset can remount the root and cancel the
+            // first launch task after it seeds the in-memory Health fixture.
+            // Relaunch without resetting the now-clean store so the fixture
+            // is installed by the final root task.
+            app.terminate()
+            app.launchArguments.removeAll { $0 == "--reset-store" }
+            app.launch()
+        }
         XCTAssertTrue(trigger.waitForExistence(timeout: 10), "Expected the flagged-sleep affordance on Home.")
         let minimizeWorkout = app.descendants(matching: .any)["minimize-workout"].firstMatch
         if minimizeWorkout.exists {
@@ -786,7 +1195,7 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(recoveryCard.waitForExistence(timeout: 5), "Expected the Home recovery card.")
         tapWhenReady(recoveryCard)
 
-        let notTracked = app.descendants(matching: .any)["recovery-sleep-override-not-tracked"].firstMatch
+        let notTracked = app.staticTexts["Sleep status: Not tracked"].firstMatch
         scrollUntilHittable(notTracked, in: app)
         XCTAssertTrue(notTracked.waitForExistence(timeout: 5), "Recovery should label the excluded night as Not tracked.")
         XCTAssertTrue(app.staticTexts["Excluded at your request"].exists)
@@ -834,7 +1243,7 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Sleep removed"].exists)
         tapWhenReady(recoveryCard)
 
-        let notTracked = app.descendants(matching: .any)["recovery-sleep-override-not-tracked"].firstMatch
+        let notTracked = app.staticTexts["Sleep status: Not tracked"].firstMatch
         scrollUntilHittable(notTracked, in: app)
         XCTAssertTrue(notTracked.waitForExistence(timeout: 5),
                       "Relaunched Recovery should apply the persisted Not tracked choice.")
@@ -869,8 +1278,21 @@ final class ForgeFitUITests: XCTestCase {
 
         // A day with no snapshot (earlier than the seeded range) shows the
         // honest empty state, no rings.
+        // The demo backfills 40 days, which can cover the entire previous
+        // month when the test runs near the start of a month. Move back two
+        // months so the chosen day is deterministically outside the fixture.
         app.buttons["Previous month"].firstMatch.tap()
-        let firstDay = app.descendants(matching: .any)["calendar-day"].firstMatch
+        app.buttons["Previous month"].firstMatch.tap()
+        let unseededMonth = try XCTUnwrap(Calendar.current.date(byAdding: .month, value: -2, to: Date()))
+        let components = Calendar.current.dateComponents([.year, .month], from: unseededMonth)
+        let firstOfUnseededMonth = try XCTUnwrap(Calendar.current.date(from: components))
+        let firstDay = app.descendants(matching: .any)
+            .matching(identifier: "calendar-day")
+            .matching(NSPredicate(
+                format: "label BEGINSWITH %@",
+                firstOfUnseededMonth.formatted(date: .abbreviated, time: .omitted)
+            ))
+            .firstMatch
         XCTAssertTrue(firstDay.waitForExistence(timeout: 3))
         firstDay.tap()
         XCTAssertTrue(app.staticTexts["No recovery recorded"].waitForExistence(timeout: 3),
@@ -886,14 +1308,11 @@ final class ForgeFitUITests: XCTestCase {
         app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-wrapped-demo", "-weightUnitRaw", "kg", "-didOnboard", "YES"]
         app.launch()
 
-        let card = app.descendants(matching: .any)["wrapped-report-available"].firstMatch
+        let card = app.buttons["wrapped-report-available"].firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 10), "Expected the Monthly Report Available card on Home.")
-        // The card renders below the week card without scrolling. Coordinate
-        // tap because XCUITest never resolves this Card-labeled Button as
-        // hittable (and scrolling to chase hittability lands taps on the
-        // wrong card).
-        RunLoop.current.run(until: Date().addingTimeInterval(1))
-        card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        scrollUntilHittable(card, in: app)
+        XCTAssertTrue(card.isHittable, "Expected the report card to be visible before opening it.")
+        tapWhenReady(card)
 
         // Story is up: page through a few pages via the right tap zone.
         let close = app.buttons["Close report"].firstMatch
@@ -912,6 +1331,135 @@ final class ForgeFitUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertFalse(card.exists, "The Home card must disappear once the report is viewed.")
+    }
+
+    // MARK: - Experiments
+
+    /// Drives the seeded experiment fixture through the public Insights entry,
+    /// active management, completed results, and both comparison choices.
+    /// Screenshots keep the feature's key first-run surfaces reviewable.
+    @MainActor
+    func testExperimentInsightsFlowOpensManagementResultsAndComparison() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-experiment-demo",
+            "-didOnboard", "YES",
+            "-weightUnitRaw", "kg",
+            "-initialTab", "insights",
+        ]
+        app.launch()
+
+        let insightsEntry = app.descendants(matching: .any)["insight-experiments-entry"].firstMatch
+        XCTAssertTrue(
+            insightsEntry.waitForExistence(timeout: 10),
+            "Expected the visible Experiments entry on Insights."
+        )
+        scrollUntilHittable(insightsEntry, in: app)
+        XCTAssertTrue(insightsEntry.isHittable, "Expected the Experiments entry to be reachable.")
+        tapWhenReady(insightsEntry)
+
+        let hubBack = app.descendants(matching: .any)["experiment-hub-back"].firstMatch
+        let activeExperiment = app.descendants(matching: .any)["experiment-open-active"].firstMatch
+        XCTAssertTrue(hubBack.waitForExistence(timeout: 8), "Expected the Experiments hub.")
+        XCTAssertTrue(activeExperiment.waitForExistence(timeout: 5), "Expected the seeded active experiment.")
+        XCTAssertTrue(app.staticTexts["Earlier Bedtime"].exists)
+        XCTAssertTrue(app.staticTexts["Creatine 5 g"].exists)
+        XCTAssertTrue(app.staticTexts["Baseline Block"].exists)
+        attachScreenshot(app, name: "experiments-hub")
+
+        tapWhenReady(activeExperiment)
+        let detailBack = app.descendants(matching: .any)["experiment-detail-back"].firstMatch
+        let manageExperiment = app.descendants(matching: .any)["experiment-manage"].firstMatch
+        XCTAssertTrue(detailBack.waitForExistence(timeout: 5), "Expected the active experiment detail.")
+        XCTAssertTrue(app.staticTexts["Earlier Bedtime"].exists)
+        XCTAssertTrue(app.staticTexts["Active Experiment"].exists)
+        XCTAssertTrue(manageExperiment.isHittable, "Expected a visible Manage experiment control.")
+        attachScreenshot(app, name: "experiment-active-detail")
+
+        tapWhenReady(manageExperiment)
+        let manageNavigationBar = app.navigationBars["Manage Experiment"].firstMatch
+        XCTAssertTrue(manageNavigationBar.waitForExistence(timeout: 5), "Expected experiment management.")
+        XCTAssertTrue(
+            app.textFields["experiment-edit-name"].firstMatch.waitForExistence(timeout: 3),
+            "Expected the experiment name to be directly editable."
+        )
+        XCTAssertTrue(app.buttons["experiment-save-management"].firstMatch.exists)
+        attachScreenshot(app, name: "experiment-active-management")
+
+        tapWhenReady(app.buttons["Cancel"].firstMatch)
+        XCTAssertTrue(manageNavigationBar.waitForNonExistence(timeout: 5), "Expected Cancel to return to the active detail.")
+        XCTAssertTrue(detailBack.waitForExistence(timeout: 3))
+        tapWhenReady(detailBack)
+        XCTAssertTrue(hubBack.waitForExistence(timeout: 5), "Expected to return to the Experiments hub.")
+
+        let completedExperiment = app.staticTexts["Creatine 5 g"].firstMatch
+        dragUp(app, until: completedExperiment, maxDrags: 12)
+        XCTAssertTrue(
+            completedExperiment.exists && completedExperiment.isHittable,
+            "Expected the completed Creatine experiment in the visible history."
+        )
+        tapWhenReady(completedExperiment)
+
+        let viewResults = app.descendants(matching: .any)["experiment-view-results"].firstMatch
+        XCTAssertTrue(viewResults.waitForExistence(timeout: 5), "Expected the completed experiment detail.")
+        XCTAssertTrue(app.staticTexts["Creatine 5 g"].exists)
+        scrollUntilHittable(viewResults, in: app)
+        XCTAssertTrue(viewResults.isHittable, "Expected a visible View Results action.")
+        tapWhenReady(viewResults)
+
+        let changeComparison = app.descendants(matching: .any)["experiment-change-comparison"].firstMatch
+        XCTAssertTrue(changeComparison.waitForExistence(timeout: 8), "Expected the completed experiment results.")
+        XCTAssertTrue(app.staticTexts["Creatine 5 g"].exists)
+        _ = app.descendants(matching: .any)["experiment-analysis-loading"].firstMatch
+            .waitForNonExistence(timeout: 10)
+        attachScreenshot(app, name: "experiment-completed-results")
+
+        tapWhenReady(changeComparison)
+        let compareNavigationBar = app.navigationBars["Compare With"].firstMatch
+        XCTAssertTrue(compareNavigationBar.waitForExistence(timeout: 5), "Expected the comparison picker.")
+        let previousPeriod = app.staticTexts["Previous Equal Period"].firstMatch
+        let baselineExperiment = app.staticTexts["Baseline Block"].firstMatch
+        XCTAssertTrue(previousPeriod.waitForExistence(timeout: 3))
+        XCTAssertTrue(baselineExperiment.waitForExistence(timeout: 3))
+        attachScreenshot(app, name: "experiment-comparison-picker")
+
+        tapWhenReady(previousPeriod)
+        XCTAssertTrue(compareNavigationBar.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(changeComparison.waitForExistence(timeout: 3))
+
+        tapWhenReady(changeComparison)
+        XCTAssertTrue(compareNavigationBar.waitForExistence(timeout: 5))
+        tapWhenReady(app.staticTexts["Baseline Block"].firstMatch)
+        XCTAssertTrue(compareNavigationBar.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts["Match Custom Trackers"].waitForExistence(timeout: 5),
+            "Choosing another experiment should reveal explicit custom-tracker matching."
+        )
+        let energyPairing = app.descendants(matching: .any)[
+            "experiment-custom-pair-E2000000-0000-4000-8000-000000000002"
+        ].firstMatch
+        dragUp(app, until: energyPairing, maxDrags: 12)
+        XCTAssertTrue(
+            energyPairing.exists && energyPairing.isHittable,
+            "Expected the Morning energy reference picker."
+        )
+        tapWhenReady(energyPairing)
+        let baselineEnergy = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Morning energy")
+        ).firstMatch
+        XCTAssertTrue(
+            baselineEnergy.waitForExistence(timeout: 3),
+            "Expected the compatible Baseline energy tracker."
+        )
+        tapWhenReady(baselineEnergy)
+        let referenceLabel = app.staticTexts["Reference: Baseline Block"].firstMatch
+        dragUp(app, until: referenceLabel, maxDrags: 8)
+        XCTAssertTrue(
+            referenceLabel.waitForExistence(timeout: 5),
+            "Expected the paired reference tracker summary."
+        )
+        attachScreenshot(app, name: "experiment-comparison-selected")
     }
 
     // MARK: - Home dashboard and dormant coach
@@ -935,9 +1483,33 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["calendar-day"].firstMatch.waitForExistence(timeout: 5))
     }
 
+    /// Every app-bar destination is an escape hatch to that tab's root. This
+    /// covers both reselecting the current tab and returning to a tab whose
+    /// navigation stack was left several screens deep.
+    @MainActor
+    func testAppBarTabsAlwaysReturnToRoot() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let homeCalendar = app.descendants(matching: .any)["home-calendar"].firstMatch
+        XCTAssertTrue(homeCalendar.waitForExistence(timeout: 8))
+        tapWhenReady(homeCalendar)
+        XCTAssertTrue(app.staticTexts["Calendar"].waitForExistence(timeout: 5))
+
+        tapWhenReady(app.descendants(matching: .any)["tab-home"].firstMatch)
+        XCTAssertTrue(homeCalendar.waitForExistence(timeout: 5), "Reselecting Home should return to the Home root.")
+
+        tapWhenReady(homeCalendar)
+        XCTAssertTrue(app.staticTexts["Calendar"].waitForExistence(timeout: 5))
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+        XCTAssertTrue(app.staticTexts["Workout"].waitForExistence(timeout: 5))
+        tapWhenReady(app.descendants(matching: .any)["tab-home"].firstMatch)
+        XCTAssertTrue(homeCalendar.waitForExistence(timeout: 5), "Returning to Home should reveal its root, not Calendar.")
+    }
+
     /// Every compact Home metric opens a focused page with the same Today /
-    /// Trends control. Recovery is exercised by the sleep-correction tests;
-    /// this covers the three new destinations.
+    /// Trends control and a matching Today summary.
     @MainActor
     func testHomeMetricTilesOpenFocusedDetails() throws {
         let app = XCUIApplication()
@@ -947,16 +1519,21 @@ final class ForgeFitUITests: XCTestCase {
 
         XCTAssertTrue(app.descendants(matching: .any)["home-metric-grid"].firstMatch.waitForExistence(timeout: 10))
         let destinations = [
-            ("home-sleep-card", "sleep-detail", "sleep-detail-tabs"),
-            ("daily-strain-card", "strain-detail", "strain-detail-tabs"),
-            ("home-health-card", "health-detail", "health-detail-tabs"),
+            ("home-recovery-card", "recovery-detail", "recovery-detail-tabs", "recovery-today-summary"),
+            ("home-sleep-card", "sleep-detail", "sleep-detail-tabs", "sleep-today-summary"),
+            ("daily-strain-card", "strain-detail", "strain-detail-tabs", "strain-today-summary"),
+            ("home-health-card", "health-detail", "health-detail-tabs", "health-today-summary"),
         ]
-        for (tileID, detailID, tabsID) in destinations {
+        for (tileID, detailID, tabsID, summaryID) in destinations {
             let tile = app.descendants(matching: .any)[tileID].firstMatch
             XCTAssertTrue(tile.waitForExistence(timeout: 5), "Expected \(tileID) on Home.")
+            if tileID == "home-recovery-card" {
+                XCTAssertFalse(tile.label.contains("%"), "Recovery is an index, not percent recovered.")
+            }
             tapWhenReady(tile)
             XCTAssertTrue(app.descendants(matching: .any)[detailID].firstMatch.waitForExistence(timeout: 5))
             XCTAssertTrue(app.descendants(matching: .any)[tabsID].firstMatch.exists)
+            XCTAssertTrue(app.descendants(matching: .any)[summaryID].firstMatch.waitForExistence(timeout: 5))
             if detailID == "health-detail" {
                 XCTAssertTrue(app.staticTexts["Respiratory rate"].waitForExistence(timeout: 3))
                 XCTAssertTrue(app.staticTexts["Blood oxygen"].exists)
@@ -1080,7 +1657,7 @@ final class ForgeFitUITests: XCTestCase {
         scrollUntilHittable(askCoach, in: app)
         tapWhenReady(askCoach)
 
-        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your training pulled up'")).firstMatch
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your readiness'")).firstMatch
         XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the chat's opening greeting.")
 
         let suggestedPrompt = app.buttons["Why this readiness score?"].firstMatch
@@ -1112,7 +1689,7 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Ask your Coach"].waitForExistence(timeout: 5), "Expected the chat to present directly.")
         XCTAssertFalse(app.navigationBars["Coach's Corner"].exists, "Coach's Corner must not present when the flag is off.")
 
-        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your training pulled up'")).firstMatch
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'got your readiness'")).firstMatch
         XCTAssertTrue(greeting.waitForExistence(timeout: 5), "Expected the chat greeting.")
     }
 

@@ -218,36 +218,27 @@ enum CardioMetrics {
     /// logs, sparse phone-only HR) — prefer `measuredZoneSecondsArray` and
     /// label anything that came from here as an estimate.
     static func estimatedZoneSeconds(avgHR: Int?, durationSeconds: Int?) -> [(zone: Int, seconds: Int)] {
-        guard let avgHR, let durationSeconds, durationSeconds > 0 else { return [] }
-        let center = HRZone.zone(forAvgHR: avgHR)
-        // Weight mass on the center zone, tapering to neighbors.
-        let weights: [Int: Double] = [center: 0.6, center - 1: 0.2, center + 1: 0.15, center - 2: 0.03, center + 2: 0.02]
-        var out: [(Int, Int)] = []
-        for z in 1...5 {
-            let w = weights[z] ?? 0
-            if w > 0 { out.append((z, Int(Double(durationSeconds) * w))) }
-        }
-        return out
+        _ = avgHR
+        _ = durationSeconds
+        return []
     }
 
-    static func estimatedZoneSecondsArray(avgHR: Int?, durationSeconds: Int?) -> [Int] {
-        var zones = [Int](repeating: 0, count: 5)
-        for item in estimatedZoneSeconds(avgHR: avgHR, durationSeconds: durationSeconds) where (1...5).contains(item.zone) {
-            zones[item.zone - 1] = item.seconds
-        }
-        return zones
+    nonisolated static func estimatedZoneSecondsArray(avgHR: Int?, durationSeconds: Int?) -> [Int] {
+        _ = avgHR
+        _ = durationSeconds
+        return [Int](repeating: 0, count: 5)
     }
 
     /// Real time-in-zone summed from a session's stored per-10s HR series,
     /// classified against the user's configured zone model. nil when the series
-    /// is missing or too sparse to be honest — fall back to the estimate and
-    /// say so in the UI.
-    static func measuredZoneSecondsArray(series: CardioSampleSeries) -> [Int]? {
+    /// is missing or too sparse to be honest. Average HR may label the average
+    /// zone, but it cannot reconstruct time spent across zones.
+    nonisolated static func measuredZoneSecondsArray(series: CardioSampleSeries) -> [Int]? {
         let config = HRZone.config
         return series.hrZoneSeconds { config.zone(for: $0) }
     }
 
-    static func measuredZoneSecondsArray(seriesJSON: String?) -> [Int]? {
+    nonisolated static func measuredZoneSecondsArray(seriesJSON: String?) -> [Int]? {
         CardioSampleSeries.decode(from: seriesJSON).flatMap(measuredZoneSecondsArray(series:))
     }
 

@@ -16,7 +16,7 @@ enum HistoricalSetPresentation {
 
     static func loadText(_ set: SetModel, unit: WeightUnit) -> String {
         guard isCompleted(set) else { return "—" }
-        return Fmt.loadUnit(set.weight, unit: unit)
+        return Fmt.loadUnit(set.modeWeight, unit: unit)
     }
 
     static func outputText(_ set: SetModel) -> String {
@@ -43,14 +43,14 @@ enum HistoricalSetPresentation {
             let activation = set.reps.map(String.init)
             let minis = set.miniReps.map(String.init).joined(separator: "+")
             let reps = [activation, minis].compactMap(\.self).joined(separator: "+")
-            guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
+            guard let weight = set.modeWeight, weight > 0 else { return "\(reps) reps" }
             return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
         }
         if let seconds = set.durationSeconds, seconds > 0 {
             return Fmt.durationShort(seconds)
         }
         let reps = set.reps.map { "\($0)" } ?? "—"
-        guard let weight = set.weight, weight > 0 else { return "\(reps) reps" }
+        guard let weight = set.modeWeight, weight > 0 else { return "\(reps) reps" }
         return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
     }
 

@@ -314,6 +314,17 @@ struct WrappedTests {
         #expect(outcome.focus.maintain?.contains("records") == true)
     }
 
+    @Test func strengthInsightUsesTheUnitCapturedBeforeBackgroundGeneration() {
+        var metric = WrappedInsights.Ingredients()
+        metric.weightUnit = .kg
+        metric.bestE1RMGainKg = 10
+        metric.bestLiftName = "Bench Press"
+        #expect(WrappedInsights.evaluate(metric).improved?.detail.contains("10 kg") == true)
+
+        metric.weightUnit = .lb
+        #expect(WrappedInsights.evaluate(metric).improved?.detail.contains("22 lbs") == true)
+    }
+
     @Test func focusPrimaryIsAlwaysSpecific() {
         // Even with nothing wrong, the focus must be a concrete instruction.
         var ingredients = WrappedInsights.Ingredients()

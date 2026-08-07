@@ -4,12 +4,12 @@ import Testing
 
 struct TodayVerdictTests {
     @Test(arguments: [
-        (0.39, RecoveryEngine.Action.deloadRecover),
-        (0.40, .reduceVolume),
-        (0.69, .reduceVolume),
-        (0.70, .trainAsPlanned),
+        (0.39, RecoveryEngine.Action.reduceVolume),
+        (0.50, .reduceVolume),
+        (0.64, .reduceVolume),
+        (0.65, .trainAsPlanned),
         (0.84, .trainAsPlanned),
-        (0.85, .push),
+        (0.85, .trainAsPlanned),
     ])
     func fixedBandsHaveOneAction(score: Double, expected: RecoveryEngine.Action) {
         #expect(TodayVerdict.make(score: score, checkinTags: []).action == expected)
@@ -29,9 +29,16 @@ struct TodayVerdictTests {
         let baseline = TodayVerdict.make(score: 0.86, checkinTags: [])
         let checkedIn = TodayVerdict.make(score: 0.86, checkinTags: ["sick"])
 
-        #expect(baseline.action == .push)
+        #expect(baseline.action == .trainAsPlanned)
         #expect(checkedIn.action == .deloadRecover)
         #expect(checkedIn.isCheckinOverride)
+    }
+
+    @Test func missingScoreProducesNoSyntheticFallback() {
+        let verdict = TodayVerdict.make(score: nil, checkinTags: [])
+
+        #expect(verdict.action == .insufficientData)
+        #expect(verdict.recommendation.contains("Not enough comparable data"))
     }
 
     @Test func checkinDoesNotChangeRecoveryEngineDisplayScore() {

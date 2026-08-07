@@ -15,6 +15,7 @@ struct StickyNoteView: View {
     let pinnedNote: UserExerciseNoteModel?
 
     @FocusState private var focused: Bool
+    @State private var newlyPinnedNote: UserExerciseNoteModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
@@ -57,7 +58,12 @@ struct StickyNoteView: View {
 
                 TextField("", text: Binding(
                     get: { workoutExercise.notes ?? "" },
-                    set: { workoutExercise.notes = $0; syncPinnedIfNeeded(); try? modelContext.save() }
+                    set: {
+                        workoutExercise.notes = $0
+                        workoutExercise.updatedAt = .now
+                        syncPinnedIfNeeded()
+                        try? modelContext.save()
+                    }
                 ), axis: .vertical)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(theme.stickyInk)
@@ -87,9 +93,11 @@ struct StickyNoteView: View {
         workoutExercise.notePinned.toggle()
         if workoutExercise.notePinned {
             upsertPinnedNote()
-        } else if let pinnedNote {
-            modelContext.delete(pinnedNote)
+        } else if let persistedPinnedNote {
+            modelContext.delete(persistedPinnedNote)
+            newlyPinnedNote = nil
         }
+        workoutExercise.updatedAt = .now
         try? modelContext.save()
     }
 
@@ -100,9 +108,9 @@ struct StickyNoteView: View {
 
     private func upsertPinnedNote() {
         let text = workoutExercise.notes ?? ""
-        if let pinnedNote {
-            pinnedNote.note = text
-            pinnedNote.updatedAt = Date()
+        if let persistedPinnedNote {
+            persistedPinnedNote.note = text
+            persistedPinnedNote.updatedAt = .now
         } else {
             let note = UserExerciseNoteModel(
                 userID: ForgeFitDemo.userID,
@@ -110,15 +118,22 @@ struct StickyNoteView: View {
                 note: text
             )
             modelContext.insert(note)
+            newlyPinnedNote = note
         }
+    }
+
+    private var persistedPinnedNote: UserExerciseNoteModel? {
+        pinnedNote ?? newlyPinnedNote
     }
 
     private func remove() {
         workoutExercise.notes = nil
-        if workoutExercise.notePinned, let pinnedNote {
-            modelContext.delete(pinnedNote)
+        if workoutExercise.notePinned, let persistedPinnedNote {
+            modelContext.delete(persistedPinnedNote)
+            newlyPinnedNote = nil
         }
         workoutExercise.notePinned = false
+        workoutExercise.updatedAt = .now
         try? modelContext.save()
     }
 }

@@ -7,6 +7,16 @@ import Testing
 
 @MainActor
 struct AccountResetServiceTests {
+    @Test
+    func resetOwnsPendingExperimentRoutes() {
+        #expect(AppPreferenceKeys.localOnly.contains(
+            ExperimentNotificationRoute.pendingURLDefaultsKey
+        ))
+        #expect(AppPreferenceKeys.localOnly.contains(
+            ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
+        ))
+    }
+
     @Test func deleteAllLocalModelsRemovesUserDataAndProgress() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }
@@ -122,12 +132,16 @@ struct AccountResetServiceTests {
             context.insert(RoutineFolderModel(userID: userID, name: "Sample"))
         case is RoutineModel.Type:
             context.insert(RoutineModel(userID: userID, name: "Sample"))
+        case is RoutineBlockModel.Type:
+            context.insert(RoutineBlockModel(userID: userID, kind: .conditioning))
         case is RoutineExerciseModel.Type:
             context.insert(RoutineExerciseModel(userID: userID, exerciseID: UUID()))
         case is RoutineSetModel.Type:
             context.insert(RoutineSetModel(userID: userID, position: 0))
         case is WorkoutModel.Type:
             context.insert(WorkoutModel(userID: userID))
+        case is WorkoutBlockModel.Type:
+            context.insert(WorkoutBlockModel(userID: userID, kind: .conditioning))
         case is WorkoutExerciseModel.Type:
             context.insert(WorkoutExerciseModel(userID: userID, exerciseID: UUID()))
         case is SetModel.Type:
@@ -154,6 +168,28 @@ struct AccountResetServiceTests {
             context.insert(ProgressionSuggestionModel(userID: userID, exerciseID: UUID(), workoutID: UUID(), workoutExerciseID: UUID(), kindRaw: "hold"))
         case is DailyCheckinModel.Type:
             context.insert(DailyCheckinModel(userID: userID, date: .now, tags: ["sore"]))
+        case is ExperimentModel.Type:
+            context.insert(ExperimentModel(
+                userID: userID,
+                name: "Sample",
+                plannedEndAt: Date().addingTimeInterval(86_400)
+            ))
+        case is ExperimentTrackerModel.Type:
+            context.insert(ExperimentTrackerModel(
+                userID: userID,
+                experimentID: UUID(),
+                label: "Sample",
+                type: .number
+            ))
+        case is ExperimentEntryModel.Type:
+            context.insert(ExperimentEntryModel(
+                userID: userID,
+                experimentID: UUID(),
+                trackerID: UUID(),
+                value: .number(1)
+            ))
+        case is SavedInsightModel.Type:
+            context.insert(SavedInsightModel(userID: userID, name: "Sample", recipeJSON: "{}"))
         case is CoachingProfileModel.Type:
             context.insert(CoachingProfileModel(userID: userID, focusRaw: "strength", goalRaw: "build-muscle", experienceRaw: "beginner"))
         case is CoachedProgramModel.Type:

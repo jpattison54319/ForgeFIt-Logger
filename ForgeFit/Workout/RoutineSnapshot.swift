@@ -65,14 +65,34 @@ struct RoutineSnapshot: Equatable {
         }
     }
 
+    struct BlockSnapshot: Equatable {
+        let id: UUID
+        let kindRaw: String
+        let position: Int
+        let planJSON: String?
+        let createdAt: Date
+
+        init(of block: RoutineBlockModel) {
+            id = block.id
+            kindRaw = block.kindRaw
+            position = block.position
+            planJSON = block.planJSON
+            createdAt = block.createdAt
+        }
+    }
+
     let name: String
     let notes: String?
+    let conditioningPlanJSON: String?
     let exercises: [ExerciseSnapshot]
+    let blocks: [BlockSnapshot]
 
     init(of routine: RoutineModel) {
         name = routine.name
         notes = routine.notes
+        conditioningPlanJSON = routine.conditioningPlanJSON
         exercises = routine.exercises.sorted { $0.position < $1.position }.map(ExerciseSnapshot.init)
+        blocks = routine.blocks.sorted { $0.position < $1.position }.map(BlockSnapshot.init)
     }
 
     /// Put the routine back exactly as captured: updates surviving models in
@@ -82,6 +102,7 @@ struct RoutineSnapshot: Equatable {
     func restore(onto routine: RoutineModel, in context: ModelContext) {
         routine.name = name
         routine.notes = notes
+        routine.conditioningPlanJSON = conditioningPlanJSON
 
         let existingByID = Dictionary(routine.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let keptExerciseIDs = Set(exercises.map(\.id))
@@ -110,6 +131,33 @@ struct RoutineSnapshot: Equatable {
             context.delete(orphan)
         }
         routine.exercises = restored
+
+        let existingBlocksByID = Dictionary(routine.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let keptBlockIDs = Set(blocks.map(\.id))
+        var restoredBlocks: [RoutineBlockModel] = []
+        for snapshot in blocks {
+            let model: RoutineBlockModel
+            if let existing = existingBlocksByID[snapshot.id] {
+                model = existing
+            } else {
+                model = RoutineBlockModel(
+                    id: snapshot.id,
+                    userID: routine.userID,
+                    kind: WorkoutBlockKind(rawValue: snapshot.kindRaw) ?? .conditioning,
+                    createdAt: snapshot.createdAt
+                )
+                context.insert(model)
+            }
+            model.kindRaw = snapshot.kindRaw
+            model.position = snapshot.position
+            model.planJSON = snapshot.planJSON
+            model.updatedAt = .now
+            restoredBlocks.append(model)
+        }
+        for orphan in routine.blocks where !keptBlockIDs.contains(orphan.id) {
+            context.delete(orphan)
+        }
+        routine.blocks = restoredBlocks
         routine.updatedAt = Date()
         try? context.save()
     }

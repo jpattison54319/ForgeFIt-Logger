@@ -42,6 +42,23 @@ extension SetType {
 
 // MARK: - Rest timer controller
 
+enum RestAlertDeliveryPolicy {
+    /// Long enough to survive a short foreground restoration hitch, bounded so
+    /// a suspended timer never announces minutes after the notification time.
+    static let maximumForegroundFallbackLateness: TimeInterval = 15
+
+    static func shouldPlayInApp(
+        soundEnabled: Bool,
+        applicationIsActive: Bool,
+        endsAt: Date,
+        now: Date
+    ) -> Bool {
+        guard soundEnabled, applicationIsActive else { return false }
+        let lateness = now.timeIntervalSince(endsAt)
+        return lateness >= 0 && lateness < maximumForegroundFallbackLateness
+    }
+}
+
 /// One app-wide rest countdown. Starting a new one replaces the old — you only
 /// ever rest from your most recent set. Fires a haptic when it hits zero.
 @Observable
@@ -60,6 +77,9 @@ final class RestTimerController {
     var microOwnerID: UUID? { isMicro ? ownerID : nil }
 
     @ObservationIgnored private var completionTask: Task<Void, Never>?
+    @ObservationIgnored private var notificationScheduleTask: Task<Void, Never>?
+    @ObservationIgnored private var alertID: UUID?
+    @ObservationIgnored private var systemSoundArmed = false
     @ObservationIgnored private var soundOnEnd = false
     @ObservationIgnored private var endNotification: (title: String, body: String)?
     @ObservationIgnored private var onComplete: ((Int) -> Void)?
@@ -94,9 +114,12 @@ final class RestTimerController {
         onComplete: ((Int) -> Void)? = nil
     ) {
         guard seconds > 0 else { return }
+        cancelLockScreenNotification()
         fireCompletionCallback()
         totalSeconds = seconds
         endsAt = Date().addingTimeInterval(TimeInterval(seconds))
+        alertID = UUID()
+        systemSoundArmed = false
         self.label = label
         isMicro = micro
         self.ownerID = ownerID
@@ -119,8 +142,11 @@ final class RestTimerController {
 
     func adjust(by delta: Int) {
         guard let current = endsAt else { return }
+        cancelLockScreenNotification()
         let target = max(Date().addingTimeInterval(1), current.addingTimeInterval(TimeInterval(delta)))
         endsAt = target
+        alertID = UUID()
+        systemSoundArmed = false
         totalSeconds = max(totalSeconds + delta, remaining())
         scheduleCompletionHaptic()
         scheduleLockScreenNotification()
@@ -134,6 +160,8 @@ final class RestTimerController {
         endsAt = nil
         isMicro = false
         ownerID = nil
+        alertID = nil
+        systemSoundArmed = false
         soundOnEnd = false
         endNotification = nil
         onStateChange?()
@@ -149,21 +177,45 @@ final class RestTimerController {
             #if canImport(UIKit)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             #endif
-            // The forge-strike chime, but only when it lands on time: a
-            // suspended app resumes this task on return, and a chime firing
-            // minutes late (the notification already covered it) reads as a
-            // bug, not a cue.
-            if let endsAt = self.endsAt, Date().timeIntervalSince(endsAt) < 3 {
+            // In normal foreground use the in-app player wins (and remains
+            // audible with the ringer switch off). The notification delegate
+            // claims the same id if foreground restoration delays us.
+            #if canImport(UIKit)
+            let applicationIsActive = UIApplication.shared.applicationState == .active
+            #else
+            let applicationIsActive = true
+            #endif
+            let notificationWasDelivered: Bool
+            if self.systemSoundArmed, let alertID = self.alertID {
+                notificationWasDelivered = await NotificationScheduler.shared
+                    .hasDeliveredRestEnd(alertID: alertID)
+            } else {
+                notificationWasDelivered = false
+            }
+            if let endsAt = self.endsAt,
+               let alertID = self.alertID,
+               !notificationWasDelivered,
+               RestAlertDeliveryPolicy.shouldPlayInApp(
+                   soundEnabled: TimerChime.isEnabled,
+                   applicationIsActive: applicationIsActive,
+                   endsAt: endsAt,
+                   now: Date()
+               ),
+               await RestAlertDeliveryCoordinator.shared.claim(
+                   NotificationScheduler.NotificationID.restTimerAlert(alertID),
+                   owner: .inApp
+               ) {
                 TimerChime.shared.play()
             }
-            // Foreground completion: the in-app chime just covered it — the
-            // opt-in loud backstop (RestAlarm) must not also ping seconds
-            // later.
+            // Foreground completion—system sound or in-app fallback—has covered
+            // the alert, so opt-in follow-ups must not ping seconds later.
             RestAlarm.cancel()
             self.fireCompletionCallback()
             self.endsAt = nil
             self.isMicro = false
             self.ownerID = nil
+            self.alertID = nil
+            self.systemSoundArmed = false
             self.soundOnEnd = false
             self.endNotification = nil
             self.onStateChange?()
@@ -178,26 +230,46 @@ final class RestTimerController {
     /// permission here — that happens explicitly in Settings). Micro-rests
     /// skip it: 15s is too short to lock your phone over.
     private func scheduleLockScreenNotification() {
-        guard let endsAt, !isMicro else { return }
+        guard let endsAt, !isMicro, let alertID else { return }
         let notification = endNotification
-        Task { @MainActor in
-            NotificationScheduler.shared.scheduleRestEnd(
+        let title = notification?.title ?? "Rest over"
+        notificationScheduleTask?.cancel()
+        notificationScheduleTask = Task { @MainActor [weak self] in
+            // Opt-in loud backstop: a couple of extra time-sensitive pings
+            // behind the primary alert (no-ops unless enabled in Settings).
+            RestAlarm.schedule(endsAt: endsAt, title: title)
+            let systemSoundArmed = await NotificationScheduler.shared.scheduleRestEnd(
+                alertID: alertID,
                 at: endsAt,
-                title: notification?.title ?? "Rest over",
+                title: title,
                 body: notification?.body ?? "Time for your next set."
             )
-            // Opt-in loud backstop: a couple of extra time-sensitive pings
-            // behind the notification above (no-ops unless enabled in
-            // Settings) — no alarm UI, just more noise.
-            RestAlarm.schedule(endsAt: endsAt, title: notification?.title ?? "Rest over")
+            guard let self,
+                  !Task.isCancelled,
+                  self.alertID == alertID else {
+                NotificationScheduler.shared.cancelRestEnd(alertID: alertID)
+                await RestAlertDeliveryCoordinator.shared.cancel(
+                    NotificationScheduler.NotificationID.restTimerAlert(alertID)
+                )
+                return
+            }
+            self.systemSoundArmed = systemSoundArmed
+            self.notificationScheduleTask = nil
         }
     }
 
     private func cancelLockScreenNotification() {
-        Task { @MainActor in
-            NotificationScheduler.shared.cancelRestEnd()
-            RestAlarm.cancel()
+        notificationScheduleTask?.cancel()
+        notificationScheduleTask = nil
+        if let alertID {
+            let identifier = NotificationScheduler.NotificationID.restTimerAlert(alertID)
+            NotificationScheduler.shared.cancelRestEnd(alertID: alertID)
+            Task {
+                await RestAlertDeliveryCoordinator.shared.cancel(identifier)
+            }
         }
+        systemSoundArmed = false
+        RestAlarm.cancel()
     }
 }
 

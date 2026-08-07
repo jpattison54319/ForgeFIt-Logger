@@ -13,72 +13,76 @@ struct DailyStrainEngineTests {
     }()
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    @Test func walkingAndEverydayMovementRaiseStrain() throws {
-        let usual = activityHistory(todaySteps: 5_000, todayExerciseMinutes: 25, todayEnergy: 350)
-        let active = activityHistory(todaySteps: 12_000, todayExerciseMinutes: 70, todayEnergy: 800)
+    @Test func sameTimeMovementPercentileRaisesStrain() throws {
+        let usual = activityHistory(todayComparableSteps: 5_000, todayFullSteps: 5_000)
+        let active = activityHistory(todayComparableSteps: 12_000, todayFullSteps: 12_000)
 
-        let usualScore = try #require(engine(activity: usual).report().score)
-        let activeScore = try #require(engine(activity: active).report().score)
+        let usualReport = engine(activity: usual).report()
+        let activeReport = engine(activity: active).report()
 
-        #expect(activeScore > usualScore + 1.5)
+        #expect(try #require(activeReport.score) > #require(usualReport.score) + 1.5)
+        #expect(activeReport.coverage == 1)
     }
 
-    @Test func completedWorkoutRaisesStrainWithoutChangingMorningRecovery() throws {
-        let activity = activityHistory(todaySteps: 5_000, todayExerciseMinutes: 25, todayEnergy: 350)
-        let history = [7, 14, 21].map { day in
-            workout(daysAgo: day, durationMinutes: 45, averageHeartRate: 135)
-        }
-        let before = engine(workouts: history, activity: activity).report()
+    @Test func fullDayStepTotalsDoNotChangeSameClockComparison() {
+        let lowFullDay = activityHistory(todayComparableSteps: 5_000, todayFullSteps: 5_000)
+        let highFullDay = activityHistory(todayComparableSteps: 5_000, todayFullSteps: 20_000)
+
+        let low = engine(activity: lowFullDay).report()
+        let high = engine(activity: highFullDay).report()
+
+        #expect(low.score == high.score)
+        #expect(low.movementRatio == high.movementRatio)
+    }
+
+    @Test func ratedWorkoutRaisesTrainingPercentile() throws {
+        let activity = activityHistory(todayComparableSteps: 5_000, todayFullSteps: 5_000)
+        let before = engine(activity: activity).report()
         let after = engine(
-            workouts: history + [workout(daysAgo: 0, durationMinutes: 60, averageHeartRate: 172)],
+            workouts: [workout(daysAgo: 0, durationMinutes: 60, cr10: 8)],
             activity: activity
         ).report()
 
-        let beforeScore = try #require(before.score)
-        let afterScore = try #require(after.score)
-        #expect(afterScore > beforeScore + 2)
+        #expect(try #require(after.score) > #require(before.score) + 2)
+        #expect(after.workoutLoad == 480)
+    }
 
-        let health = recoveryHistory()
-        let recoveryBefore = RecoveryEngine(workouts: history, healthMetrics: health, calendar: calendar, now: now).report()
-        let recoveryAfter = RecoveryEngine(
-            workouts: history + [workout(daysAgo: 0, durationMinutes: 60, averageHeartRate: 172)],
-            healthMetrics: health,
+    @Test func unratedWorkoutUsesEstimatedTrainingLoad() {
+        let report = engine(
+            workouts: [workout(daysAgo: 0, durationMinutes: 60, cr10: nil)],
+            activity: activityHistory(todayComparableSteps: 5_000, todayFullSteps: 5_000)
+        ).report()
+
+        #expect(report.workoutLoad == 360)
+        #expect(report.workoutRatio != nil)
+        #expect(report.workoutLoadWasEstimated)
+        #expect(report.coverage == 1)
+    }
+
+    @Test func recoveryNeverMovesStrainOrUsualRange() {
+        let activity = activityHistory(todayComparableSteps: 7_000, todayFullSteps: 7_000)
+        let low = DailyStrainEngine(
+            workouts: [],
+            activityMetrics: activity,
+            dailyReadiness: 0.2,
+            trendRecovery: 0.2,
             calendar: calendar,
             now: now
         ).report()
-        #expect(abs(recoveryBefore.displayScore - recoveryAfter.displayScore) < 0.0001)
+        let high = DailyStrainEngine(
+            workouts: [],
+            activityMetrics: activity,
+            dailyReadiness: 1,
+            trendRecovery: 1,
+            calendar: calendar,
+            now: now
+        ).report()
+
+        #expect(low.score == high.score)
+        #expect(low.targetRange == high.targetRange)
     }
 
-    @Test func targetUsesBothDailyReadinessAndRecoveryTrend() throws {
-        let activity = activityHistory(todaySteps: 5_000, todayExerciseMinutes: 25, todayEnergy: 350)
-        let strong = DailyStrainEngine(
-            workouts: [], activityMetrics: activity,
-            dailyReadiness: 0.90, trendRecovery: 0.90,
-            calendar: calendar, now: now
-        ).report()
-        let lowDaily = DailyStrainEngine(
-            workouts: [], activityMetrics: activity,
-            dailyReadiness: 0.35, trendRecovery: 0.90,
-            calendar: calendar, now: now
-        ).report()
-        let lowTrend = DailyStrainEngine(
-            workouts: [], activityMetrics: activity,
-            dailyReadiness: 0.90, trendRecovery: 0.35,
-            calendar: calendar, now: now
-        ).report()
-
-        let strongTarget = try #require(strong.targetMidpoint)
-        let lowDailyTarget = try #require(lowDaily.targetMidpoint)
-        let lowTrendTarget = try #require(lowTrend.targetMidpoint)
-        #expect(strongTarget > lowDailyTarget)
-        #expect(strongTarget > lowTrendTarget)
-        // Daily readiness intentionally has more influence than the trend.
-        #expect(lowDailyTarget < lowTrendTarget)
-    }
-
-    @Test func statusIsFullyDeterminedByScoreAndTarget() {
-        // Home's same-day cached tile stores only score + target and rebuilds
-        // status through this derivation — it must cover every band.
+    @Test func statusIsFullyDeterminedByScoreAndUsualRange() {
         typealias Report = DailyStrainEngine.Report
         #expect(Report.status(score: nil, targetRange: nil) == .building)
         #expect(Report.status(score: 4.0, targetRange: nil) == .targetBuilding)
@@ -87,37 +91,22 @@ struct DailyStrainEngineTests {
         #expect(Report.status(score: 6.1, targetRange: 4.0...6.0) == .aboveTarget)
     }
 
-    @Test func perfectRecoveryCannotRaiseTargetMoreThanTwentyPercentAboveNorm() throws {
-        let report = DailyStrainEngine(
-            workouts: [],
-            activityMetrics: activityHistory(todaySteps: 5_000, todayExerciseMinutes: 25, todayEnergy: 350),
-            dailyReadiness: 1,
-            trendRecovery: 1,
-            calendar: calendar,
-            now: now
-        ).report()
-        let midpoint = try #require(report.targetMidpoint)
-        // Perfect recovery centers the target band on a 1.20× ratio. The
-        // display curve is concave, so the band's score midpoint sits just
-        // BELOW score(1.20) — the cap holds; equality would be a curve
-        // identity no concave mapping can satisfy.
-        #expect(midpoint <= DailyStrainEngine.score(forLoadRatio: 1.20))
-        #expect(midpoint > DailyStrainEngine.score(forLoadRatio: 1.08))
-    }
-
-    @Test func shortMovementHistoryDoesNotClaimAPersonalScore() {
+    @Test func shortHistoryDoesNotClaimAPersonalScore() {
         let today = calendar.startOfDay(for: now)
         let activity = (0...4).map { offset in
             DailyActivityMetric(
                 date: calendar.date(byAdding: .day, value: -offset, to: today)!,
                 steps: 5_000,
                 exerciseMinutes: 25,
-                activeEnergyKcal: 350
+                activeEnergyKcal: 350,
+                comparableTimeSteps: 3_000
             )
         }
+
         let report = engine(activity: activity).report()
 
         #expect(report.score == nil)
+        #expect(report.coverage == 0)
         #expect(report.status == .building)
     }
 
@@ -136,63 +125,48 @@ struct DailyStrainEngineTests {
     }
 
     private func activityHistory(
-        todaySteps: Double,
-        todayExerciseMinutes: Double,
-        todayEnergy: Double
+        todayComparableSteps: Double,
+        todayFullSteps: Double
     ) -> [DailyActivityMetric] {
         let today = calendar.startOfDay(for: now)
         var metrics = (1...28).map { day in
             DailyActivityMetric(
                 date: calendar.date(byAdding: .day, value: -day, to: today)!,
-                steps: 5_000,
+                steps: 9_000,
                 exerciseMinutes: 25,
-                activeEnergyKcal: 350
+                activeEnergyKcal: 350,
+                comparableTimeSteps: 5_000
             )
         }
         metrics.append(DailyActivityMetric(
             date: today,
-            steps: todaySteps,
-            exerciseMinutes: todayExerciseMinutes,
-            activeEnergyKcal: todayEnergy
+            steps: todayFullSteps,
+            exerciseMinutes: 25,
+            activeEnergyKcal: 350,
+            comparableTimeSteps: todayComparableSteps
         ))
         return metrics
     }
 
-    /// A workout shaped like the app actually produces one: load math zeroes
-    /// bare local shells (no sets, no cardio, not imported), so the fixture
-    /// carries a cardio session and lets effort resolve from the workout HR.
-    private func workout(daysAgo: Int, durationMinutes: Int, averageHeartRate: Int) -> WorkoutModel {
-        let start = calendar.date(byAdding: .day, value: -daysAgo, to: now)!
-        let session = CardioSessionModel(
-            userID: userID,
-            modality: "run",
-            startedAt: start.addingTimeInterval(Double(-durationMinutes * 60)),
-            endedAt: start,
-            durationSeconds: durationMinutes * 60
-        )
-        return WorkoutModel(
+    private func workout(daysAgo: Int, durationMinutes: Int, cr10: Double?) -> WorkoutModel {
+        let end = calendar.date(byAdding: .day, value: -daysAgo, to: now)!
+        let start = end.addingTimeInterval(Double(-durationMinutes * 60))
+        let workout = WorkoutModel(
             userID: userID,
             title: "Training",
-            startedAt: start.addingTimeInterval(Double(-durationMinutes * 60)),
-            endedAt: start,
-            avgHR: averageHeartRate,
-            cardioSessions: [session]
+            startedAt: start,
+            endedAt: end,
+            cardioSessions: [
+                CardioSessionModel(
+                    userID: userID,
+                    modality: "run",
+                    startedAt: start,
+                    endedAt: end,
+                    durationSeconds: durationMinutes * 60
+                ),
+            ]
         )
-    }
-
-    private func recoveryHistory() -> [RecoveryEngine.DailyHealthMetric] {
-        let today = calendar.startOfDay(for: now)
-        return (0...30).map { day in
-            RecoveryEngine.DailyHealthMetric(
-                date: calendar.date(byAdding: .day, value: -day, to: today)!,
-                hrvSDNN: nil,
-                restingHR: nil,
-                sleepTotalMinutes: 480,
-                source: "test",
-                hrvSampleCount: 5,
-                nocturnalHRV: 70,
-                sleepingHR: 55
-            )
-        }
+        workout.wholeSessionRPE = cr10
+        return workout
     }
 }

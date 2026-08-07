@@ -40,7 +40,7 @@ enum RecordKind: String, CaseIterable {
 
 /// The best prior values for one exercise — the bar a set must clear to earn
 /// an award.
-struct ExerciseRecordBaseline {
+nonisolated struct ExerciseRecordBaseline {
     var maxLoad: Double = 0
     var maxSetVolume: Double = 0
     var max1RM: Double = 0
@@ -63,7 +63,7 @@ struct ExerciseRecordBaseline {
 
 /// Derives records on the fly (never persisted), so the live logger, the
 /// post-workout summary, and any future surface all agree by construction.
-enum PersonalRecords {
+nonisolated enum PersonalRecords {
 
     /// Best prior values per exercise from workouts finished before `workout`
     /// started. The date cut-off keeps historical edits honest: editing an old

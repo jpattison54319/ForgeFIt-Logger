@@ -99,6 +99,7 @@ struct WorkoutDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @Environment(SocialService.self) private var social
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     var history: [WorkoutModel] = []
@@ -117,22 +118,20 @@ struct WorkoutDetailView: View {
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
     @State private var splitsMemo = MemoTable<UUID, [CardioSplitModel]>()
     @State private var expandedRoute: ExpandedRouteTarget?
-    /// Cardio blocks currently expanded inline (mixed workouts only) —
-    /// independent per session, collapsed by default.
-    @State private var expandedCardioIDs: Set<UUID> = []
+    /// Timed modality blocks currently expanded inline (mixed workouts only)
+    /// — independent per block, collapsed by default.
+    @State private var expandedModalityIDs: Set<UUID> = []
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: [workout], exercises: exercises) }
-
-    /// Mixed = strength and cardio in one session. Only then do cardio cards
-    /// collapse to compact rows; cardio-only workouts keep the full detail
-    /// rendering as the always-open source of truth.
-    private var isMixedWorkout: Bool {
-        CardioBlockSupport.isMixedWorkout(
-            exerciseIDs: workout.exercises.map(\.id),
-            cardioLinkedExerciseIDs: Set(workout.cardioSessions.compactMap(\.workoutExerciseID)),
-            cardioSessionCount: workout.cardioSessions.count
-        )
+    private var workoutShape: WorkoutShareShape {
+        .of(workout: workout, summary: analytics.summary(for: workout))
     }
+    private var presentationPlan: WorkoutPresentationPlan { .make(for: workout) }
+
+    /// A single-modality workout remains open as its source of truth. Any
+    /// combination of strength, cardio, conditioning, and yoga uses compact
+    /// disclosures so the authored timeline stays scannable.
+    private var isMixedWorkout: Bool { presentationPlan.isMixed }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -145,6 +144,22 @@ struct WorkoutDetailView: View {
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
                 }
 
+                if let note = WorkoutNotePolicy.userText(in: workout) {
+                    LoggedNoteView(title: "Workout note", text: note)
+                }
+
+                // Likes only exist for workouts shared through an opted-in
+                // community profile.
+                if social.isOptedIn, SocialBackfill.isEligible(workout) {
+                    WorkoutHeartsRow(workoutID: workout.id)
+                }
+                #if DEBUG
+                // Automation probe: distinguishes a closed product gate from
+                // a mounted row whose async fetch has not completed.
+                Color.clear.frame(width: 0, height: 0)
+                    .accessibilityIdentifier("hearts-gate-optedIn-\(social.isOptedIn)-eligible-\(SocialBackfill.isEligible(workout))")
+                #endif
+
                 let s = analytics.summary(for: workout)
                 overallStatsCard(s)
 
@@ -156,35 +171,85 @@ struct WorkoutDetailView: View {
                     heartRateCard
                 }
 
-                if s.hasStrength, recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
+                if workoutShape.supportsBetweenSetRecovery,
+                   recoveryPoints.contains(where: { $0.recoveryBPM != nil }) {
                     betweenSetRecoveryCard
                 }
 
-                if s.hasStrength {
-                    let muscleRows = analytics.muscleVolume(for: workout)
+                if presentationPlan.modalities.contains(.strength) {
+                    let muscleRows = analytics.muscleVolume(
+                        for: workout,
+                        exerciseRows: presentationPlan.strengthExercises
+                    )
                     if !muscleRows.isEmpty {
                         muscleWorkedCard(muscleRows)
                     }
                 }
 
-                ForEach(workout.exercises.sorted { $0.position < $1.position }) { we in
-                    if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
-                        if session.isYogaSession {
-                            yogaCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                ForEach(presentationPlan.items) { item in
+                    switch item {
+                    case .exercise(let workoutExercise):
+                        if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
+                            if session.isYogaSession {
+                                YogaHistoryCard(
+                                    plan: YogaFlowPlan.decode(from: workoutExercise.yogaFlowJSON),
+                                    session: session.endedAt == nil ? nil : session,
+                                    workoutExercise: workoutExercise,
+                                    exercise: exercises.first { $0.id == workoutExercise.exerciseID },
+                                    hrSamples: hrSamples,
+                                    collapsible: isMixedWorkout
+                                )
+                            } else {
+                                cardioCard(session, workoutExercise: workoutExercise, exercise: exercises.first { $0.id == workoutExercise.exerciseID })
+                            }
+                        } else if let yogaPlan = YogaFlowPlan.decode(from: workoutExercise.yogaFlowJSON) {
+                            YogaHistoryCard(
+                                plan: yogaPlan,
+                                session: nil,
+                                workoutExercise: workoutExercise,
+                                exercise: exercises.first { $0.id == workoutExercise.exerciseID },
+                                hrSamples: hrSamples,
+                                collapsible: isMixedWorkout
+                            )
                         } else {
-                            cardioCard(session, exercise: exercises.first { $0.id == we.exerciseID })
+                            exerciseCard(workoutExercise)
                         }
-                    } else {
-                        exerciseCard(we)
+                    case .block(let block):
+                        completedBlock(block)
+                    case .legacyConditioning(let conditioning):
+                        ConditioningHistoryCard(
+                            plan: conditioning.plan,
+                            result: conditioning.result,
+                            session: workout.cardioSessions.first {
+                                $0.workoutBlockID == nil && $0.workoutExerciseID == nil && $0.isConditioningSession
+                            },
+                            exercises: exercises,
+                            hrSamples: hrSamples,
+                            collapsible: isMixedWorkout
+                        )
+                    case .session(let session, _):
+                        if session.isYogaSession {
+                            YogaHistoryCard(
+                                plan: nil,
+                                session: session,
+                                workoutExercise: nil,
+                                exercise: nil,
+                                hrSamples: hrSamples,
+                                collapsible: isMixedWorkout
+                            )
+                        } else if session.isConditioningSession {
+                            ConditioningHistoryCard(
+                                plan: nil,
+                                result: nil,
+                                session: session,
+                                exercises: exercises,
+                                hrSamples: hrSamples,
+                                collapsible: isMixedWorkout
+                            )
+                        } else {
+                            cardioCard(session, workoutExercise: nil, exercise: nil)
+                        }
                     }
-                }
-                // Yoga sessions without an anchor exercise (Health imports).
-                ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && $0.isYogaSession }) { session in
-                    yogaCard(session, exercise: nil)
-                }
-                // Legacy cardio sessions not linked to an exercise.
-                ForEach(workout.cardioSessions.filter { $0.workoutExerciseID == nil && !$0.isYogaSession }) { session in
-                    cardioCard(session, exercise: nil)
                 }
             }
             .padding(.horizontal, Space.lg)
@@ -265,53 +330,27 @@ struct WorkoutDetailView: View {
     /// Whole-workout facts only. Cardio pace, distance, HR, laps, and route
     /// stay with their cardio block—especially important for mixed sessions.
     private func overallStatsCard(_ summary: TrainingAnalytics.Summary) -> some View {
-        Card {
-            if summary.hasStrength, summary.hasCardio {
-                // Mixed sessions have three distinct stories: the whole
-                // session, strength output, and time spent doing cardio.
-                // A 2×2 grid keeps all four readouts legible at Dynamic Type.
-                Grid(horizontalSpacing: Space.lg, verticalSpacing: Space.md) {
-                    GridRow {
-                        StatColumn(label: "Total time", value: Fmt.durationShort(summary.durationSeconds))
-                        StatColumn(label: "Cardio", value: Fmt.durationShort(totalCardioSeconds))
-                    }
-                    GridRow {
-                        StatColumn(label: "Volume", value: Fmt.volume(summary.volume))
-                        StatColumn(label: "Sets", value: Fmt.sets(summary.sets))
-                    }
-                }
-            } else {
-                HStack {
-                    StatColumn(label: "Total time", value: Fmt.durationShort(summary.durationSeconds))
-                    if summary.hasStrength {
-                        StatColumn(label: "Volume", value: Fmt.volume(summary.volume))
-                        StatColumn(label: "Sets", value: Fmt.sets(summary.sets))
-                    } else {
-                        let linkedIDs = Set(workout.cardioSessions.compactMap(\.workoutExerciseID))
-                        let activities = linkedIDs.count
-                            + workout.cardioSessions.count(where: { $0.workoutExerciseID == nil })
-                        StatColumn(label: "Activities", value: "\(max(activities, 1))")
-                    }
+        let overview = WorkoutOverviewPresentation.make(
+            workout: workout,
+            exercises: exercises,
+            durationSeconds: summary.durationSeconds
+        )
+        return Card {
+            LazyVGrid(
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
+                alignment: .leading,
+                spacing: Space.md
+            ) {
+                ForEach(Array(overview.facts.enumerated()), id: \.offset) { _, fact in
+                    StatColumn(label: fact.label, value: fact.value)
                 }
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(overallStatsAccessibilityLabel(summary))
-    }
-
-    private var totalCardioSeconds: Int {
-        workout.cardioSessions.compactMap(\.durationSeconds).reduce(0, +)
-    }
-
-    private func overallStatsAccessibilityLabel(_ summary: TrainingAnalytics.Summary) -> String {
-        var label = "Workout summary. Total time \(Fmt.durationShort(summary.durationSeconds))"
-        if summary.hasStrength {
-            label += ", volume \(Fmt.volume(summary.volume)), \(Fmt.sets(summary.sets)) sets"
-        }
-        if summary.hasStrength, summary.hasCardio {
-            label += ", cardio \(Fmt.durationShort(totalCardioSeconds))"
-        }
-        return label
+        .accessibilityLabel(
+            "Workout summary. "
+                + overview.facts.map { "\($0.label) \($0.value)" }.joined(separator: ", ")
+        )
     }
 
     private func scheduleDeleteWorkout() {
@@ -387,11 +426,11 @@ struct WorkoutDetailView: View {
 
     /// Per-set between-set HR recovery for this workout's strength sets, derived
     /// from the HR series and each set's `completedAt`. Cardio sessions are
-    /// excluded — this is a resistance-training conditioning read.
+    /// excluded — this is a resistance-training recovery read.
     private func betweenSetRecovery(from samples: [(date: Date, bpm: Int)]) -> [SetRecoveryPoint] {
-        guard !samples.isEmpty else { return [] }
+        guard workoutShape.supportsBetweenSetRecovery, !samples.isEmpty else { return [] }
         let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
-        let sets = workout.exercises
+        let sets = presentationPlan.strengthExercises
             .filter { !cardioExerciseIDs.contains($0.id) }
             .flatMap(\.sets)
             .compactMap { set -> (id: UUID, completedAt: Date)? in
@@ -421,8 +460,8 @@ struct WorkoutDetailView: View {
         }
     }
 
-    /// How far HR fell during rest after each set — a between-set recovery /
-    /// conditioning read, distinct from set effort (which RPE/RIR cover).
+    /// How far HR fell during rest after each strength set, distinct from set
+    /// effort (which RPE/RIR cover).
     private var betweenSetRecoveryCard: some View {
         let dict = Dictionary(recoveryPoints.map { ($0.setID, $0) }, uniquingKeysWith: { first, _ in first })
         let drops = recoveryPoints.compactMap(\.recoveryBPM)
@@ -430,9 +469,8 @@ struct WorkoutDetailView: View {
         let best = drops.max() ?? 0
         let maxDrop = max(1, best)
         let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
-        let strengthExercises = workout.exercises
+        let strengthExercises = presentationPlan.strengthExercises
             .filter { !cardioExerciseIDs.contains($0.id) }
-            .sorted { $0.position < $1.position }
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: 6) {
@@ -539,6 +577,45 @@ struct WorkoutDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private func completedBlock(_ block: WorkoutBlockModel) -> some View {
+        if block.kind == .yoga {
+            let session = workout.cardioSessions.first(where: { $0.workoutBlockID == block.id })
+            let anchor = workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }
+            YogaHistoryCard(
+                plan: YogaFlowPlan.decode(from: block.planSnapshotJSON),
+                session: session?.endedAt == nil ? nil : session,
+                workoutExercise: anchor,
+                exercise: anchor.flatMap { row in exercises.first { $0.id == row.exerciseID } },
+                hrSamples: hrSamples,
+                collapsible: isMixedWorkout
+            )
+        } else if block.kind == .conditioning,
+                  let plan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            let result = ConditioningResult.decode(from: block.resultJSON)
+            let session = workout.cardioSessions.first {
+                $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
+            }
+            ConditioningHistoryCard(
+                plan: plan,
+                result: result,
+                session: session?.endedAt == nil ? nil : session,
+                exercises: exercises,
+                hrSamples: hrSamples,
+                collapsible: isMixedWorkout
+            )
+        } else {
+            Card(padding: Space.md) {
+                HStack(spacing: Space.sm) {
+                    Image(systemName: block.kind == .yoga ? "figure.yoga" : "stopwatch")
+                    Text(block.kind.title).font(.cardTitle)
+                    Spacer()
+                    Text("Skipped").font(.tag).foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+    }
+
     private func exerciseCard(_ we: WorkoutExerciseModel) -> some View {
         let exercise = exercises.first { $0.id == we.exerciseID }
         let name = exercise?.name ?? "Exercise"
@@ -553,6 +630,9 @@ struct WorkoutDetailView: View {
                     .buttonStyle(.plain)
                 } else {
                     Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                }
+                if let note = nonemptyNote(we.notes) {
+                    LoggedNoteView(title: "Exercise note", text: note)
                 }
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                     historicalSetRow(set, index: index, sets: sets, unit: unit)
@@ -676,60 +756,11 @@ struct WorkoutDetailView: View {
         return efs.reduce(0, +) / Double(efs.count)
     }
 
-    /// A completed yoga session: style, duration/poses/HR, and the pose-by-
-    /// pose hold list — the history mirror of the live yoga card.
-    private func yogaCard(_ session: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
-        let style = session.resolvedYogaStyle
-        let name = exercise.map { ex in
-            YogaFlowPlan.decode(from: workout.exercises.first { $0.exerciseID == ex.id }?.yogaFlowJSON)?.steps.count ?? 1 > 1
-                ? "Guided Flow" : ex.name
-        } ?? "Yoga"
-        let splits = session.splits.filter { $0.label != nil }.sorted { $0.index < $1.index }
-        return Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(spacing: Space.sm) {
-                    Image(systemName: style.systemImage).foregroundStyle(theme.accent)
-                        .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
-                    if let exercise {
-                        NavigationLink(value: exercise.id) {
-                            ExerciseNameLabel(name: name)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                    }
-                    Spacer()
-                    Tag(text: "\(style.title) Yoga", color: theme.accent, background: theme.accentSoft)
-                }
-                HStack {
-                    StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
-                    StatColumn(label: "Poses", value: session.posesCompleted.map(String.init) ?? "—")
-                    StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
-                    StatColumn(label: "kcal", value: session.activeEnergyKcal.map { String(Int($0)) } ?? "—")
-                }
-                if let hr = session.avgHR {
-                    HRZoneBar(avgHR: hr, maxHR: session.maxHR, durationSeconds: session.durationSeconds)
-                }
-                if !splits.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Poses").font(.tag).foregroundStyle(theme.textSecondary)
-                        ForEach(splits) { split in
-                            HStack {
-                                Text(split.label ?? "Pose \(split.index + 1)")
-                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
-                                Spacer()
-                                Text(Fmt.durationShort(split.durationSeconds))
-                                    .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                                    .foregroundStyle(theme.accent)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func cardioCard(_ cardio: CardioSessionModel, exercise: ExerciseLibraryModel?) -> some View {
+    private func cardioCard(
+        _ cardio: CardioSessionModel,
+        workoutExercise: WorkoutExerciseModel?,
+        exercise: ExerciseLibraryModel?
+    ) -> some View {
         let kind = CardioKind.from(modality: cardio.modality)
         let name = exercise?.name ?? kind.title
         return Card {
@@ -738,9 +769,12 @@ struct WorkoutDetailView: View {
                     // In a mixed session the cardio block collapses to a
                     // compact row so the strength timeline stays scannable;
                     // expanding reveals the full cardio detail inline.
-                    let isExpanded = expandedCardioIDs.contains(cardio.id)
+                    let isExpanded = expandedModalityIDs.contains(cardio.id)
                     cardioBlockHeader(cardio, kind: kind, name: name, isExpanded: isExpanded)
                     if isExpanded {
+                        if let note = nonemptyNote(workoutExercise?.notes) {
+                            LoggedNoteView(title: "Exercise note", text: note)
+                        }
                         cardioDetailContent(cardio, kind: kind, showPerBlockHR: true)
                         if let exercise {
                             cardioLibraryLink(exercise, name: name)
@@ -760,10 +794,21 @@ struct WorkoutDetailView: View {
                         }
                     }
 
+                    if let note = nonemptyNote(workoutExercise?.notes) {
+                        LoggedNoteView(title: "Exercise note", text: note)
+                    }
+
                     cardioDetailContent(cardio, kind: kind, showPerBlockHR: false)
                 }
             }
         }
+    }
+
+    private func nonemptyNote(_ note: String?) -> String? {
+        guard let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty else {
+            return nil
+        }
+        return note
     }
 
     /// Compact collapsed row for a cardio block in a mixed workout:
@@ -773,9 +818,9 @@ struct WorkoutDetailView: View {
         Button {
             withAnimation(.spring(duration: 0.25)) {
                 if isExpanded {
-                    expandedCardioIDs.remove(cardio.id)
+                    expandedModalityIDs.remove(cardio.id)
                 } else {
-                    expandedCardioIDs.insert(cardio.id)
+                    expandedModalityIDs.insert(cardio.id)
                 }
             }
         } label: {

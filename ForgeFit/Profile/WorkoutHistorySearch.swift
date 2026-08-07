@@ -10,12 +10,13 @@ import ForgeData
 /// sets; every interaction after that is pure array work.
 struct WorkoutHistoryEntry: Identifiable, Equatable, Sendable {
     enum Kind: String, Sendable {
-        case strength, cardio, yoga, mixed
+        case strength, cardio, conditioning, yoga, mixed
 
         var title: String {
             switch self {
             case .strength: "Strength"
             case .cardio: "Cardio"
+            case .conditioning: "Conditioning"
             case .yoga: "Yoga"
             case .mixed: "Mixed"
             }
@@ -25,10 +26,16 @@ struct WorkoutHistoryEntry: Identifiable, Equatable, Sendable {
             switch self {
             case .strength: "dumbbell.fill"
             case .cardio: "figure.run"
+            case .conditioning: "figure.cross.training"
             case .yoga: "figure.mind.and.body"
             case .mixed: "figure.cross.training"
             }
         }
+    }
+
+    struct Fact: Equatable, Sendable {
+        let label: String
+        let value: String
     }
 
     let id: UUID
@@ -40,6 +47,7 @@ struct WorkoutHistoryEntry: Identifiable, Equatable, Sendable {
     let effectiveSets: Double
     let kind: Kind
     let kindSystemImage: String   // cardio rows show their modality's figure
+    let facts: [Fact]
     let avgHR: Int?
     let isImported: Bool
     let prCount: Int              // exercises that set an all-time e1RM PR here
@@ -96,6 +104,10 @@ enum WorkoutHistoryIndexer {
         calendar: Calendar = .current
     ) async -> WorkoutHistoryIndex {
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let exerciseByFoldedName = Dictionary(
+            exercises.map { (fold($0.name), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         // Oldest → newest so the PR pass sees history in order; reversed at the end.
         let completed = workouts
@@ -117,22 +129,20 @@ enum WorkoutHistoryIndexer {
             if index.isMultiple(of: 200) { await Task.yield() }
             guard seenIDs.insert(workout.id).inserted else { continue }
 
-            let workingSets = workout.exercises.flatMap(\.sets).filter {
+            let presentation = WorkoutPresentationPlan.make(for: workout)
+            let workingSets = presentation.strengthExercises.flatMap(\.sets).filter {
                 $0.completedAt != nil && $0.setType.countsAsWorkingVolume
             }
-            let hasStrength = !workingSets.isEmpty
-            let cardioSessions = workout.cardioSessions
-            let hasCardio = !cardioSessions.isEmpty
-            let isYogaOnly = hasCardio && !hasStrength && cardioSessions.allSatisfy(\.isYogaSession)
-
-            let kind: WorkoutHistoryEntry.Kind = if hasStrength && hasCardio {
+            let cardioSessions = workout.cardioSessions.filter { $0.deletedAt == nil }
+            let kind: WorkoutHistoryEntry.Kind = if presentation.modalities.count > 1 {
                 .mixed
-            } else if isYogaOnly {
-                .yoga
-            } else if hasCardio {
-                .cardio
             } else {
-                .strength
+                switch presentation.modalities.first {
+                case .cardio: .cardio
+                case .conditioning: .conditioning
+                case .yoga: .yoga
+                case .strength, nil: .strength
+                }
             }
 
             var haystack: [String] = []
@@ -140,10 +150,29 @@ enum WorkoutHistoryIndexer {
             var entryMuscles: Set<String> = []
             var prCount = 0
 
+            func indexExercise(_ exerciseID: UUID) {
+                entryExerciseIDs.insert(exerciseID)
+                guard let library = exerciseByID[exerciseID] else { return }
+                haystack.append(library.name)
+                for muscle in library.primaryMuscles {
+                    entryMuscles.insert(fold(muscle))
+                }
+            }
+
+            func indexYogaPlan(_ plan: YogaFlowPlan) {
+                haystack.append("yoga")
+                haystack.append(plan.style.title)
+                for step in plan.steps {
+                    haystack.append(step.name)
+                    indexExercise(step.poseID)
+                }
+            }
+
             if let title = workout.title { haystack.append(title) }
             if let notes = workout.notes { haystack.append(notes) }
 
             var sessionBest: [UUID: Double] = [:]
+            let strengthRowIDs = Set(presentation.strengthExercises.map(\.id))
             for workoutExercise in workout.exercises {
                 let sets = workoutExercise.sets.filter {
                     $0.completedAt != nil && $0.setType.countsAsWorkingVolume
@@ -156,8 +185,10 @@ enum WorkoutHistoryIndexer {
                         entryMuscles.insert(fold(muscle))
                     }
                 }
-                let best = sets.compactMap(\.estimated1RM).max() ?? 0
-                if best > 0 { sessionBest[workoutExercise.exerciseID] = best }
+                if strengthRowIDs.contains(workoutExercise.id) {
+                    let best = sets.compactMap(\.estimated1RM).max() ?? 0
+                    if best > 0 { sessionBest[workoutExercise.exerciseID] = best }
+                }
             }
             for (exerciseID, best) in sessionBest {
                 if best > (bestE1RM[exerciseID] ?? 0) {
@@ -176,7 +207,46 @@ enum WorkoutHistoryIndexer {
                 if session.isYogaSession {
                     haystack.append("yoga")
                     haystack.append(session.resolvedYogaStyle.rawValue)
+                    for pose in YogaHistoryPresentation.poses(session: session, plan: nil) {
+                        haystack.append(pose.name)
+                        if let library = exerciseByFoldedName[fold(pose.name)] {
+                            indexExercise(library.id)
+                        }
+                    }
                     kindImage = WorkoutHistoryEntry.Kind.yoga.systemImage
+                }
+                if session.isConditioningSession {
+                    haystack.append("conditioning")
+                    kindImage = WorkoutHistoryEntry.Kind.conditioning.systemImage
+                }
+            }
+            var indexedYogaPlans = Set<String>()
+            for block in workout.blocks where block.kind == .yoga {
+                guard let planJSON = block.planSnapshotJSON,
+                      indexedYogaPlans.insert(planJSON).inserted,
+                      let yogaPlan = YogaFlowPlan.decode(from: planJSON) else { continue }
+                indexYogaPlan(yogaPlan)
+            }
+            for workoutExercise in workout.exercises {
+                guard let planJSON = workoutExercise.yogaFlowJSON,
+                      indexedYogaPlans.insert(planJSON).inserted,
+                      let yogaPlan = YogaFlowPlan.decode(from: planJSON) else { continue }
+                indexYogaPlan(yogaPlan)
+            }
+            for context in ConditioningSharePresentation.contexts(for: workout) {
+                haystack.append("conditioning")
+                for section in context.plan.sections {
+                    haystack.append(section.format.title)
+                    haystack.append(ConditioningSharePresentation.prescription(section))
+                    for movement in section.movements {
+                        entryExerciseIDs.insert(movement.exerciseID)
+                        if let library = exerciseByID[movement.exerciseID] {
+                            haystack.append(library.name)
+                            for muscle in library.primaryMuscles {
+                                entryMuscles.insert(fold(muscle))
+                            }
+                        }
+                    }
                 }
             }
 
@@ -194,6 +264,11 @@ enum WorkoutHistoryIndexer {
             let duration = elapsed > 0
                 ? elapsed
                 : cardioSessions.compactMap(\.durationSeconds).reduce(0, +)
+            let facts = WorkoutOverviewPresentation.make(
+                workout: workout,
+                exercises: exercises,
+                durationSeconds: duration
+            ).facts.map { WorkoutHistoryEntry.Fact(label: $0.label, value: $0.value) }
 
             let entry = WorkoutHistoryEntry(
                 id: workout.id,
@@ -205,6 +280,7 @@ enum WorkoutHistoryIndexer {
                 effectiveSets: workingSets.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) },
                 kind: kind,
                 kindSystemImage: (kind == .cardio || kind == .yoga) ? kindImage : kind.systemImage,
+                facts: facts,
                 avgHR: cardioSessions.first?.avgHR ?? workout.avgHR,
                 isImported: workout.isImportedHistory,
                 prCount: prCount,
@@ -251,13 +327,14 @@ enum WorkoutHistoryIndexer {
 
 struct WorkoutHistoryQuery: Equatable {
     enum KindFilter: String, CaseIterable, Equatable {
-        case all, strength, cardio, yoga, mixed
+        case all, strength, cardio, conditioning, yoga, mixed
 
         var title: String {
             switch self {
             case .all: "Type"
             case .strength: "Strength"
             case .cardio: "Cardio"
+            case .conditioning: "Conditioning"
             case .yoga: "Yoga"
             case .mixed: "Mixed"
             }

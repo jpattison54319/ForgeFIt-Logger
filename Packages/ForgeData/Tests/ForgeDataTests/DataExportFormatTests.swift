@@ -39,6 +39,9 @@ struct DataExportFormatTests {
             endedAt: Date(timeIntervalSince1970: 1_780_002_700),
             sourceDevice: nil,
             notes: "felt strong, no pain",
+            wholeSessionRPE: 7.5,
+            wholeSessionRPERatedAt: Date(timeIntervalSince1970: 1_780_002_700),
+            wholeSessionRPEProtocolVersion: "whole-session-cr10-immediate-v1",
             externalSource: nil,
             externalID: nil,
             importFingerprint: nil,
@@ -132,15 +135,17 @@ struct DataExportFormatTests {
         #expect(fields.count == WorkoutCSVExport.header.count)
         #expect(fields[1] == "Push, \"Heavy\"")
         #expect(fields[4] == "felt strong, no pain")
-        #expect(fields[5] == "131")
-        #expect(fields[9] == "set")
-        #expect(fields[15] == "myoRep")        // raw ForgeFit vocabulary
-        #expect(fields[16] == "102.5")
+        #expect(fields[col("whole_session_cr10")] == "7.5")
+        #expect(fields[col("whole_session_cr10_protocol")] == "whole-session-cr10-immediate-v1")
+        #expect(fields[col("avg_hr")] == "131")
+        #expect(fields[col("entry_type")] == "set")
+        #expect(fields[col("set_type")] == "myoRep")        // raw ForgeFit vocabulary
+        #expect(fields[col("weight_kg")] == "102.5")
 
         let cardio = parse(String(lines[3]))
         #expect(cardio.count == WorkoutCSVExport.header.count)
-        #expect(cardio[9] == "cardio")
-        #expect(cardio[10] == "Treadmill Run") // anchor exercise name
+        #expect(cardio[col("entry_type")] == "cardio")
+        #expect(cardio[col("exercise")] == "Treadmill Run") // anchor exercise name
         #expect(cardio[col("modality")] == "run")
         #expect(cardio[col("distance_m")] == "1930")
         #expect(cardio[col("cardio_avg_hr")] == "162") // from appendix
@@ -194,7 +199,10 @@ struct DataExportFormatTests {
         let workout = sampleWorkout()
         let csv = WorkoutCSVExport.csv(workouts: [workout], health: ExportHealthMetrics())
         let firstRow = parse(String(csv.split(separator: "\n")[1]))
-        #expect(firstRow[5].isEmpty && firstRow[6].isEmpty && firstRow[7].isEmpty && firstRow[8].isEmpty)
+        #expect(firstRow[col("avg_hr")].isEmpty)
+        #expect(firstRow[col("max_hr")].isEmpty)
+        #expect(firstRow[col("active_energy_kcal")].isEmpty)
+        #expect(firstRow[col("readiness_at_start")].isEmpty)
     }
 
     // MARK: - Routines CSV

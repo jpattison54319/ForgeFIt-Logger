@@ -3,7 +3,7 @@ import Observation
 
 /// A user's correction of one night's sleep, when the app flagged it as
 /// probable partial-wear capture.
-enum SleepNightOverride: Equatable, Codable {
+nonisolated enum SleepNightOverride: Equatable, Codable, Sendable {
     /// "That's right" — trust the captured value as a real (short) night.
     case confirmed
     /// "I didn't wear it" — drop this night's sleep from readiness and debt.

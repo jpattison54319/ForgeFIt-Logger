@@ -1,25 +1,20 @@
 import Foundation
 
-/// Banister/Coggan impulse-response model — the engine behind the Fitness-vs-Fatigue chart.
-///
-/// CTL ("fitness") and ATL ("fatigue") are exponentially-weighted moving averages of daily
-/// training load with different time constants (42 and 7 days by convention — the values
-/// popularized by Coggan/TrainingPeaks because they empirically track adaptation vs. acute
-/// stress). TSB ("form") is their difference: a fresh training spike raises ATL faster than
-/// CTL, so TSB goes negative (tired); a taper lets ATL decay first, so TSB turns positive
-/// (peaked). The model only means anything if rest days are counted — a week off must decay
-/// both curves — so the series walks every calendar day, treating missing days as zero load.
+/// Startup-normalized load smoothing for the long-term load, short-term load,
+/// and load-balance chart. The time constants are display settings, not
+/// universal physiological fitness/fatigue constants.
 public enum FitnessFatigue {
 
-    /// One day on the chart. `tsb` is derived rather than stored so the invariant
-    /// tsb == ctl - atl can never drift.
+    /// One day on the chart. Legacy property names remain for source
+    /// compatibility; the product labels them long-term load, short-term load,
+    /// and load balance.
     public struct Point: Equatable, Sendable {
         public let date: Date
-        /// Chronic Training Load — long-time-constant EWMA, the "fitness" curve.
+        /// Startup-normalized long-time-constant load EWMA.
         public let ctl: Double
-        /// Acute Training Load — short-time-constant EWMA, the "fatigue" curve.
+        /// Startup-normalized short-time-constant load EWMA.
         public let atl: Double
-        /// Training Stress Balance ("form"): negative when fatigue outpaces fitness.
+        /// Load balance: long-term EWMA minus short-term EWMA.
         public var tsb: Double { ctl - atl }
 
         public init(date: Date, ctl: Double, atl: Double) {
@@ -29,17 +24,16 @@ public enum FitnessFatigue {
         }
     }
 
-    /// Builds the full CTL/ATL series from raw workout loads.
+    /// Builds both startup-normalized EWMA series from raw workout loads.
     ///
     /// Loads are bucketed by calendar start-of-day (two sessions in one day are one training
     /// impulse, so they sum), then EVERY day from the first to the last load is walked with
     /// the recursion `v = v + (load - v) / τ`. Days with no workout contribute load 0 —
-    /// skipping them would freeze fatigue and make rest look free. Both curves start at 0,
-    /// the standard CTL/ATL assumption that an athlete with no logged history is untrained;
-    /// early values are therefore biased low until ~1 time constant of history exists.
+    /// skipping them would freeze the smoothing. Sum/weight normalization avoids
+    /// inventing a low long-term value solely because history starts today.
     ///
     /// Time constants are clamped to ≥ 1 day because the discrete recursion overshoots and
-    /// oscillates for τ < 1, which can never represent a physical fitness response.
+    /// oscillates for τ < 1 and is not useful as a display smoother.
     public static func series(
         dailyLoads: [(date: Date, load: Double)],
         ctlDays: Double = 42,
@@ -60,13 +54,21 @@ public enum FitnessFatigue {
         let atlTau = max(1, atlDays)
 
         var points: [Point] = []
-        var ctl = 0.0
-        var atl = 0.0
+        var ctlSum = 0.0
+        var atlSum = 0.0
+        var ctlWeight = 0.0
+        var atlWeight = 0.0
+        let ctlDecay = exp(-1 / ctlTau)
+        let atlDecay = exp(-1 / atlTau)
         var day = firstDay
         while day <= lastDay {
             let load = buckets[day] ?? 0
-            ctl += (load - ctl) / ctlTau
-            atl += (load - atl) / atlTau
+            ctlSum = ctlDecay * ctlSum + load
+            atlSum = atlDecay * atlSum + load
+            ctlWeight = ctlDecay * ctlWeight + 1
+            atlWeight = atlDecay * atlWeight + 1
+            let ctl = ctlSum / ctlWeight
+            let atl = atlSum / atlWeight
             points.append(Point(date: day, ctl: ctl, atl: atl))
             // Calendar day-stepping (not +86400s) so DST transitions don't skip or
             // double-count a bucket.
@@ -78,9 +80,9 @@ public enum FitnessFatigue {
 
     /// Latest point extended with zero-load days through `now`.
     ///
-    /// Exists so the "current form" readout stays honest when the athlete hasn't trained
-    /// recently: the last *logged* point would show week-old fatigue, but a week off has
-    /// really decayed both curves. Implemented by injecting a zero-load impulse at `now` —
+    /// Extends the descriptive load-balance readout through zero-load days. The
+    /// last logged point would otherwise be stale. Implemented by injecting a
+    /// zero-load impulse at `now` —
     /// same-day loads sum, so it is a no-op when `now` falls on an already-logged day and
     /// otherwise forces the day-walk to continue to today. Returns nil only when there is
     /// no history at all (a zero/zero point would render as fake data on the chart).

@@ -128,7 +128,7 @@ final class InsightDataCoordinator {
         }
         var inputs = HealthInputs()
         inputs.bodyweight = await HealthService.shared.bodyMassSeries(days: days)
-            .map { InsightObservation(timestamp: $0.date, value: $0.kilograms, provenance: .measured) }
+            .map { InsightObservation(timestamp: $0.date, value: $0.value, provenance: .measured) }
         // The SAME integrity pipeline every other surface trusts: sleep
         // corrections + partial-wear detection, then bestHRV / bestRestingHR
         // fallback semantics — a 5am fragment must not read as a

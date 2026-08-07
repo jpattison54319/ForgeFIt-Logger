@@ -43,6 +43,43 @@ struct IncompleteSetHistoryPresentationTests {
         #expect(HistoricalSetPresentation.shareValue(done, unit: .kg).contains(Fmt.load(100, unit: .kg)))
     }
 
+    @Test func assistedSetRendersTheEnteredAssistance() {
+        let assisted = SetModel(
+            userID: userID,
+            position: 0,
+            setType: .working,
+            weightMode: .bodyweightAssisted,
+            reps: 10,
+            assistanceWeight: 25,
+            bodyweightKg: 97.52,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        assisted.recomputeDerivedMetrics()
+
+        #expect(assisted.weight == nil)
+        #expect(assisted.effectiveLoad == 72.52)
+        #expect(HistoricalSetPresentation.loadText(assisted, unit: .kg) == "25 kg")
+        #expect(HistoricalSetPresentation.shareValue(assisted, unit: .kg) == "25 kg × 10")
+    }
+
+    @Test func addedBodyweightSetRendersTheEnteredAddedWeight() {
+        let added = SetModel(
+            userID: userID,
+            position: 0,
+            setType: .working,
+            weightMode: .bodyweightAdded,
+            reps: 6,
+            addedWeight: 20,
+            bodyweightKg: 80,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        added.recomputeDerivedMetrics()
+
+        #expect(added.weight == nil)
+        #expect(HistoricalSetPresentation.loadText(added, unit: .kg) == "20 kg")
+        #expect(HistoricalSetPresentation.shareValue(added, unit: .kg) == "20 kg × 6")
+    }
+
     @Test func incompleteSeededSetDoesNotContributeVolume() {
         let incomplete = SetModel(
             userID: userID,

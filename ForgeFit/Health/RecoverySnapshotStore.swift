@@ -11,9 +11,9 @@ import SwiftData
 ///
 /// Values are stored as rendered (strings included) so the optimistic paint
 /// can never drift from what the engines actually showed.
-struct HomeDashboardCache: Codable, Equatable {
+nonisolated struct HomeDashboardCache: Codable, Equatable, Sendable {
     // Recovery tile + recommendation hero.
-    var recoveryDisplayScore: Double
+    var recoveryDisplayScore: Double?
     var baselineReady: Bool
     var actionRaw: String
     var recommendation: String
@@ -31,13 +31,17 @@ struct HomeDashboardCache: Codable, Equatable {
     var healthCaption: String
     var healthEvaluatedCount: Int
     var healthOutsideRangeCount: Int
+    // Non-Home surfaces use the exact same finished report. Optional defaults
+    // preserve decoding of caches written by older app builds.
+    var preWorkoutAdjustment: String? = nil
+    var readinessMethodID: String? = nil
+    var readinessCoverage: Double? = nil
 }
 
 /// One day's recovery and exertion reading, captured for the calendar.
-struct RecoverySnapshot: Codable, Equatable {
-    /// That day's ACUTE daily-readiness score, 0...1 — the pure daily number,
-    /// NOT `displayScore` (which falls back to the trend when the acute isn't
-    /// ready). Nil until the night's data is in.
+nonisolated struct RecoverySnapshot: Codable, Equatable, Sendable {
+    /// That day's acute recovery-signal product index, 0...1. Nil until the
+    /// current recording and source-pure baselines satisfy the v2 contract.
     var daily: Double?
     /// That day's 7-day chronic recovery trend, 0...1. Nil until enough
     /// history backs it.
@@ -77,10 +81,8 @@ struct RecoverySnapshot: Codable, Equatable {
 final class RecoverySnapshotStore {
     static let shared = RecoverySnapshotStore()
 
-    // v2: v1 stored `displayScore` as the daily, which falls back to the trend
-    // when the acute isn't ready — so daily == trend and every day looked the
-    // same. Bumping the keys discards those bad snapshots and re-backfills with
-    // the pure acute daily.
+    // v2 corrected the historical daily/trend separation. Keep the storage key
+    // for decode compatibility; v2 analytics provenance lives on workouts.
     private let defaultsKey = "recoverySnapshots.v2"
     // v3 reruns the merge-style backfill once to add strain to existing v2
     // recovery snapshots without discarding their captured daily/trend values.
@@ -91,6 +93,10 @@ final class RecoverySnapshotStore {
     private(set) var snapshots: [Date: RecoverySnapshot] = [:]
 
     init() { load() }
+
+    var needsBackfill: Bool {
+        !UserDefaults.standard.bool(forKey: backfillKey)
+    }
 
     func snapshot(for day: Date) -> RecoverySnapshot? {
         snapshots[calendar.startOfDay(for: day)]
@@ -157,48 +163,23 @@ final class RecoverySnapshotStore {
         persist()
     }
 
-    /// One-time merge backfill: recomputes retained days and fills fields that
-    /// are missing. Live-captured values always win, so adding strain cannot
-    /// rewrite historical recovery.
-    func backfillIfNeeded(
-        days: Int = 60,
-        workouts: [WorkoutModel],
-        exercises: [ExerciseLibraryModel],
-        activityMetrics: [DailyActivityMetric],
-        in context: ModelContext
-    ) {
-        guard !UserDefaults.standard.bool(forKey: backfillKey) else { return }
-        // Home can render before its asynchronous HealthKit refresh finishes.
-        // Wait for that first query so walking and other daily movement are not
-        // permanently omitted from the one-time historical strain backfill.
-        guard HealthMetricsStore.shared.lastRefreshed != nil else { return }
-        let hasCompletedWorkout = workouts.contains { $0.endedAt != nil && $0.deletedAt == nil }
-        guard hasCompletedWorkout || !HealthMetricsStore.shared.metrics.isEmpty || !activityMetrics.isEmpty else { return }
-        let today = calendar.startOfDay(for: Date())
+    /// Merges a calendar projection produced by HomeAnalyticsWorker. The
+    /// expensive history-wide scoring has already happened off MainActor;
+    /// this method only preserves live-captured values and persists once.
+    func mergeBackfill(_ candidates: [Date: RecoverySnapshot]) {
+        guard needsBackfill else { return }
         var changed = false
-        for offset in 0...days {
-            guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
+        for (day, candidate) in candidates {
             let key = calendar.startOfDay(for: day)
-            // Recompute as-of a consistent mid-morning so each day reflects what
-            // the user would have seen. Capture the ACUTE daily and the trend
-            // separately — never displayScore, which conflates the two.
-            let asOf = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: day) ?? day
-            let report = ReadinessReportFactory.report(workouts: workouts, exercises: exercises, in: context, now: asOf)
-            let strainReport = DailyStrainEngine(
-                workouts: workouts,
-                activityMetrics: activityMetrics,
-                dailyReadiness: report.recovery.daily.state.value,
-                trendRecovery: report.recovery.systemic.state.value,
-                calendar: calendar,
-                now: asOf
-            ).report()
             let existing = snapshots[key]
             var snapshot = existing ?? RecoverySnapshot(daily: nil, trend: nil)
-            snapshot.daily = snapshot.daily ?? report.recovery.daily.state.value
-            snapshot.trend = snapshot.trend ?? report.recovery.systemic.state.value
-            snapshot.strain = snapshot.strain ?? strainReport.score
-            snapshot.strainTargetLower = snapshot.strainTargetLower ?? strainReport.targetRange?.lowerBound
-            snapshot.strainTargetUpper = snapshot.strainTargetUpper ?? strainReport.targetRange?.upperBound
+            snapshot.daily = snapshot.daily ?? candidate.daily
+            snapshot.trend = snapshot.trend ?? candidate.trend
+            snapshot.strain = snapshot.strain ?? candidate.strain
+            snapshot.strainTargetLower = snapshot.strainTargetLower
+                ?? candidate.strainTargetLower
+            snapshot.strainTargetUpper = snapshot.strainTargetUpper
+                ?? candidate.strainTargetUpper
             guard snapshot.hasData else { continue }   // no data that day → no calendar score
             if snapshot != existing {
                 snapshots[key] = snapshot
@@ -242,17 +223,20 @@ final class RecoverySnapshotStore {
             dashboard: HomeDashboardCache(
                 recoveryDisplayScore: 0.82,
                 baselineReady: true,
-                actionRaw: RecoveryEngine.Action.push.rawValue,
-                recommendation: "Green light. Push intensity or volume today.",
-                reasonTexts: ["HRV above baseline", "Sleep need met"],
+                actionRaw: RecoveryEngine.Action.trainAsPlanned.rawValue,
+                recommendation: "No recovery-based restriction was detected. Use your warm-up to confirm.",
+                reasonTexts: ["No adverse HRV deviation", "Sleep target met"],
                 sleepValue: "7h 12m",
-                sleepCaption: "Sleep need met",
+                sleepCaption: "Sleep target met",
                 sleepProgress: 0.9,
                 sleepLooksPartial: false,
                 healthHeadline: "All in range",
                 healthCaption: "4 health signals checked",
                 healthEvaluatedCount: 4,
-                healthOutsideRangeCount: 0))
+                healthOutsideRangeCount: 0,
+                preWorkoutAdjustment: "Train as planned.",
+                readinessMethodID: "recovery-index-v2",
+                readinessCoverage: 1))
     }
 
     func seedDemo(days: Int = 40) {

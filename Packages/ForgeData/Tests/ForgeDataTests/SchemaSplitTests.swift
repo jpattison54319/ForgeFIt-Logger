@@ -55,6 +55,9 @@ extension PersistenceSplitTests {
 
         let routineID = UUID()
         let workoutID = UUID()
+        let experimentID = UUID()
+        let trackerID = UUID()
+        let entryID = UUID()
 
         // Scope so the container closes before the stores reopen below.
         do {
@@ -82,6 +85,32 @@ extension PersistenceSplitTests {
             context.insert(workoutExercise)
             workout.exercises.append(workoutExercise)
 
+            let experiment = ExperimentModel(
+                id: experimentID,
+                userID: routine.userID,
+                name: "Local experiment",
+                startedAt: Date(timeIntervalSince1970: 1_800_000_000),
+                plannedEndAt: Date(timeIntervalSince1970: 1_804_838_400)
+            )
+            let tracker = ExperimentTrackerModel(
+                id: trackerID,
+                userID: routine.userID,
+                experimentID: experimentID,
+                label: "Daily dose",
+                type: .number,
+                unit: "mg"
+            )
+            let entry = ExperimentEntryModel(
+                id: entryID,
+                userID: routine.userID,
+                experimentID: experimentID,
+                trackerID: trackerID,
+                value: .number(5)
+            )
+            context.insert(experiment)
+            context.insert(tracker)
+            context.insert(entry)
+
             try context.save()
 
             // Cross-layer UUID reference resolves via a second fetch.
@@ -102,6 +131,9 @@ extension PersistenceSplitTests {
             let workouts = try logContext.fetch(FetchDescriptor<WorkoutModel>())
             #expect(workouts.map(\.id) == [workoutID])
             #expect(workouts.first?.exercises.count == 1)
+            #expect(try logContext.fetch(FetchDescriptor<ExperimentModel>()).map(\.id) == [experimentID])
+            #expect(try logContext.fetch(FetchDescriptor<ExperimentTrackerModel>()).map(\.id) == [trackerID])
+            #expect(try logContext.fetch(FetchDescriptor<ExperimentEntryModel>()).map(\.id) == [entryID])
         }
         do {
             let planOnly = try ModelContainer(
@@ -122,6 +154,9 @@ extension PersistenceSplitTests {
             )
             let context = ModelContext(crossCheck)
             #expect(try context.fetchCount(FetchDescriptor<WorkoutModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<ExperimentModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<ExperimentTrackerModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<ExperimentEntryModel>()) == 0)
         }
     }
 }

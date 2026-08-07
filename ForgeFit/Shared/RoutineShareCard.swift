@@ -16,10 +16,12 @@ struct RoutineShareCard: View {
     private var sortedExercises: [RoutineExerciseModel] {
         routine.exercises.sorted { $0.position < $1.position }
     }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
     private func library(_ re: RoutineExerciseModel) -> ExerciseLibraryModel? {
         exercises.first { $0.id == re.exerciseID }
     }
     private var totalSets: Int { sortedExercises.reduce(0) { $0 + $1.sets.count } }
+    private var conditioningPlan: ConditioningPlan? { ConditioningPlan.decode(from: routine.conditioningPlanJSON) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -30,16 +32,25 @@ struct RoutineShareCard: View {
                 theme: theme
             )
             statBlock
+            if let conditioningPlan, routine.blocks.isEmpty {
+                ConditioningShareBlock(plan: conditioningPlan, exercises: exercises, theme: theme)
+            }
             if let notes = routine.notes, !notes.isEmpty {
                 Text(notes).font(.system(size: 13)).foregroundStyle(theme.textSecondary)
             }
-            Rectangle().fill(theme.separator).frame(height: 1)
-            if sortedExercises.isEmpty {
-                Text("No exercises yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textSecondary)
-            } else {
-                ForEach(sortedExercises) { re in
-                    exerciseBlock(re)
+            if !orderedItems.isEmpty {
+                Rectangle().fill(theme.separator).frame(height: 1)
+                ForEach(orderedItems) { item in
+                    switch item {
+                    case .exercise(let exercise):
+                        exerciseBlock(exercise)
+                    case .block(let block):
+                        routineBlockShare(block)
+                    }
                 }
+            } else if conditioningPlan == nil {
+                Rectangle().fill(theme.separator).frame(height: 1)
+                Text("Nothing added yet").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.textSecondary)
             }
             ShareCardFooter(theme: theme)
         }
@@ -50,8 +61,41 @@ struct RoutineShareCard: View {
 
     private var statBlock: some View {
         HStack(spacing: 12) {
-            RoutineShareStat(value: "\(sortedExercises.count)", label: "Exercises", color: theme.accent, theme: theme)
-            RoutineShareStat(value: "\(totalSets)", label: "Sets", color: theme.secondaryAccent, theme: theme)
+            if let conditioningPlan, routine.blocks.isEmpty {
+                RoutineShareStat(value: "\(conditioningPlan.sections.count)", label: "Sections", color: theme.accent, theme: theme)
+                RoutineShareStat(
+                    value: conditioningPlan.sections.first?.format.title ?? "Workout",
+                    label: "Format",
+                    color: theme.secondaryAccent,
+                    theme: theme
+                )
+            } else {
+                RoutineShareStat(value: "\(orderedItems.count)", label: "Items", color: theme.accent, theme: theme)
+                RoutineShareStat(value: "\(totalSets)", label: "Sets", color: theme.secondaryAccent, theme: theme)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func routineBlockShare(_ block: RoutineBlockModel) -> some View {
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planJSON) {
+            ConditioningShareBlock(plan: plan, exercises: exercises, theme: theme)
+        } else if block.kind == .yoga,
+                  let plan = YogaFlowPlan.decode(from: block.planJSON) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Yoga", systemImage: "figure.yoga")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                Text("\(plan.structureSummary) · \(plan.style.title)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                ForEach(plan.steps) { step in
+                    Text("• \(step.name) · \(Fmt.durationShort(step.holdSeconds))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textPrimary)
+                }
+            }
         }
     }
 

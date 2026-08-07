@@ -57,7 +57,9 @@ public enum CSVWriter {
 public enum WorkoutCSVExport {
     public static let header: [String] = [
         "workout_id", "workout_title", "started_at", "ended_at", "workout_notes",
+        "whole_session_cr10", "whole_session_cr10_rated_at", "whole_session_cr10_protocol",
         "avg_hr", "max_hr", "active_energy_kcal", "readiness_at_start",
+        "readiness_method_id", "readiness_coverage_at_start",
         "entry_type",
         "exercise", "exercise_position", "superset_group", "exercise_notes",
         "set_position", "set_type", "weight_kg", "reps", "rpe", "rir",
@@ -82,10 +84,15 @@ public enum WorkoutCSVExport {
                 CSVWriter.date(workout.startedAt),
                 CSVWriter.date(workout.endedAt),
                 workout.notes ?? "",
+                CSVWriter.number(workout.wholeSessionRPE),
+                CSVWriter.date(workout.wholeSessionRPERatedAt),
+                workout.wholeSessionRPEProtocolVersion ?? "",
                 CSVWriter.number(workoutHealth?.avgHR),
                 CSVWriter.number(workoutHealth?.maxHR),
                 CSVWriter.number(workoutHealth?.activeEnergyKcal),
                 CSVWriter.number(workoutHealth?.readinessAtStart),
+                workoutHealth?.readinessMethodID ?? "",
+                CSVWriter.number(workoutHealth?.readinessCoverageAtStart),
             ]
             let exercisesByID = Dictionary(
                 workout.exercises.map { ($0.id, $0) },

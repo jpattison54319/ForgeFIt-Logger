@@ -1,9 +1,27 @@
 import Foundation
 
+/// Keeps signals that already have a dedicated Health row or chart out of the
+/// generic "Other readings" section. Names live at the presentation boundary,
+/// so this centralizes the de-duplication contract and makes it testable.
+nonisolated enum HealthDetailSignalFilter {
+    private static let dedicatedSignalNames: Set<String> = [
+        "HRV", "Resting HR", "Sleeping HR", "Heart rate", "Sleep",
+        "Respiratory", "Blood O₂", "Steps", "Active energy",
+    ]
+
+    static func supplemental(
+        from signals: [RecoveryEngine.Signal]
+    ) -> [RecoveryEngine.Signal] {
+        signals.filter { signal in
+            signal.connected && !dedicatedSignalNames.contains(signal.name)
+        }
+    }
+}
+
 /// A raw health reading interpreted only against this user's own recent
 /// distribution. It intentionally does not invent a combined "health score."
-struct PersonalRangeReading: Identifiable, Equatable {
-    enum Status: Equatable {
+nonisolated struct PersonalRangeReading: Identifiable, Equatable, Sendable {
+    enum Status: Equatable, Sendable {
         case typical
         case belowRange
         case aboveRange
@@ -28,28 +46,29 @@ struct PersonalRangeReading: Identifiable, Equatable {
 /// A single measurement channel selected consistently for both today's status
 /// and the trend chart. Overnight and all-day readings have different sampling
 /// contexts, so they must never share a baseline.
-struct HealthMetricChannelSeries {
+nonisolated struct HealthMetricChannelSeries {
     let name: String
     let current: Double
     let values: [(date: Date, value: Double)]
     let baselineValues: [Double]
+    let baselineDates: [Date]
 
     static func hrv(
         metrics: [RecoveryEngine.DailyHealthMetric],
         calendar: Calendar = .current
     ) -> HealthMetricChannelSeries? {
-        let selection = selectChannel(
+        selectChannel(
             metrics: metrics,
             calendar: calendar,
-            preferredName: "HRV",
-            preferredValue: { metric in
-                guard metric.sleepIsTrustworthy else { return nil }
-                return metric.nocturnalHRV
-            },
-            fallbackName: "HRV",
-            fallbackValue: { $0.hrvRMSSD ?? $0.hrvSDNN }
+            candidates: [
+                ("Overnight SDNN", { metric in
+                    guard metric.sleepIsTrustworthy else { return nil }
+                    return metric.nocturnalHRV
+                }, { $0.hrvSourceBundleID ?? $0.source }),
+                ("Resting RMSSD", { $0.hrvRMSSD }, { $0.hrvSourceBundleID ?? $0.source }),
+                ("HealthKit SDNN", { $0.hrvSDNN }, { $0.hrvSourceBundleID ?? $0.source })
+            ]
         )
-        return selection
     }
 
     static func heartRate(
@@ -59,13 +78,13 @@ struct HealthMetricChannelSeries {
         selectChannel(
             metrics: metrics,
             calendar: calendar,
-            preferredName: "Sleeping HR",
-            preferredValue: { metric in
-                guard metric.sleepIsTrustworthy else { return nil }
-                return metric.sleepingHR.map(Double.init)
-            },
-            fallbackName: "Resting HR",
-            fallbackValue: { $0.restingHR.map(Double.init) }
+            candidates: [
+                ("Sleeping HR", { metric in
+                    guard metric.sleepIsTrustworthy else { return nil }
+                    return metric.sleepingHR.map(Double.init)
+                }, { $0.sleepingHRSourceBundleID ?? $0.source }),
+                ("Resting HR", { $0.restingHR.map(Double.init) }, { $0.restingHRSourceBundleID ?? $0.source })
+            ]
         )
     }
 
@@ -77,7 +96,8 @@ struct HealthMetricChannelSeries {
             metrics: metrics,
             calendar: calendar,
             name: "Respiratory rate",
-            value: \RecoveryEngine.DailyHealthMetric.respiratoryRate
+            value: \RecoveryEngine.DailyHealthMetric.respiratoryRate,
+            source: { $0.respiratoryRateSourceBundleID ?? $0.source }
         )
     }
 
@@ -89,7 +109,8 @@ struct HealthMetricChannelSeries {
             metrics: metrics,
             calendar: calendar,
             name: "Blood oxygen",
-            value: \RecoveryEngine.DailyHealthMetric.oxygenSaturationPercent
+            value: \RecoveryEngine.DailyHealthMetric.oxygenSaturationPercent,
+            source: { $0.oxygenSaturationSourceBundleID ?? $0.source }
         )
     }
 
@@ -97,71 +118,68 @@ struct HealthMetricChannelSeries {
         metrics: [RecoveryEngine.DailyHealthMetric],
         calendar: Calendar,
         name: String,
-        value: KeyPath<RecoveryEngine.DailyHealthMetric, Double?>
+        value: KeyPath<RecoveryEngine.DailyHealthMetric, Double?>,
+        source: (RecoveryEngine.DailyHealthMetric) -> String?
     ) -> HealthMetricChannelSeries? {
         let ordered = metrics.sorted { $0.date < $1.date }
         guard let latest = ordered.last,
               let current = latest[keyPath: value] else { return nil }
         let latestDay = calendar.startOfDay(for: latest.date)
+        let currentSource = source(latest)
         let history = ordered
-            .filter { calendar.startOfDay(for: $0.date) < latestDay }
-            .suffix(45)
-        let baseline = history.compactMap { $0[keyPath: value] }
-        let values = ordered.suffix(45).compactMap { metric in
+            .filter { calendar.startOfDay(for: $0.date) < latestDay && source($0) == currentSource }
+            .suffix(60)
+        let baselinePairs = history.compactMap { metric in
+            metric[keyPath: value].map { (metric.date, $0) }
+        }
+        let values = ordered.suffix(60).compactMap { metric in
             metric[keyPath: value].map { (metric.date, $0) }
         }
         return HealthMetricChannelSeries(
             name: name,
             current: current,
             values: values,
-            baselineValues: baseline
+            baselineValues: baselinePairs.map(\.1),
+            baselineDates: baselinePairs.map(\.0)
         )
     }
+
+    private typealias ChannelCandidate = (
+        name: String,
+        value: (RecoveryEngine.DailyHealthMetric) -> Double?,
+        source: (RecoveryEngine.DailyHealthMetric) -> String?
+    )
 
     private static func selectChannel(
         metrics: [RecoveryEngine.DailyHealthMetric],
         calendar: Calendar,
-        preferredName: String,
-        preferredValue: (RecoveryEngine.DailyHealthMetric) -> Double?,
-        fallbackName: String,
-        fallbackValue: (RecoveryEngine.DailyHealthMetric) -> Double?
+        candidates: [ChannelCandidate]
     ) -> HealthMetricChannelSeries? {
         let ordered = metrics.sorted { $0.date < $1.date }
         guard let latest = ordered.last else { return nil }
         let latestDay = calendar.startOfDay(for: latest.date)
         let history = ordered.filter {
-            calendar.startOfDay(for: $0.date) < latestDay && !$0.sleepUserCorrected
-        }.suffix(45)
-        let preferredBaseline = history.compactMap(preferredValue)
-
-        if let current = preferredValue(latest), preferredBaseline.count >= 7 {
-            return make(
-                name: preferredName,
-                current: current,
-                metrics: ordered,
-                baselineValues: preferredBaseline,
-                value: preferredValue
-            )
+            calendar.startOfDay(for: $0.date) < latestDay
+        }.suffix(60)
+        let locked = candidates.first { candidate in
+            let currentSource = candidate.source(latest)
+            let dates = history.filter { candidate.source($0) == currentSource }.compactMap { metric in
+                candidate.value(metric).map { _ in metric.date }
+            }
+            return dates.count >= 28 && spanDays(dates, calendar: calendar) >= 42
         }
-
-        let fallbackBaseline = history.compactMap(fallbackValue)
-        if let current = fallbackValue(latest) {
-            return make(
-                name: fallbackName,
-                current: current,
-                metrics: ordered,
-                baselineValues: fallbackBaseline,
-                value: fallbackValue
-            )
+        let selected = locked ?? candidates.first { $0.value(latest) != nil }
+        guard let selected, let current = selected.value(latest) else { return nil }
+        let currentSource = selected.source(latest)
+        let baselinePairs = history.filter { selected.source($0) == currentSource }.compactMap { metric in
+            selected.value(metric).map { (metric.date, $0) }
         }
-
-        guard let current = preferredValue(latest) else { return nil }
         return make(
-            name: preferredName,
+            name: selected.name,
             current: current,
             metrics: ordered,
-            baselineValues: preferredBaseline,
-            value: preferredValue
+            baselinePairs: baselinePairs,
+            value: selected.value
         )
     }
 
@@ -169,25 +187,36 @@ struct HealthMetricChannelSeries {
         name: String,
         current: Double,
         metrics: [RecoveryEngine.DailyHealthMetric],
-        baselineValues: [Double],
+        baselinePairs: [(Date, Double)],
         value: (RecoveryEngine.DailyHealthMetric) -> Double?
     ) -> HealthMetricChannelSeries {
-        let values = metrics.suffix(45).compactMap { metric in
+        let values = metrics.suffix(60).compactMap { metric in
             value(metric).map { (metric.date, $0) }
         }
         return HealthMetricChannelSeries(
             name: name,
             current: current,
             values: values,
-            baselineValues: baselineValues
+            baselineValues: baselinePairs.map(\.1),
+            baselineDates: baselinePairs.map(\.0)
         )
+    }
+
+    private static func spanDays(_ dates: [Date], calendar: Calendar) -> Int {
+        guard let first = dates.min(), let last = dates.max() else { return 0 }
+        return calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: first),
+            to: calendar.startOfDay(for: last)
+        ).day ?? 0
     }
 }
 
 /// Home's Health tile summary. Each reading is compared only with the same
 /// channel in the user's own recent history; isolated readings remain
-/// informational until at least seven prior samples establish a range.
-struct HealthRangeAssessment: Equatable {
+/// informational until at least 28 comparable readings spanning 42 days
+/// establish a usual observed band.
+nonisolated struct HealthRangeAssessment: Equatable, Sendable {
     let readings: [PersonalRangeReading]
 
     var evaluatedCount: Int {
@@ -201,13 +230,13 @@ struct HealthRangeAssessment: Equatable {
     var headline: String {
         if readings.isEmpty { return "No readings" }
         if evaluatedCount == 0 { return "Building" }
-        if outsideRangeCount == 0 { return "All in range" }
-        return "\(outsideRangeCount) outside range"
+        if outsideRangeCount == 0 { return "Within usual bands" }
+        return "\(outsideRangeCount) outside usual band"
     }
 
     var caption: String {
         if readings.isEmpty { return "Connect Apple Health" }
-        if evaluatedCount == 0 { return "Personal ranges need 7 nights" }
+        if evaluatedCount == 0 { return "Usual bands need 28 readings over 42 days" }
         return "\(evaluatedCount) health signal\(evaluatedCount == 1 ? "" : "s") checked"
     }
 
@@ -225,7 +254,8 @@ struct HealthRangeAssessment: Equatable {
                 value: hrvChannel.current,
                 unit: "ms",
                 baseline: hrvChannel.baselineValues,
-                minimumBand: max(3, average(hrvChannel.baselineValues) * 0.05)
+                baselineDates: hrvChannel.baselineDates,
+                calendar: calendar
             ))
         }
 
@@ -238,7 +268,8 @@ struct HealthRangeAssessment: Equatable {
                 value: heartRateChannel.current,
                 unit: "bpm",
                 baseline: heartRateChannel.baselineValues,
-                minimumBand: max(5, average(heartRateChannel.baselineValues) * 0.08)
+                baselineDates: heartRateChannel.baselineDates,
+                calendar: calendar
             ))
         }
         let respiratoryChannel = HealthMetricChannelSeries.respiratoryRate(metrics: metrics, calendar: calendar)
@@ -250,7 +281,8 @@ struct HealthRangeAssessment: Equatable {
                 value: respiratoryChannel.current,
                 unit: "br/min",
                 baseline: respiratoryChannel.baselineValues,
-                minimumBand: max(1, average(respiratoryChannel.baselineValues) * 0.05)
+                baselineDates: respiratoryChannel.baselineDates,
+                calendar: calendar
             ))
         }
         let oxygenChannel = HealthMetricChannelSeries.oxygenSaturation(metrics: metrics, calendar: calendar)
@@ -262,7 +294,8 @@ struct HealthRangeAssessment: Equatable {
                 value: oxygenChannel.current,
                 unit: "%",
                 baseline: oxygenChannel.baselineValues,
-                minimumBand: max(1, average(oxygenChannel.baselineValues) * 0.01)
+                baselineDates: oxygenChannel.baselineDates,
+                calendar: calendar
             ))
         }
         return HealthRangeAssessment(readings: readings)
@@ -275,9 +308,12 @@ struct HealthRangeAssessment: Equatable {
         value: Double,
         unit: String,
         baseline: [Double],
-        minimumBand: Double
+        baselineDates: [Date],
+        calendar: Calendar
     ) -> PersonalRangeReading {
-        guard baseline.count >= 7 else {
+        guard baseline.count >= 28,
+              let first = baselineDates.min(), let last = baselineDates.max(),
+              (calendar.dateComponents([.day], from: calendar.startOfDay(for: first), to: calendar.startOfDay(for: last)).day ?? 0) >= 42 else {
             return PersonalRangeReading(
                 id: id,
                 name: name,
@@ -291,10 +327,8 @@ struct HealthRangeAssessment: Equatable {
             )
         }
         let mean = average(baseline)
-        let variance = baseline.reduce(0) { $0 + pow($1 - mean, 2) } / Double(baseline.count)
-        let halfBand = max(minimumBand, variance.squareRoot())
-        let lower = mean - halfBand
-        let upper = mean + halfBand
+        let lower = quantile(baseline, probability: 0.10) ?? mean
+        let upper = quantile(baseline, probability: 0.90) ?? mean
         let status: PersonalRangeReading.Status = value < lower
             ? .belowRange
             : value > upper ? .aboveRange : .typical
@@ -315,6 +349,17 @@ struct HealthRangeAssessment: Equatable {
         guard !values.isEmpty else { return 0 }
         return values.reduce(0, +) / Double(values.count)
     }
+
+    private static func quantile(_ values: [Double], probability: Double) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let position = min(1, max(0, probability)) * Double(sorted.count - 1)
+        let lower = Int(position.rounded(.down))
+        let upper = Int(position.rounded(.up))
+        if lower == upper { return sorted[lower] }
+        let fraction = position - Double(lower)
+        return sorted[lower] + fraction * (sorted[upper] - sorted[lower])
+    }
 }
 
 struct MetricTrendSeries: Equatable {
@@ -325,28 +370,57 @@ struct MetricTrendSeries: Equatable {
     }
 
     let points: [Point]
-    let mean: Double
-    let standardDeviation: Double
+    let median: Double
+    let lowerBound: Double
+    let upperBound: Double
 
     var latest: Point? { points.last }
 
     static func make(
         values: [(date: Date, value: Double)],
         baselineValues: [Double]? = nil,
-        minimumBaselineCount: Int = 7
+        baselineDates: [Date]? = nil,
+        minimumBaselineCount: Int = 28,
+        minimumSpanDays: Int = 42,
+        calendar: Calendar = .current
     ) -> MetricTrendSeries? {
         let points = values
             .sorted { $0.date < $1.date }
             .map { Point(date: $0.date, value: $0.value) }
         let baseline = baselineValues ?? points.dropLast().map(\.value)
-        guard points.count >= 2, baseline.count >= minimumBaselineCount else { return nil }
-        let mean = baseline.reduce(0, +) / Double(baseline.count)
-        let variance = baseline.reduce(0) { $0 + pow($1 - mean, 2) } / Double(baseline.count)
-        return MetricTrendSeries(points: points, mean: mean, standardDeviation: variance.squareRoot())
+        let dates = baselineDates ?? Array(points.dropLast().map(\.date))
+        guard points.count >= 2,
+              baseline.count >= minimumBaselineCount,
+              let first = dates.min(), let last = dates.max(),
+              (calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: first),
+                to: calendar.startOfDay(for: last)
+              ).day ?? 0) >= minimumSpanDays,
+              let median = quantile(baseline, probability: 0.5),
+              let lower = quantile(baseline, probability: 0.10),
+              let upper = quantile(baseline, probability: 0.90) else { return nil }
+        return MetricTrendSeries(
+            points: points,
+            median: median,
+            lowerBound: lower,
+            upperBound: upper
+        )
+    }
+
+    private static func quantile(_ values: [Double], probability: Double) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let position = min(1, max(0, probability)) * Double(sorted.count - 1)
+        let lower = Int(position.rounded(.down))
+        let upper = Int(position.rounded(.up))
+        if lower == upper { return sorted[lower] }
+        let fraction = position - Double(lower)
+        return sorted[lower] + fraction * (sorted[upper] - sorted[lower])
     }
 }
 
-enum SleepMetricPresentation {
+nonisolated enum SleepMetricPresentation {
     static func duration(_ minutes: Int) -> String {
         "\(minutes / 60)h \(minutes % 60)m"
     }
@@ -358,8 +432,8 @@ enum SleepMetricPresentation {
         return duration(minutes)
     }
 
-    /// Fraction of the personal sleep need met, for the tile's progress bar.
-    /// Nil when the night is excluded, untracked, or the need is unknown.
+    /// Fraction of the editable sleep target met, for the tile's progress bar.
+    /// Nil when the night is excluded, untracked, or the target is unknown.
     static func progress(for metric: RecoveryEngine.DailyHealthMetric?) -> Double? {
         guard let metric, metric.sleepOverrideStatus != .notTracked,
               let minutes = metric.sleepTotalMinutes, metric.sleepNeedMinutes > 0 else { return nil }
@@ -374,7 +448,7 @@ enum SleepMetricPresentation {
         if metric.sleepLikelyPartial { return "Tracked night looks incomplete" }
         guard let minutes = metric.sleepTotalMinutes else { return "No sleep recorded" }
         let difference = minutes - metric.sleepNeedMinutes
-        if difference >= 0 { return "Sleep need met" }
-        return "\(duration(abs(difference))) short of need"
+        if difference >= 0 { return "Sleep target met" }
+        return "\(duration(abs(difference))) short of target"
     }
 }

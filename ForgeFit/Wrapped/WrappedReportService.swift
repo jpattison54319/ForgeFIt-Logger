@@ -10,8 +10,8 @@ import SwiftData
 /// reports are keyed by (type, year, month) and queried before insert, so
 /// repeated calls, delayed launches days after the 1st, and timezone changes
 /// can't create duplicates.
-@MainActor
-enum WrappedReportService {
+nonisolated enum WrappedReportService {
+    private static let lastAutomaticAttemptKey = "wrapped.lastAutomaticAttempt"
 
     /// Pure calendar logic, separated so date/idempotency tests never touch
     /// SwiftData.
@@ -48,17 +48,41 @@ enum WrappedReportService {
     @discardableResult
     static func generateIfDue(
         in context: ModelContext,
+        healthMetrics: [RecoveryEngine.DailyHealthMetric] = [],
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        weightUnit: WeightUnit = .lb,
+        coalesceAutomaticAttempt: Bool = false
     ) -> [WrappedReportModel] {
-        let workouts = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
-        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        let builder = WrappedBuilder(
-            workouts: workouts,
-            exercises: exercises,
-            healthMetrics: HealthMetricsStore.shared.metrics,
-            calendar: calendar
-        )
+        if coalesceAutomaticAttempt,
+           let lastAttempt = UserDefaults.standard.object(
+               forKey: lastAutomaticAttemptKey
+           ) as? Date,
+           calendar.isDate(lastAttempt, inSameDayAs: now) {
+            return []
+        }
+        if coalesceAutomaticAttempt {
+            // Stamp before computation so repeated foreground notifications
+            // cannot queue duplicate full-history passes on the same day.
+            UserDefaults.standard.set(now, forKey: lastAutomaticAttemptKey)
+        }
+
+        // Checking whether a keyed report exists is a tiny indexed fetch. Load
+        // the full workout/library graph only when a report is actually missing
+        // or inside its short refresh window.
+        var cachedBuilder: WrappedBuilder?
+        func builder() -> WrappedBuilder {
+            if let cachedBuilder { return cachedBuilder }
+            let value = WrappedBuilder(
+                workouts: (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? [],
+                exercises: (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? [],
+                healthMetrics: healthMetrics,
+                calendar: calendar,
+                weightUnit: weightUnit
+            )
+            cachedBuilder = value
+            return value
+        }
         var created: [WrappedReportModel] = []
 
         if let monthStart = WrappedSchedule.dueMonthStart(now: now, calendar: calendar) {
@@ -66,13 +90,13 @@ enum WrappedReportService {
             let month = calendar.component(.month, from: monthStart)
             if let existing = fetchReport(type: "monthly", year: year, month: month, in: context) {
                 if WrappedSchedule.isInRefreshWindow(now: now, calendar: calendar),
-                   let payload = builder.buildMonth(starting: monthStart),
+                   let payload = builder().buildMonth(starting: monthStart),
                    payload.encodedJSON() != existing.payloadJSON {
                     existing.payloadJSON = payload.encodedJSON()
                     existing.updatedAt = now
                     try? context.save()
                 }
-            } else if let payload = builder.buildMonth(starting: monthStart) {
+            } else if let payload = builder().buildMonth(starting: monthStart) {
                 let interval = calendar.dateInterval(of: .month, for: monthStart)
                 let report = WrappedReportModel(
                     userID: ForgeFitDemo.userID,
@@ -93,7 +117,7 @@ enum WrappedReportService {
 
         if let dueYear = WrappedSchedule.dueYear(now: now, calendar: calendar),
            fetchReport(type: "yearly", year: dueYear, month: 0, in: context) == nil,
-           let payload = builder.buildYear(dueYear) {
+           let payload = builder().buildYear(dueYear) {
             var components = DateComponents()
             components.year = dueYear
             components.month = 1

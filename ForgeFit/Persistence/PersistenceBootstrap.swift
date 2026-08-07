@@ -1,5 +1,6 @@
 import ForgeData
 import Foundation
+import SQLite3
 import SwiftData
 
 /// Builds the app's split persistence stack (App Store Guideline 5.1.3(ii)):
@@ -23,17 +24,21 @@ enum PersistenceBootstrap {
     /// The legacy combined store's location — SwiftData's default URL,
     /// discovered the same way the pre-split code did (via a URL-less
     /// configuration) so it can never drift from where data actually lives.
-    static var defaultStoreURL: URL {
+    // Resolving SwiftData's default URL constructs a schema-backed
+    // ModelConfiguration. Cache it once: recovery, migration, container
+    // creation, and backup exclusion all need the same immutable location,
+    // and recomputing it repeatedly adds avoidable cold-launch work.
+    static let defaultStoreURL: URL = {
         ModelConfiguration(
             schema: Schema(ForgeDataSchema.models),
             isStoredInMemoryOnly: false,
             cloudKitDatabase: .none
         ).url
-    }
+    }()
 
-    static var planStoreURL: URL {
+    static let planStoreURL: URL = {
         defaultStoreURL.deletingLastPathComponent().appendingPathComponent("plan.store")
-    }
+    }()
 
     @MainActor
     static func makeContainer() -> ModelContainer {
@@ -41,7 +46,9 @@ enum PersistenceBootstrap {
         restoreQuarantinedWorkoutLogIfNeeded()
 
         do {
-            return try makeSplitContainer()
+            let container = try makeSplitContainer()
+            excludeStoreDirectoryFromSystemBackup()
+            return container
         } catch {
             // The plan store is CloudKit-recoverable; the local workout log is
             // not. The old fallback quarantined BOTH stores when either one
@@ -52,11 +59,34 @@ enum PersistenceBootstrap {
             }
             quarantine(storeURL: planStoreURL)
             do {
-                return try makeSplitContainer()
+                let container = try makeSplitContainer()
+                excludeStoreDirectoryFromSystemBackup()
+                return container
             } catch {
                 fatalError("Could not create ModelContainer: \(error)")
             }
         }
+    }
+
+    /// The LOG store contains Health-derived values and experiments. Neither
+    /// belongs in an opaque device backup: workout continuity comes from the
+    /// app's deliberately sanitized iCloud Drive file, while plan rows already
+    /// sync through their private CloudKit store. Excluding the containing
+    /// directory also covers SQLite's transient WAL/SHM files.
+    private static func excludeStoreDirectoryFromSystemBackup() {
+        let directory = defaultStoreURL.deletingLastPathComponent()
+        do {
+            try excludeDirectoryFromSystemBackup(directory)
+        } catch {
+            assertionFailure("Could not exclude ForgeFit stores from system backup: \(error)")
+        }
+    }
+
+    static func excludeDirectoryFromSystemBackup(_ url: URL) throws {
+        var directory = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
     }
 
     private static func makeSplitContainer() throws -> ModelContainer {
@@ -142,6 +172,14 @@ enum PersistenceBootstrap {
     @MainActor
     private static func workoutCount(at storeURL: URL) -> Int? {
         guard FileManager.default.fileExists(atPath: storeURL.path) else { return 0 }
+        if let count = sqliteWorkoutCount(at: storeURL) {
+            return count
+        }
+
+        // Compatibility fallback if a future SwiftData schema renames its
+        // backing table. Normal launches use the read-only SQLite COUNT above;
+        // constructing another full ModelContainer cost ~650 ms on a
+        // phone-sized store before the first frame.
         do {
             return try autoreleasepool {
                 let container = try ModelContainer(
@@ -158,6 +196,40 @@ enum PersistenceBootstrap {
         } catch {
             return nil
         }
+    }
+
+    /// Core Data's table name is stable for the current `WorkoutModel` schema.
+    /// SQLite opens the WAL read-only as part of the same store, so this sees
+    /// committed rows without migrating, mutating, or faulting model objects.
+    private static func sqliteWorkoutCount(at storeURL: URL) -> Int? {
+        var database: OpaquePointer?
+        let openResult = storeURL.path.withCString { path in
+            sqlite3_open_v2(
+                path,
+                &database,
+                SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+                nil
+            )
+        }
+        guard openResult == SQLITE_OK, let database else {
+            if database != nil { sqlite3_close(database) }
+            return nil
+        }
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT COUNT(*) FROM ZWORKOUTMODEL",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK,
+        let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return Int(exactly: sqlite3_column_int64(statement, 0))
     }
 
     private static func replaceStore(at destination: URL, withStoreAt source: URL) throws {

@@ -91,15 +91,17 @@ enum AICoach {
             a form letter, a disclaimer, or a textbook; skip corporate hedging like "it's important to note"
             and don't use emoji unless they do first.
 
-            Grounding: base every answer on the provided ForgeFit data — their real numbers, recent workouts,
+            Data boundary: base every answer on the provided ForgeFit data — their real numbers, recent workouts,
             suggested session, and recovery signals. Never invent data you weren't given. When a signal is
-            missing or confidence is low, say so plainly and still give your best call.
+            missing or data coverage is low, say so plainly and still give your best call.
+            Do not cite studies, researchers, journals, literature, or scientific consensus. Do not describe
+            ForgeFit's scores or recommendations as research-backed, evidence-based, validated, or proven.
 
             Scope: stay in the training lane — workouts, technique, readiness, recovery, cardio, routines,
             progress, and nutrition around training. If asked something off-topic, warmly decline in a
             sentence and steer back to their training.
 
-            Boundaries: you EXPLAIN the deterministic readiness score, progression targets, and coach dose
+            Boundaries: you EXPLAIN the deterministic recovery-signal index, progression targets, and coach dose
             adjustments the app has already computed — you never invent, create, or modify a training program
             or its numbers yourself. \(planGuidance)
 
@@ -129,7 +131,7 @@ enum AICoach {
 
     /// Rules-based answer used when Apple Intelligence isn't available. Routes to
     /// the most relevant slice of the user's data by intent; anything else still
-    /// gets a grounded readiness-based reply rather than a refusal.
+    /// gets a data-specific readiness reply rather than a refusal.
     static func fallbackAnswer(for question: String, context: AICoachContext) -> String {
         let lower = question.lowercased()
         let readinessIntent = ["ready", "recover", "recovery", "train", "workout", "work out",
@@ -176,50 +178,46 @@ struct AICoachContext {
         let rawName = UserDefaults.standard.string(forKey: "profileDisplayName")
         let athleteName = (rawName.map { !$0.isEmpty && $0 != "Athlete" } == true) ? rawName : nil
 
-        // Use displayScore — the same number the user sees on Home / Recovery
-        // (evidence-based systemic score when available, legacy composite
-        // otherwise). Feeding recovery.score here made the coach cite a
-        // different readiness than the ring on screen.
-        let readinessLine = "Readiness: \(Int((recovery.displayScore * 100).rounded()))/100, \(recovery.action.title)."
+        let readinessLine = recovery.displayScore.map {
+            "Recovery-signal index: \(Int(($0 * 100).rounded()))/100, \(recovery.action.title)."
+        } ?? "Recovery-signal index: baseline building; no headline score is available."
         let actionLine = "Today: \(recovery.preWorkoutAdjustment)"
         let topReasons = recovery.reasonChips.prefix(4).map(\.text).joined(separator: ", ")
         let topReasonLine = topReasons.isEmpty ? "No major readiness flags are available yet." : "Main signals: \(topReasons)."
 
-        // Evidence-based sub-scores the user actually sees, so the coach can
-        // reason about *why* readiness is where it is and what's still building.
+        // Versioned personal indices the user actually sees. They compress
+        // comparable observations; they are not physiological percentages.
         let systemic = recovery.recovery.systemic
         let systemicLine: String = {
             if let value = systemic.state.value {
-                return "Systemic recovery: \(Int((value * 100).rounded()))% — \(systemic.guidance)"
+                return "Seven-day recovery trend index: \(Int((value * 100).rounded())) — \(systemic.guidance)"
             }
-            if case .building(let need) = systemic.state { return "Systemic recovery: still building — \(need)." }
-            return "Systemic recovery: not available yet."
+            if case .building(let need) = systemic.state { return "Seven-day recovery trend: still building — \(need)." }
+            return "Seven-day recovery trend: not available yet."
         }()
 
         let cardio = recovery.recovery.cardio
         let cardioLine: String = {
             if let value = cardio.state.value {
                 let domain = cardio.dominantDomain.map { " Last effort \($0.rawValue.lowercased())." } ?? ""
-                return "Cardio recovery: \(Int((value * 100).rounded()))%.\(domain) \(cardio.guidance)"
+                return "Cardio freshness index: \(Int((value * 100).rounded())).\(domain) \(cardio.guidance)"
             }
-            if case .building(let need) = cardio.state { return "Cardio recovery: still building — \(need)." }
-            return "Cardio recovery: not available yet."
+            if case .building(let need) = cardio.state { return "Cardio freshness: still building — \(need)." }
+            return "Cardio freshness: not available yet."
         }()
 
-        // Which muscles are still fatigued (avoid) vs fresh (fair game).
+        // Recent modeled exposure by muscle. Never translate this into a
+        // measured recovery state or a time-to-ready promise.
         let ranked = recovery.recovery.muscles
             .filter { $0.state.value != nil }
             .sorted { ($0.state.value ?? 1) < ($1.state.value ?? 1) }
         let stillRecovering = ranked
             .filter { ($0.state.value ?? 1) < 0.75 }
             .prefix(4)
-            .map { m -> String in
-                let eta = m.readyInHours.map { " (~\($0)h to ready)" } ?? ""
-                return "\(m.muscle.capitalized) \(m.statusLabel.lowercased())\(eta)"
-            }
+            .map { "\($0.muscle.capitalized) \($0.statusLabel.lowercased())" }
         let muscleRecoveryLine = stillRecovering.isEmpty
-            ? "Muscle recovery: all recently trained muscles are fresh."
-            : "Muscles still recovering: \(stillRecovering.joined(separator: ", "))."
+            ? "Muscle freshness: no high recent exposure is modeled."
+            : "Muscle recent exposure: \(stillRecovering.joined(separator: ", "))."
 
         let recentLines = completed.prefix(8).map { workout in
             let summary = analytics.summary(for: workout)
@@ -281,7 +279,7 @@ struct AICoachContext {
         \(athleteName.map { "You're coaching \($0).\n" } ?? "")\(readinessLine)
         \(actionLine)
         \(topReasonLine)
-        Confidence: \(Int((recovery.confidence * 100).rounded()))% (lower confidence = sparser data, hedge advice accordingly).
+        Data coverage: \(Int((recovery.dataCoverage * 100).rounded()))% (this measures comparable data availability, not statistical confidence).
         Missing inputs: \(missing).
 
         Recovery detail:

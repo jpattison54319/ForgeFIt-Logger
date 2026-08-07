@@ -24,6 +24,7 @@ struct RoutineDetailView: View {
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -36,25 +37,31 @@ struct RoutineDetailView: View {
                 }
 
                 PrimaryButton(title: "Start Routine") { start() }
+                    .disabled(orderedItems.isEmpty)
 
                 chartSection
 
                 HStack {
-                    Text("Exercises").font(.sectionTitle).foregroundStyle(theme.textPrimary)
+                    Text("Workout").font(.sectionTitle).foregroundStyle(theme.textPrimary)
                     Spacer()
                     Button("Edit Routine") { editing = true }
                         .font(.bodyStrong).foregroundStyle(theme.accent)
                 }
 
-                if sortedExercises.isEmpty {
-                    EmptyStateCard(title: "No exercises", message: "Build this routine from your exercise library.", systemImage: "dumbbell")
+                if orderedItems.isEmpty {
+                    EmptyStateCard(title: "Nothing added", message: "Add an exercise, conditioning block, or Yoga flow.", systemImage: "plus.rectangle.on.rectangle")
                 } else {
-                    ForEach(sortedExercises) { re in
-                        RoutineExerciseSummary(
-                            routineExercise: re,
-                            exercise: exercises.first { $0.id == re.exerciseID },
-                            setupNote: setupNotes.first { $0.exerciseID == re.exerciseID && $0.userID == ForgeFitDemo.userID }
-                        )
+                    ForEach(orderedItems) { item in
+                        switch item {
+                        case .exercise(let routineExercise):
+                            RoutineExerciseSummary(
+                                routineExercise: routineExercise,
+                                exercise: exercises.first { $0.id == routineExercise.exerciseID },
+                                setupNote: setupNotes.first { $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID }
+                            )
+                        case .block(let block):
+                            RoutineBlockSummary(block: block)
+                        }
                     }
                 }
             }
@@ -154,6 +161,45 @@ struct RoutineDetailView: View {
     }
 }
 
+private struct RoutineBlockSummary: View {
+    @Environment(\.theme) private var theme
+    let block: RoutineBlockModel
+
+    var body: some View {
+        Card(padding: Space.md) {
+            HStack(spacing: Space.md) {
+                Image(systemName: block.kind == .conditioning ? "stopwatch" : "figure.yoga")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(block.kind == .conditioning ? theme.warmup : theme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(theme.surfaceElevated)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(block.kind.title)
+                        .font(.cardTitle)
+                        .foregroundStyle(theme.textPrimary)
+                    Text(summary)
+                        .font(.label)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var summary: String {
+        if block.kind == .conditioning,
+           let plan = ConditioningPlan.decode(from: block.planJSON) {
+            let movements = Set(plan.sections.flatMap(\.movements).map(\.exerciseID)).count
+            return "\(plan.sections.count) section\(plan.sections.count == 1 ? "" : "s") · \(movements) movement\(movements == 1 ? "" : "s")"
+        }
+        if let plan = YogaFlowPlan.decode(from: block.planJSON) {
+            return "\(plan.structureSummary) · \(plan.style.title)"
+        }
+        return "Not configured"
+    }
+}
+
 /// A read-only exercise block on the routine detail: name, tags, rest timer and
 /// the target set table.
 private struct RoutineExerciseSummary: View {
@@ -187,6 +233,9 @@ private struct RoutineExerciseSummary: View {
                         }
                         if let equipment = exercise?.equipment {
                             Tag(text: equipment.capitalized)
+                        }
+                        if let group = routineExercise.supersetGroup {
+                            SupersetChip(group: group)
                         }
                     }
                     Spacer()
@@ -238,28 +287,50 @@ private struct RoutineExerciseSummary: View {
             }
             .foregroundStyle(theme.accent)
 
-            HStack {
+            HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
                 Text(displayUnit.suffix.uppercased()).frame(maxWidth: .infinity, alignment: .leading)
                 Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
+                Text("EFFORT").frame(width: 64, alignment: .trailing)
             }
             .font(.tag)
             .foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
-                HStack {
-                    Text(set.setType == .warmup ? "W" : "\(index + 1)")
-                        .font(.rowValue)
-                        .foregroundStyle(set.setType == .warmup ? theme.warmup : theme.textPrimary)
+                let style = SetTypeStyle.of(set.setType)
+                HStack(alignment: .top, spacing: 8) {
+                    Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sortedSets))
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(set.setType == .working ? theme.textPrimary : style.color)
                         .frame(width: 44, alignment: .leading)
-                    Text(Fmt.load(set.targetWeight, unit: displayUnit))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Fmt.load(set.targetWeight, unit: displayUnit))
+                            .font(.rowValue)
+                            .foregroundStyle(theme.textPrimary)
+                        if set.setType != .working {
+                            Text(style.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(style.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(RoutineSetPresentation.repsText(for: set))
                         .font(.rowValue).foregroundStyle(theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(repsText(set))
-                        .font(.rowValue).foregroundStyle(theme.textPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(RoutineSetPresentation.effortText(for: set))
+                        .font(.tag)
+                        .foregroundStyle(theme.textTertiary)
+                        .frame(width: 64, alignment: .trailing)
                 }
                 .padding(.vertical, 2)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(style.label), \(Fmt.load(set.targetWeight, unit: displayUnit)), "
+                        + "\(RoutineSetPresentation.repsText(for: set)), "
+                        + RoutineSetPresentation.effortText(for: set)
+                )
             }
         }
     }
@@ -304,24 +375,4 @@ private struct RoutineExerciseSummary: View {
         }
     }
 
-    private func repsText(_ set: RoutineSetModel) -> String {
-        // Structured plans summarize their shape, not a rep range.
-        switch set.setType {
-        case .myoRep:
-            if let minis = set.plannedMiniSetCount { return "activation + \(minis) minis" }
-        case .cluster:
-            let plan = set.plannedMiniReps
-            if !plan.isEmpty { return plan.map(String.init).joined(separator: "+") }
-        case .amrap:
-            if let seconds = set.targetDurationSeconds { return "max reps in \(seconds)s" }
-        default:
-            break
-        }
-        switch (set.targetRepsLow, set.targetRepsHigh) {
-        case let (lo?, hi?) where lo != hi: return "\(lo)–\(hi)"
-        case let (lo?, _): return "\(lo)"
-        case let (_, hi?): return "\(hi)"
-        default: return "—"
-        }
-    }
 }

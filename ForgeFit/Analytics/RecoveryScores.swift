@@ -2,45 +2,14 @@ import Foundation
 import ForgeCore
 import ForgeData
 
-/// Evidence-based recovery scores: one systemic (whole-body) score, one score
-/// per muscle, and one cardiovascular score. Each score gates on data
-/// sufficiency and says what it still needs instead of guessing.
-///
-/// The model, with its literature anchors:
-///
-/// **Systemic** — a weighted blend of three components (weights renormalize
-/// over whatever data exists):
-///  - HRV (47%): 7-day rolling average compared against a 14–60 day baseline,
-///    banded by the baseline's own variability. Rolling-average HRV tracks
-///    training adaptation and fatigue better than single readings
-///    (Plews et al. 2013, Sports Med; Buchheit 2014, Front Physiol).
-///  - Sleep (35%): last night vs need, plus 7-day accumulated debt. Sleep is
-///    the best-supported recovery behavior in athletes (Fullagar et al. 2015,
-///    Sports Med).
-///  - Resting HR (18%): today vs baseline; a slower-moving corroborator of
-///    autonomic status (Buchheit 2014).
-/// Training-load comparisons are shown separately as descriptive context.
-/// They do not change recovery because acute:chronic ratios have conceptual
-/// and mathematical limitations that do not support an injury-risk or
-/// readiness prescription (Impellizzeri et al. 2020; Coyne et al. 2019).
-///
-/// **Per muscle** — force capacity after a bout recovers roughly
-/// exponentially over 24–72 h, slower with more volume, closer proximity to
-/// failure, and for larger muscle groups (McLester et al. 2003, JSCR;
-/// Korak et al. 2015; Morán-Navarro et al. 2017, Eur J Appl Physiol —
-/// failure sets need 24–48 h+ vs non-failure). Each session deposits a
-/// recovery deficit D = min(0.65, 0.12·(effectiveSets)^0.75) that decays with
-/// muscle-specific time constants (18–34 h); the score is 1 − Σ remaining
-/// deficits. ~48 h between hard sessions for the same muscle matches
-/// meta-analytic frequency guidance (Schoenfeld et al. 2016, Sports Med).
-///
-/// **Cardio** — autonomic (parasympathetic) recovery depends on intensity
-/// domain, not just duration: ≲24 h after low-intensity work, 24–48 h after
-/// threshold work, 48 h+ after high-intensity intervals (Stanley, Peake &
-/// Buchheit 2013, Sports Med). Sessions are dosed by Edwards-style
-/// zone-weighted minutes and decay with a domain-specific time constant, so
-/// Zone 2 and HIIT genuinely differ.
-extension RecoveryEngine {
+/// Versioned personalized product indices, not measured physiological
+/// recovery percentages. The headline score uses source-consistent HRV or
+/// heart-rate history plus sleep-target attainment, identifies adverse
+/// deviations only, and withholds when coverage is inadequate. Muscle and
+/// cardio numbers are explicitly recency-weighted exposure/freshness models.
+/// Their launch constants are transparent product settings to be calibrated
+/// prospectively against ForgeFit performance and subjective outcomes.
+nonisolated extension RecoveryEngine {
 
     // MARK: - Types
 
@@ -84,6 +53,9 @@ extension RecoveryEngine {
         var state: ScoreState
         var parts: [ScorePart]
         var guidance: String
+        var coverage: Double = 0
+        var methodID: String = RecoveryIndexV2.analyticsVersion
+        var provenance: AnalyticsProvenance? = nil
     }
 
     /// The acute, today-only readiness score — nocturnal autonomic state plus
@@ -98,6 +70,9 @@ extension RecoveryEngine {
         /// "HRV low today" — the copy and the number share one source of truth.
         var flags: [String]
         var guidance: String
+        var coverage: Double = 0
+        var methodID: String = RecoveryIndexV2.analyticsVersion
+        var provenance: AnalyticsProvenance? = nil
     }
 
     struct MuscleRecoveryScore: Identifiable {
@@ -105,16 +80,42 @@ extension RecoveryEngine {
         let muscle: String
         let state: ScoreState         // building = never logged for this muscle
         let lastTrainedDaysAgo: Int?
-        /// Hours until the muscle is back above ~90%, nil when already there.
+        /// Retained for decoding/UI migration only. V2 never presents this as
+        /// time until physiological recovery.
         let readyInHours: Int?
+        let isProvisional: Bool
+        /// Current recency-weighted set-equivalent exposure. Exposed so the
+        /// UI can explain why two muscle rows differ without reverse-
+        /// engineering the score.
+        let recentExposure: Double?
+        /// One user-level reference shared by every muscle row. A common
+        /// denominator makes the rows directly comparable with one another.
+        let referenceDose: Double?
+
+        init(
+            muscle: String,
+            state: ScoreState,
+            lastTrainedDaysAgo: Int?,
+            readyInHours: Int?,
+            isProvisional: Bool = false,
+            recentExposure: Double? = nil,
+            referenceDose: Double? = nil
+        ) {
+            self.muscle = muscle
+            self.state = state
+            self.lastTrainedDaysAgo = lastTrainedDaysAgo
+            self.readyInHours = readyInHours
+            self.isProvisional = isProvisional
+            self.recentExposure = recentExposure
+            self.referenceDose = referenceDose
+        }
 
         var statusLabel: String {
             guard let value = state.value else { return "No data" }
             switch value {
-            case 0.9...: return "Ready"
-            case 0.75..<0.9: return "Nearly ready"
-            case 0.5..<0.75: return "Recovering"
-            default: return "Fatigued"
+            case 0.75...: return "Lower recent exposure"
+            case 0.4..<0.75: return "Moderate recent exposure"
+            default: return "High recent exposure"
             }
         }
     }
@@ -131,6 +132,26 @@ extension RecoveryEngine {
         var dominantDomain: CardioDomain?
         var readyInHours: Int?
         var guidance: String
+        var isProvisional: Bool = false
+        var methodLabel: String? = nil
+
+        init(
+            state: ScoreState,
+            lastSessionText: String?,
+            dominantDomain: CardioDomain?,
+            readyInHours: Int?,
+            guidance: String,
+            isProvisional: Bool = false,
+            methodLabel: String? = nil
+        ) {
+            self.state = state
+            self.lastSessionText = lastSessionText
+            self.dominantDomain = dominantDomain
+            self.readyInHours = readyInHours
+            self.guidance = guidance
+            self.isProvisional = isProvisional
+            self.methodLabel = methodLabel
+        }
     }
 
     struct RecoverySnapshot {
@@ -151,121 +172,162 @@ extension RecoveryEngine {
 
     // MARK: - Systemic
 
-    /// Chronic-trend weights. HRV keeps the largest share (Plews 2013).
-    /// Training load is deliberately absent: its comparison is useful context,
-    /// but a workload ratio is not a recovery measurement.
-    private enum SystemicWeight {
-        static let hrv = 0.47, sleep = 0.35, rhr = 0.18
-    }
-
     private func systemicRecovery() -> SystemicRecovery {
-        let hrv = hrvPart()
-        let sleep = sleepPart()
-        let rhr = rhrPart()
-        let parts = [hrv, sleep, rhr]
+        let recent = recentHealthMetrics(days: 7)
+        let target = personalizedSleepNeedMinutes()
+        let latest = latestHealthMetric()
+        let hrvKind = latest.flatMap { selectedHRVChannel(for: $0, excludingRecentDays: 7) }
+        let hrKind = latest.flatMap { selectedHRChannel(for: $0, excludingRecentDays: 7) }
 
-        var weighted = 0.0
-        var weightSum = 0.0
-        for (part, weight) in [(hrv, SystemicWeight.hrv), (sleep, SystemicWeight.sleep),
-                               (rhr, SystemicWeight.rhr)] {
-            if let value = part.state.value {
-                weighted += value * weight
-                weightSum += weight
-            }
+        let hrvAssessments = recent.compactMap {
+            hrvAssessment(for: $0, excludingRecentDays: 7, forcedChannel: hrvKind)
         }
+        let hrAssessments = recent.compactMap {
+            heartRateAssessment(for: $0, excludingRecentDays: 7, forcedChannel: hrKind)
+        }
+        let sleepAssessments = recent.compactMap { sleepAssessment(for: $0, targetMinutes: target) }
 
-        // Require at least one real component before claiming a score.
-        guard weightSum >= 0.15 else {
+        let hrv = trendPart(
+            name: "HRV trend",
+            assessments: hrvAssessments,
+            minimumDays: 4,
+            valueText: hrvAssessments.last.map { "\(Int($0.observed.rounded())) ms" } ?? "—"
+        )
+        let hr = trendPart(
+            name: "Heart-rate trend",
+            assessments: hrAssessments,
+            minimumDays: 5,
+            valueText: hrAssessments.last.map { "\(Int($0.observed.rounded())) bpm" } ?? "—"
+        )
+        let observedShortfall = recent.reduce(0) { total, metric in
+            guard metric.sleepIsTrustworthy, let sleep = metric.sleepTotalMinutes else { return total }
+            return total + max(0, target - sleep)
+        }
+        let sleep = trendPart(
+            name: "Sleep trend",
+            assessments: sleepAssessments,
+            minimumDays: 5,
+            valueText: sleepAssessments.isEmpty
+                ? "—"
+                : "\((sleepAssessments.map(\.observed).reduce(0, +) / Double(sleepAssessments.count) / 60).formatted(.number.precision(.fractionLength(1)))) h avg",
+            detailOverride: "Observed shortfall: \(formatMinutes(observedShortfall)) across \(sleepAssessments.count) of 7 recorded nights"
+        )
+        let parts = [hrv.part, sleep.part, hr.part]
+        let inputs = [hrv.input, sleep.input, hr.input].compactMap { $0 }
+
+        guard let combined = RecoveryIndexV2.combine(inputs) else {
             return SystemicRecovery(
-                state: .building("Connect Apple Health to build this score."),
+                state: .building("Needs comparable readings in at least two domains across the last seven days."),
                 parts: parts,
-                guidance: "Systemic recovery blends HRV, sleep, and resting heart rate once data is available."
+                guidance: "The seven-day recovery trend appears once enough source-consistent HRV or heart-rate data and sleep are available.",
+                coverage: inputs.reduce(0) { $0 + min(1, $1.quality) / 3 }
             )
         }
-
-        let score = min(1, max(0, weighted / weightSum))
-        return SystemicRecovery(state: .ready(score), parts: parts, guidance: systemicGuidance(score))
+        let score = combined.score / 100
+        return SystemicRecovery(
+            state: .ready(score),
+            parts: parts,
+            guidance: systemicGuidance(score),
+            coverage: combined.coverage,
+            provenance: recoveryProvenance(
+                analyticsID: "seven-day-recovery-trend",
+                coverage: combined.coverage,
+                baseline: baselineMetrics(days: 90)
+            )
+        )
     }
 
     private func systemicGuidance(_ score: Double) -> String {
         switch score {
-        case 0.85...: "Strong recovery trend — adaptation is on track."
-        case 0.7..<0.85: "Stable recovery trend — your recent health signals are holding steady."
-        case 0.4..<0.7: "Recovery trend is softening — sleep or autonomic signals may be accumulating."
-        default: "Downward recovery trend — accumulated fatigue is building."
+        case 0.85...: "No major adverse recovery signals were detected across the available seven-day data."
+        case 0.65..<0.85: "Most available recovery signals are close to your recent comparable pattern."
+        case 0.5..<0.65: "The available seven-day signals are mixed."
+        default: "Multiple available recovery signals are below your recent comparable pattern."
         }
     }
 
     // MARK: - Daily readiness (acute)
 
-    private enum DailyWeight {
-        static let hrv = 0.55, sleepingHR = 0.20, sleep = 0.25
-    }
-
     /// Today's autonomic state vs the individual's baseline, plus last night's
     /// sleep. Reactive by design — one genuinely bad night should move it.
     private func dailyReadiness() -> DailyReadiness {
-        let hrv = acuteHRVPart()
-        let hr = sleepingHRPart()
-        let sleep = lastNightSleepPart()
-        let parts = [hrv, sleep, hr]
-
-        var weighted = 0.0, weightSum = 0.0
-        for (part, weight) in [(hrv, DailyWeight.hrv), (hr, DailyWeight.sleepingHR), (sleep, DailyWeight.sleep)] {
-            if let value = part.state.value { weighted += value * weight; weightSum += weight }
-        }
-        // An acute "last night" score needs evidence a night happened: HRV
-        // (channel-pure — awake-only users' awake channel counts, it's all
-        // they have), sleep, or genuinely sleeping HR. Apple's daytime
-        // resting-HR estimate alone can't fabricate a night — before this
-        // gate, being up past midnight scored the new day from awake data
-        // and the score whipsawed until sleep synced.
-        //
-        // The gate only holds until mid-morning: before then, missing
-        // overnight data almost always means the night isn't in yet (still
-        // awake at 1am, or the watch hasn't synced). From mid-morning it
-        // means the night was missed, and the score degrades honestly to
-        // the daytime signals that exist (an elevated daytime resting HR
-        // must still flag on a watch-died day).
-        let hrMeasuredOvernight = sleepingHRAssessment().map { !$0.isDaytimeFallback } ?? false
-        let sleepExplicitlyExcluded = latestHealthMetric()?.sleepOverrideStatus == .notTracked
-        let overnightEvidence = hrv.state.value != nil || sleep.state.value != nil || sleepExplicitlyExcluded
-            || (hr.state.value != nil && hrMeasuredOvernight)
-        let nightStillPending = calendar.component(.hour, from: now) < 9
-        guard weightSum >= 0.2, overnightEvidence || !nightStillPending else {
-            let overnightHistory = usesNocturnalHRV
-                || baselineMetrics(days: 60).contains { $0.sleepTotalMinutes != nil }
+        guard let current = latestHealthMetric() else {
             return DailyReadiness(
-                state: .building(overnightHistory
-                    ? "Waiting on last night's data — the score updates once your sleep syncs."
-                    : "Wear a watch to bed — Apple Watch, or a Garmin synced through Garmin Connect — to capture last night's HRV, heart rate, and sleep."),
-                parts: parts, flags: [],
-                guidance: "Daily readiness reads your nocturnal HRV, sleeping heart rate, and last night's sleep against your own baseline."
+                state: .building("No comparable recovery data is available yet."),
+                parts: [],
+                flags: [],
+                guidance: "The recovery-signal index needs at least two domains, including HRV or heart rate."
             )
         }
-        let score = min(1, max(0, weighted / weightSum))
 
-        // Flags are derived from the same parts that moved the score, so the
-        // copy can never contradict the number.
-        var flags: [String] = []
-        if acuteHRVBelowRange { flags.append("HRV low today") }
-        if let hrAssessment = sleepingHRAssessment(), hrAssessment.elevated {
-            flags.append(hrAssessment.isDaytimeFallback ? "Resting HR elevated" : "Sleeping HR elevated")
+        let hrv = hrvAssessment(for: current, excludingRecentDays: 0)
+        let hr = heartRateAssessment(for: current, excludingRecentDays: 0)
+        let sleep = sleepAssessment(for: current, targetMinutes: personalizedSleepNeedMinutes())
+        let parts = [
+            hrv?.part ?? unavailableHRVPart(for: current),
+            sleep?.part ?? unavailableSleepPart(for: current),
+            hr?.part ?? unavailableHeartRatePart(for: current)
+        ]
+        let inputs = [hrv?.input, hr?.input, sleep?.input].compactMap { $0 }
+        let provisionalCoverage = inputs.reduce(0) { $0 + min(1, $1.quality) / 3 }
+
+        // An unresolved partial overnight record means the relevant episode
+        // may still be incomplete. Even mature daytime HRV/HR channels must
+        // not turn that ambiguous recording window into a headline score.
+        if current.sleepLikelyPartial && !current.sleepUserCorrected {
+            return DailyReadiness(
+                state: .building("Possible incomplete overnight recording — confirm or correct it before scoring."),
+                parts: parts,
+                flags: [],
+                guidance: "Available signals remain visible, but an unresolved partial night cannot produce a headline recovery score.",
+                coverage: provisionalCoverage
+            )
         }
-        if lastNightSleepShort { flags.append("Short sleep") }
 
-        return DailyReadiness(state: .ready(score), parts: parts, flags: flags, guidance: dailyGuidance(score, flags: flags))
+        guard let combined = RecoveryIndexV2.combine(inputs) else {
+            let hasMatureChannel = hrv != nil || hr != nil
+            return DailyReadiness(
+                state: .building(hasMatureChannel
+                    ? "Needs a second complete recovery domain before showing a score."
+                    : "Baseline building — needs 21 comparable readings spanning at least 28 days."),
+                parts: parts,
+                flags: [],
+                guidance: "Missing data lowers coverage; one signal can never create a headline recovery score.",
+                coverage: provisionalCoverage
+            )
+        }
+
+        var flags: [String] = []
+        if hrv.map({ $0.adverseUnits >= 1 }) == true { flags.append("HRV low today") }
+        if hr.map({ $0.adverseUnits >= 1 }) == true {
+            flags.append(hr?.channelLabel == "Sleeping HR" ? "Sleeping HR elevated" : "Resting HR elevated")
+        }
+        if sleep.map({ $0.adverseUnits >= 1 }) == true { flags.append("Short sleep") }
+
+        let score = combined.score / 100
+        return DailyReadiness(
+            state: .ready(score),
+            parts: parts,
+            flags: flags,
+            guidance: dailyGuidance(score, flags: flags),
+            coverage: combined.coverage,
+            provenance: recoveryProvenance(
+                analyticsID: "recovery-signal-index",
+                coverage: combined.coverage,
+                baseline: baselineMetrics(days: 60)
+            )
+        )
     }
 
     private func dailyGuidance(_ score: Double, flags: [String]) -> String {
         let base = switch score {
-        case 0.85...: "Today’s overnight signals are exceptionally favorable."
-        case 0.7..<0.85: "Today’s overnight signals are within your ready range."
-        case 0.4..<0.7: "Today’s overnight signals show some recovery caution."
-        default: "Today’s overnight signals are below your ready range."
+        case 0.85...: "No major adverse recovery signals were detected in the available data."
+        case 0.65..<0.85: "Today’s available recovery signals are mostly typical for you."
+        case 0.5..<0.65: "Today’s available recovery signals are mixed."
+        default: "Today’s available recovery signals show marked adverse deviations."
         }
         guard !flags.isEmpty else { return base }
-        let reasons = flags.compactMap(Self.acuteReasonClause)
+        let reasons = flags.compactMap { Self.acuteReasonClause($0) }
         guard !reasons.isEmpty else { return base }
         let joined = reasons.count == 1
             ? reasons[0]
@@ -274,11 +336,382 @@ extension RecoveryEngine {
         return "\(base) \(sentence)."
     }
 
+    private struct DomainAssessment {
+        let input: RecoveryComponentInput
+        let part: ScorePart
+        let adverseUnits: Double
+        let observed: Double
+        let channelLabel: String
+    }
+
+    private struct TrendAssessment {
+        let input: RecoveryComponentInput?
+        let part: ScorePart
+    }
+
+    private enum HRVChannel: CaseIterable {
+        case nocturnalSDNN
+        case restingRMSSD
+        case opportunisticSDNN
+
+        var label: String {
+            switch self {
+            case .nocturnalSDNN: "Overnight SDNN"
+            case .restingRMSSD: "Resting RMSSD"
+            case .opportunisticSDNN: "HealthKit SDNN"
+            }
+        }
+
+        var repeatabilityFloor: Double {
+            switch self {
+            case .nocturnalSDNN: 0.12
+            case .restingRMSSD: 0.08
+            case .opportunisticSDNN: 0.12
+            }
+        }
+    }
+
+    private enum HeartRateChannel: CaseIterable {
+        case sleeping
+        case daytimeResting
+
+        var label: String { self == .sleeping ? "Sleeping HR" : "Resting HR" }
+    }
+
+    private func selectedHRVChannel(
+        for current: DailyHealthMetric,
+        excludingRecentDays: Int
+    ) -> HRVChannel? {
+        let history = comparableHistory(for: current, excludingRecentDays: excludingRecentDays)
+        if let locked = HRVChannel.allCases.first(where: { channel in
+            let currentSource = hrvSource(current, channel: channel)
+            let dated = history.filter { hrvSource($0, channel: channel) == currentSource }.compactMap { metric in
+                hrvValue(metric, channel: channel).map { (metric.date, $0) }
+            }
+            return baselineIsMature(dated.map(\.0))
+        }) {
+            return locked
+        }
+        return HRVChannel.allCases.first { hrvValue(current, channel: $0) != nil }
+    }
+
+    private func selectedHRChannel(
+        for current: DailyHealthMetric,
+        excludingRecentDays: Int
+    ) -> HeartRateChannel? {
+        let history = comparableHistory(for: current, excludingRecentDays: excludingRecentDays)
+        if let locked = HeartRateChannel.allCases.first(where: { channel in
+            let currentSource = heartRateSource(current, channel: channel)
+            let dates = history.filter { heartRateSource($0, channel: channel) == currentSource }.compactMap { metric in
+                heartRateValue(metric, channel: channel).map { _ in metric.date }
+            }
+            return baselineIsMature(dates)
+        }) {
+            return locked
+        }
+        return HeartRateChannel.allCases.first { heartRateValue(current, channel: $0) != nil }
+    }
+
+    private func hrvAssessment(
+        for current: DailyHealthMetric,
+        excludingRecentDays: Int,
+        forcedChannel: HRVChannel? = nil
+    ) -> DomainAssessment? {
+        guard let channel = forcedChannel ?? selectedHRVChannel(
+            for: current,
+            excludingRecentDays: excludingRecentDays
+        ), let today = hrvValue(current, channel: channel), today > 0 else { return nil }
+
+        let currentSource = hrvSource(current, channel: channel)
+        let dated = comparableHistory(for: current, excludingRecentDays: excludingRecentDays)
+            .filter { hrvSource($0, channel: channel) == currentSource }
+            .compactMap { metric in hrvValue(metric, channel: channel).map { (metric.date, log($0)) } }
+        guard baselineIsMature(dated.map(\.0)) else { return nil }
+        let values = dated.map(\.1)
+        guard let baseline = robustMedian(values) else { return nil }
+        let scale = max(1.4826 * medianAbsoluteDeviation(values, around: baseline), channel.repeatabilityFloor)
+        let adverse = max(0, (baseline - log(today)) / scale)
+        let quality = RecoveryIndexV2.historyQuality(count: values.count, spanDays: historySpanDays(dated.map(\.0)))
+            * hrvMeasurementQuality(current, channel: channel)
+        let input = RecoveryComponentInput(domain: .hrv, adverseUnits: adverse, quality: quality)
+        return DomainAssessment(
+            input: input,
+            part: ScorePart(
+                name: "HRV (today)",
+                state: .ready(input.score / 100),
+                valueText: "\(Int(today.rounded())) ms",
+                detailText: adverse > 0
+                    ? "\(channel.label), below your comparable median of \(Int(exp(baseline).rounded())) ms"
+                    : "\(channel.label), at or above your comparable median of \(Int(exp(baseline).rounded())) ms"
+            ),
+            adverseUnits: adverse,
+            observed: today,
+            channelLabel: channel.label
+        )
+    }
+
+    private func heartRateAssessment(
+        for current: DailyHealthMetric,
+        excludingRecentDays: Int,
+        forcedChannel: HeartRateChannel? = nil
+    ) -> DomainAssessment? {
+        guard let channel = forcedChannel ?? selectedHRChannel(
+            for: current,
+            excludingRecentDays: excludingRecentDays
+        ), let today = heartRateValue(current, channel: channel) else { return nil }
+
+        let currentSource = heartRateSource(current, channel: channel)
+        let dated = comparableHistory(for: current, excludingRecentDays: excludingRecentDays)
+            .filter { heartRateSource($0, channel: channel) == currentSource }
+            .compactMap { metric in heartRateValue(metric, channel: channel).map { (metric.date, $0) } }
+        guard baselineIsMature(dated.map(\.0)), let baseline = robustMedian(dated.map(\.1)) else { return nil }
+        let scale = max(
+            1.4826 * medianAbsoluteDeviation(dated.map(\.1), around: baseline),
+            max(4, 0.05 * baseline)
+        )
+        let adverse = max(0, (today - baseline) / scale)
+        let quality = RecoveryIndexV2.historyQuality(
+            count: dated.count,
+            spanDays: historySpanDays(dated.map(\.0))
+        ) * heartRateMeasurementQuality(current, channel: channel)
+        let input = RecoveryComponentInput(domain: .heartRate, adverseUnits: adverse, quality: quality)
+        return DomainAssessment(
+            input: input,
+            part: ScorePart(
+                name: channel.label,
+                state: .ready(input.score / 100),
+                valueText: "\(Int(today.rounded())) bpm",
+                detailText: adverse > 0
+                    ? "Above your comparable median of \(Int(baseline.rounded())) bpm"
+                    : "At or below your comparable median of \(Int(baseline.rounded())) bpm"
+            ),
+            adverseUnits: adverse,
+            observed: today,
+            channelLabel: channel.label
+        )
+    }
+
+    private func sleepAssessment(
+        for current: DailyHealthMetric,
+        targetMinutes: Int
+    ) -> DomainAssessment? {
+        guard current.sleepOverrideStatus != .notTracked,
+              current.sleepIsTrustworthy,
+              let sleep = current.sleepTotalMinutes,
+              sleep >= 0 else { return nil }
+        let quality = sleepMeasurementQuality(current)
+        guard quality > 0 else { return nil }
+        let adverse = max(0, Double(targetMinutes - sleep) / 90)
+        let input = RecoveryComponentInput(domain: .sleep, adverseUnits: adverse, quality: quality)
+        let targetText = "target \(formatMinutes(targetMinutes))"
+        let correctionPrefix = current.sleepOverrideStatus.map { "\($0.detailPrefix) · " } ?? ""
+        return DomainAssessment(
+            input: input,
+            part: ScorePart(
+                name: "Sleep (last night)",
+                state: .ready(input.score / 100),
+                valueText: formatMinutes(sleep),
+                detailText: correctionPrefix + (sleep < targetMinutes
+                    ? "\(formatMinutes(targetMinutes - sleep)) below your editable \(targetText)"
+                    : "Met your editable \(targetText)"),
+                sleepOverrideStatus: current.sleepOverrideStatus
+            ),
+            adverseUnits: adverse,
+            observed: Double(sleep),
+            channelLabel: "Sleep duration"
+        )
+    }
+
+    private func trendPart(
+        name: String,
+        assessments: [DomainAssessment],
+        minimumDays: Int,
+        valueText: String,
+        detailOverride: String? = nil
+    ) -> TrendAssessment {
+        guard assessments.count >= minimumDays else {
+            return TrendAssessment(
+                input: nil,
+                part: ScorePart(
+                    name: name,
+                    state: .building("Needs \(minimumDays - assessments.count) more comparable day\(minimumDays - assessments.count == 1 ? "" : "s")"),
+                    valueText: valueText,
+                    detailText: "\(assessments.count) of 7 valid days"
+                )
+            )
+        }
+        let meanScore = assessments.map { $0.input.score }.reduce(0, +) / Double(assessments.count)
+        let adverse = max(0, (100 - meanScore) / 30)
+        let meanQuality = assessments.map { $0.input.quality }.reduce(0, +) / Double(assessments.count)
+        let quality = Double(assessments.count) / 7 * meanQuality
+        guard let domain = assessments.first?.input.domain else {
+            return TrendAssessment(input: nil, part: assessments[0].part)
+        }
+        let input = RecoveryComponentInput(domain: domain, adverseUnits: adverse, quality: quality)
+        return TrendAssessment(
+            input: input,
+            part: ScorePart(
+                name: name,
+                state: .ready(input.score / 100),
+                valueText: valueText,
+                detailText: detailOverride ?? "Mean component score across \(assessments.count) of 7 valid days"
+            )
+        )
+    }
+
+    private func unavailableHRVPart(for current: DailyHealthMetric) -> ScorePart {
+        ScorePart(
+            name: "HRV (today)",
+            state: .building(hrvValue(current, channel: selectedHRVChannel(for: current, excludingRecentDays: 0) ?? .nocturnalSDNN) == nil
+                ? "Primary HRV channel unavailable — no source substitution"
+                : "Baseline building — needs 21 readings over 28 days"),
+            valueText: "—",
+            detailText: "SDNN and RMSSD maintain separate baselines"
+        )
+    }
+
+    private func unavailableHeartRatePart(for current: DailyHealthMetric) -> ScorePart {
+        ScorePart(
+            name: "Heart rate",
+            state: .building("Comparable heart-rate channel unavailable or baseline building"),
+            valueText: current.bestRestingHR.map { "\($0) bpm" } ?? "—",
+            detailText: "Sleeping and daytime resting heart rate maintain separate baselines"
+        )
+    }
+
+    private func unavailableSleepPart(for current: DailyHealthMetric) -> ScorePart {
+        ScorePart(
+            name: "Sleep (last night)",
+            state: .building(current.sleepOverrideStatus == .notTracked
+                ? "Excluded at your request"
+                : current.sleepLikelyPartial ? "Possible incomplete recording" : "No complete sleep duration"),
+            valueText: current.sleepTotalMinutes.map(formatMinutes) ?? "—",
+            detailText: current.sleepOverrideStatus == .notTracked
+                ? "Not tracked for this night at your request"
+                : "Sleep must be complete before it can affect the score",
+            sleepOverrideStatus: current.sleepOverrideStatus
+        )
+    }
+
+    private func comparableHistory(
+        for current: DailyHealthMetric,
+        excludingRecentDays: Int
+    ) -> [DailyHealthMetric] {
+        baselineMetrics(days: 60).filter { metric in
+            calendarDaysBetween(metric.date, and: now) > excludingRecentDays
+        }
+    }
+
+    private func hrvValue(_ metric: DailyHealthMetric, channel: HRVChannel) -> Double? {
+        switch channel {
+        case .nocturnalSDNN:
+            guard metric.sleepIsTrustworthy else { return nil }
+            return metric.nocturnalHRV
+        case .restingRMSSD: return metric.hrvRMSSD
+        case .opportunisticSDNN: return metric.hrvSDNN
+        }
+    }
+
+    private func heartRateValue(_ metric: DailyHealthMetric, channel: HeartRateChannel) -> Double? {
+        switch channel {
+        case .sleeping:
+            guard metric.sleepIsTrustworthy else { return nil }
+            return metric.sleepingHR.map(Double.init)
+        case .daytimeResting: return metric.restingHR.map(Double.init)
+        }
+    }
+
+    private func hrvSource(_ metric: DailyHealthMetric, channel: HRVChannel) -> String? {
+        switch channel {
+        case .nocturnalSDNN: metric.hrvSourceBundleID ?? metric.source
+        case .restingRMSSD, .opportunisticSDNN: metric.hrvSourceBundleID ?? metric.source
+        }
+    }
+
+    private func heartRateSource(_ metric: DailyHealthMetric, channel: HeartRateChannel) -> String? {
+        switch channel {
+        case .sleeping: metric.sleepingHRSourceBundleID ?? metric.source
+        case .daytimeResting: metric.restingHRSourceBundleID ?? metric.source
+        }
+    }
+
+    private func hrvMeasurementQuality(_ metric: DailyHealthMetric, channel: HRVChannel) -> Double {
+        guard channel == .nocturnalSDNN, metric.source == "healthkit" else { return 1 }
+        guard let bins = metric.nocturnalHRVOccupiedBinCount,
+              let span = metric.nocturnalHRVSampleSpanMinutes else { return 0 }
+        return min(1, Double(bins) / Double(NocturnalAggregator.minHRVBins))
+            * min(1, Double(span) / Double(NocturnalAggregator.minimumSpanMinutes))
+    }
+
+    private func heartRateMeasurementQuality(_ metric: DailyHealthMetric, channel: HeartRateChannel) -> Double {
+        guard channel == .sleeping, metric.source == "healthkit" else { return 1 }
+        guard let bins = metric.sleepingHROccupiedBinCount,
+              let span = metric.sleepingHRSampleSpanMinutes else { return 0 }
+        return min(1, Double(bins) / Double(NocturnalAggregator.minSleepingHRBins))
+            * min(1, Double(span) / Double(NocturnalAggregator.minimumSpanMinutes))
+    }
+
+    private func sleepMeasurementQuality(_ metric: DailyHealthMetric) -> Double {
+        guard metric.source == "healthkit" else { return 1 }
+        guard let end = metric.sleepEnd, end <= now, metric.sleepStart != nil else { return 0 }
+        return metric.sleepLikelyPartial && !metric.sleepUserCorrected ? 0 : 1
+    }
+
+    private func baselineIsMature(_ dates: [Date]) -> Bool {
+        dates.count >= 21 && historySpanDays(dates) >= 28
+    }
+
+    private func historySpanDays(_ dates: [Date]) -> Int {
+        guard let first = dates.min(), let last = dates.max() else { return 0 }
+        return calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: first),
+            to: calendar.startOfDay(for: last)
+        ).day ?? 0
+    }
+
+    private func robustMedian(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2)
+            ? (sorted[middle - 1] + sorted[middle]) / 2
+            : sorted[middle]
+    }
+
+    private func medianAbsoluteDeviation(_ values: [Double], around median: Double) -> Double {
+        robustMedian(values.map { abs($0 - median) }) ?? 0
+    }
+
+    private func formatMinutes(_ minutes: Int) -> String {
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
+    }
+
+    private func recoveryProvenance(
+        analyticsID: String,
+        coverage: Double,
+        baseline: [DailyHealthMetric]
+    ) -> AnalyticsProvenance {
+        AnalyticsProvenance(
+            analyticsID: analyticsID,
+            analyticsVersion: RecoveryIndexV2.analyticsVersion,
+            formulaHash: RecoveryIndexV2.formulaHash,
+            baselineStart: baseline.map(\.date).min(),
+            baselineEnd: baseline.map(\.date).max(),
+            baselineCount: baseline.count,
+            coverage: coverage,
+            measurementClass: .productHeuristic,
+            generatedAt: now
+        )
+    }
+
     /// User-facing clause per acute flag, phrased to read naturally alone or
     /// joined with others. Shared by the daily score and its evidence rows.
     static func acuteReasonClause(_ flag: String) -> String? {
         switch flag {
-        case "HRV low today": return "HRV dipped below your normal range this morning"
+        case "HRV low today": return "HRV dipped below your usual observed range this morning"
         case "Sleeping HR elevated": return "your sleeping heart rate was elevated overnight"
         case "Resting HR elevated": return "your resting heart rate is running above your usual"
         case "Short sleep": return "you came up short on sleep last night"
@@ -356,8 +789,8 @@ extension RecoveryEngine {
             state: .ready(assessment.score),
             valueText: "\(Int(assessment.todayMs.rounded())) ms",
             detailText: assessment.belowRange
-                ? "Last night, below your normal range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
-                : "Last night, within your normal range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
+                ? "Last night, below your usual observed range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
+                : "Last night, within your usual observed range (baseline \(Int(assessment.baselineMs.rounded())) ms)"
         )
     }
 
@@ -470,21 +903,11 @@ extension RecoveryEngine {
         )
     }
 
-    /// Personalized nightly sleep need. Starts from an 8 h default (or a profile
-    /// override via `sleepNeedMinutes`) and only raises it for habitual long
-    /// sleepers — the 60th percentile of the last 30 nights — never lowering it
-    /// below 8 h, so chronic short sleep is still flagged as debt rather than
-    /// quietly redefined as sufficient.
+    /// Explicit, editable sleep target. Observed sleep duration is not used to
+    /// infer biological need; habitual short or long sleep must not silently
+    /// redefine the target.
     func personalizedSleepNeedMinutes() -> Int {
-        let base = max(300, latestHealthMetric()?.sleepNeedMinutes ?? 480)
-        // Only trustworthy nights set "normal" — a partial-wear fragment must
-        // not drag the personalized need down (baseline-contamination gotcha).
-        let nights = baselineMetrics(days: 30)
-            .filter(\.sleepIsTrustworthy)
-            .compactMap { $0.sleepTotalMinutes }.sorted()
-        guard nights.count >= 10 else { return base }
-        let p60 = nights[Int(Double(nights.count - 1) * 0.6)]
-        return min(600, max(base, p60))   // cap at 10 h
+        max(1, latestHealthMetric()?.sleepNeedMinutes ?? 480)
     }
 
     /// 7-day rolling HRV vs a 14–60 day baseline (last 7 days excluded from
@@ -527,7 +950,7 @@ extension RecoveryEngine {
             state: .ready(score),
             valueText: "\(Int(displayAvg.rounded())) ms",
             detailText: within
-                ? "7-day avg, within your normal range (baseline \(Int(displayMean.rounded())) ms)"
+                ? "7-day avg, within your usual observed range (baseline \(Int(displayMean.rounded())) ms)"
                 : "7-day avg vs \(Int(displayMean.rounded())) ms baseline"
         )
     }
@@ -591,83 +1014,74 @@ extension RecoveryEngine {
 
     // MARK: - Per-muscle
 
-    /// Exponential time constants (hours) per muscle group. Bigger movers and
-    /// long-stretch-position muscles show slower force recovery.
-    private static let muscleBaseTauHours: [String: Double] = [
-        "quadriceps": 30, "hamstrings": 32, "glutes": 28,
-        "lats": 28, "middle back": 28, "lower back": 34,
-        "chest": 26, "shoulders": 22,
-        "biceps": 20, "triceps": 20,
-        "calves": 18, "abdominals": 18, "forearms": 16, "traps": 22,
+    private static let trackedMuscles = [
+        "chest", "back", "lats", "upper back", "middle back", "lower back", "traps",
+        "shoulders", "biceps", "triceps", "quadriceps", "hamstrings", "glutes",
     ]
-    private static let trackedMuscles = ["chest", "lats", "shoulders", "biceps", "triceps", "quadriceps", "hamstrings", "glutes"]
 
     private func muscleRecoveryScores() -> [MuscleRecoveryScore] {
         let byID = exerciseByID
-        struct Load {
-            var remainingDeficit = 0.0
-            var slowestTau = 24.0
-            var lastTrained: Date?
-        }
-        var perMuscle: [String: Load] = [:]
+        struct SessionExposure { let endedAt: Date; let dose: Double }
+        var perMuscle: [String: [SessionExposure]] = [:]
 
         for workout in completed {
-            let hoursAgo = max(0, now.timeIntervalSince(workout.endedAt ?? workout.startedAt) / 3600)
-
-            // Fractional sets per muscle for this session (primary 1.0,
-            // secondary 0.5 — same convention as weekly muscle volume).
-            var sets: [String: Double] = [:]
-            var rpeSum: [String: Double] = [:]
-            var rpeCount: [String: Double] = [:]
+            let endedAt = workout.endedAt ?? workout.startedAt
+            guard endedAt <= now, now.timeIntervalSince(endedAt) <= 56 * 86_400 else { continue }
+            var sessionDose: [String: Double] = [:]
             for we in workout.exercises {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
-                let rpes = done.compactMap(\.rpe)
-                for muscle in exercise.primaryMuscles {
-                    sets[muscle, default: 0] += Double(done.count)
-                    if !rpes.isEmpty {
-                        rpeSum[muscle, default: 0] += rpes.reduce(0, +)
-                        rpeCount[muscle, default: 0] += Double(rpes.count)
+                for set in done {
+                    let effortFactor = min(1.2, 1 + 0.1 * max(0, (set.rpe ?? 8) - 8))
+                    // Exact muscles and taxonomy parents are credited once per
+                    // set at their strongest role. A row tagged as both lats
+                    // and upper back therefore contributes one Back set, not
+                    // two, while both child rows retain their exact exposure.
+                    var credited: [String: Double] = [:]
+                    for muscle in exercise.secondaryMuscles {
+                        credited[MuscleTaxonomy.canonical(muscle)] = 0.5
                     }
-                }
-                for muscle in exercise.secondaryMuscles {
-                    sets[muscle, default: 0] += Double(done.count) * 0.5
+                    for muscle in exercise.primaryMuscles {
+                        credited[MuscleTaxonomy.canonical(muscle)] = 1
+                    }
+                    var parentCredits: [String: Double] = [:]
+                    for (muscle, weight) in credited {
+                        let parent = MuscleTaxonomy.parent(of: muscle)
+                        guard MuscleTaxonomy.children[parent] != nil else { continue }
+                        parentCredits[parent] = max(parentCredits[parent] ?? 0, weight)
+                    }
+                    for (parent, weight) in parentCredits {
+                        credited[parent] = max(credited[parent] ?? 0, weight)
+                    }
+                    for (muscle, weight) in credited {
+                        sessionDose[muscle, default: 0] += weight * effortFactor
+                    }
                 }
             }
-
-            for (muscle, setCount) in sets {
-                var load = perMuscle[muscle] ?? Load()
-                if load.lastTrained.map({ workout.startedAt > $0 }) ?? true {
-                    load.lastTrained = workout.startedAt
-                }
-                // Only the last 14 days meaningfully contribute to deficits.
-                if hoursAgo <= 14 * 24 {
-                    let avgRPE = rpeCount[muscle].flatMap { count -> Double? in
-                        count > 0 ? (rpeSum[muscle] ?? 0) / count : nil
-                    }
-                    // Proximity to failure prolongs recovery, continuously:
-                    // RPE 8 is the reference (1.0), each RPE point moves the
-                    // dose ±0.15 — so RPE 6 costs 0.7× and RPE 10 costs 1.3×
-                    // (Morán-Navarro 2017: failure sets need 24–48 h more than
-                    // sets stopped 2+ reps short). No logged RPE assumes 8.
-                    let effortFactor = avgRPE.map { min(1.3, max(0.55, 1.0 + ($0 - 8) * 0.15)) } ?? 1.0
-                    let dose = setCount * effortFactor
-                    let deficit = min(0.65, 0.12 * pow(dose, 0.75))
-                    let baseTau = Self.muscleBaseTauHours[muscle.lowercased()] ?? 24
-                    // True-failure sessions also *decay slower*, not just
-                    // deeper: stretch the time constant near RPE 10.
-                    let failureStretch = avgRPE.map { $0 >= 9.5 ? 1.2 : 1.0 } ?? 1.0
-                    let tau = baseTau * (0.8 + 0.05 * min(setCount, 8)) * failureStretch
-                    load.remainingDeficit += deficit * exp(-hoursAgo / tau)
-                    load.slowestTau = max(load.slowestTau, tau)
-                }
-                perMuscle[muscle] = load
+            for (muscle, dose) in sessionDose where dose > 0 {
+                perMuscle[muscle, default: []].append(SessionExposure(endedAt: endedAt, dose: dose))
             }
         }
 
+        let latestSessionEnd = perMuscle.values.flatMap { $0 }.map(\.endedAt).max()
+        var priorComparableDoses: [Double] = []
+        for (muscle, sessions) in perMuscle where muscle != "back" {
+            for session in sessions where latestSessionEnd.map({ session.endedAt < $0 }) ?? false {
+                priorComparableDoses.append(session.dose)
+            }
+        }
+        let allComparableDoses = perMuscle
+            .filter { $0.key != "back" }
+            .flatMap { $0.value.map(\.dose) }
+        let sharedReference = robustMedian(priorComparableDoses)
+            ?? robustMedian(allComparableDoses)
+            ?? 1
+        let referenceIsProvisional = priorComparableDoses.count < 6
+
         return Self.trackedMuscles.map { muscle in
-            guard let load = perMuscle[muscle], let lastTrained = load.lastTrained else {
+            guard let sessions = perMuscle[muscle],
+                  let lastTrained = sessions.map(\.endedAt).max() else {
                 return MuscleRecoveryScore(
                     muscle: muscle,
                     state: .building("No sets logged yet"),
@@ -675,80 +1089,76 @@ extension RecoveryEngine {
                     readyInHours: nil
                 )
             }
-            let remaining = min(0.85, load.remainingDeficit)
-            let score = min(1, max(0, 1 - remaining))
-            // Hours until remaining deficit decays below 0.10 (≈ 90% ready).
-            let readyIn: Int? = remaining > 0.10
-                ? Int((load.slowestTau * log(remaining / 0.10)).rounded(.up))
-                : nil
+            let decayedExposure = sessions.reduce(0.0) { total, session in
+                let hoursAgo = max(0, now.timeIntervalSince(session.endedAt) / 3600)
+                return total + session.dose * pow(2, -hoursAgo / 36)
+            }
+            let score = min(1, max(0, pow(2, -decayedExposure / max(sharedReference, 0.001))))
             return MuscleRecoveryScore(
                 muscle: muscle,
                 state: .ready(score),
                 lastTrainedDaysAgo: calendarDaysBetween(lastTrained, and: now),
-                readyInHours: readyIn
+                readyInHours: nil,
+                isProvisional: referenceIsProvisional,
+                recentExposure: decayedExposure,
+                referenceDose: sharedReference
             )
         }
     }
 
     // MARK: - Cardio
 
-    /// Edwards-style zone weights (minutes in zone × weight).
-    private static let zoneWeights: [Double] = [0.4, 1.0, 1.8, 3.0, 5.0]
-
     private func cardioRecovery() -> CardioRecovery {
-        struct Session {
-            let date: Date
+        enum Method: String {
+            case sessionRPE = "Session RPE load"
+            case measuredZones = "Measured zone-duration load"
+        }
+        struct Exposure {
+            let endedAt: Date
             let minutes: Double
-            let domain: CardioDomain
-            let weightedMinutes: Double
+            let load: Double
+            let method: Method
         }
 
-        var sessions: [Session] = []
+        var exposures: [Exposure] = []
         var everLoggedCardio = false
         for workout in completed {
-            for cardio in workout.cardioSessions {
-                // Yoga: restorative practice is zero aerobic stress; active
-                // practice counts only when a real HR was measured (matching
-                // the training-load classifier in RecoveryEngine).
-                if cardio.isYogaSession {
-                    guard !cardio.resolvedYogaStyle.isRestorative, cardio.avgHR != nil else { continue }
-                }
-                everLoggedCardio = true
-                guard calendarDaysBetween(workout.startedAt, and: now) <= 7 else { continue }
-                let minutes = Double(cardio.durationSeconds ?? 0) / 60
-                guard minutes > 0 else { continue }
-                let zones = zoneMinutes(
-                    zoneSeconds: cardio.hrZoneSeconds,
-                    avgHR: cardio.avgHR,
-                    durationSeconds: cardio.durationSeconds,
-                    effort: cardio.effort
-                )
-                sessions.append(Session(
-                    date: workout.startedAt,
-                    minutes: minutes,
-                    domain: dominantDomain(zones),
-                    weightedMinutes: zip(zones, Self.zoneWeights).reduce(0) { $0 + $1.0 * $1.1 }
-                ))
+            let cardioSessions = workout.cardioSessions.filter {
+                !$0.isYogaSession || !$0.resolvedYogaStyle.isRestorative
             }
-            // Imported HR-only workouts (no local sets) still stress the system.
-            if workout.hkWorkoutUUID != nil, workout.cardioSessions.isEmpty,
-               workout.exercises.flatMap(\.sets).isEmpty, workout.avgHR != nil,
-               !healthWorkoutLooksStrengthLike(workout) {
-                everLoggedCardio = true
-                guard calendarDaysBetween(workout.startedAt, and: now) <= 7 else { continue }
+            let importedCardio = workout.hkWorkoutUUID != nil
+                && workout.cardioSessions.isEmpty
+                && workout.exercises.flatMap(\.sets).isEmpty
+                && !healthWorkoutLooksStrengthLike(workout)
+            guard !cardioSessions.isEmpty || importedCardio else { continue }
+            everLoggedCardio = true
+            let endedAt = workout.endedAt ?? workout.startedAt
+            guard endedAt <= now, now.timeIntervalSince(endedAt) <= 56 * 86_400 else { continue }
+
+            let hasStrengthWork = workout.exercises.flatMap(\.sets).contains {
+                $0.completedAt != nil && $0.setType.countsAsWorkingVolume
+            }
+            if !hasStrengthWork, let rpe = workout.wholeSessionRPE {
                 let minutes = durationMinutes(workout)
-                let zones = zoneMinutes(
-                    zoneSeconds: workout.hrZoneSeconds,
-                    avgHR: workout.avgHR,
-                    durationSeconds: Int(minutes * 60),
-                    effort: nil
-                )
-                sessions.append(Session(
-                    date: workout.startedAt,
-                    minutes: minutes,
-                    domain: dominantDomain(zones),
-                    weightedMinutes: zip(zones, Self.zoneWeights).reduce(0) { $0 + $1.0 * $1.1 }
-                ))
+                if minutes > 0 {
+                    exposures.append(Exposure(
+                        endedAt: endedAt,
+                        minutes: minutes,
+                        load: minutes * min(10, max(0, rpe)),
+                        method: .sessionRPE
+                    ))
+                }
+                continue
+            }
+
+            for cardio in cardioSessions where cardio.sampleSeriesJSON != nil {
+                let zones = cardio.hrZoneSeconds
+                guard zones.count == 5, zones.contains(where: { $0 > 0 }) else { continue }
+                let minutes = Double(cardio.durationSeconds ?? zones.reduce(0, +)) / 60
+                let load = zip(zones, 1...5).reduce(0.0) { total, pair in
+                    total + Double(pair.0) / 60 * Double(pair.1)
+                }
+                exposures.append(Exposure(endedAt: cardio.endedAt ?? endedAt, minutes: minutes, load: load, method: .measuredZones))
             }
         }
 
@@ -758,81 +1168,44 @@ extension RecoveryEngine {
                 lastSessionText: nil,
                 dominantDomain: nil,
                 readyInHours: nil,
-                guidance: "Cardio recovery tracks how hard recent sessions hit your system — Zone 2 clears in about a day; hard intervals take 2–3."
+                guidance: "Cardio freshness is a recency-weighted exposure index, not measured physiological recovery."
             )
         }
 
-        var remaining = 0.0
-        var slowestTau = 14.0
-        for session in sessions {
-            let hoursAgo = max(0, now.timeIntervalSince(session.date) / 3600)
-            // Parasympathetic reactivation time constants by intensity domain
-            // (Stanley, Peake & Buchheit 2013).
-            let tau: Double = switch session.domain {
-            case .easy: 14
-            case .threshold: 26
-            case .severe: 40
-            }
-            let deficit = min(0.6, 0.006 * session.weightedMinutes)
-            remaining += deficit * exp(-hoursAgo / tau)
-            if deficit > 0.05 { slowestTau = max(slowestTau, tau) }
+        guard !exposures.isEmpty else {
+            return CardioRecovery(
+                state: .building("Rate overall session effort after cardio, or record measured zone time."),
+                lastSessionText: nil,
+                dominantDomain: nil,
+                readyInHours: nil,
+                guidance: "Average-heart-rate estimates and synthetic zone distributions do not feed cardio freshness."
+            )
         }
-        remaining = min(0.85, remaining)
-        let score = min(1, max(0, 1 - remaining))
-        let readyIn: Int? = remaining > 0.10
-            ? Int((slowestTau * log(remaining / 0.10)).rounded(.up))
-            : nil
 
-        let last = sessions.max { $0.date < $1.date }
-        let lastText: String? = last.map { session in
-            let days = calendarDaysBetween(session.date, and: now)
-            let when = days == 0 ? "today" : (days == 1 ? "yesterday" : "\(days)d ago")
-            return "\(Int(session.minutes.rounded()))min \(session.domain.rawValue.lowercased()) · \(when)"
+        let selectedMethod: Method = exposures.contains { $0.method == .sessionRPE } ? .sessionRPE : .measuredZones
+        let sameMethod = exposures.filter { $0.method == selectedMethod }.sorted { $0.endedAt < $1.endedAt }
+        guard let last = sameMethod.last else {
+            return CardioRecovery(state: .building("No comparable cardio load is available."), lastSessionText: nil, dominantDomain: nil, readyInHours: nil, guidance: "Load methods are never mixed.")
         }
+        let referenceLoads = sameMethod.dropLast().map(\.load)
+        let reference = robustMedian(referenceLoads) ?? robustMedian(sameMethod.map(\.load)) ?? 1
+        let decayed = sameMethod.reduce(0.0) { total, exposure in
+            let hoursAgo = max(0, now.timeIntervalSince(exposure.endedAt) / 3600)
+            return total + exposure.load * pow(2, -hoursAgo / 24)
+        }
+        let score = min(1, max(0, pow(2, -decayed / max(reference, 0.001))))
+        let days = calendarDaysBetween(last.endedAt, and: now)
+        let when = days == 0 ? "today" : (days == 1 ? "yesterday" : "\(days)d ago")
+        let lastText = "\(Int(last.minutes.rounded()))min · \(when)"
         return CardioRecovery(
             state: .ready(score),
-            lastSessionText: lastText ?? "None in the last week",
-            dominantDomain: last?.domain,
-            readyInHours: readyIn,
-            guidance: cardioGuidance(score: score, domain: last?.domain)
+            lastSessionText: lastText,
+            dominantDomain: nil,
+            readyInHours: nil,
+            guidance: "A score of 50 means the remaining modeled exposure equals one typical same-method session; it is not percent recovered.",
+            isProvisional: referenceLoads.count < 6,
+            methodLabel: selectedMethod.rawValue
         )
-    }
-
-    /// Minutes per HR zone, best-available source first: measured zone
-    /// seconds → estimate from average HR → estimate from logged effort.
-    private func zoneMinutes(zoneSeconds: [Int], avgHR: Int?, durationSeconds: Int?, effort: Int?) -> [Double] {
-        if zoneSeconds.count == 5, zoneSeconds.contains(where: { $0 > 0 }) {
-            return zoneSeconds.map { Double($0) / 60 }
-        }
-        if avgHR != nil {
-            let estimated = CardioMetrics.estimatedZoneSecondsArray(avgHR: avgHR, durationSeconds: durationSeconds)
-            if estimated.contains(where: { $0 > 0 }) {
-                return estimated.map { Double($0) / 60 }
-            }
-        }
-        let minutes = Double(durationSeconds ?? 0) / 60
-        var zones = [Double](repeating: 0, count: 5)
-        let zone: Int = switch Double(effort ?? 6) {
-        case 9...: 5
-        case 7...: 4
-        case 5.5...: 3
-        case 4...: 2
-        default: 1
-        }
-        zones[zone - 1] = minutes
-        return zones
-    }
-
-    private func dominantDomain(_ zoneMinutes: [Double]) -> CardioDomain {
-        guard zoneMinutes.count == 5 else { return .easy }
-        let easy = (zoneMinutes[0] + zoneMinutes[1]) * 1.0
-        let threshold = (zoneMinutes[2] + zoneMinutes[3]) * 2.4
-        let severe = zoneMinutes[4] * 5.0
-        // A meaningful chunk of Zone 5 defines the session even when most
-        // minutes are easy — intervals live between recoveries.
-        if zoneMinutes[4] >= 5 || severe >= max(easy, threshold) { return .severe }
-        if threshold >= easy { return .threshold }
-        return .easy
     }
 
     private func cardioGuidance(score: Double, domain: CardioDomain?) -> String {

@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import OSLog
 
 /// Plays ForgeFit's signature timer-end sound — the "forge strike", two
 /// anvil-like metallic notes a rising fifth apart (rest's done → go lift),
@@ -31,28 +32,80 @@ final class TimerChime: NSObject, AVAudioPlayerDelegate {
     nonisolated static let soundFileName = "ForgeTimerChime.caf"
 
     private var player: AVAudioPlayer?
+    private var playbackTask: Task<Void, Never>?
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "ForgeFit",
+        category: "TimerChime"
+    )
 
     func play() {
         guard Self.isEnabled,
               let url = Bundle.main.url(forResource: "ForgeTimerChime", withExtension: "caf") else { return }
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.duckOthers, .mixWithOthers])
-        try? session.setActive(true)
-        guard let player = try? AVAudioPlayer(contentsOf: url) else {
-            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-            return
+        stop()
+        // Activate off the main thread (setActive can block on a Bluetooth
+        // handoff), then build and play the chime. `.default` mode — this is a
+        // sound, not speech. If the player won't load, release the session so
+        // other audio doesn't stay ducked.
+        playbackTask = Task {
+            do {
+                try await AudioCueSession.shared.activate(mode: .default)
+            } catch {
+                logger.error("Audio session activation failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            guard !Task.isCancelled else {
+                try? await AudioCueSession.shared.deactivate()
+                return
+            }
+            do {
+                let player = try AVAudioPlayer(contentsOf: url)
+                guard !Task.isCancelled else {
+                    try? await AudioCueSession.shared.deactivate()
+                    return
+                }
+                self.player = player
+                player.delegate = self
+                player.volume = 0.9
+                guard player.play() else {
+                    self.player = nil
+                    logger.error("AVAudioPlayer declined to start the timer chime")
+                    try? await AudioCueSession.shared.deactivate()
+                    return
+                }
+            } catch {
+                logger.error("Timer chime player failed: \(error.localizedDescription, privacy: .public)")
+                try? await AudioCueSession.shared.deactivate()
+            }
         }
-        self.player = player
-        player.delegate = self
-        player.volume = 0.9
-        player.play()
+    }
+
+    func stop() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        player?.stop()
+        player = nil
+        Task { try? await AudioCueSession.shared.deactivate() }
     }
 
     /// Un-duck other audio the moment the chime finishes.
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
-            self.player = nil
-            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            if self.player === player {
+                self.player = nil
+            }
+            try? await AudioCueSession.shared.deactivate()
+        }
+    }
+
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor in
+            if self.player === player {
+                self.player = nil
+            }
+            if let error {
+                self.logger.error("Timer chime decode failed: \(error.localizedDescription, privacy: .public)")
+            }
+            try? await AudioCueSession.shared.deactivate()
         }
     }
 }

@@ -90,8 +90,16 @@ public struct HRZoneConfig: Codable, Sendable, Equatable {
     }
 }
 
-/// Shared persistence for `HRZoneConfig` in the app-group container so the
-/// watch and widget read the same personalized zones the phone writes.
+/// Shared persistence for `HRZoneConfig` in the app-group container, so the
+/// phone's widget extension reads the same personalized zones the phone app
+/// writes.
+///
+/// This is NOT how the zones reach Apple Watch — app groups are per-device, so
+/// the watch's container is a different container with different contents. The
+/// watch gets its zones over WatchConnectivity, in
+/// `WatchAppContext.hrZoneConfig`. Note also that `UserDefaults(suiteName:)`
+/// fails soft: without the app-group entitlement it falls back to `.standard`
+/// and reads/writes land somewhere nothing else looks, with no error.
 public enum HRZoneConfigStore {
     public static let suiteName = "group.org.xpetsllc.ForgeFit"
     public static let key = "forgefit.hrZoneConfig"

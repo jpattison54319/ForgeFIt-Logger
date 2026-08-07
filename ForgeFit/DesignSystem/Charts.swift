@@ -10,7 +10,7 @@ struct MetricPoint: Identifiable {
     let value: Double
 }
 
-enum TimeChartRange: String, CaseIterable, Identifiable {
+nonisolated enum TimeChartRange: String, CaseIterable, Identifiable, Sendable {
     case fourWeeks
     case twelveWeeks
     case oneYear
@@ -131,9 +131,8 @@ struct LineTrendChart: View {
     }
 }
 
-/// Daily HRV against a shaded ±1 SD "normal" band and a dashed baseline mean,
-/// with today's reading called out — so a single noisy night reads as "within
-/// my range" rather than an alarming isolated number.
+/// Daily HRV against a shaded 10th–90th percentile usual observed band and a
+/// dashed median. This is personal descriptive history, not a medical range.
 struct HRVBaselineBandChart: View {
     struct Point: Identifiable {
         let id = UUID()
@@ -142,8 +141,9 @@ struct HRVBaselineBandChart: View {
     }
 
     let points: [Point]
-    let mean: Double
-    let sd: Double
+    let median: Double
+    let lowerBound: Double
+    let upperBound: Double
 
     @Environment(\.theme) private var theme
 
@@ -151,11 +151,11 @@ struct HRVBaselineBandChart: View {
         Chart {
             ForEach(points) { point in
                 AreaMark(x: .value("Date", point.date),
-                         yStart: .value("Low", mean - sd),
-                         yEnd: .value("High", mean + sd))
+                         yStart: .value("Low", lowerBound),
+                         yEnd: .value("High", upperBound))
                     .foregroundStyle(theme.success.opacity(0.12))
             }
-            RuleMark(y: .value("Baseline", mean))
+            RuleMark(y: .value("Baseline median", median))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 .foregroundStyle(theme.textTertiary)
             ForEach(points) { point in
@@ -254,10 +254,22 @@ struct CriticalPaceCurveView: View {
 /// Red line + area fill with a dashed average, bpm on the y-axis and clock time
 /// on the x-axis. The caller only renders this when samples exist.
 struct HeartRateTrendChart: View {
+    struct Band: Identifiable, Equatable {
+        enum Kind: String, CaseIterable {
+            case cardio = "Cardio"
+            case conditioning = "Conditioning"
+            case yoga = "Yoga"
+        }
+
+        let id: UUID
+        let start: Date
+        let end: Date
+        let kind: Kind
+    }
+
     let samples: [(date: Date, bpm: Int)]
-    /// Time windows shaded behind the trace — the cardio efforts of a hybrid
-    /// session, in the same time domain as `samples`.
-    var bands: [(start: Date, end: Date)] = []
+    /// Typed timed-segment windows in the same time domain as `samples`.
+    var bands: [Band] = []
     var height: CGFloat = 160
 
     @Environment(\.theme) private var theme
@@ -267,15 +279,20 @@ struct HeartRateTrendChart: View {
         return Int((Double(samples.reduce(0) { $0 + $1.bpm }) / Double(samples.count)).rounded())
     }
 
+    private var legendKinds: [Band.Kind] {
+        Band.Kind.allCases.filter { kind in bands.contains { $0.kind == kind } }
+    }
+
     var body: some View {
-        Chart {
+        VStack(alignment: .leading, spacing: 6) {
+            Chart {
             // Declared first so the bands sit behind the line and area marks.
-            ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+            ForEach(bands) { band in
                 RectangleMark(
                     xStart: .value("Start", band.start),
                     xEnd: .value("End", band.end)
                 )
-                .foregroundStyle(theme.secondaryAccent.opacity(0.14))
+                .foregroundStyle(color(for: band.kind).opacity(0.16))
             }
             ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
                 LineMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
@@ -297,42 +314,89 @@ struct HeartRateTrendChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     .foregroundStyle(theme.textTertiary)
             }
-        }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
-                AxisValueLabel(format: .dateTime.hour().minute())
-                    .foregroundStyle(theme.textTertiary)
             }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
-                AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
-                AxisValueLabel().foregroundStyle(theme.textTertiary)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisValueLabel(format: .dateTime.hour().minute())
+                        .foregroundStyle(theme.textTertiary)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                    AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
+                    AxisValueLabel().foregroundStyle(theme.textTertiary)
+                }
+            }
+            .frame(height: bands.isEmpty ? height : max(64, height - 20))
+
+            if !legendKinds.isEmpty {
+                HStack(spacing: 12) {
+                    ForEach(legendKinds, id: \.self) { kind in
+                        HStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(color(for: kind))
+                                .frame(width: 10, height: 6)
+                            Text(kind.rawValue)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                }
             }
         }
         .frame(height: height)
     }
+
+    private func color(for kind: Band.Kind) -> Color {
+        switch kind {
+        case .cardio: theme.secondaryAccent
+        case .conditioning: theme.warmup
+        case .yoga: theme.accent
+        }
+    }
 }
 
 extension HeartRateTrendChart {
-    /// Cardio-effort windows for a hybrid workout's session HR chart. Only
-    /// live-tracked sessions carry trustworthy wall-clock windows — manually
-    /// logged ones are skipped rather than shading the wrong span. Pure-cardio
-    /// workouts return nothing: shading the entire chart says nothing.
-    static func cardioBands(for workout: WorkoutModel) -> [(start: Date, end: Date)] {
-        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap(\.workoutExerciseID))
-        let hasStrength = workout.exercises.contains { !cardioExerciseIDs.contains($0.id) }
-        guard hasStrength else { return [] }
-        return workout.cardioSessions
+    /// Trustworthy wall-clock windows for every timed modality. A block can
+    /// own summary and movement sessions; those collapse to its longest
+    /// window so one conditioning effort never paints itself twice.
+    static func modalityBands(for workout: WorkoutModel) -> [Band] {
+        let candidates = workout.cardioSessions
             .filter { $0.deletedAt == nil }
-            .compactMap { session -> (start: Date, end: Date)? in
+            .compactMap { session -> Band? in
                 guard let start = session.liveStartedAt else { return nil }
                 let end = session.endedAt
                     ?? session.durationSeconds.map { start.addingTimeInterval(Double($0)) }
                 guard let end, end > start else { return nil }
-                return (start, end)
+                let kind: Band.Kind
+                if session.isConditioningSession || session.workoutBlockID.flatMap({ id in
+                    workout.blocks.first { $0.id == id }?.kind
+                }) == .conditioning {
+                    kind = .conditioning
+                } else if session.isYogaSession {
+                    kind = .yoga
+                } else {
+                    kind = .cardio
+                }
+                return Band(id: session.id, start: start, end: end, kind: kind)
             }
-            .sorted { $0.start < $1.start }
+
+        var collapsed: [String: Band] = [:]
+        for band in candidates {
+            let session = workout.cardioSessions.first { $0.id == band.id }
+            let key = session?.workoutBlockID.map { "block-\($0.uuidString)" }
+                ?? "session-\(band.id.uuidString)"
+            let existing = collapsed[key]
+            if existing == nil || band.end.timeIntervalSince(band.start) > existing!.end.timeIntervalSince(existing!.start) {
+                collapsed[key] = band
+            }
+        }
+        return collapsed.values.sorted { $0.start < $1.start }
+    }
+
+    /// Source-compatible name retained for existing call sites.
+    static func cardioBands(for workout: WorkoutModel) -> [Band] {
+        modalityBands(for: workout)
     }
 }
 

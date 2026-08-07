@@ -50,6 +50,23 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Expensive history/Health maintenance is useful on an idle foreground, but
+/// it must never compete with the live logger for the first interactive frames
+/// after an app switch.
+enum LiveWorkoutLifecyclePolicy {
+    static func shouldRunForegroundMaintenance(hasActiveWorkout: Bool) -> Bool {
+        !hasActiveWorkout
+    }
+}
+
+private struct ExperimentWorkoutPrompt: Identifiable {
+    var id: UUID { workout.id }
+    let experiment: ExperimentModel
+    let workout: WorkoutModel
+    let trackers: [ExperimentTrackerModel]
+    let entries: [ExperimentEntryModel]
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -63,6 +80,7 @@ struct ContentView: View {
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
     @Query(filter: #Predicate<WorkoutModel> { $0.endedAt == nil && $0.deletedAt == nil }, sort: \WorkoutModel.startedAt, order: .reverse) private var activeWorkouts: [WorkoutModel]
     @Query(sort: \DailyCheckinModel.updatedAt, order: .reverse) private var checkins: [DailyCheckinModel]
+    @Query(sort: \ExperimentModel.startedAt, order: .reverse) private var experiments: [ExperimentModel]
 
     @State private var appState = AppState()
     @State private var social = SocialService.make()
@@ -83,19 +101,35 @@ struct ContentView: View {
     @State private var showQuickActionsEditor = false
     @State private var showLogWeightSheet = false
     @State private var cleanedOnboardingSlate = false
-    @State private var lastHealthWorkoutImportAt: Date?
     @State private var workoutCountReactionTask: Task<Void, Never>?
     @State private var readinessStampTask: Task<Void, Never>?
     @State private var liveSurfaceUpdateTask: Task<Void, Never>?
+    @State private var structuralLiveSurfaceUpdateTask: Task<Void, Never>?
     @State private var planDeduplicationTask: Task<Void, Never>?
+    @State private var pendingPlanMaintenance = false
+    @State private var pendingPlanMaintenanceVersionStamp = false
+    @State private var foregroundMaintenanceTask: Task<Void, Never>?
+    @State private var experimentEndTask: Task<Void, Never>?
+    @State private var experimentWorkoutPrompt: ExperimentWorkoutPrompt?
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
+    @State private var didFinishLaunchTasks = false
     // Tabs that have been visited at least once. They stay mounted behind the
     // current tab (keep-resident) so their @State-held Memo caches survive —
     // switching back is instant instead of re-running full-history analytics in
     // `body`. Seeded lazily (only the first tab mounts at launch).
     @State private var mountedTabs: Set<AppTab> = []
-    @State private var showBootSplash = true
+    /// A tab-bar tap always means "show this tab's root", including a tap on
+    /// the already-selected tab. Kept separate per tab so resetting one stack
+    /// does not disturb the other resident tabs or their memoized analytics.
+    @State private var tabRootRequestIDs: [AppTab: Int] = [:]
+    /// True while the software keyboard is up — hides the floating tab bar /
+    /// quick-action bubble so keyboard avoidance can't lift them into view.
+    @State private var keyboardVisible = false
+    /// Local-log → cloud pipeline (backup + community). Built once the shell
+    /// appears; see `SyncCoordinator`.
+    @State private var syncCoordinator: SyncCoordinator?
+    @State private var needsForcedLaunchSync = true
     // First launch only; UI-test launch hooks skip it.
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didOnboard")
         && UserDefaults.standard.string(forKey: "initialTab") == nil
@@ -105,6 +139,14 @@ struct ContentView: View {
 
     private var activeWorkout: WorkoutModel? {
         activeWorkouts.first
+    }
+
+    private var experimentScheduleRevision: [String] {
+        experiments.filter {
+            $0.deletedAt == nil && $0.stateRaw == ExperimentLifecycleService.activeState
+        }.map {
+            "\($0.id.uuidString)|\($0.plannedEndAt.timeIntervalSinceReferenceDate)"
+        }
     }
 
     /// The single source of truth for the app's appearance: combines the
@@ -148,37 +190,70 @@ struct ContentView: View {
     // purely for the type-checker: as one expression it exceeded the
     // reasonable-time limit once the deep-link hook landed.
     private var presentedShell: some View {
-        ZStack {
-            appShell
-
-            if showBootSplash {
-                BootSplashView()
-                    .transition(.opacity)
-                    .zIndex(1)
-            }
-        }
+        appShell
             .environment(appState)
             .environment(social)
             .environment(\.theme, activeTheme)
             .preferredColorScheme(resolvedColorScheme)
             .tint(activeTheme.accent)
-            .task { await social.bootstrap() }
+            .task {
+                await social.bootstrap()
+                // The sync pipeline: watches every SwiftData save and keeps
+                // backup + community converged with the local log (see
+                // SyncCoordinator). The forced launch pass publishes history
+                // for accounts that opted in before backfill existed and
+                // catches up anything done offline last session.
+                if syncCoordinator == nil {
+                    let coordinator = SyncCoordinator(social: social, container: modelContext.container)
+                    coordinator.start()
+                    syncCoordinator = coordinator
+                }
+                // Reconcile is a full local/remote history pass for opted-in
+                // users. The foreground-maintenance lane owns it after the
+                // first interaction window instead of startup owning it.
+                if didFinishLaunchTasks, scenePhase == .active, activeWorkout == nil {
+                    scheduleForegroundMaintenance()
+                }
+            }
             .fullScreenCover(isPresented: $appState.showingLogger) {
             if let activeWorkout = activeWorkoutForPresentation() {
                 // No `injectedHistory:` — the logger snapshots history itself,
                 // so the per-save re-fetch of `workouts` never hands the
                 // logger a new array identity mid-session.
-                ActiveWorkoutLoggerView(
-                    workout: activeWorkout,
-                    exercises: exercises,
-                    setupNotes: setupNotes,
-                    onMinimize: { appState.showingLogger = false },
-                    onFinished: { publishFinishedWorkout($0) }
-                )
-                .environment(social)
+                if activeWorkout.conditioningPlanSnapshotJSON != nil && activeWorkout.blocks.isEmpty {
+                    ConditioningWorkoutView(
+                        workout: activeWorkout,
+                        exercises: exercises,
+                        onMinimize: { appState.showingLogger = false },
+                        onFinished: { _ in
+                            appState.showingLogger = false
+                            Task { await syncCoordinator?.flushNow() }
+                        }
+                    )
+                } else {
+                    ActiveWorkoutLoggerView(
+                        workout: activeWorkout,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        onMinimize: { appState.showingLogger = false },
+                        // The finish save already queued the share via the change
+                        // feed; skipping the debounce makes it appear immediately.
+                        onFinished: { _ in Task { await syncCoordinator?.flushNow() } }
+                    )
+                    .environment(social)
+                }
             }
             }
-            .fullScreenCover(isPresented: $showOnboarding) {
+            .fullScreenCover(isPresented: Binding(
+                get: {
+                    #if DEBUG
+                    showOnboarding && !ProcessInfo.processInfo.arguments.contains("--skip-onboarding")
+                    #else
+                    showOnboarding
+                    #endif
+                },
+                set: { showOnboarding = $0 }
+            )) {
                 // `showOnboarding` can already be `true` on the very first
                 // render (computed synchronously at launch, unlike other
                 // presentations that flip true reactively later) — a
@@ -236,6 +311,19 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .forgeFitAccountResetDidComplete)) { _ in
                 handleAccountReset()
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: ExperimentNotificationRoute.openRequested
+                )
+            ) { _ in
+                consumePendingExperimentNotificationRoute()
+            }
+            // Launch tasks perform the initial reconcile once. This handler is
+            // only for a real schedule mutation; `initial: true` previously
+            // duplicated synchronous SwiftData fetches during first render.
+            .onChange(of: experimentScheduleRevision) {
+                reconcileExperimentLifecycle()
+            }
             .onChange(of: scenePhase) { _, phase in handleScenePhaseChange(phase) }
             .onOpenURL { url in handleDeepLink(url) }
     }
@@ -255,7 +343,9 @@ struct ContentView: View {
             // and coalesced: the refreshes run full recovery/analytics passes, and
             // doing that synchronously stalls the dismiss/pop animation the user
             // is watching (first delete used to lag and drop its dismissal).
-            .onChange(of: completedWorkoutCount) { handleCompletedWorkoutCountChange() }
+            .onChange(of: completedWorkoutCount) { oldCount, newCount in
+                handleCompletedWorkoutCountChange(oldCount: oldCount, newCount: newCount)
+            }
             // Quick-action presentations live on this handler layer, not on
             // `presentedShell`'s already-at-budget modifier expression. Theme
             // is pinned explicitly, mirroring the onboarding cover.
@@ -263,6 +353,17 @@ struct ContentView: View {
                 LogWeightSheet()
                     .environment(\.theme, activeTheme)
                     .preferredColorScheme(resolvedColorScheme)
+            }
+            .sheet(item: $experimentWorkoutPrompt) { prompt in
+                ExperimentLogUpdateSheet(
+                    experiment: prompt.experiment,
+                    trackers: prompt.trackers,
+                    entries: prompt.entries,
+                    workoutID: prompt.workout.id,
+                    initialDate: prompt.workout.startedAt
+                )
+                .environment(\.theme, activeTheme)
+                .preferredColorScheme(resolvedColorScheme)
             }
             .fullScreenCover(
                 isPresented: $showQuickActionsEditor,
@@ -290,10 +391,23 @@ struct ContentView: View {
 
     private var shellRealtimeHandlers: some View {
         presentedShell
+            // Fresh opt-in flips status to .active — publish the user's
+            // existing history right then, not on the next launch.
+            .onChange(of: social.status) { _, status in
+                guard status == .active else { return }
+                Task { await syncCoordinator?.syncNow(force: true) }
+            }
             .onChange(of: showOnboarding) { _, isPresented in handleOnboardingPresentationChange(isPresented) }
             .onChange(of: appState.startRequestID) { _, requestID in handleStartRequestChange(requestID) }
-            .onChange(of: routineListVersion) { WatchLink.shared.publishState() }
-            .onChange(of: planRowsVersion) { schedulePlanDeduplication() }
+            .onChange(of: routineListVersion) {
+                WatchLink.shared.invalidateRoutineSummaryCache()
+                WatchLink.shared.publishState()
+            }
+            .onChange(of: planRowsVersion) {
+                guard hasDuplicatePlanRows else { return }
+                schedulePlanDeduplication()
+            }
+            .onChange(of: exercises.count) { schedulePlanDeduplication() }
             .onChange(of: todayCheckinTags) { _, _ in handleTodayCheckinChange() }
             .onChange(of: restTimer.endsAt) { _, endsAt in handleRestTimerChange(endsAt) }
             // Interval step transitions repaint the watch + Live Activity.
@@ -346,7 +460,7 @@ struct ContentView: View {
                     .padding(.horizontal, Space.lg)
                     .transition(Motion.riseIn(reduceMotion: reduceMotion))
                 }
-                ForgeTabBar(selection: $appState.selectedTab)
+                ForgeTabBar(selection: $appState.selectedTab, onSelect: selectTab)
             }
             .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: activeWorkout == nil)
             .padding(.bottom, Space.sm)
@@ -359,7 +473,17 @@ struct ContentView: View {
             // untouched by this modifier, so its own ScrollView content still
             // gets normal keyboard avoidance/insetting.
             .ignoresSafeArea(.keyboard, edges: .bottom)
+            // Belt to the exemption's suspenders: on a pushed editor
+            // (RoutineEditorView) SwiftUI's automatic keyboard avoidance was
+            // lifting this whole layer — tab bar + quick-action bubble — into a
+            // black gap above the keyboard anyway. Behind the keyboard it's
+            // unusable, so hide it outright while editing; it can't be raised
+            // into view if it isn't drawn.
+            .opacity(keyboardVisible ? 0 : 1)
+            .allowsHitTesting(!keyboardVisible)
+            .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: keyboardVisible)
         }
+        .onKeyboardVisibilityChange($keyboardVisible)
     }
 
     /// Dimmed tap-catcher behind the open quick-action fan: above the tab
@@ -418,6 +542,7 @@ struct ContentView: View {
             ForEach(AppTab.allCases) { tab in
                 if appState.selectedTab == tab || mountedTabs.contains(tab) {
                     tabContent(for: tab)
+                        .environment(\.tabRootRequestID, tabRootRequestIDs[tab, default: 0])
                         .opacity(appState.selectedTab == tab ? 1 : 0)
                         .allowsHitTesting(appState.selectedTab == tab)
                         .accessibilityHidden(appState.selectedTab != tab)
@@ -441,6 +566,14 @@ struct ContentView: View {
             InsightsView(workouts: workouts, exercises: exercises)
         case .profile:
             ProfileView(workouts: workouts, exercises: exercises)
+        }
+    }
+
+    private func selectTab(_ tab: AppTab) {
+        tabRootRequestIDs[tab, default: 0] &+= 1
+        guard appState.selectedTab != tab else { return }
+        withAnimation(.bouncy(duration: 0.42, extraBounce: 0.06)) {
+            appState.selectedTab = tab
         }
     }
 
@@ -468,10 +601,31 @@ struct ContentView: View {
         // forced publish on every start/adjust/skip/end. Publishing here too
         // doubled the SwiftData-fetch + WCSession-serialize cost on the main
         // thread at exactly the moments a lifter starts scrolling.
-        // Structural change (start/skip/replace, not a per-second tick):
-        // the phone-local surfaces still update immediately.
+        // Structural external surfaces may trail local feedback by 500 ms.
+        // Coalescing keeps ActivityKit, widget writes, and timeline reloads out
+        // of the completion gesture's run-loop turn.
+        scheduleStructuralLiveSurfaceUpdate()
+    }
+
+    private func scheduleStructuralLiveSurfaceUpdate() {
+        structuralLiveSurfaceUpdateTask?.cancel()
+        structuralLiveSurfaceUpdateTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            structuralLiveSurfaceUpdateTask = nil
+            publishStructuralLiveSurfacesNow()
+        }
+    }
+
+    private func publishStructuralLiveSurfacesNow() {
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
         updateWidgetSnapshot()
+    }
+
+    private func flushStructuralLiveSurfaceUpdate() {
+        structuralLiveSurfaceUpdateTask?.cancel()
+        structuralLiveSurfaceUpdateTask = nil
+        publishStructuralLiveSurfacesNow()
     }
 
     private func handleTodayCheckinChange() {
@@ -481,29 +635,139 @@ struct ContentView: View {
         ReadinessDelivery.shared.refreshMorningNotification()
     }
 
-    private func handleCompletedWorkoutCountChange() {
+    private func handleCompletedWorkoutCountChange(oldCount: Int, newCount: Int) {
         workoutCountReactionTask?.cancel()
         workoutCountReactionTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             updateWidgetSnapshot()
             WatchLink.shared.publishState()
+
+            guard newCount > oldCount else { return }
+            for _ in 0..<8 where appState.showingLogger {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+            }
+            guard !appState.showingLogger, scenePhase == .active else { return }
+            experimentWorkoutPrompt = makeExperimentWorkoutPrompt()
+        }
+    }
+
+    /// A per-workout tracker belongs to the workout's start instant, matching
+    /// the exact `[start, end)` membership used by results and comparisons.
+    /// The short recency gate prevents a bulk Health history import from
+    /// presenting a stale check-in during launch.
+    private func makeExperimentWorkoutPrompt(now: Date = .now) -> ExperimentWorkoutPrompt? {
+        let recentCutoff = now.addingTimeInterval(-10 * 60)
+        let completedCandidates = workouts.filter {
+            $0.deletedAt == nil
+                && $0.endedAt != nil
+                && ($0.endedAt ?? Date.distantPast) >= recentCutoff
+        }
+        guard let workout = completedCandidates.max(by: {
+            ($0.endedAt ?? Date.distantPast) < ($1.endedAt ?? Date.distantPast)
+        }) else { return nil }
+
+        do {
+            _ = try ExperimentLifecycleService.reconcile(in: modelContext, now: now)
+            let experiment = try modelContext.fetch(
+                FetchDescriptor<ExperimentModel>(
+                    sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+                )
+            )
+            .first {
+                $0.deletedAt == nil
+                    && workout.startedAt >= $0.startedAt
+                    && workout.startedAt < ($0.endedAt ?? $0.plannedEndAt)
+            }
+            guard let experiment else { return nil }
+
+            let trackers = try modelContext.fetch(FetchDescriptor<ExperimentTrackerModel>())
+                .filter {
+                    $0.experimentID == experiment.id
+                        && $0.deletedAt == nil
+                        && $0.cadence == .perWorkout
+                }
+                .sorted { $0.position < $1.position }
+            guard !trackers.isEmpty else { return nil }
+
+            let entries = try modelContext.fetch(FetchDescriptor<ExperimentEntryModel>())
+                .filter {
+                    $0.experimentID == experiment.id && $0.deletedAt == nil
+                }
+            let alreadyLoggedTrackerIDs = Set(entries.compactMap { entry -> UUID? in
+                entry.workoutID == workout.id ? entry.trackerID : nil
+            })
+            let pendingTrackers = trackers.filter { !alreadyLoggedTrackerIDs.contains($0.id) }
+                .filter {
+                    workout.startedAt >= $0.createdAt
+                        && workout.startedAt < ($0.archivedAt ?? experiment.endedAt
+                            ?? experiment.plannedEndAt)
+                }
+            guard !pendingTrackers.isEmpty else { return nil }
+            return ExperimentWorkoutPrompt(
+                experiment: experiment,
+                workout: workout,
+                trackers: pendingTrackers,
+                entries: entries
+            )
+        } catch {
+            return nil
         }
     }
 
     /// CloudKit may deliver several related rows in a short burst. Debounce the
     /// cleanup so one pass handles the batch; a resulting query change is safe
     /// because the follow-up pass is idempotent and performs no save.
-    private func schedulePlanDeduplication() {
+    private var hasDuplicatePlanRows: Bool {
+        routines.count != Set(routines.map(\.id)).count
+            || routineFolders.count != Set(routineFolders.map(\.id)).count
+    }
+
+    private func scheduleLaunchPlanMaintenanceIfNeeded() {
+        let storedVersion = UserDefaults.standard.integer(
+            forKey: PlanMaintenancePolicy.defaultsKey
+        )
+        guard PlanMaintenancePolicy.needsLaunchAudit(
+            storedVersion: storedVersion
+        ) else { return }
+        schedulePlanDeduplication(stampLaunchAudit: true)
+    }
+
+    private func schedulePlanDeduplication(stampLaunchAudit: Bool = false) {
+        pendingPlanMaintenance = true
+        pendingPlanMaintenanceVersionStamp = pendingPlanMaintenanceVersionStamp
+            || stampLaunchAudit
         planDeduplicationTask?.cancel()
+        planDeduplicationTask = nil
+        guard scenePhase == .active, activeWorkout == nil else { return }
+
+        let worker = PlanMaintenanceWorker(modelContainer: modelContext.container)
         planDeduplicationTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(750))
-            guard !Task.isCancelled else { return }
+            // Debounce CloudKit batches. The scan itself runs on the worker's
+            // private context, so this delay is coalescing rather than an
+            // attempt to hide main-thread work later in the launch.
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled,
+                  scenePhase == .active,
+                  activeWorkout == nil else { return }
             do {
-                try RoutineDeduplicator.removeDuplicates(in: modelContext)
+                _ = try await worker.removeDuplicates()
+                guard !Task.isCancelled else { return }
+                pendingPlanMaintenance = false
+                if pendingPlanMaintenanceVersionStamp {
+                    UserDefaults.standard.set(
+                        PlanMaintenancePolicy.currentVersion,
+                        forKey: PlanMaintenancePolicy.defaultsKey
+                    )
+                    pendingPlanMaintenanceVersionStamp = false
+                }
+            } catch is CancellationError {
+                return
             } catch {
                 assertionFailure("Plan deduplication after CloudKit change failed: \(error)")
             }
+            planDeduplicationTask = nil
         }
     }
 
@@ -552,8 +816,24 @@ struct ContentView: View {
             }
         case "insights":
             appState.selectedTab = .insights
+        case "experiment":
+            guard let experimentID = url.pathComponents.dropFirst()
+                .first
+                .flatMap(UUID.init) else {
+                appState.selectedTab = .insights
+                return
+            }
+            UserDefaults.standard.set(
+                experimentID.uuidString,
+                forKey: ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
+            )
+            appState.selectedTab = .insights
+            NotificationCenter.default.post(
+                name: ExperimentNotificationRoute.routeReady,
+                object: nil
+            )
         case "u":   // forgefit://u/<handle> — visit a friend's profile
-            if let handle = SocialLinks.handle(from: url) {
+            if FeatureFlags.social, let handle = SocialLinks.handle(from: url) {
                 social.pendingFollowHandle = handle
                 appState.selectedTab = .profile
             }
@@ -573,16 +853,16 @@ struct ContentView: View {
         }
     }
 
-    /// Projects a just-finished workout to its health-safe shared form
-    /// (strength, cardio, or yoga — health + GPS stripped) and publishes it
-    /// (no-op unless the user opted into social). Skips a genuinely empty one.
-    private func publishFinishedWorkout(_ workout: WorkoutModel) {
-        guard social.isOptedIn else { return }
-        let names = Dictionary(exercises.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        let dto = SocialWorkoutMapper.shared(from: workout, exerciseNames: names)
-        guard !(dto.exercises.isEmpty && dto.cardioSessions.isEmpty) else { return }
-        let summary = dto.summary
-        Task { await social.publish(dto, summary: summary) }
+    private func consumePendingExperimentNotificationRoute() {
+        guard let rawURL = UserDefaults.standard.string(
+            forKey: ExperimentNotificationRoute.pendingURLDefaultsKey
+        ), let url = URL(string: rawURL) else {
+            return
+        }
+        UserDefaults.standard.removeObject(
+            forKey: ExperimentNotificationRoute.pendingURLDefaultsKey
+        )
+        handleDeepLink(url)
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
@@ -596,51 +876,117 @@ struct ContentView: View {
         }
         if phase == .active {
             UserDefaults.standard.set(Date(), forKey: "lastActiveDate")
-            Task { await importHealthWorkoutHistory() }
-            // Force: every app open must pick up the day's new Health data
-            // (overnight sleep, morning HRV, weigh-ins) so readiness is
-            // never stale. Re-write the idle widget once fresh metrics land so
-            // it isn't hours stale between app opens.
-            Task { @MainActor in
-                await HealthMetricsStore.shared.refreshNow()
-                if activeWorkout == nil { updateWidgetSnapshot() }
-            }
+            reconcileLiveRuntimeOwnership()
+            reconcileExperimentLifecycle()
+            BackupScheduler.shared.resumeAfterForeground()
             NotificationScheduler.shared.refreshStatus()
-            // Covers "the app was already running when the month rolled
-            // over" — launch alone would miss it.
-            generateWrappedIfDue()
             updateWidgetSnapshot()
+
+            if LiveWorkoutLifecyclePolicy.shouldRunForegroundMaintenance(
+                hasActiveWorkout: activeWorkout != nil
+            ) {
+                scheduleForegroundMaintenance()
+                scheduleLaunchPlanMaintenanceIfNeeded()
+                if pendingPlanMaintenance, planDeduplicationTask == nil {
+                    schedulePlanDeduplication()
+                }
+            } else {
+                foregroundMaintenanceTask?.cancel()
+                foregroundMaintenanceTask = nil
+            }
         } else if phase == .background {
+            experimentEndTask?.cancel()
+            experimentEndTask = nil
+            planDeduplicationTask?.cancel()
+            planDeduplicationTask = nil
+            foregroundMaintenanceTask?.cancel()
+            foregroundMaintenanceTask = nil
             // Leave the widget with the freshest snapshot we have — otherwise it
             // would serve whatever it last read until the next app open.
+            flushStructuralLiveSurfaceUpdate()
+            WatchLink.shared.publishState(policy: .immediate)
+            // Training data is already durable in SwiftData. A full-history
+            // iCloud projection here can be suspended mid-snapshot and resume
+            // over the logger's first foreground frames, so keep it deferred
+            // until the app is idle and no workout is live.
+            BackupScheduler.shared.pauseForBackground()
+        }
+    }
+
+    /// Let the foreground draw and accept input before starting maintenance.
+    /// The work is deliberately serialized so Health/store passes do not all
+    /// converge on the main actor in the same frame.
+    private func scheduleForegroundMaintenance() {
+        guard didFinishLaunchTasks else { return }
+        foregroundMaintenanceTask?.cancel()
+        foregroundMaintenanceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard !Task.isCancelled, activeWorkout == nil else { return }
+
+            await HealthMetricsStore.shared.refreshIfStaleNow()
+            guard !Task.isCancelled, activeWorkout == nil else { return }
+
+            await importHealthWorkoutHistory()
+            guard !Task.isCancelled, activeWorkout == nil else { return }
+
+            let forceSocialSync = needsForcedLaunchSync
+            await syncCoordinator?.syncNow(force: forceSocialSync)
+            if syncCoordinator != nil {
+                needsForcedLaunchSync = false
+            }
+            guard !Task.isCancelled, activeWorkout == nil else { return }
+
+            // Check due-state before loading report inputs (the service lazily
+            // builds only when a report is actually missing or refreshable).
+            await generateWrappedIfDue()
             updateWidgetSnapshot()
-            // Flush any pending (debounced) backup before iOS suspends us.
-            BackupScheduler.shared.exportNow()
+            foregroundMaintenanceTask = nil
         }
     }
 
     /// Wrapped generation is launch/foreground-driven (idempotent, keyed by
     /// period — cheap when nothing is due). A newly created report gets the
     /// one-shot "ready" notification; the Home card appears either way.
-    private func generateWrappedIfDue() {
-        let created = WrappedReportService.generateIfDue(in: modelContext)
+    private func generateWrappedIfDue() async {
+        let worker = WrappedReportWorker(modelContainer: modelContext.container)
+        let created = await worker.generateIfDue(
+            healthMetrics: HealthMetricsStore.shared.metrics,
+            weightUnit: Fmt.unit
+        )
         if let newest = created.first {
             NotificationScheduler.shared.scheduleWrappedReady(
-                reportTitle: WrappedReportService.title(for: newest)
+                reportTitle: newest.title
             )
         }
     }
 
     private func handleActiveWorkoutChange(oldID: UUID?, newID: UUID?) {
-        WatchLink.shared.publishState(force: newID != nil)
+        structuralLiveSurfaceUpdateTask?.cancel()
+        structuralLiveSurfaceUpdateTask = nil
+        BackupScheduler.shared.setLiveWorkoutActive(newID != nil)
+        if newID != nil {
+            planDeduplicationTask?.cancel()
+            planDeduplicationTask = nil
+            foregroundMaintenanceTask?.cancel()
+            foregroundMaintenanceTask = nil
+        } else if scenePhase == .active {
+            scheduleForegroundMaintenance()
+            if pendingPlanMaintenance || hasDuplicatePlanRows {
+                schedulePlanDeduplication()
+            }
+        }
+        WatchLink.shared.publishState(policy: .immediate)
         if newID == nil {
+            // Backstop for externally removed workouts. Normal finish/discard
+            // paths already send their more specific terminal command.
+            WatchLink.shared.sendCommand(.workoutFinished)
             readinessStampTask?.cancel()
             liveSurfaceUpdateTask?.cancel()
-            WorkoutActivityController.shared.end()
-            RestTimerController.shared.skip()
-            IntervalRunnerHub.shared.stop()
-            LiveMetricsHub.shared.endSession()
+            WorkoutFinisher.cancelLiveRuntime()
         } else {
+            CardioRouteRecorder.shared.cancelIfOrphaned(
+                validSessionIDs: activeLiveCardioSessionIDs()
+            )
             // A workout can start from the watch or a deep link while the
             // quick-action fan is open; the bubble unmounts with the fan, so
             // it can never report the collapse — clear the scrim here.
@@ -663,6 +1009,26 @@ struct ContentView: View {
         }
     }
 
+    private func reconcileLiveRuntimeOwnership() {
+        guard activeWorkout != nil else {
+            WorkoutFinisher.cancelLiveRuntime()
+            return
+        }
+        CardioRouteRecorder.shared.cancelIfOrphaned(
+            validSessionIDs: activeLiveCardioSessionIDs()
+        )
+    }
+
+    private func activeLiveCardioSessionIDs() -> Set<UUID> {
+        guard let activeWorkout else { return [] }
+        return Set(activeWorkout.cardioSessions.compactMap { session in
+            guard session.deletedAt == nil,
+                  session.endedAt == nil,
+                  session.liveStartedAt != nil else { return nil }
+            return session.id
+        })
+    }
+
     private func scheduleReadinessStamp(for workout: WorkoutModel, delayMilliseconds: Int) {
         readinessStampTask?.cancel()
         readinessStampTask = Task { @MainActor in
@@ -671,12 +1037,9 @@ struct ContentView: View {
                   !appState.showingLogger,
                   workout.deletedAt == nil,
                   workout.readinessAtStart == nil else { return }
-            workout.readinessAtStart = Int(ReadinessReportFactory.report(
-                workouts: workouts,
-                exercises: exercises,
-                in: modelContext
-            ).displayScore * 100)
-            try? modelContext.save()
+            if ReadinessSurfacePublisher.applyCachedStart(to: workout) {
+                try? modelContext.save()
+            }
         }
     }
 
@@ -694,23 +1057,13 @@ struct ContentView: View {
     private func runLaunchTasksIfNeeded() async {
         guard !didStartLaunchTasks else { return }
         didStartLaunchTasks = true
-        let startedAt = Date()
 
         await launchTasks()
+        didFinishLaunchTasks = true
+        scheduleLaunchPlanMaintenanceIfNeeded()
 
-        // The branding beat is a first-impression device; a returning user
-        // just wants in. Warm launches drop the minimum hold and dismiss the
-        // splash as soon as launch tasks finish.
-        let isWarmLaunch = UserDefaults.standard.bool(forKey: "hasCompletedFirstLaunch")
-        UserDefaults.standard.set(true, forKey: "hasCompletedFirstLaunch")
-        let minimumSplashSeconds = isWarmLaunch ? 0 : 0.65
-        let elapsed = Date().timeIntervalSince(startedAt)
-        if elapsed < minimumSplashSeconds {
-            try? await Task.sleep(for: .seconds(minimumSplashSeconds - elapsed))
-        }
-
-        withAnimation(.easeOut(duration: 0.22)) {
-            showBootSplash = false
+        if scenePhase == .active, activeWorkout == nil {
+            scheduleForegroundMaintenance()
         }
 
         if shouldAutoStartRoutine {
@@ -782,8 +1135,8 @@ struct ContentView: View {
         // that was already active before the first render.
         if activeWorkout != nil {
             LiveMetricsHub.shared.beginSession()
+            BLEHeartRateService.shared.reconnectIfRemembered()
         }
-        BLEHeartRateService.shared.reconnectIfRemembered()
         await seedLaunchData()
         #if DEBUG
         // Forced-reset automation can rebuild the visible shell while the
@@ -804,8 +1157,17 @@ struct ContentView: View {
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
         }
+        // Hearts demo: plant friends' hearts on existing share-eligible
+        // workouts. Seeded at launch rather than on publish so the row is
+        // visible immediately in the simulator (and to screenshot
+        // automation) without having to finish a live workout first.
+        if ProcessInfo.processInfo.arguments.contains("--seed-social-hearts") {
+            let eligible = ((try? modelContext.fetch(
+                FetchDescriptor<WorkoutModel>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+            )) ?? []).filter(SocialBackfill.isEligible)
+            await social.seedDemoHearts(workoutIDs: eligible.prefix(12).map(\.id))
+        }
         #endif
-        generateWrappedIfDue()
         if let raw = UserDefaults.standard.string(forKey: "initialTab"),
            let tab = AppTab(rawValue: raw) {
             appState.selectedTab = tab
@@ -818,15 +1180,66 @@ struct ContentView: View {
             _ = WorkoutFactory.start(routine: routine, exercises: launchExercises, setupNotes: launchSetupNotes, in: modelContext)
             presentLoggerWhenActiveWorkoutIsReady()
         }
-        await importHealthWorkoutHistory()
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
-        NotificationScheduler.shared.activate()
+        consumePendingExperimentNotificationRoute()
+        reconcileExperimentLifecycle()
         ReadinessDelivery.shared.configure(container: modelContext.container)
         BackupScheduler.shared.configure(container: modelContext.container)
+        BackupScheduler.shared.setLiveWorkoutActive(activeWorkout != nil)
         BackupScheduler.shared.dailyCheckIfDue()
         updateWidgetSnapshot()
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+    }
+
+    /// Scheduled experiment endings are date truth, not notification truth:
+    /// iOS may never wake the process at the exact end instant. Materialize
+    /// expired rows whenever the app becomes usable, then rebuild the one
+    /// active experiment's bounded reminder set.
+    private func reconcileExperimentLifecycle() {
+        experimentEndTask?.cancel()
+        experimentEndTask = nil
+        do {
+            _ = try ExperimentLifecycleService.reconcile(in: modelContext)
+            guard let active = try ExperimentLifecycleService.activeExperiment(in: modelContext) else {
+                return
+            }
+            let trackers = try modelContext.fetch(FetchDescriptor<ExperimentTrackerModel>())
+                .filter { $0.experimentID == active.id && $0.deletedAt == nil && $0.archivedAt == nil }
+            let notificationSchedule = ExperimentNotificationScheduler.ScheduleSnapshot(
+                experiment: active,
+                trackers: trackers
+            )
+            Task {
+                _ = await ExperimentNotificationScheduler.schedule(
+                    notificationSchedule
+                )
+            }
+            let experimentID = active.id
+            let wait = active.plannedEndAt.timeIntervalSinceNow
+            guard wait > 0 else { return }
+            experimentEndTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .seconds(wait))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                let stillActive = try? ExperimentLifecycleService.activeExperiment(
+                    in: modelContext,
+                    now: .now
+                )
+                guard stillActive?.id == experimentID
+                        || stillActive == nil else {
+                    return
+                }
+                experimentEndTask = nil
+                reconcileExperimentLifecycle()
+            }
+        } catch {
+            // A lifecycle refresh must never block launch or foreground. The
+            // active/results surfaces retry through their own model queries.
+        }
     }
 
     #if DEBUG
@@ -890,28 +1303,18 @@ struct ContentView: View {
     }
 
     private func updateWidgetSnapshot() {
-        let snapshot: ForgeFitWidgetSnapshot
         if let activeWorkout {
-            snapshot = activeWorkoutSnapshot(activeWorkout)
+            ReadinessSurfacePublisher.publish(activeWorkoutSnapshot(activeWorkout))
+        } else if let dashboard = ReadinessSurfacePublisher.currentDashboard() {
+            ReadinessSurfacePublisher.publish(
+                ReadinessSurfacePublisher.idleSnapshot(from: dashboard)
+            )
         } else {
-            let report = ReadinessReportFactory.report(
-                workouts: workouts,
-                exercises: exercises,
-                in: modelContext
-            )
-            snapshot = ForgeFitWidgetSnapshot(
-                mode: .idle,
-                readinessScore: Int(report.displayScore * 100),
-                readinessAction: report.action.title,
-                readinessDetail: report.preWorkoutAdjustment,
-                reasonChips: report.reasonChips.prefix(3).map(\.text)
-            )
+            // Never carry yesterday's readiness into a new day, and never
+            // block launch to replace it. Home publishes today's completed
+            // background result when it becomes available.
+            ReadinessSurfacePublisher.publish(ForgeFitWidgetSnapshot(mode: .idle))
         }
-
-        ForgeFitWidgetSnapshotStore.save(snapshot)
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
-        #endif
     }
 
     private func activeWorkoutSnapshot(_ workout: WorkoutModel) -> ForgeFitWidgetSnapshot {
@@ -947,12 +1350,9 @@ struct ContentView: View {
     @MainActor
     private func importHealthWorkoutHistory() async {
         guard HealthService.shared.isAvailable else { return }
-        if let lastHealthWorkoutImportAt,
-           Date().timeIntervalSince(lastHealthWorkoutImportAt) < 300 {
-            return
-        }
-        lastHealthWorkoutImportAt = Date()
-        _ = await HealthWorkoutImporter.shared.importRecent(in: modelContext)
+        _ = await HealthWorkoutImporter.shared.importRecentIfDue(
+            in: modelContext.container
+        )
     }
 
     // MARK: - Launch data seeding
@@ -983,20 +1383,25 @@ struct ContentView: View {
                 // real artwork) so users only ever see fully-illustrated poses.
                 YogaPoseCatalog.pruneUnavailablePoses(into: modelContext)
             }
-            // CloudKit can't enforce unique constraints, so re-seed/sync races
-            // can leave several rows sharing one id — and sync races arrive on
-            // ANY launch, not just seed launches. Dedup stays unconditional:
-            // it's the cheap part of the old work (two fetches, no JSON decode,
-            // no refinement) and it's the safety net.
-            try ExerciseLibraryDeduplicator.removeDuplicates(in: modelContext)
-            // The plan-store split migration and CloudKit sync can also leave
-            // duplicate RoutineModel rows (same id, different SwiftData rows).
-            // Cascade delete rules collapse child exercises/sets automatically.
-            try RoutineDeduplicator.removeDuplicates(in: modelContext)
+            // CloudKit duplicate cleanup is intentionally not performed here.
+            // It scans the full ~900-row plan store on a private worker after
+            // launch, and later re-runs only when query counts reveal a remote
+            // row arrival. MainActor launch seeding never pays that audit cost.
             if shouldSeedStarterContent {
                 try seedStarterSetupNote()
                 try seedStarterRoutine()
             }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--seed-quick-increment-history") {
+                try QuickIncrementUITestFixture.seed(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--seed-block-prefill-history") {
+                try BlockPrefillUITestFixture.seed(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--seed-experiment-demo") {
+                try ExperimentDemoSeed.seed(in: modelContext)
+            }
+            #endif
             if ProcessInfo.processInfo.arguments.contains("--seed-history") {
                 try seedHistoryFixtures()
             }
@@ -1125,6 +1530,7 @@ struct ContentView: View {
 
     private func clearStarterSlate() {
         do {
+            WorkoutFinisher.cancelLiveRuntime()
             for workout in try modelContext.fetch(FetchDescriptor<WorkoutModel>())
             where workout.endedAt == nil || workout.id == ForgeFitDemo.starterRoutineID {
                 modelContext.delete(workout)
@@ -1159,7 +1565,6 @@ struct ContentView: View {
         quickActionsReloadToken += 1
         InsightDataCoordinator.shared.invalidate()
         cleanedOnboardingSlate = false
-        lastHealthWorkoutImportAt = nil
         showOnboarding = true
         themeManager.mode = .dark
         updateWidgetSnapshot()
@@ -1233,49 +1638,6 @@ private struct LiveHeartRateObserver: View {
             .onChange(of: hub.liveMetrics?.heartRate) { _, heartRate in
                 onChange(heartRate)
             }
-    }
-}
-
-private struct BootSplashView: View {
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        ZStack {
-            ScreenBackground()
-
-            VStack(spacing: Space.xl) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentSoft)
-                        .frame(width: 92, height: 92)
-
-                    Circle()
-                        .stroke(theme.accent.opacity(0.38), lineWidth: 1)
-                        .frame(width: 92, height: 92)
-
-                    Image(systemName: "dumbbell.fill")
-                        .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(theme.accent)
-                }
-
-                VStack(spacing: Space.sm) {
-                    Text("ForgeFit")
-                        .font(.screenTitle)
-                        .foregroundStyle(theme.textPrimary)
-
-                    Text("Loading your training")
-                        .font(.label)
-                        .foregroundStyle(theme.textSecondary)
-                }
-
-                ProgressView()
-                    .tint(theme.accent)
-                    .controlSize(.regular)
-            }
-            .padding(.horizontal, Space.xxl)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("ForgeFit is loading")
     }
 }
 

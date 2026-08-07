@@ -66,7 +66,10 @@ struct ForgeFitTests {
         #expect(workout.exercises.first?.sets.isEmpty == true)
         #expect(workout.cardioSessions.count == 1)
         #expect(workout.cardioSessions.first?.modality == CardioKind.run.rawValue)
-        #expect(workout.cardioSessions.first?.durationSeconds == 1_800)
+        #expect(workout.cardioSessions.first?.durationSeconds == nil)
+        let plan = IntervalPlan.decode(from: workout.exercises.first?.intervalPlanJSON)
+        #expect(plan?.goal?.kind == .duration)
+        #expect(plan?.goal?.value == 1_800)
         _ = container   // keep models alive to the end (see TestStore.make)
     }
 
@@ -127,7 +130,7 @@ struct ForgeFitTests {
         _ = container   // keep models alive to the end (see TestStore.make)
     }
 
-    @Test func cardioSRPELoadFallsBackToDurationTimesEffort() {
+    @Test func cardioSessionRPELoadUsesDurationTimesWholeSessionCR10() {
         let workout = cardioWorkout(daysAgo: 1, minutes: 60, effort: 5)
         let report = RecoveryEngine(workouts: [workout], now: now).report()
 
@@ -172,7 +175,7 @@ struct ForgeFitTests {
         #expect(!summary.isCardio)
     }
 
-    @Test func importedHealthStrengthWorkoutContributesModerateLoadWithoutSets() {
+    @Test func importedHealthStrengthWorkoutWithoutCR10HasNoSharedLoad() {
         let startedAt = now.addingTimeInterval(-86_400)
         let workout = WorkoutModel(
             userID: userID,
@@ -186,40 +189,34 @@ struct ForgeFitTests {
 
         let report = RecoveryEngine(workouts: [workout], now: now).report()
 
-        #expect(abs(report.acuteLoad - 270) < 0.001)
-        #expect(abs(report.strengthLoad - 270) < 0.001)
+        #expect(report.acuteLoad == 0)
+        #expect(report.strengthLoad == 0)
         #expect(report.cardioLoad == 0)
     }
 
-    @Test func strengthLoadCountsCompletedSetsScaledByEffort() {
+    @Test func strengthSharedLoadUsesWholeSessionCR10NotSetCount() {
         let bench = exercise("Bench Press", muscles: ["chest"])
         let workout = strengthWorkout(daysAgo: 1, exercise: bench, reps: 10, weight: 100, rpe: 8)
         let report = RecoveryEngine(workouts: [workout], exercises: [bench], now: now).report()
 
-        // One working set at RPE 8 = 35 load points; a lone set in a long
-        // workout no longer inherits the whole hour as load.
-        #expect(abs(report.strengthLoad - 35) < 0.001)
+        #expect(abs(report.strengthLoad - 480) < 0.001)
         #expect(abs(report.acuteLoad - report.strengthLoad) < 0.001)
         #expect(report.cardioLoad == 0)
     }
 
-    /// A single low-HRV morning scales with severity. Both examples fall below
-    /// the agreed 70-ready boundary, so their global verdict is reduce volume;
-    /// the deeper crash is still reflected by a much lower numeric score.
-    @Test func singleLowHRVSeverityScalesTheResponse() {
+    @Test func oneLowHRVSignalCannotAloneCreateAnAutomaticReduction() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let workouts = recurringWorkouts(exercise: squat, daysAgo: [2, 9, 16, 23])
 
         let mildDip = RecoveryEngine(
             workouts: workouts,
             exercises: [squat],
-            healthMetrics: healthSeries(currentHRV: 46, priorLowDays: 0),
+            healthMetrics: healthSeries(currentHRV: 40, priorLowDays: 0),
             targetMuscles: ["quadriceps"],
             now: now
         ).report()
-        #expect(mildDip.action == .reduceVolume)
+        #expect(mildDip.action == .trainAsPlanned)
         #expect(mildDip.reasonChips.contains { $0.text == "HRV low today" })
-        #expect(mildDip.reasonChips.contains { $0.text == "48h recovered" })
 
         let crash = RecoveryEngine(
             workouts: workouts,
@@ -228,14 +225,11 @@ struct ForgeFitTests {
             targetMuscles: ["quadriceps"],
             now: now
         ).report()
-        #expect(crash.action == .reduceVolume)
-        #expect(crash.displayScore < 0.6)   // number agrees with the action
+        #expect(crash.action == .trainAsPlanned)
+        #expect((crash.displayScore ?? 1) < (mildDip.displayScore ?? 0))
     }
 
-    /// When every trained muscle is recovered, the chip says so collectively —
-    /// naming the single longest-rested muscle ("Triceps fresh") reads as
-    /// arbitrary when the whole body is ready.
-    @Test func allMusclesFreshGetsCollectiveChipNotArbitrarySingleMuscle() {
+    @Test func freshnessStaysDescriptiveAndOutOfHeadlineReasonChips() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let curl = exercise("Curl", muscles: ["biceps"])
         let pushdown = exercise("Pushdown", muscles: ["triceps"])
@@ -246,18 +240,17 @@ struct ForgeFitTests {
         ]
         let report = RecoveryEngine(workouts: workouts, exercises: [squat, curl, pushdown], now: now).report()
 
-        #expect(report.reasonChips.contains { $0.text == "All muscles fresh" })
-        #expect(!report.reasonChips.contains { $0.text.hasSuffix(" fresh") && $0.text != "All muscles fresh" })
+        #expect(report.recovery.muscles.filter { $0.state.value != nil }.count == 3)
+        #expect(!report.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("fresh") })
 
         // Mixed picture: biceps trained yesterday → the named-muscle chip is
         // back, because now it is informative.
         let mixed = workouts + [strengthWorkout(daysAgo: 1, exercise: curl, reps: 10, weight: 20, rpe: 8)]
         let mixedReport = RecoveryEngine(workouts: mixed, exercises: [squat, curl, pushdown], now: now).report()
-        #expect(!mixedReport.reasonChips.contains { $0.text == "All muscles fresh" })
-        #expect(mixedReport.reasonChips.contains { $0.text == "Triceps fresh" })
+        #expect(!mixedReport.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("fresh") })
     }
 
-    @Test func sustainedLowHRVAfter48HoursReducesVolume() {
+    @Test func sustainedLowHRVIsAComponentNotAScoreBasedPrescription() {
         let squat = exercise("Back Squat", muscles: ["quadriceps"])
         let workouts = recurringWorkouts(exercise: squat, daysAgo: [2, 9, 16, 23])
         let health = healthSeries(currentHRV: 35, priorLowDays: 2)
@@ -270,8 +263,8 @@ struct ForgeFitTests {
             now: now
         ).report()
 
-        #expect(report.action == .reduceVolume)
-        #expect(report.reasonChips.contains { $0.text == "HRV low trend" })
+        #expect(report.action == .trainAsPlanned)
+        #expect(report.reasonChips.contains { $0.text == "HRV low today" })
     }
 
     @Test func elevatedRHRPlusPoorSleepReducesVolume() {
@@ -281,8 +274,8 @@ struct ForgeFitTests {
         let report = RecoveryEngine(workouts: [run], healthMetrics: health, now: now).report()
 
         #expect(report.action == .reduceVolume)
-        #expect(report.reasonChips.contains { $0.text == "RHR elevated" })
-        #expect(report.reasonChips.contains { $0.text == "Sleep debt" })
+        #expect(report.reasonChips.contains { $0.text == "Resting HR elevated" })
+        #expect(report.reasonChips.contains { $0.text == "Short sleep" })
     }
 
     @Test func recentLoadWaitsForBaselineAndDoesNotDriveReadiness() {
@@ -308,7 +301,8 @@ struct ForgeFitTests {
         ).report()
 
         #expect(report.action == .trainAsPlanned)
-        #expect(report.reasonChips.contains { $0.text == "Chest trained yesterday" })
+        #expect(!report.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("trained") })
+        #expect(report.recovery.muscles.first { $0.muscle == "chest" }?.state.value != nil)
     }
 
     @Test func fourDaysOffEasesBackInRatherThanPushingBlindly() {
@@ -322,9 +316,8 @@ struct ForgeFitTests {
             now: now
         ).report()
 
-        #expect(report.action == .trainAsPlanned)
-        #expect(report.reasonChips.contains { $0.text == "4d since workout" })
-        #expect(report.insights.contains { $0 == "It has been 4 days since your last workout." })
+        #expect(report.action == .insufficientData)
+        #expect(report.insights.contains { $0.contains("Freshness references are provisional") })
     }
 
     private func exercise(_ name: String, muscles: [String]) -> ExerciseLibraryModel {
@@ -362,6 +355,7 @@ struct ForgeFitTests {
             exercises: [workoutExercise]
         )
         workout.recomputeTotalVolume()
+        workout.wholeSessionRPE = rpe
         return workout
     }
 
@@ -380,13 +374,15 @@ struct ForgeFitTests {
             durationSeconds: minutes * 60,
             effort: effort
         )
-        return WorkoutModel(
+        let workout = WorkoutModel(
             userID: userID,
             title: "Run",
             startedAt: startedAt,
             endedAt: endedAt,
             cardioSessions: [cardio]
         )
+        workout.wholeSessionRPE = Double(effort)
+        return workout
     }
 
     private func healthSeries(
@@ -396,7 +392,7 @@ struct ForgeFitTests {
         currentSleep: Int = 480
     ) -> [RecoveryEngine.DailyHealthMetric] {
         var metrics: [RecoveryEngine.DailyHealthMetric] = []
-        for day in 1...21 {
+        for day in 1...40 {
             let hrv = day <= priorLowDays ? 35.0 : 50.0
             metrics.append(RecoveryEngine.DailyHealthMetric(
                 date: now.addingTimeInterval(-Double(day) * 86_400),

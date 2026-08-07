@@ -1,3 +1,4 @@
+import ForgeCore
 import ForgeData
 import Foundation
 import SwiftData
@@ -29,6 +30,15 @@ struct WorkoutFinisherSubstanceTests {
         let untouched = WorkoutModel(userID: userID, exercises: [lift], cardioSessions: [plannedRun])
         context.insert(untouched)
         #expect(!WorkoutFinisher.hasSubstance(untouched))
+
+        let plannedBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            progressJSON: ConditioningProgress().encodedJSON()
+        )
+        let untouchedBlockWorkout = WorkoutModel(userID: userID, blocks: [plannedBlock])
+        context.insert(untouchedBlockWorkout)
+        #expect(!WorkoutFinisher.hasSubstance(untouchedBlockWorkout))
     }
 
     @Test func completedSetLiveCardioManualYogaAndNotesAllCount() throws {
@@ -46,6 +56,15 @@ struct WorkoutFinisherSubstanceTests {
         context.insert(withLiveCardio)
         #expect(WorkoutFinisher.hasSubstance(withLiveCardio))
 
+        let activeBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            progressJSON: ConditioningProgress(startedAt: .now, status: .active).encodedJSON()
+        )
+        let withConditioning = WorkoutModel(userID: userID, blocks: [activeBlock])
+        context.insert(withConditioning)
+        #expect(WorkoutFinisher.hasSubstance(withConditioning))
+
         let manualYoga = CardioSessionModel(userID: userID, modality: "yoga")
         manualYoga.sourceDevice = CardioSessionModel.yogaManualSource
         let withYoga = WorkoutModel(userID: userID, cardioSessions: [manualYoga])
@@ -57,6 +76,18 @@ struct WorkoutFinisherSubstanceTests {
         let withNotes = WorkoutModel(userID: userID, exercises: [noted])
         context.insert(withNotes)
         #expect(WorkoutFinisher.hasSubstance(withNotes))
+
+        let withWorkoutNote = WorkoutModel(userID: userID, notes: "Low energy, kept the session easy")
+        context.insert(withWorkoutNote)
+        #expect(WorkoutFinisher.hasSubstance(withWorkoutNote))
+
+        let legacyCardioLabel = WorkoutModel(
+            userID: userID,
+            sourceDevice: "iphone-cardio-row",
+            notes: "Cardio workout"
+        )
+        context.insert(legacyCardioLabel)
+        #expect(!WorkoutFinisher.hasSubstance(legacyCardioLabel))
     }
 
     /// The behavioral guarantee: finish() on an empty workout tombstones it
@@ -73,5 +104,34 @@ struct WorkoutFinisherSubstanceTests {
         #expect(failure == nil)
         #expect(workout.deletedAt != nil)
         #expect(workout.endedAt == nil)
+    }
+
+    @Test func finishRejectsStartedUntimedConditioningBelowItsTarget() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let section = ConditioningSection(
+            name: "Ten rounds",
+            format: .forTime,
+            rounds: 10,
+            movements: [ConditioningMovement(exerciseID: UUID(), targetValue: 10)]
+        )
+        let block = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            planSnapshotJSON: ConditioningPlan(sections: [section]).encodedJSON(),
+            progressJSON: ConditioningProgress(
+                round: 5,
+                startedAt: .now,
+                status: .active
+            ).encodedJSON()
+        )
+        let workout = WorkoutModel(userID: userID, blocks: [block])
+        context.insert(workout)
+
+        let failure = WorkoutFinisher.finish(workout, in: context)
+
+        #expect(failure?.contains("6 more conditioning rounds") == true)
+        #expect(workout.endedAt == nil)
+        #expect(workout.deletedAt == nil)
     }
 }

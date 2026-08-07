@@ -40,6 +40,12 @@ public enum BackupMapper {
             endedAt: workout.endedAt,
             sourceDevice: workout.sourceDevice,
             notes: workout.notes,
+            conditioningPlanSnapshotJSON: workout.conditioningPlanSnapshotJSON,
+            conditioningProgressJSON: workout.conditioningProgressJSON,
+            conditioningResultJSON: workout.conditioningResultJSON,
+            wholeSessionRPE: workout.wholeSessionRPE,
+            wholeSessionRPERatedAt: workout.wholeSessionRPERatedAt,
+            wholeSessionRPEProtocolVersion: workout.wholeSessionRPEProtocolVersion,
             externalSource: workout.externalSource,
             externalID: workout.externalWorkoutID,
             importFingerprint: workout.importFingerprint,
@@ -52,6 +58,9 @@ public enum BackupMapper {
             exercises: workout.exercises
                 .sorted { $0.position < $1.position }
                 .map { backupExercise(from: $0, exerciseNames: exerciseNames) },
+            blocks: workout.blocks
+                .sorted { $0.position < $1.position }
+                .map(backupBlock(from:)),
             cardioSessions: workout.cardioSessions
                 .sorted { $0.startedAt < $1.startedAt }
                 .map(backupCardioSession(from:))
@@ -71,10 +80,25 @@ public enum BackupMapper {
             microRestSeconds: exercise.microRestSeconds,
             intervalPlanJSON: exercise.intervalPlanJSON,
             yogaFlowJSON: exercise.yogaFlowJSON,
+            generatedByWorkoutBlockID: exercise.generatedByWorkoutBlockID,
             sourceRoutineExerciseID: exercise.sourceRoutineExerciseID,
             createdAt: exercise.createdAt,
             updatedAt: exercise.updatedAt,
             sets: exercise.sets.sorted { $0.position < $1.position }.map(backupSet(from:))
+        )
+    }
+
+    private static func backupBlock(from block: WorkoutBlockModel) -> BackupWorkoutBlock {
+        BackupWorkoutBlock(
+            id: block.id,
+            kindRaw: block.kindRaw,
+            position: block.position,
+            planSnapshotJSON: block.planSnapshotJSON,
+            progressJSON: block.progressJSON,
+            resultJSON: block.resultJSON,
+            sourceRoutineBlockID: block.sourceRoutineBlockID,
+            createdAt: block.createdAt,
+            updatedAt: block.updatedAt
         )
     }
 
@@ -115,6 +139,7 @@ public enum BackupMapper {
         BackupCardioSession(
             id: session.id,
             workoutExerciseID: session.workoutExerciseID,
+            workoutBlockID: session.workoutBlockID,
             modality: session.modality,
             startedAt: session.startedAt,
             liveStartedAt: session.liveStartedAt,
@@ -197,13 +222,19 @@ public enum BackupMapper {
     /// start nil/empty and are refilled from Apple Health by the enrichment
     /// pass. Derived metrics are recomputed. The caller inserts everything
     /// into a context and wires the relationships' inverse side.
-    public static func workoutModel(from backup: BackupWorkout, userID: UUID) -> (workout: WorkoutModel, exercises: [WorkoutExerciseModel], sets: [SetModel], sessions: [CardioSessionModel], splits: [CardioSplitModel], points: [CardioRoutePointModel]) {
+    public static func workoutModel(from backup: BackupWorkout, userID: UUID) -> (workout: WorkoutModel, blocks: [WorkoutBlockModel], exercises: [WorkoutExerciseModel], sets: [SetModel], sessions: [CardioSessionModel], splits: [CardioSplitModel], points: [CardioRoutePointModel]) {
         let workout = WorkoutModel(userID: userID, title: backup.title, startedAt: backup.startedAt)
         workout.id = backup.id
         workout.routineID = backup.routineID
         workout.endedAt = backup.endedAt
         workout.sourceDevice = backup.sourceDevice
         workout.notes = backup.notes
+        workout.conditioningPlanSnapshotJSON = backup.conditioningPlanSnapshotJSON
+        workout.conditioningProgressJSON = backup.conditioningProgressJSON
+        workout.conditioningResultJSON = backup.conditioningResultJSON
+        workout.wholeSessionRPE = backup.wholeSessionRPE
+        workout.wholeSessionRPERatedAt = backup.wholeSessionRPERatedAt
+        workout.wholeSessionRPEProtocolVersion = backup.wholeSessionRPEProtocolVersion
         workout.externalSource = backup.externalSource
         workout.externalWorkoutID = backup.externalID
         workout.importFingerprint = backup.importFingerprint
@@ -226,6 +257,7 @@ public enum BackupMapper {
             exercise.microRestSeconds = backupExercise.microRestSeconds
             exercise.intervalPlanJSON = backupExercise.intervalPlanJSON
             exercise.yogaFlowJSON = backupExercise.yogaFlowJSON
+            exercise.generatedByWorkoutBlockID = backupExercise.generatedByWorkoutBlockID
             exercise.sourceRoutineExerciseID = backupExercise.sourceRoutineExerciseID
             exercise.createdAt = backupExercise.createdAt
             exercise.updatedAt = backupExercise.updatedAt
@@ -265,6 +297,22 @@ public enum BackupMapper {
             }
         }
 
+        let blocks = (backup.blocks ?? []).map { backupBlock -> WorkoutBlockModel in
+            let kind = WorkoutBlockKind(rawValue: backupBlock.kindRaw) ?? .conditioning
+            return WorkoutBlockModel(
+                id: backupBlock.id,
+                userID: userID,
+                kind: kind,
+                position: backupBlock.position,
+                planSnapshotJSON: backupBlock.planSnapshotJSON,
+                progressJSON: backupBlock.progressJSON,
+                resultJSON: backupBlock.resultJSON,
+                sourceRoutineBlockID: backupBlock.sourceRoutineBlockID,
+                createdAt: backupBlock.createdAt,
+                updatedAt: backupBlock.updatedAt
+            )
+        }
+
         var sessions: [CardioSessionModel] = []
         var splits: [CardioSplitModel] = []
         var points: [CardioRoutePointModel] = []
@@ -272,6 +320,7 @@ public enum BackupMapper {
             let session = CardioSessionModel(
                 userID: userID,
                 workoutExerciseID: backupSession.workoutExerciseID,
+                workoutBlockID: backupSession.workoutBlockID,
                 modality: backupSession.modality,
                 startedAt: backupSession.startedAt
             )
@@ -335,7 +384,7 @@ public enum BackupMapper {
             }
         }
 
-        return (workout, exercises, sets, sessions, splits, points)
+        return (workout, blocks, exercises, sets, sessions, splits, points)
     }
 
     public static func batchModel(from backup: BackupImportBatch, userID: UUID) -> WorkoutImportBatchModel {

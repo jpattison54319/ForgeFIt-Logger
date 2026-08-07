@@ -952,10 +952,10 @@ struct InsightQueryEngineTests {
         #expect(result.series.first?.points.count == 2)
     }
 
-    /// A recorded measurement defines an eligible day. The event tally is
-    /// exactly zero when absent on that day; selecting only workout days
-    /// would bias the relationship. No sleep value is ever fabricated.
-    @Test func mixedRelationshipFillsOnlyTheTally() throws {
+    /// Dose relationships default to days where the training total and the
+    /// measurement were both recorded. Missing sleep is never fabricated, and
+    /// inactive training days do not flatten the fitted dose relationship.
+    @Test func mixedRelationshipDefaultsToActiveTrainingDays() throws {
         var recipe = InsightRecipe(
             shape: .relationship, primaryMetricID: "sessions",
             comparisonMetricIDs: ["sleep"], range: .fourWeeks, bucket: .daily
@@ -972,9 +972,37 @@ struct InsightQueryEngineTests {
             now: now, calendar: calendar
         )
         let relationship = try #require(result.relationship)
+        #expect(relationship.pairs.count == 2)
+        #expect(relationship.pairs.allSatisfy { $0.y > 0 })
+        #expect(relationship.pairs.allSatisfy { $0.x >= 401 })
+        #expect(result.warnings.contains(.insufficientPairs(found: 2, needed: 10)))
+        #expect(!result.warnings.contains { if case .sparseCoverage = $0 { return true } else { return false } })
+    }
+
+    /// The visible override restores the all-measured-days question: a
+    /// recorded sleep day with no session receives a structural training zero.
+    @Test func mixedRelationshipCanIncludeInactiveTrainingDays() throws {
+        var recipe = InsightRecipe(
+            shape: .relationship, primaryMetricID: "sessions",
+            comparisonMetricIDs: ["sleep"], range: .fourWeeks, bucket: .daily,
+            relationshipPopulation: .includeInactiveBuckets
+        )
+        recipe.lag = InsightLag(unit: .days, count: 0)
+        let sleepDays = (1...20).map { (offset: $0, value: 400.0 + Double($0)) }
+        let result = InsightQueryEngine.evaluate(
+            recipe: recipe,
+            descriptors: [metric("sessions"), metric("sleep", aggregation: .mean, role: .exposure)],
+            observations: [
+                "sessions": observations([(10, 2), (3, 1)]),
+                "sleep": observations(sleepDays.map { ($0.0, $0.1) }),
+            ],
+            now: now, calendar: calendar
+        )
+        let relationship = try #require(result.relationship)
         #expect(relationship.pairs.count == 20)
         #expect(relationship.pairs.filter { $0.y == 0 }.count == 18)
         #expect(relationship.pairs.allSatisfy { $0.x >= 401 })
+        #expect(!result.warnings.contains { if case .sparseCoverage = $0 { return true } else { return false } })
     }
 
     /// When BOTH operands are exact event tallies, the meaningful daily
@@ -983,7 +1011,8 @@ struct InsightQueryEngineTests {
     @Test func tallyRelationshipsCompleteTheUnionWithTrueZeros() throws {
         var recipe = InsightRecipe(
             shape: .relationship, primaryMetricID: "outcome",
-            comparisonMetricIDs: ["exposure"], range: .fourWeeks, bucket: .daily
+            comparisonMetricIDs: ["exposure"], range: .fourWeeks, bucket: .daily,
+            relationshipPopulation: .includeInactiveBuckets
         )
         recipe.lag = InsightLag(unit: .days, count: 0)
         let result = InsightQueryEngine.evaluate(
@@ -1009,7 +1038,8 @@ struct InsightQueryEngineTests {
     @Test func optionalSumRelationshipDoesNotInventZeros() throws {
         var recipe = InsightRecipe(
             shape: .relationship, primaryMetricID: "energy",
-            comparisonMetricIDs: ["steps"], range: .fourWeeks, bucket: .daily
+            comparisonMetricIDs: ["steps"], range: .fourWeeks, bucket: .daily,
+            relationshipPopulation: .includeInactiveBuckets
         )
         recipe.lag = InsightLag(unit: .days, count: 0)
         let result = InsightQueryEngine.evaluate(

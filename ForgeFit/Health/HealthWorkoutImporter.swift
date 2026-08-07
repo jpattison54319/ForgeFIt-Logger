@@ -8,30 +8,98 @@ import CoreLocation
 import HealthKit
 #endif
 
-@MainActor
-final class HealthWorkoutImporter {
-    static let shared = HealthWorkoutImporter()
-    private var isImporting = false
+nonisolated enum HealthWorkoutImportPolicy {
+    static let minimumAutomaticInterval: TimeInterval = 300
 
-    private init() {}
+    static func isAutomaticImportDue(
+        lastAttempt: Date?,
+        now: Date,
+        minimumInterval: TimeInterval = minimumAutomaticInterval
+    ) -> Bool {
+        guard let lastAttempt else { return true }
+        return now.timeIntervalSince(lastAttempt) >= minimumInterval
+    }
+}
+
+/// Serializes import requests and persists the automatic-import throttle across
+/// cold launches. The actual HealthKit and SwiftData work belongs to a
+/// ModelActor below; this actor only owns scheduling state.
+actor HealthWorkoutImporter {
+    nonisolated static let shared = HealthWorkoutImporter()
+    nonisolated static let lastAutomaticAttemptKey = "healthWorkoutImport.lastAutomaticAttempt"
+
+    private var activeImport: Task<Int, Never>?
 
     @discardableResult
-    func importRecent(in context: ModelContext, days: Int = 60) async -> Int {
-        // MainActor async functions can still be re-entered at an `await`.
-        // Serialize imports so two refresh triggers cannot insert the same
-        // Health workout before either one saves.
-        guard !isImporting else { return 0 }
-        isImporting = true
-        defer { isImporting = false }
+    func importRecent(in container: ModelContainer, days: Int = 60) async -> Int {
+        await runImport(in: container, days: days)
+    }
 
+    @discardableResult
+    func importRecentIfDue(
+        in container: ModelContainer,
+        days: Int = 60,
+        now: Date = .now
+    ) async -> Int {
+        let defaults = UserDefaults.standard
+        let lastAttempt = defaults.object(forKey: Self.lastAutomaticAttemptKey) as? Date
+        guard HealthWorkoutImportPolicy.isAutomaticImportDue(
+            lastAttempt: lastAttempt,
+            now: now
+        ) else { return 0 }
+
+        // Stamp before starting so repeated lifecycle notifications cannot
+        // queue identical 60-day scans while this one is awaiting HealthKit.
+        defaults.set(now, forKey: Self.lastAutomaticAttemptKey)
+        return await runImport(in: container, days: days)
+    }
+
+    private func runImport(in container: ModelContainer, days: Int) async -> Int {
+        if let activeImport {
+            return await activeImport.value
+        }
+
+        // A SwiftData ModelActor adopts the queue on which it is created.
+        // Construct it inside the detached task as well as running it there;
+        // creating it at an arbitrary caller would allow MainActor inheritance.
+        let task = Task.detached(priority: .utility) {
+            let worker = HealthWorkoutImportWorker(modelContainer: container)
+            return await worker.importRecent(days: days)
+        }
+        activeImport = task
+        let imported = await task.value
+        activeImport = nil
+        return imported
+    }
+}
+
+/// A private ModelContext whose serial executor is never MainActor. Model
+/// objects stay inside this actor; the caller receives only an integer count.
+@ModelActor
+actor HealthWorkoutImportWorker {
+
+    #if DEBUG
+    func isExecutingOnMainThreadForTesting() -> Bool {
+        Self.currentThreadIsMain()
+    }
+
+    private nonisolated static func currentThreadIsMain() -> Bool {
+        Thread.isMainThread
+    }
+    #endif
+
+    @discardableResult
+    func importRecent(days: Int = 60) async -> Int {
         #if canImport(HealthKit)
         guard HealthService.shared.isAvailable else { return 0 }
+        let context = modelContext
         let end = Date()
         guard let start = Calendar.current.date(byAdding: .day, value: -days, to: end) else { return 0 }
         let healthStore = HKHealthStore()
         let healthWorkouts = await fetchWorkouts(from: start, to: end, store: healthStore)
             .filter { !isForgeFitSource($0) }
             .sorted { $0.endDate < $1.endDate }
+        guard !Task.isCancelled else { return 0 }
         guard !healthWorkouts.isEmpty else { return 0 }
 
         var existing = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
@@ -47,7 +115,7 @@ final class HealthWorkoutImporter {
             let durationSeconds = max(1, Int(healthWorkout.duration.rounded()))
             let energyKcal = activeEnergyKcal(for: healthWorkout)
             let distanceMeters = healthWorkout.totalDistance?.doubleValue(for: .meter())
-            let zones = CardioMetrics.estimatedZoneSecondsArray(avgHR: avgHR, durationSeconds: durationSeconds)
+            let zones = [Int](repeating: 0, count: 5)
             let source = sourceLabel(for: healthWorkout)
             let kind = cardioKind(for: healthWorkout.workoutActivityType)
 
@@ -57,7 +125,7 @@ final class HealthWorkoutImporter {
             let cardioSession: CardioSessionModel?
             if kind.isYoga {
                 // Yoga/flexibility import: a yoga session — no distance (the
-                // mat doesn't move) and no pace-based TSS.
+                // mat doesn't move) and no estimated zone-duration load.
                 cardioSession = CardioSessionModel(
                     userID: ForgeFitDemo.userID,
                     workoutExerciseID: nil,
@@ -93,7 +161,7 @@ final class HealthWorkoutImporter {
                         maxHR: maxHR,
                         hrZoneSeconds: zones,
                         effort: estimatedEffort(avgHR: avgHR),
-                        tss: estimatedTSS(durationSeconds: durationSeconds, avgHR: avgHR)
+                        tss: estimatedZoneDurationLoad(durationSeconds: durationSeconds, avgHR: avgHR)
                     )
                 }
             }
@@ -306,7 +374,7 @@ final class HealthWorkoutImporter {
         }
     }
 
-    private func estimatedTSS(durationSeconds: Int, avgHR: Int?) -> Double? {
+    private func estimatedZoneDurationLoad(durationSeconds: Int, avgHR: Int?) -> Double? {
         guard let avgHR else { return nil }
         let minutes = Double(durationSeconds) / 60
         let multiplier = switch HRZone.zone(forAvgHR: avgHR) {

@@ -104,6 +104,32 @@ final class WatchWorkoutEngine: NSObject {
         }
     }
 
+    /// A live session is never a reason to re-present HealthKit setup. This is
+    /// especially important for indoor conditioning: Workout Routes is part
+    /// of the Watch's full share set, but it must not prompt again once workout
+    /// write access has already been granted.
+    private func requestAuthorizationIfNeeded() async -> Bool {
+        guard HKHealthStore.isHealthDataAvailable() else { return false }
+        let hasWorkoutWriteAccess = healthStore.authorizationStatus(
+            for: HKObjectType.workoutType()
+        ) == .sharingAuthorized
+        guard !hasWorkoutWriteAccess else { return true }
+        do {
+            let status = try await healthStore.statusForAuthorizationRequest(
+                toShare: shareTypes,
+                read: readTypes
+            )
+            guard WorkoutAuthorizationPromptPolicy.shouldRequestAtWorkoutStart(
+                hasWorkoutWriteAccess: hasWorkoutWriteAccess,
+                hasUndecidedTypes: status == .shouldRequest
+            ) else { return false }
+            return await requestAuthorization()
+        } catch {
+            logger.error("Unable to inspect HealthKit authorization: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
     // MARK: - Session lifecycle
 
     func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date(), isYoga: Bool = false) {
@@ -112,8 +138,8 @@ final class WatchWorkoutEngine: NSObject {
         startRequestID = requestID
         isStarting = true
         didAttemptFailureRestart = false
-        // Authorization is requested lazily, right when the first session
-        // starts — the prompt appears in context instead of at app launch.
+        // First-time setup may request access here. An already-connected watch
+        // starts immediately without reopening the full HealthKit sheet.
         Task {
             defer {
                 if startRequestID == requestID {
@@ -121,7 +147,7 @@ final class WatchWorkoutEngine: NSObject {
                     isStarting = false
                 }
             }
-            let authorized = await requestAuthorization()
+            let authorized = await requestAuthorizationIfNeeded()
             guard startRequestID == requestID else { return }
             if authorized {
                 // Yoga sessions record as .yoga so the Fitness app shows the
@@ -249,7 +275,7 @@ final class WatchWorkoutEngine: NSObject {
 
     /// End the session and save the HKWorkout to Apple Health.
     /// Returns the final metrics and whether the save succeeded.
-    func finish() async -> (metrics: WatchLiveMetrics, savedToHealth: Bool) {
+    func finish(workoutName: String? = nil) async -> (metrics: WatchLiveMetrics, savedToHealth: Bool) {
         let metrics = currentMetrics()
         cancelPendingTransitions()
         guard let session, let builder else { return (metrics, false) }
@@ -258,6 +284,12 @@ final class WatchWorkoutEngine: NSObject {
         session.end()
         var saved = false
         do {
+            if let workoutName = workoutName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !workoutName.isEmpty {
+                // Keep the activity classification while giving Fitness the
+                // ForgeFit routine title for the workout's displayed name.
+                try? await builder.addMetadata([HKMetadataKeyWorkoutBrandName: workoutName])
+            }
             try await builder.endCollection(at: Date())
             if (try? await builder.finishWorkout()) != nil {
                 saved = true

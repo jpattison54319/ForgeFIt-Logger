@@ -31,7 +31,7 @@ final class WorkoutActivityController {
             activity = current
             Task {
                 await Self.withBackgroundTask(named: "UpdateWorkoutLiveActivity") {
-                    await current.update(ActivityContent(state: state, staleDate: nil))
+                    await current.update(ActivityContent(state: state, staleDate: Self.staleDate()))
                     for stale in Activity<WorkoutActivityAttributes>.activities where stale.id != current.id {
                         await stale.end(nil, dismissalPolicy: .immediate)
                     }
@@ -40,9 +40,21 @@ final class WorkoutActivityController {
         } else {
             activity = try? Activity.request(
                 attributes: WorkoutActivityAttributes(workoutTitle: workout.title ?? "Workout"),
-                content: ActivityContent(state: state, staleDate: nil)
+                content: ActivityContent(state: state, staleDate: Self.staleDate())
             )
         }
+    }
+
+    /// When the system should stop presenting this content as current.
+    ///
+    /// Updates arrive on set completion, rest start/stop, and heart-rate
+    /// changes, so a live workout refreshes this window long before it lapses.
+    /// It matters when the app is force-quit mid-session: without a stale date
+    /// the lock screen keeps showing a frozen exercise, set count, and heart
+    /// rate as though they were current, for hours. Thirty minutes clears a
+    /// genuinely slow set-and-rest cycle while still catching a dead app.
+    private static func staleDate() -> Date {
+        Date().addingTimeInterval(30 * 60)
     }
 
     /// Ends the Live Activity. Wrapped in a background task assertion because
@@ -89,7 +101,7 @@ final class WorkoutActivityController {
     }
     #endif
 
-    private func contentState(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> WorkoutActivityAttributes.ContentState {
+    func contentState(for workout: WorkoutModel, exercises: [ExerciseLibraryModel]) -> WorkoutActivityAttributes.ContentState {
         let sorted = workout.exercises.sorted { $0.position < $1.position }
         let allSets = sorted.flatMap(\.sets)
         let hasStrengthSets = allSets.contains { $0.completedAt != nil || $0.reps != nil || $0.weight != nil }
@@ -114,6 +126,13 @@ final class WorkoutActivityController {
 
         let timer = RestTimerController.shared
         let resting = timer.isRunning && !timer.isMicro
+
+        // Conditioning is a first-class live modality. Its focused runner has
+        // no ordinary "current exercise" row, so falling through to strength
+        // produces a 0/0-set activity and makes the HR stream look absent.
+        if let conditioning = conditioningContentState(for: workout) {
+            return conditioning
+        }
 
         // Guided yoga headline: the current pose with a native countdown.
         // Any yoga session in the workout takes the lock screen while it's
@@ -165,15 +184,16 @@ final class WorkoutActivityController {
         if pureCardio, let session = workout.cardioSessions.first(where: { !$0.isYogaSession }) {
             let kind = CardioKind.from(modality: session.modality)
             let duration = session.durationSeconds ?? max(0, Int(Date().timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
-            // Prefer live distance (watch stream / phone GPS) so the lock screen
-            // and Dynamic Island tick in real time; treadmills stay manual-only.
+            // Use the same authoritative live distance as the logger and
+            // speech so the lock screen never races ahead of the wrist.
             let library = workout.exercises.first { $0.id == session.workoutExerciseID }
                 .flatMap { we in exercises.first { $0.id == we.exerciseID } }
             let providesGPS = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
             let liveDist: Double? = providesGPS
-                ? (LiveMetricsHub.shared.liveMetrics?.distanceMeters
-                    ?? CardioRouteRecorder.shared.liveDistanceMeters(for: session.id)
-                    ?? session.distanceMeters)
+                ? CardioRouteRecorder.shared.authoritativeLiveDistance(
+                    for: session.id,
+                    storedMeters: session.distanceMeters
+                )
                 : session.distanceMeters
             let paceOrSpeed = kind.usesPace
                 ? CardioMetrics.paceString(distanceMeters: liveDist, durationSeconds: duration, kind: kind)
@@ -212,6 +232,64 @@ final class WorkoutActivityController {
             totalSets: allSets.count,
             restEndsAt: resting ? timer.endsAt : nil,
             heartRate: LiveMetricsHub.shared.liveMetrics?.heartRate
+        )
+    }
+
+    private func conditioningContentState(
+        for workout: WorkoutModel
+    ) -> WorkoutActivityAttributes.ContentState? {
+        let plan: ConditioningPlan
+        let progress: ConditioningProgress
+        let sessionStart: Date?
+
+        if let session = workout.cardioSessions.first(where: {
+            $0.isConditioningSession && $0.liveStartedAt != nil && $0.endedAt == nil
+        }),
+        let blockID = session.workoutBlockID,
+        let block = workout.blocks.first(where: { $0.id == blockID }),
+        let decodedPlan = ConditioningPlan.decode(from: block.planSnapshotJSON) {
+            plan = decodedPlan
+            progress = ConditioningProgress.decode(from: block.progressJSON) ?? ConditioningProgress()
+            sessionStart = session.liveStartedAt
+        } else if let decodedPlan = ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON),
+                  let decodedProgress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
+                  decodedProgress.status != .ready {
+            plan = decodedPlan
+            progress = decodedProgress
+            sessionStart = decodedProgress.startedAt
+        } else {
+            return nil
+        }
+
+        guard plan.sections.indices.contains(progress.sectionIndex) else { return nil }
+        let section = plan.sections[progress.sectionIndex]
+        let rounds = section.prescribedRounds
+        let roundText = rounds.map { "Round \(min(progress.round, $0)) of \($0)" }
+            ?? "Round \(progress.round)"
+        let metric = progress.status == .paused ? "Paused · \(roundText)" : roundText
+        let targets = section.movements.map { section.target(for: $0, round: progress.round) }
+        let repTargetText: String? = if !targets.isEmpty,
+                                       section.movements.allSatisfy({ $0.targetUnit == .reps }) {
+            targets
+                .map { $0.formatted(.number.precision(.fractionLength(0...1))) }
+                .joined(separator: " / ") + " reps"
+        } else {
+            nil
+        }
+        let progressText = rounds.map { "\(min(progress.fullRounds, $0))/\($0) rounds" }
+            ?? "\(progress.fullRounds) rounds"
+        let detail = [repTargetText, progressText].compactMap { $0 }.joined(separator: " · ")
+
+        return WorkoutActivityAttributes.ContentState(
+            startedAt: sessionStart ?? progress.startedAt ?? workout.startedAt,
+            completedSets: 0,
+            totalSets: 0,
+            mode: .conditioning,
+            cardioTitle: section.name.isEmpty ? "Conditioning" : section.name,
+            cardioMetric: metric,
+            cardioDetail: detail,
+            restEndsAt: nil,
+            heartRate: LiveMetricsHub.shared.liveMetrics?.freshHeartRate()
         )
     }
     #else

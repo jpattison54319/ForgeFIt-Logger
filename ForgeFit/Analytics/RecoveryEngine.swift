@@ -5,7 +5,7 @@ import ForgeData
 /// Pure readiness math for the Today and Recovery screens. The score is
 /// action-oriented: load math, biometrics, and per-muscle freshness explain
 /// what to do today instead of pretending any one metric predicts injury.
-struct RecoveryEngine {
+nonisolated struct RecoveryEngine {
     let workouts: [WorkoutModel]
     var exercises: [ExerciseLibraryModel] = []
     var healthMetrics: [DailyHealthMetric] = []
@@ -22,6 +22,7 @@ struct RecoveryEngine {
     var now = Date()
 
     enum Action: String, Equatable {
+        case insufficientData
         case push
         case trainAsPlanned
         case reduceVolume
@@ -29,15 +30,17 @@ struct RecoveryEngine {
 
         var title: String {
             switch self {
-            case .push: "Push"
-            case .trainAsPlanned: "Train as planned"
-            case .reduceVolume: "Reduce volume"
-            case .deloadRecover: "Deload/recover"
+            case .insufficientData: "Baseline building"
+            case .push: "Optional progression"
+            case .trainAsPlanned: "Proceed as planned"
+            case .reduceVolume: "Begin conservatively"
+            case .deloadRecover: "Recovery focused"
             }
         }
 
         var systemImage: String {
             switch self {
+            case .insufficientData: "chart.line.uptrend.xyaxis"
             case .push: "bolt.fill"
             case .trainAsPlanned: "checkmark.circle.fill"
             case .reduceVolume: "dial.low.fill"
@@ -46,14 +49,14 @@ struct RecoveryEngine {
         }
     }
 
-    enum ReasonTone: Equatable {
+    enum ReasonTone: Equatable, Sendable {
         case positive, caution, neutral
     }
 
     /// User-visible provenance for a night resolved through Home's sleep
     /// integrity affordance. This stays separate from data-quality flags so
     /// Recovery can distinguish an edit from a confirmation or exclusion.
-    enum SleepOverrideStatus: Equatable {
+    enum SleepOverrideStatus: Equatable, Sendable {
         case confirmed
         case edited
         case notTracked
@@ -83,7 +86,7 @@ struct RecoveryEngine {
         }
     }
 
-    struct DailyHealthMetric {
+    struct DailyHealthMetric: Sendable {
         var date: Date
         var hrvSDNN: Double?
         var hrvRMSSD: Double?
@@ -95,6 +98,12 @@ struct RecoveryEngine {
         var sleepTotalMinutes: Int?
         var sleepNeedMinutes: Int = 480
         var source: String?
+        var hrvSourceBundleID: String?
+        var restingHRSourceBundleID: String?
+        var sleepingHRSourceBundleID: String?
+        var sleepSourceBundleID: String?
+        var respiratoryRateSourceBundleID: String?
+        var oxygenSaturationSourceBundleID: String?
         var hrvSampleCount: Int?
         var dataQualityFlags: [String] = []
         /// HRV averaged over the sleep window only — the validated nocturnal
@@ -102,6 +111,8 @@ struct RecoveryEngine {
         /// Buchheit 2014). Preferred over the all-day `hrvSDNN`/`hrvRMSSD` mean
         /// when present.
         var nocturnalHRV: Double?
+        var nocturnalHRVOccupiedBinCount: Int?
+        var nocturnalHRVSampleSpanMinutes: Int?
         /// Mean heart rate during sleep — a cleaner overnight autonomic signal
         /// than Apple's daytime-derived resting heart rate. Preferred over
         /// `restingHR` when present.
@@ -111,6 +122,8 @@ struct RecoveryEngine {
         /// short fragment can't be trusted for a mean sleeping HR (see
         /// `SleepIntegrity`).
         var sleepingHRSampleCount: Int?
+        var sleepingHROccupiedBinCount: Int?
+        var sleepingHRSampleSpanMinutes: Int?
         /// Merged sleep-window bounds for the night. Their deviation from the
         /// user's habitual bed/wake anchors is what separates a true short
         /// night (normal anchors, dense samples) from a partial-wear gap
@@ -129,18 +142,17 @@ struct RecoveryEngine {
         /// Recovery can explain the resulting value honestly.
         var sleepOverride: SleepNightOverride?
         /// Data-integrity markers stamped by `SleepIntegrity.annotate` and the
-        /// user's own corrections (`SleepOverrideStore`). Read by the sleep
-        /// scoring, the sleep-debt sum, and the baseline filters so a
-        /// low-integrity or manually-corrected night can't masquerade as a
-        /// measured recovery deficit or contaminate the baselines.
+        /// user's own corrections (`SleepOverrideStore`). Read by scoring and
+        /// range selection so incomplete recordings are excluded while an
+        /// explicit user correction retains its measurement type.
         var integrityFlags: Set<String> = []
 
         /// A night the app has flagged as probable partial-wear capture —
         /// present-but-untrustworthy sleep data (see `SleepIntegrity`).
         var sleepLikelyPartial: Bool { integrityFlags.contains(SleepIntegrity.Flag.partialWear) }
         /// The user resolved this night by hand: confirmed the data, entered a
-        /// duration, or marked it untracked. Corrected nights are trusted for
-        /// today's score but never feed the rolling baselines.
+        /// duration, or marked it untracked. Confirmed/edited nights remain
+        /// source-attributed observations; untracked nights remain excluded.
         var sleepUserCorrected: Bool { integrityFlags.contains(SleepIntegrity.Flag.userCorrected) }
         var sleepOverrideStatus: SleepOverrideStatus? {
             switch sleepOverride {
@@ -175,7 +187,7 @@ struct RecoveryEngine {
         let tone: ReasonTone
     }
 
-    struct Signal: Identifiable {
+    struct Signal: Identifiable, Sendable {
         var id: String { name }
         let name: String
         let systemImage: String
@@ -199,12 +211,12 @@ struct RecoveryEngine {
     }
 
     struct Report {
-        var score: Double            // 0...1 overall readiness
-        var confidence: Double       // 0...1 data completeness
+        var score: Double?           // 0...1 recovery-signal index
+        var confidence: Double       // compatibility alias for data coverage
         var verdict: TodayVerdict
         var trainingLoad: TrainingLoadComparison
-        var monotony: Double?
-        var strain: Double?
+        var loadVariability: Double?
+        var loadConcentration: Double?
         var daysSinceLast: Int?
         var usedRMSSD: Bool
         var missingInputs: [String]
@@ -213,17 +225,20 @@ struct RecoveryEngine {
         var muscleFreshness: [MuscleFreshness]
         var insights: [String]
         var signals: [Signal]
-        /// Evidence-based recovery scores (see RecoveryScores.swift for the model
-        /// and citations): an acute daily-readiness score, a chronic recovery
-        /// trend, and per-muscle / cardio scores.
+        /// Versioned personal product indices: an acute recovery-signal index,
+        /// a seven-day trend, and recency-weighted muscle/cardio exposure indices.
         var recovery: RecoverySnapshot
 
-        /// The headline the user acts on: the acute **daily readiness** (today's
-        /// nocturnal autonomic state + last night's sleep) when enough data backs
-        /// it, then the chronic trend, then the legacy composite. Acute-first so
-        /// the number always moves with — and agrees with — the day's guidance.
-        var displayScore: Double {
-            recovery.daily.state.value ?? recovery.systemic.state.value ?? score
+        /// Acute recovery-signal index when its gate passes, otherwise the
+        /// seven-day trend. The retired legacy heuristic is never used.
+        var displayScore: Double? {
+            recovery.daily.state.value ?? recovery.systemic.state.value
+        }
+
+        var dataCoverage: Double {
+            recovery.daily.state.value != nil || recovery.daily.coverage > 0
+                ? recovery.daily.coverage
+                : recovery.systemic.coverage
         }
 
         var action: Action { verdict.action }
@@ -240,14 +255,13 @@ struct RecoveryEngine {
         /// beside the daily number. Nil until it has enough history.
         var trendScore: Double? { recovery.systemic.state.value }
 
-        /// True once an evidence-based score backs `displayScore` (the acute
-        /// daily readiness or the chronic trend). Surfaces gate the score on
-        /// this, never on `confidence` — confidence also dips when today's
+        /// True once a versioned index backs `displayScore`. Surfaces gate the
+        /// score on this, never on the compatibility `confidence` alias — data coverage dips when today's
         /// inputs are incomplete (sleep not yet synced at 1am), which is not
         /// the same as a baseline still being built, and gating on it made
         /// Home claim "building" while the Recovery screen showed a score.
         var baselineReady: Bool {
-            recovery.daily.state.value != nil || recovery.systemic.state.value != nil
+            displayScore != nil
         }
     }
 
@@ -318,57 +332,63 @@ struct RecoveryEngine {
         let trainingLoad = trainingLoadCalculator.comparison()
 
         let daily = dailyLoads(days: 7)
-        let monotony = monotony(daily)
-        let strain = monotony.map { $0 * daily.reduce(0, +) }
+        let distribution = weeklyLoadDistribution(daily)
 
         let daysSinceLast = completed
             .map { calendarDaysBetween($0.startedAt, and: now) }
             .min()
 
         let muscles = muscleFreshness()
-        let load = loadAssessment(trainingLoad)
-        let muscle = muscleAssessment(freshness: muscles, daysSinceLast: daysSinceLast)
-        let biometric = biometricAssessment()
-
-        var score = 0.62 + muscle.adjustment + biometric.adjustment
-        if completed.isEmpty { score = 0.64 + biometric.adjustment }
-        score = min(1, max(0, score))
-
-        // The action must agree with the number the user actually sees: the
-        // acute daily readiness drives the ring AND the recommendation (then
-        // the chronic trend, then the legacy composite — same chain as
-        // `displayScore`). A green 72 must never caption itself "Deload"
-        // unless the user explicitly reports being sick.
         let snapshot = recoverySnapshot()
-        let effectiveScore = snapshot.daily.state.value ?? snapshot.systemic.state.value ?? score
-        let verdict = TodayVerdict.make(score: effectiveScore, checkinTags: todayCheckinTags)
-        let chips = reasonChips(
-            muscle: muscle,
-            biometric: biometric,
-            daysSinceLast: daysSinceLast,
-            acuteFlags: snapshot.daily.flags
-        )
+        // The verdict answers "what should I do TODAY", so only today's acute
+        // score may produce one. This used to fall back to the seven-day trend
+        // — which meant a night with no HRV, no sleep, and no comparable heart
+        // rate still rendered "Proceed as planned", stated with a checkmark,
+        // directly above three dashes and "Baseline building". Last week's data
+        // cannot vouch for this morning. With nil, `TodayVerdict` returns
+        // `.insufficientData` and says so.
+        //
+        // The trend still has a place — `Report.displayScore` keeps showing it,
+        // labelled "7-day trend" — it just no longer issues a command.
+        let verdict = TodayVerdict.make(score: snapshot.daily.state.value, checkinTags: todayCheckinTags)
 
-        // Training load is now descriptive context and cannot inflate the
-        // confidence of a readiness recommendation. Confidence follows the
-        // completeness of the health signals that actually drive that call.
-        let confidence = min(1, max(0.1, biometric.completeness))
+        // The number on the ring, which may be the trend standing in for a
+        // still-building acute score. Kept deliberately separate from the
+        // value that produced `verdict` above: showing the trend is honest as
+        // long as it's labelled, but it must never speak for today.
+        let displayedScore = snapshot.daily.state.value ?? snapshot.systemic.state.value
+        let chips = reasonChips(acuteFlags: snapshot.daily.flags)
+        let inputSignals = recoveryInputSignals(snapshot.daily.parts)
+        let missingInputs = recoveryMissingInputs(snapshot.daily.parts)
+        let componentSubScores = snapshot.daily.parts.compactMap { part -> SubScore? in
+            guard let score = part.state.value else { return nil }
+            return SubScore(
+                name: part.name,
+                value: part.valueText,
+                score: score,
+                caption: part.detailText
+            )
+        }
+
+        let coverage = snapshot.daily.state.value != nil || snapshot.daily.coverage > 0
+            ? snapshot.daily.coverage
+            : snapshot.systemic.coverage
 
         return Report(
-            score: score,
-            confidence: confidence,
+            score: displayedScore,
+            confidence: coverage,
             verdict: verdict,
             trainingLoad: trainingLoad,
-            monotony: monotony,
-            strain: strain,
+            loadVariability: distribution.variability,
+            loadConcentration: distribution.concentration,
             daysSinceLast: daysSinceLast,
-            usedRMSSD: biometric.usedRMSSD,
-            missingInputs: biometric.missing,
+            usedRMSSD: latestHealthMetric()?.hrvRMSSD != nil && latestHealthMetric()?.nocturnalHRV == nil,
+            missingInputs: missingInputs,
             reasonChips: chips,
-            subScores: subScores(load: load, muscle: muscle, biometric: biometric),
+            subScores: componentSubScores,
             muscleFreshness: muscles,
-            insights: insights(load: load, muscle: muscle, biometric: biometric, daysSinceLast: daysSinceLast),
-            signals: biometric.signals + supplementalSignals,
+            insights: scoreInsights(snapshot: snapshot, comparison: trainingLoad),
+            signals: inputSignals + supplementalSignals,
             recovery: snapshot
         )
     }
@@ -378,21 +398,31 @@ struct RecoveryEngine {
     }
 
     func healthWorkoutLooksStrengthLike(_ workout: WorkoutModel) -> Bool {
-        trainingLoadCalculator.looksStrengthLike(workout)
-            || trainingLoadCalculator.looksMindBodyLike(workout)
+        let title = (workout.title ?? "").lowercased()
+        return title.contains("strength")
+            || title.contains("weight")
+            || title.contains("resistance")
+            || title.contains("core")
+            || title.contains("pilates")
+            || title.contains("yoga")
+            || title.contains("stretch")
+            || title.contains("mind and body")
     }
 
     func dailyLoads(days: Int) -> [Double] {
         trainingLoadCalculator.dailyLoads(days: days)
     }
 
-    func monotony(_ daily: [Double]) -> Double? {
+    func weeklyLoadDistribution(_ daily: [Double]) -> (variability: Double?, concentration: Double?) {
+        guard !daily.isEmpty else { return (nil, nil) }
+        let total = daily.reduce(0, +)
         let mean = daily.reduce(0, +) / Double(daily.count)
-        guard mean > 0 else { return nil }
-        let variance = daily.map { pow($0 - mean, 2) }.reduce(0, +) / Double(daily.count)
-        let sd = sqrt(variance)
-        guard sd > 0 else { return nil }
-        return mean / sd
+        guard mean > 0, total > 0 else { return (nil, nil) }
+        let divisor = Double(max(1, daily.count - 1))
+        let sampleSD = sqrt(daily.map { pow($0 - mean, 2) }.reduce(0, +) / divisor)
+        let variability = 100 * sampleSD / (sampleSD + mean)
+        let concentration = 100 * (daily.max() ?? 0) / total
+        return (variability, concentration)
     }
 
     private func loadAssessment(_ comparison: TrainingLoadComparison) -> LoadAssessment {
@@ -400,7 +430,7 @@ struct RecoveryEngine {
             let status = switch comparison.state {
             case .noRecentLoad: "No prior load"
             case .sparseBaseline: "Baseline too light"
-            case .building, .ready: "\(comparison.baselineDaysAvailable)/28 days"
+            case .building, .ready: "\(comparison.baselineDaysAvailable)/42 days"
             }
             return LoadAssessment(
                 status: status,
@@ -547,7 +577,7 @@ struct RecoveryEngine {
                         chips.append(ReasonChip(text: "HRV low today", tone: .caution))
                     } else {
                         adjustment += 0.04
-                        chips.append(ReasonChip(text: "HRV normal", tone: .positive))
+                        chips.append(ReasonChip(text: "HRV within usual range", tone: .positive))
                     }
                     // Trend beats a single reading: show the 7-day rolling
                     // average against the longer baseline (Plews et al. 2013).
@@ -593,7 +623,7 @@ struct RecoveryEngine {
                         score = min(score, 0.55)
                         chips.append(ReasonChip(text: "RHR elevated", tone: .caution))
                     } else {
-                        chips.append(ReasonChip(text: "RHR normal", tone: .positive))
+                        chips.append(ReasonChip(text: "RHR within usual range", tone: .positive))
                     }
                     signals.append(Signal(name: "Resting HR", systemImage: "heart.fill",
                                           value: "\(restingHR)", detail: "Baseline \(Int(mean.rounded())) bpm", connected: true))
@@ -692,31 +722,67 @@ struct RecoveryEngine {
         )
     }
 
-    private func reasonChips(
-        muscle: MuscleAssessment,
-        biometric: BiometricAssessment,
-        daysSinceLast: Int?,
-        acuteFlags: [String] = []
-    ) -> [ReasonChip] {
-        // Acute daily-readiness flags lead: they use the same banding as the
-        // headline score, so the chips can't disagree with the number. The
-        // legacy "HRV normal" chip is dropped when the acute read says low.
+    private func reasonChips(acuteFlags: [String] = []) -> [ReasonChip] {
         let acute = acuteFlags.map { ReasonChip(text: $0, tone: .caution) }
-        var biometricChips = biometric.chips
-        if acuteFlags.contains("HRV low today") {
-            biometricChips.removeAll { $0.text == "HRV normal" }
-        }
-        if acuteFlags.contains("Sleeping HR elevated") {
-            biometricChips.removeAll { $0.text == "RHR normal" }
-        }
         let checkin = todayCheckinTags.compactMap(Self.checkinChip(for:))
-        var chips = acute + checkin + muscle.chips + biometricChips
-        if chips.isEmpty, let daysSinceLast, daysSinceLast >= 2 {
-            chips.append(ReasonChip(text: "48h recovered", tone: .positive))
+        var dataFlags: [ReasonChip] = []
+        if latestHealthMetric()?.sleepLikelyPartial == true,
+           latestHealthMetric()?.sleepUserCorrected == false {
+            dataFlags.append(ReasonChip(text: "Sleep data looks partial", tone: .neutral))
+        } else if latestHealthMetric()?.sleepOverrideStatus == .notTracked {
+            dataFlags.append(ReasonChip(text: "Sleep excluded by you", tone: .neutral))
         }
+        var chips = acute + checkin + dataFlags
         chips = removeRedundantTodayTrainingChips(chips)
         var seen = Set<String>()
         return chips.filter { seen.insert($0.text).inserted }.prefix(6).map { $0 }
+    }
+
+    private func recoveryInputSignals(_ parts: [ScorePart]) -> [Signal] {
+        parts.map { part in
+            let baseName = part.name
+                .replacingOccurrences(of: " (today)", with: "")
+                .replacingOccurrences(of: " (last night)", with: "")
+            let name = baseName == "Heart rate" ? "Resting HR" : baseName
+            let icon: String = switch name {
+            case "HRV": "waveform.path.ecg"
+            case "Sleep": "bed.double.fill"
+            default: "heart.fill"
+            }
+            return Signal(
+                name: name,
+                systemImage: icon,
+                value: part.valueText,
+                detail: part.detailText,
+                connected: part.valueText != "—"
+            )
+        }
+    }
+
+    private func recoveryMissingInputs(_ parts: [ScorePart]) -> [String] {
+        parts.compactMap { part in
+            guard part.state.value == nil else { return nil }
+            if part.sleepOverrideStatus == .notTracked { return "Sleep (excluded by you)" }
+            if part.name.hasPrefix("Sleep"), latestHealthMetric()?.sleepLikelyPartial == true {
+                return "Sleep (partial)"
+            }
+            return part.name
+        }
+    }
+
+    private func scoreInsights(
+        snapshot: RecoverySnapshot,
+        comparison: TrainingLoadComparison
+    ) -> [String] {
+        var output: [String] = []
+        if let ratio = comparison.ratio {
+            let percent = Int((abs(ratio - 1) * 100).rounded())
+            output.append("Your last seven days are \(percent)% \(ratio >= 1 ? "above" : "below") the median of \(comparison.baselineWeekCount) prior complete weeks. This is descriptive history.")
+        }
+        if snapshot.muscles.contains(where: \.isProvisional) || snapshot.cardio.isProvisional {
+            output.append("Freshness references are provisional until six prior comparable sessions are available.")
+        }
+        return output
     }
 
     /// Chip text/tone for a morning check-in tag id; nil for unknown ids.

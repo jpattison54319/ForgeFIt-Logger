@@ -3,9 +3,6 @@ import ForgeData
 import Foundation
 import SwiftData
 import UserNotifications
-#if canImport(WidgetKit)
-import WidgetKit
-#endif
 
 extension Notification.Name {
     static let forgeFitAccountResetDidComplete = Notification.Name("forgefit.accountResetDidComplete")
@@ -16,6 +13,7 @@ enum AccountResetService {
     static func resetAllAppData(in context: ModelContext) throws {
         clearLiveSurfaces()
         cancelAppNotifications()
+        ExperimentExportService.cleanupAll()
         try deleteAllLocalModels(in: context)
         clearAppDefaults()
         try ExerciseSeedRepository.seedGlobalLibrary(in: context)
@@ -29,6 +27,10 @@ enum AccountResetService {
     }
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
+        WorkoutFinisher.cancelLiveRuntime()
+        try deleteAll(ExperimentEntryModel.self, in: context)
+        try deleteAll(ExperimentTrackerModel.self, in: context)
+        try deleteAll(ExperimentModel.self, in: context)
         try deleteAll(SavedInsightModel.self, in: context)
         try deleteAll(CoachingWeekOverrideModel.self, in: context)
         try deleteAll(CoachedProgramModel.self, in: context)
@@ -40,6 +42,7 @@ enum AccountResetService {
         try deleteAll(CardioSessionModel.self, in: context)
         try deleteAll(SetModel.self, in: context)
         try deleteAll(WorkoutExerciseModel.self, in: context)
+        try deleteAll(WorkoutBlockModel.self, in: context)
         try deleteAll(WorkoutModel.self, in: context)
         try deleteAll(WorkoutImportBatchModel.self, in: context)
         try deleteAll(WorkoutXPEventModel.self, in: context)
@@ -49,6 +52,7 @@ enum AccountResetService {
         try deleteAll(YogaFlowModel.self, in: context)
         try deleteAll(RoutineSetModel.self, in: context)
         try deleteAll(RoutineExerciseModel.self, in: context)
+        try deleteAll(RoutineBlockModel.self, in: context)
         try deleteAll(RoutineModel.self, in: context)
         try deleteAll(RoutineFolderModel.self, in: context)
         try deleteAll(UserExerciseNoteModel.self, in: context)
@@ -64,22 +68,15 @@ enum AccountResetService {
     }
 
     private static func clearLiveSurfaces() {
-        WorkoutActivityController.shared.end()
-        RestTimerController.shared.skip()
-        IntervalRunnerHub.shared.stop()
-        YogaFlowRunnerHub.shared.stop()
-        LiveMetricsHub.shared.endSession()
+        WorkoutFinisher.cancelLiveRuntime()
         WatchLink.shared.sendCommand(.discardWorkout)
         WatchLink.shared.publishState()
-        ForgeFitWidgetSnapshotStore.save(ForgeFitWidgetSnapshot(mode: .idle))
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
-        #endif
     }
 
     private static func cancelAppNotifications() {
+        NotificationScheduler.shared.cancelAllRestEnds()
+        ExperimentNotificationScheduler.cancelEveryExperimentNotification()
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [
-            NotificationScheduler.NotificationID.restTimer,
             NotificationScheduler.NotificationID.streakNudge,
             NotificationScheduler.NotificationID.intervalCue,
             NotificationScheduler.NotificationID.wrappedReady

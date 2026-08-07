@@ -1,5 +1,21 @@
 import SwiftUI
 
+/// One-way intent lock for a set-row drag. Once vertical intent wins, later
+/// horizontal drift cannot turn that same scroll into a delete swipe.
+enum SwipeToDeleteDirection: Equatable {
+    case horizontal
+    case rejected
+
+    static func resolve(horizontal: CGFloat, vertical: CGFloat, isOpen: Bool) -> Self? {
+        let x = abs(horizontal)
+        let y = abs(vertical)
+        if y >= x { return .rejected }
+        guard x >= y * 1.5 else { return nil }
+        guard isOpen || horizontal < 0 else { return .rejected }
+        return .horizontal
+    }
+}
+
 /// Mail-style swipe-to-delete for set rows. These rows live in a plain
 /// `LazyVStack`/`VStack`, not a `List`, so SwiftUI's `.swipeActions` isn't
 /// available — this is the hand-rolled equivalent. Swipe left to reveal a red
@@ -8,9 +24,9 @@ import SwiftUI
 /// path. Shared by the live logger and the routine editor so deleting a set
 /// feels identical everywhere.
 ///
-/// The drag is gated on horizontal-dominant movement with a non-trivial
-/// `minimumDistance` so taps, typing, and vertical scrolling are left to the
-/// row's controls and the enclosing scroll view.
+/// The drag uses a one-way direction lock plus a non-trivial `minimumDistance`
+/// so taps, typing, and vertical scrolling stay with the row's controls and
+/// enclosing scroll view.
 struct SwipeToDeleteRow<Content: View>: View {
     @Environment(\.theme) private var theme
     let isOpen: Bool
@@ -21,6 +37,7 @@ struct SwipeToDeleteRow<Content: View>: View {
     @State private var offset: CGFloat = 0
     @State private var width: CGFloat = 1
     @State private var deleteHapticTrigger = 0
+    @State private var swipeDirection: SwipeToDeleteDirection?
 
     init(
         isOpen: Bool,
@@ -61,8 +78,8 @@ struct SwipeToDeleteRow<Content: View>: View {
                 // the touch stream even for the vertical drags its onChanged
                 // ignores, which starved ScrollView's pan whenever a scroll
                 // began on a set row or one of its text fields. The
-                // horizontal-dominant guard below still keeps casual scrolls
-                // from opening the tray.
+                // one-way direction lock below prevents a vertical scroll's
+                // later sideways drift from opening the tray.
                 .simultaneousGesture(swipe)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -84,11 +101,16 @@ struct SwipeToDeleteRow<Content: View>: View {
     }
 
     private var swipe: some Gesture {
-        DragGesture(minimumDistance: 12)
+        DragGesture(minimumDistance: 16)
             .onChanged { value in
-                // Horizontal-dominant drags only — vertical stays with the
-                // scroll view, taps stay with the row's controls.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let direction = swipeDirection ?? SwipeToDeleteDirection.resolve(
+                    horizontal: value.translation.width,
+                    vertical: value.translation.height,
+                    isOpen: isOpen
+                )
+                guard let direction else { return }
+                if swipeDirection == nil { swipeDirection = direction }
+                guard direction == .horizontal else { return }
                 let base: CGFloat = isOpen ? -revealWidth : 0
                 let raw = base + value.translation.width
                 if raw > 0 {
@@ -102,6 +124,9 @@ struct SwipeToDeleteRow<Content: View>: View {
                 }
             }
             .onEnded { value in
+                let wasHorizontal = swipeDirection == .horizontal
+                swipeDirection = nil
+                guard wasHorizontal else { return }
                 let base: CGFloat = isOpen ? -revealWidth : 0
                 let end = base + value.translation.width
                 if -end > commitWidth {

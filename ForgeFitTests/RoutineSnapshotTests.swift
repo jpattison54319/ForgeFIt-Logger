@@ -115,6 +115,45 @@ struct RoutineSnapshotTests {
         snapshot.restore(onto: r, in: context)
         #expect(r.exercises[0].yogaFlowJSON == nil)
     }
+
+    @Test func blockEditsAdditionsAndRemovalsAreRestored() throws {
+        let context = ModelContext(try TestStore.makeContainer())
+        let r = routine(in: context)
+        let original = RoutineBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 1,
+            planJSON: #"{"name":"Original"}"#
+        )
+        context.insert(original)
+        r.blocks = [original]
+        try context.save()
+        let snapshot = RoutineSnapshot(of: r)
+
+        r.blocks.removeAll()
+        context.delete(original)
+        let added = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 0,
+            planJSON: #"{"name":"Added"}"#
+        )
+        context.insert(added)
+        r.blocks.append(added)
+        try context.save()
+        #expect(snapshot != RoutineSnapshot(of: r))
+
+        snapshot.restore(onto: r, in: context)
+
+        #expect(r.blocks.count == 1)
+        #expect(r.blocks[0].id == original.id)
+        #expect(r.blocks[0].kind == .conditioning)
+        #expect(r.blocks[0].position == 1)
+        #expect(r.blocks[0].planJSON == #"{"name":"Original"}"#)
+        let allBlocks = try context.fetch(FetchDescriptor<RoutineBlockModel>())
+        #expect(allBlocks.count == 1)
+        #expect(RoutineSnapshot(of: r) == snapshot)
+    }
 }
 
 /// Assisted / added bodyweight modes: the weight column routes into the field

@@ -4,5 +4,13 @@
 <dict>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
+	<!-- Shared with ForgeFitWatchComplication: WatchStore writes the readiness
+	     / live-set snapshot into this suite and the complication reads it.
+	     Without the entitlement on both sides, UserDefaults(suiteName:) falls
+	     back to .standard and the write lands where nothing reads it. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.org.xpetsllc.ForgeFit</string>
+	</array>
 </dict>
 </plist>

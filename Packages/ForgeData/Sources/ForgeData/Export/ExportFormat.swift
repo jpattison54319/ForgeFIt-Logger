@@ -63,24 +63,31 @@ public struct ExportWorkoutHealth: Codable, Sendable {
     public var activeEnergyKcal: Double?
     public var hrZoneSeconds: [Int]?
     public var readinessAtStart: Int?
+    public var readinessMethodID: String?
+    public var readinessCoverageAtStart: Double?
 
     public init(
         avgHR: Int? = nil,
         maxHR: Int? = nil,
         activeEnergyKcal: Double? = nil,
         hrZoneSeconds: [Int]? = nil,
-        readinessAtStart: Int? = nil
+        readinessAtStart: Int? = nil,
+        readinessMethodID: String? = nil,
+        readinessCoverageAtStart: Double? = nil
     ) {
         self.avgHR = avgHR
         self.maxHR = maxHR
         self.activeEnergyKcal = activeEnergyKcal
         self.hrZoneSeconds = hrZoneSeconds
         self.readinessAtStart = readinessAtStart
+        self.readinessMethodID = readinessMethodID
+        self.readinessCoverageAtStart = readinessCoverageAtStart
     }
 
     public var isEmpty: Bool {
         avgHR == nil && maxHR == nil && activeEnergyKcal == nil
-            && (hrZoneSeconds?.allSatisfy { $0 == 0 } ?? true) && readinessAtStart == nil
+            && (hrZoneSeconds?.allSatisfy { $0 == 0 } ?? true)
+            && readinessAtStart == nil && readinessMethodID == nil && readinessCoverageAtStart == nil
     }
 }
 
@@ -93,7 +100,7 @@ public struct ExportCardioSessionHealth: Codable, Sendable {
     public var maxHR: Int?
     public var activeEnergyKcal: Double?
     public var hrZoneSeconds: [Int]?
-    public var tss: Double?
+    public var estimatedZoneDurationLoad: Double?
     public var totalSteps: Int?
     public var floorsClimbed: Int?
 
@@ -102,7 +109,7 @@ public struct ExportCardioSessionHealth: Codable, Sendable {
         maxHR: Int? = nil,
         activeEnergyKcal: Double? = nil,
         hrZoneSeconds: [Int]? = nil,
-        tss: Double? = nil,
+        estimatedZoneDurationLoad: Double? = nil,
         totalSteps: Int? = nil,
         floorsClimbed: Int? = nil
     ) {
@@ -110,7 +117,7 @@ public struct ExportCardioSessionHealth: Codable, Sendable {
         self.maxHR = maxHR
         self.activeEnergyKcal = activeEnergyKcal
         self.hrZoneSeconds = hrZoneSeconds
-        self.tss = tss
+        self.estimatedZoneDurationLoad = estimatedZoneDurationLoad
         self.totalSteps = totalSteps
         self.floorsClimbed = floorsClimbed
     }
@@ -118,7 +125,7 @@ public struct ExportCardioSessionHealth: Codable, Sendable {
     public var isEmpty: Bool {
         avgHR == nil && maxHR == nil && activeEnergyKcal == nil
             && (hrZoneSeconds?.allSatisfy { $0 == 0 } ?? true)
-            && tss == nil && totalSteps == nil && floorsClimbed == nil
+            && estimatedZoneDurationLoad == nil && totalSteps == nil && floorsClimbed == nil
     }
 }
 
@@ -161,6 +168,7 @@ public struct ExportRoutine: Codable, Sendable {
     public var position: Int
     /// Present when the routine is archived (hidden but kept). Additive.
     public var archivedAt: Date?
+    public var conditioningPlanJSON: String?
     public var exercises: [ExportRoutineExercise]
 
     public init(
@@ -170,6 +178,7 @@ public struct ExportRoutine: Codable, Sendable {
         folderID: UUID? = nil,
         position: Int,
         archivedAt: Date? = nil,
+        conditioningPlanJSON: String? = nil,
         exercises: [ExportRoutineExercise] = []
     ) {
         self.id = id
@@ -178,6 +187,7 @@ public struct ExportRoutine: Codable, Sendable {
         self.folderID = folderID
         self.position = position
         self.archivedAt = archivedAt
+        self.conditioningPlanJSON = conditioningPlanJSON
         self.exercises = exercises
     }
 }

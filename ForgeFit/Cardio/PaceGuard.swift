@@ -98,41 +98,39 @@ final class PaceGuard: NSObject {
         case .onPace: phrase = "On pace"
         case .unknown: return
         }
-        if speak(phrase) {
-            lastCueAt = now
-        }
+        // Reserve the debounce window up front: activation is async now, so we
+        // can't gate on its success synchronously. A rare activation failure
+        // costs one quiet interval, not a burst of retries.
+        lastCueAt = now
+        speak(phrase)
     }
 
-    @discardableResult
-    private func speak(_ text: String) -> Bool {
-        guard activateSession() else { return false }
-        if synthesizer.isSpeaking {
-            synthesizer.stopSpeaking(at: .immediate)
-        }
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.postUtteranceDelay = 0
-        synthesizer.speak(utterance)
-        return true
-    }
-
-    @discardableResult
-    private func activateSession() -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
-            try session.setActive(true)
-            return true
-        } catch {
-            logger.error("Failed to activate pace cue audio session: \(error.localizedDescription, privacy: .public)")
-            return false
+    private func speak(_ text: String) {
+        // Activation runs off the main thread; the utterance waits for it inside
+        // the task so it isn't clipped, and we stay silent if it fails.
+        Task {
+            do {
+                try await AudioCueSession.shared.activate()
+            } catch {
+                logger.error("Failed to activate pace cue audio session: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            if synthesizer.isSpeaking {
+                synthesizer.stopSpeaking(at: .immediate)
+            }
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.postUtteranceDelay = 0
+            synthesizer.speak(utterance)
         }
     }
 
     private func deactivateSession() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        } catch {
-            logger.error("Failed to deactivate pace cue audio session: \(error.localizedDescription, privacy: .public)")
+        Task {
+            do {
+                try await AudioCueSession.shared.deactivate()
+            } catch {
+                logger.error("Failed to deactivate pace cue audio session: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }

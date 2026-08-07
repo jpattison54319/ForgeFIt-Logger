@@ -2,6 +2,18 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
+private struct TabRootRequestIDKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    /// Changes whenever the app bar asks the visible tab to return to its root.
+    var tabRootRequestID: Int {
+        get { self[TabRootRequestIDKey.self] }
+        set { self[TabRootRequestIDKey.self] = newValue }
+    }
+}
+
 /// Floating iOS 26 Liquid Glass app bar: a single clear-glass capsule with a
 /// fluid pill indicator that morphs between tabs. All tabs display a filled
 /// SF Symbol above a single-word label; the selected tab's accent pill
@@ -10,6 +22,7 @@ struct ForgeTabBar: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selection: AppTab
+    let onSelect: (AppTab) -> Void
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
     @Namespace private var pill
@@ -26,15 +39,18 @@ struct ForgeTabBar: View {
         }
         .shadow(color: .black.opacity(0.28), radius: 22, y: 10)
         .padding(.horizontal, Space.xl)
+        // The bar is fixed chrome over scrolling content, so it can't be
+        // allowed to grow without bound: at the accessibility sizes the labels
+        // pushed it tall enough to cover the card behind it. Body copy still
+        // scales — this caps the shell so the two don't fight.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     }
 
     private func item(_ tab: AppTab) -> some View {
         let isSelected = tab == selection
         let badgeCount = tab == .profile ? reviewCount : 0
         return Button {
-            withAnimation(.bouncy(duration: 0.42, extraBounce: 0.06)) {
-                selection = tab
-            }
+            onSelect(tab)
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: tab.systemImage)
@@ -42,7 +58,8 @@ struct ForgeTabBar: View {
                     .symbolEffect(.bounce, value: isSelected)
                 Text(tab.title)
                     .font(.caption.weight(.semibold))
-                    .fixedSize()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .overlay(alignment: .topTrailing) {
                 if badgeCount > 0 {

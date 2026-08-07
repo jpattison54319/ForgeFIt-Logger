@@ -519,11 +519,46 @@ struct InsightCompatibilityTests {
     @Test func signatureIgnoresNameAndTimestamps() {
         var a = recipe(shape: .trend)
         var b = a
-        #expect(a.analysisSignature.hasPrefix("m6;"))
+        #expect(a.analysisSignature.hasPrefix("m7;"))
         b.name = "Renamed"
         b.updatedAt = Date(timeIntervalSinceNow: 999)
         #expect(a.analysisSignature == b.analysisSignature)
         a.range = .fourWeeks
         #expect(a.analysisSignature != b.analysisSignature)
+
+        b = a
+        b.relationshipPopulation = .includeInactiveBuckets
+        #expect(a.analysisSignature != b.analysisSignature)
+    }
+
+    @Test func relationshipPopulationIsAvailableOnlyForZeroCapableCalendarMetrics() {
+        let volumeAndSleep = recipe(shape: .relationship, comparisons: ["sleep"])
+        #expect(
+            InsightCompatibilityEngine.allowedRelationshipPopulations(
+                for: volumeAndSleep,
+                descriptors: [volume, metric("sleep", aggregation: .mean)]
+            ) == [.activeBucketsOnly, .includeInactiveBuckets]
+        )
+        #expect(
+            InsightCompatibilityEngine.resolvedRelationshipPopulation(
+                for: volumeAndSleep,
+                descriptors: [volume, metric("sleep", aggregation: .mean)]
+            ) == .activeBucketsOnly
+        )
+
+        let measurements = recipe(
+            shape: .relationship,
+            primary: "sleep",
+            comparisons: ["hrv"]
+        )
+        #expect(
+            InsightCompatibilityEngine.allowedRelationshipPopulations(
+                for: measurements,
+                descriptors: [
+                    metric("sleep", aggregation: .mean),
+                    metric("hrv", aggregation: .mean),
+                ]
+            ).isEmpty
+        )
     }
 }

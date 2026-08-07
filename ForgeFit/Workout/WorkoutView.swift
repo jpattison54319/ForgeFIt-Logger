@@ -57,6 +57,7 @@ private struct DropFeedback: Equatable {
 /// Hevy-style Workout tab: start an empty session and manage routines organized
 /// into folders (create, rename, delete, and drag routines in / out).
 struct WorkoutHomeView: View {
+    @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
     @Environment(AppState.self) private var appState
@@ -190,8 +191,12 @@ struct WorkoutHomeView: View {
                 }
 
                 HStack(spacing: Space.sm) {
-                    SecondaryButton(title: "New Routine", systemImage: "list.bullet.clipboard") { createRoutine(folderID: nil) }
+                    SecondaryButton(title: "New Routine", systemImage: "plus") { createRoutine(folderID: nil) }
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("new-routine-button")
                     SecondaryButton(title: "Explore", systemImage: "sparkles") { showExploreLibrary = true }
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("explore-routines-button")
                 }
 
                 if activeRoutines.isEmpty && folders.isEmpty {
@@ -308,6 +313,7 @@ struct WorkoutHomeView: View {
                 )
             }
         }
+        .id(tabRootRequestID)
         .interactiveBackSwipeEnabled()
     }
 
@@ -1037,9 +1043,27 @@ private struct RoutineCard: View {
     private var sortedRoutineExercises: [RoutineExerciseModel] {
         routine.exercises.sorted { $0.position < $1.position }
     }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
 
     private func exerciseName(for re: RoutineExerciseModel) -> String {
         exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise"
+    }
+
+    private var conditioningSummary: String? {
+        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
+            ?? routine.conditioningPlanJSON
+        guard let plan = ConditioningPlan.decode(from: json),
+              let first = plan.sections.first else { return nil }
+        switch first.format {
+        case .amrap:
+            return "\(max(1, (first.durationSeconds ?? 1_200) / 60)) min AMRAP"
+        case .emom:
+            return "EMOM \(first.rounds ?? 20)"
+        case .forTime:
+            return "For Time"
+        default:
+            return first.format.title
+        }
     }
 
     var body: some View {
@@ -1069,7 +1093,7 @@ private struct RoutineCard: View {
                         .buttonBorderShape(.capsule)
                         // An empty routine has nothing to start — starting it
                         // would just open a blank freestyle session.
-                        .disabled(sortedRoutineExercises.isEmpty)
+                        .disabled(orderedItems.isEmpty)
                         .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
                             Button("Edit Routine", systemImage: "pencil", action: onEdit)
@@ -1103,18 +1127,23 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
-                    if sortedRoutineExercises.isEmpty {
-                        Text("No exercises yet — add some to start")
+                    if orderedItems.isEmpty {
+                        Text("Nothing added yet — add an exercise or block to start")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
+                        if routine.blocks.isEmpty, let conditioningSummary {
+                            Label(conditioningSummary, systemImage: "stopwatch")
+                                .font(.tag)
+                                .foregroundStyle(theme.accent)
+                        }
                         VStack(alignment: .leading, spacing: 3) {
-                            ForEach(sortedRoutineExercises) { re in
+                            ForEach(orderedItems) { item in
                                 HStack(spacing: 6) {
                                     Circle()
                                         .fill(theme.textTertiary)
                                         .frame(width: 4, height: 4)
-                                    Text(exerciseName(for: re))
+                                    Text(itemName(item))
                                         .font(.system(size: 14))
                                         .foregroundStyle(theme.textSecondary)
                                         .lineLimit(1)
@@ -1127,6 +1156,13 @@ private struct RoutineCard: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func itemName(_ item: OrderedRoutineItem) -> String {
+        switch item {
+        case .exercise(let exercise): exerciseName(for: exercise)
+        case .block(let block): block.kind.title
+        }
     }
 }
 

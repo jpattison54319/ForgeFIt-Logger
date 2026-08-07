@@ -24,11 +24,24 @@ struct ExercisePickerView: View {
     /// only make sense inside a flow, so only the Yoga Session container is
     /// offered. The flow is configured afterwards from the session card.
     var excludeYogaPoses = false
+    /// General workout addition and conditioning movement selection keep all
+    /// yoga choices out of the exercise catalog. Yoga is added as a block and
+    /// poses are selected inside its dedicated flow builder.
+    var excludeYoga = false
+    /// Adds first-class block actions above the strength/cardio catalog.
+    var showsWorkoutBlocks = false
     /// Exercises already in the routine/workout being added to — drives the
     /// muscle profile behind "Suggested".
     var context: [ExerciseLibraryModel] = []
     /// Completed workouts, for ranking by the user's most-used exercises.
     var history: [WorkoutModel] = []
+    /// Lets replacement reuse the familiar picker without presenting itself
+    /// as an add flow.
+    var navigationTitle = "Add Exercise"
+    /// Current/in-use exercises that replacement must never offer.
+    var excludedIDs: Set<UUID> = []
+    var onAddConditioningBlock: ((String) -> Void)?
+    var onAddYogaBlock: ((String) -> Void)?
     let onAdd: ([ExerciseLibraryModel]) -> Void
 
     @State private var search = ""
@@ -37,6 +50,8 @@ struct ExercisePickerView: View {
     @State private var modalityFilter: Modality?
     @State private var selected: Set<UUID> = []
     @State private var showCreate = false
+    @State private var showConditioningBuilder = false
+    @State private var showYogaBuilder = false
     @State private var detailExercise: ExerciseLibraryModel?
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var suggestedMemo = Memo<String, [ExerciseLibraryModel]>()
@@ -72,9 +87,13 @@ struct ExercisePickerView: View {
             .joined(separator: "|")
     }
 
+    private var exclusionFingerprint: String {
+        excludedIDs.map(\.uuidString).sorted().joined(separator: "|")
+    }
+
     private var filtered: [ExerciseLibraryModel] {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filterKey = "\(exerciseFingerprint)|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")|\(excludeYogaSession)|\(excludeYogaPoses)"
+        let filterKey = "\(exerciseFingerprint)|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")|\(excludeYogaSession)|\(excludeYogaPoses)|\(excludeYoga)|\(exclusionFingerprint)"
         let key = "\(filterKey)|\(normalizedSearch.lowercased())"
         return filteredMemo(key) {
             let base = filteredBase(filterKey: filterKey)
@@ -101,7 +120,8 @@ struct ExercisePickerView: View {
             // layout (rows collapse to zero height / spacing goes erratic).
             var seen = Set<UUID>()
             return exercises.filter { ex in
-                guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
+                guard ex.deletedAt == nil, !excludedIDs.contains(ex.id), seen.insert(ex.id).inserted else { return false }
+                if excludeYoga, ex.isYoga { return false }
                 if excludeYogaSession, YogaPoseCatalog.isSessionExercise(ex) { return false }
                 if excludeYogaPoses, ex.isYoga, !YogaPoseCatalog.isSessionExercise(ex) { return false }
                 if let modalityFilter, ex.modality != modalityFilter { return false }
@@ -124,7 +144,7 @@ struct ExercisePickerView: View {
     private var suggested: [ExerciseLibraryModel] {
         guard search.isEmpty, muscle == nil, equipment == nil else { return [] }
 
-        let key = "\(exerciseFingerprint)|\(historyFingerprint)|\(contextFingerprint)"
+        let key = "\(exerciseFingerprint)|\(historyFingerprint)|\(contextFingerprint)|\(exclusionFingerprint)"
         return suggestedMemo(key) {
             var usage: [UUID: Int] = [:]
             for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
@@ -140,7 +160,12 @@ struct ExercisePickerView: View {
             let alreadyIn = Set(context.map(\.id))
             var seen = Set<UUID>()
             let scored: [(ExerciseLibraryModel, Double)] = exercises.compactMap { ex in
-                guard ex.deletedAt == nil, !alreadyIn.contains(ex.id), seen.insert(ex.id).inserted else { return nil }
+                guard ex.deletedAt == nil,
+                      !alreadyIn.contains(ex.id),
+                      !excludedIDs.contains(ex.id),
+                      seen.insert(ex.id).inserted else { return nil }
+                if excludeYoga, ex.isYoga { return nil }
+                if excludeYogaSession, YogaPoseCatalog.isSessionExercise(ex) { return nil }
                 if excludeYogaPoses, ex.isYoga, !YogaPoseCatalog.isSessionExercise(ex) { return nil }
                 var score = 0.0
                 for m in ex.primaryMuscles { score += (muscleScore[m] ?? 0) }
@@ -159,6 +184,13 @@ struct ExercisePickerView: View {
                 theme.background.ignoresSafeArea()
 
                 VStack(spacing: 0) {
+                    if showsWorkoutBlocks {
+                        WorkoutBlockPickerSection(
+                            onAddConditioning: { showConditioningBuilder = true },
+                            onAddYoga: { showYogaBuilder = true }
+                        )
+                        Divider().overlay(theme.separator)
+                    }
                     filterBar
                     Divider().overlay(theme.separator)
                     if filtered.isEmpty {
@@ -178,7 +210,7 @@ struct ExercisePickerView: View {
                 }
             }
             .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: selected.isEmpty)
-            .navigationTitle("Add Exercise")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
             .toolbar {
@@ -193,6 +225,23 @@ struct ExercisePickerView: View {
                     initialName: search.trimmingCharacters(in: .whitespacesAndNewlines),
                     initialModality: modalityFilter ?? .strength
                 ) { created in commit([created]) }
+            }
+            .sheet(isPresented: $showConditioningBuilder) {
+                ConditioningBlockBuilderView(
+                    planJSON: nil,
+                    exercises: exercises,
+                    workouts: history
+                ) { json in
+                    onAddConditioningBlock?(json)
+                    dismiss()
+                }
+            }
+            .sheet(isPresented: $showYogaBuilder) {
+                YogaFlowBuilderView(planJSON: nil) { json in
+                    guard let json else { return }
+                    onAddYogaBlock?(json)
+                    dismiss()
+                }
             }
             .sheet(item: $detailExercise) { exercise in
                 NavigationStack {
@@ -224,7 +273,7 @@ struct ExercisePickerView: View {
                         Button("All types") { modalityFilter = nil }
                         Button("Lifts") { modalityFilter = .strength }
                         Button("Cardio") { modalityFilter = .cardio }
-                        Button("Yoga") { modalityFilter = .yoga }
+                        if !excludeYoga { Button("Yoga") { modalityFilter = .yoga } }
                     } label: {
                         FilterChip(
                             title: modalityFilterTitle,
@@ -683,15 +732,15 @@ struct CreateExerciseView: View {
                     }
                 }
                 .padding(Space.lg)
+                // Apply keyboard clearance to the scroll content. Putting the
+                // same padding on the outer ScrollView double-counts SwiftUI's
+                // sheet avoidance and collapses the form into a black gap.
+                .keyboardAdaptiveBottomInset()
                 .animation(.spring(duration: 0.25), value: modality)
             }
-            // Long form, several text fields (name, Sanskrit name) — without
-            // these two, the last field/row of the modality-specific card
-            // (e.g. "Weight unit" or "Sanskrit name") could be left stranded
-            // behind the keyboard with no way to scroll to it. Same shared
-            // fix as ScreenScaffold/RoutineEditorView.
+            // Let the keyboard be dismissed by dragging this long form; the
+            // content-level inset above keeps its final rows reachable.
             .scrollDismissesKeyboard(.interactively)
-            .keyboardAdaptiveBottomInset()
             // Keep the equipment pick coherent with the type: snap to the new
             // discipline's default only when the current value belongs to the
             // OTHER discipline's primary set, so a deliberate edge-case pick

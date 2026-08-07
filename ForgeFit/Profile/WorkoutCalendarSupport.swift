@@ -1,4 +1,5 @@
 import Foundation
+import ForgeData
 
 /// Pure date/classification logic behind the Profile workout calendar: month
 /// grid layout, local-day grouping keys, and the training-type marker for a
@@ -7,7 +8,20 @@ import Foundation
 enum WorkoutCalendarSupport {
     /// What a workout was, for the calendar's per-workout day markers.
     enum WorkoutKind {
-        case strength, cardio, mixed
+        case strength, cardio, conditioning, yoga, mixed
+    }
+
+    static func workoutKind(for workout: WorkoutModel) -> WorkoutKind {
+        let modalities = WorkoutPresentationPlan.make(for: workout).modalities
+        guard modalities.count == 1, let modality = modalities.first else {
+            return modalities.isEmpty ? .strength : .mixed
+        }
+        return switch modality {
+        case .strength: .strength
+        case .cardio: .cardio
+        case .conditioning: .conditioning
+        case .yoga: .yoga
+        }
     }
 
     /// Same linkage inputs as `CardioBlockSupport.isMixedWorkout`: strength

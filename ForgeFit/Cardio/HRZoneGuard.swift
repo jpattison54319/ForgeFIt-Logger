@@ -101,44 +101,42 @@ final class HRZoneGuard: NSObject {
         case .inZone: phrase = "Back in zone \(targetZone)"
         case .unknown: return
         }
-        if speak(phrase) {
-            lastCueAt = now
-        }
+        // Reserve the debounce window up front: activation is async now, so we
+        // can't gate on its success synchronously. A rare activation failure
+        // costs one quiet interval, not a burst of retries.
+        lastCueAt = now
+        speak(phrase)
     }
 
-    @discardableResult
-    private func speak(_ text: String) -> Bool {
+    private func speak(_ text: String) {
         // Duck music/podcasts briefly so the cue is audible, then mix back.
-        guard activateSession() else { return false }
-        interruptedUtterance = nil
-        wasInterrupted = false
-        if synthesizer.isSpeaking {
-            synthesizer.stopSpeaking(at: .immediate)
-        }
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.postUtteranceDelay = 0
-        synthesizer.speak(utterance)
-        return true
-    }
-
-    @discardableResult
-    private func activateSession() -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
-            try session.setActive(true)
-            return true
-        } catch {
-            logger.error("Failed to activate zone cue audio session: \(error.localizedDescription, privacy: .public)")
-            return false
+        // Activation runs off the main thread; the utterance waits for it inside
+        // the task so it isn't clipped, and we stay silent if it fails.
+        Task {
+            do {
+                try await AudioCueSession.shared.activate()
+            } catch {
+                logger.error("Failed to activate zone cue audio session: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            interruptedUtterance = nil
+            wasInterrupted = false
+            if synthesizer.isSpeaking {
+                synthesizer.stopSpeaking(at: .immediate)
+            }
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.postUtteranceDelay = 0
+            synthesizer.speak(utterance)
         }
     }
 
     private func deactivateSession() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        } catch {
-            logger.error("Failed to deactivate zone cue audio session: \(error.localizedDescription, privacy: .public)")
+        Task {
+            do {
+                try await AudioCueSession.shared.deactivate()
+            } catch {
+                logger.error("Failed to deactivate zone cue audio session: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -156,12 +154,20 @@ final class HRZoneGuard: NSObject {
                 guard guarder.isActive, guarder.wasInterrupted else { return }
                 guarder.wasInterrupted = false
                 let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
-                guard options.contains(.shouldResume), guarder.activateSession() else { return }
+                guard options.contains(.shouldResume) else { return }
                 if guarder.synthesizer.isPaused {
+                    // Reactivate before resuming the paused utterance; the
+                    // replay branch lets `speak` own its own activation.
+                    do {
+                        try await AudioCueSession.shared.activate()
+                    } catch {
+                        guarder.logger.error("Failed to reactivate zone cue audio session: \(error.localizedDescription, privacy: .public)")
+                        return
+                    }
                     guarder.synthesizer.continueSpeaking()
                 } else if let text = guarder.interruptedUtterance {
                     guarder.interruptedUtterance = nil
-                    _ = guarder.speak(text)
+                    guarder.speak(text)
                 }
             @unknown default:
                 break

@@ -7,6 +7,44 @@ import Foundation
 /// no view ever re-derives (or forgets) a rule.
 public enum InsightCompatibilityEngine {
 
+    /// A population choice is meaningful only for calendar-bucket
+    /// relationships containing a total whose absence is a factual zero.
+    /// Recorded measurements never gain a zero option from this API.
+    public static func allowedRelationshipPopulations(
+        for recipe: InsightRecipe,
+        descriptors descriptorList: [InsightMetricDescriptor]
+    ) -> [InsightRelationshipPopulation] {
+        guard recipe.shape == .relationship,
+              recipe.bucket != .session,
+              recipe.operands.count == 2 else { return [] }
+        let byID = Dictionary(
+            descriptorList.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let metrics = recipe.operands.compactMap { byID[$0.metricID] }
+        guard metrics.count == 2,
+              metrics.contains(where: { $0.zeroFillPolicy == .zeroWhenAbsent }) else {
+            return []
+        }
+        return [.activeBucketsOnly, .includeInactiveBuckets]
+    }
+
+    /// `automatic` deliberately favors dose quality over calendar density:
+    /// when zero-capable training totals are involved, fit only buckets where
+    /// both operands were recorded. The visible override can opt back into
+    /// structural zeros. Relationships without that choice also use their
+    /// recorded intersection.
+    public static func resolvedRelationshipPopulation(
+        for recipe: InsightRecipe,
+        descriptors: [InsightMetricDescriptor]
+    ) -> InsightRelationshipPopulation {
+        let allowed = allowedRelationshipPopulations(for: recipe, descriptors: descriptors)
+        guard !allowed.isEmpty else { return .activeBucketsOnly }
+        return allowed.contains(recipe.relationshipPopulation)
+            ? recipe.relationshipPopulation
+            : .activeBucketsOnly
+    }
+
     public static func validate(
         _ recipe: InsightRecipe,
         descriptors descriptorList: [InsightMetricDescriptor]

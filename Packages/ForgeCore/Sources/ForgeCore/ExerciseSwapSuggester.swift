@@ -15,6 +15,16 @@ public enum ExerciseSwapSuggester {
         case bodyweight
     }
 
+    /// Completed workout dates for one exercise. The engine derives a bounded
+    /// current-block affinity at a caller-supplied date; nothing is persisted.
+    public struct UsageProfile: Equatable, Sendable {
+        public let sessionDates: [Date]
+
+        public init(sessionDates: [Date]) {
+            self.sessionDates = sessionDates.sorted(by: >)
+        }
+    }
+
     /// A snapshot of the fields that matter for similarity.
     public struct Candidate: Equatable, Sendable {
         public let id: UUID
@@ -61,6 +71,10 @@ public enum ExerciseSwapSuggester {
         /// The lifter has completed sets of this exercise before, so ghosts
         /// and records light up immediately after the swap.
         case trainedBefore
+        /// Broad compatibility inferred from movement metadata and muscles.
+        case sameMovementFamily(ExerciseMovementFamily)
+        /// Honest personal context for the recommendation row.
+        case usage(recentSessionCount: Int, lastUsedAt: Date)
     }
 
     public struct Suggestion: Equatable, Sendable {
@@ -79,11 +93,17 @@ public enum ExerciseSwapSuggester {
         trainedIDs: Set<UUID> = [],
         excluding: Set<UUID> = [],
         preference: SwapPreference? = nil,
+        usageByID: [UUID: UsageProfile] = [:],
+        referenceDate: Date = .now,
         limit: Int = 6
     ) -> [Suggestion] {
         let targetPrimary = Set(target.primaryMuscles.map(normalize))
         guard !targetPrimary.isEmpty else { return [] }
         let targetMachineBased = isMachineBased(target.equipment)
+        let targetFamily = ExerciseMovementFamily.infer(
+            movementPattern: target.movementPattern,
+            primaryMuscles: target.primaryMuscles
+        )
 
         var ranked: [(suggestion: Suggestion, trained: Bool)] = []
         for candidate in pool {
@@ -93,6 +113,14 @@ public enum ExerciseSwapSuggester {
             let sharedPrimary = targetPrimary.intersection(candidatePrimary)
             guard !sharedPrimary.isEmpty else { continue }
 
+            let candidateFamily = ExerciseMovementFamily.infer(
+                movementPattern: candidate.movementPattern,
+                primaryMuscles: candidate.primaryMuscles
+            )
+            if let targetFamily, let candidateFamily, targetFamily != candidateFamily {
+                continue
+            }
+
             var score = 3.0 * Double(sharedPrimary.count) / Double(targetPrimary.count)
             var facets: [MatchFacet] = [.sharedMuscles(sharedPrimary.sorted())]
 
@@ -100,8 +128,9 @@ public enum ExerciseSwapSuggester {
             score += 0.75 * Double(targetPrimary.intersection(candidateSecondary).count)
                 / Double(targetPrimary.count)
 
-            let samePattern = target.movementPattern.map(normalize) == candidate.movementPattern.map(normalize)
-                && target.movementPattern?.isEmpty == false
+            let targetPattern = normalizePattern(target.movementPattern)
+            let candidatePattern = normalizePattern(candidate.movementPattern)
+            let samePattern = !targetPattern.isEmpty && targetPattern == candidatePattern
             if samePattern {
                 score += 2.0
                 facets.append(.samePattern)
@@ -112,8 +141,18 @@ public enum ExerciseSwapSuggester {
             if sharedPrimary.count == targetPrimary.count, samePattern {
                 score += 1.0
             }
-            if let force = target.force, !force.isEmpty,
-               normalize(force) == normalize(candidate.force ?? "") {
+
+            if let targetFamily, targetFamily == candidateFamily {
+                score += 0.75
+                facets.append(.sameMovementFamily(targetFamily))
+            }
+
+            let targetForce = normalize(target.force ?? "")
+            let candidateForce = normalize(candidate.force ?? "")
+            let forceDuplicatesPattern = !targetForce.isEmpty
+                && targetForce == targetPattern
+                && candidateForce == candidatePattern
+            if !targetForce.isEmpty, targetForce == candidateForce, !forceDuplicatesPattern {
                 score += 0.4
             }
             if let mechanic = target.mechanic, !mechanic.isEmpty,
@@ -138,6 +177,15 @@ public enum ExerciseSwapSuggester {
                 facets.append(.preferredEquipment(equipment))
             }
 
+            if let usage = usageByID[candidate.id],
+               let lastUsedAt = usage.sessionDates.first {
+                score += usageAffinity(usage, referenceDate: referenceDate)
+                let recentCount = usage.sessionDates.count {
+                    elapsedDays(since: $0, referenceDate: referenceDate) <= 90
+                }
+                facets.append(.usage(recentSessionCount: recentCount, lastUsedAt: lastUsedAt))
+            }
+
             let trained = trainedIDs.contains(candidate.id)
             if trained {
                 facets.append(.trainedBefore)
@@ -146,31 +194,13 @@ public enum ExerciseSwapSuggester {
             ranked.append((Suggestion(candidate: candidate, score: score, facets: facets), trained))
         }
 
-        // History is deliberately only a near-equal tiebreaker. Grouping from
-        // the best score in each band keeps the comparison deterministic.
-        let byQuality = ranked.sorted { lhs, rhs in
+        let suggestions = ranked.sorted { lhs, rhs in
             if lhs.suggestion.score != rhs.suggestion.score {
                 return lhs.suggestion.score > rhs.suggestion.score
             }
+            if lhs.trained != rhs.trained { return lhs.trained }
             return lhs.suggestion.candidate.name < rhs.suggestion.candidate.name
-        }
-        var suggestions: [Suggestion] = []
-        var index = 0
-        while index < byQuality.count {
-            let bestScore = byQuality[index].suggestion.score
-            var end = index + 1
-            while end < byQuality.count, bestScore - byQuality[end].suggestion.score <= 0.35 {
-                end += 1
-            }
-            suggestions.append(contentsOf: byQuality[index..<end].sorted { lhs, rhs in
-                if lhs.trained != rhs.trained { return lhs.trained }
-                if lhs.suggestion.score != rhs.suggestion.score {
-                    return lhs.suggestion.score > rhs.suggestion.score
-                }
-                return lhs.suggestion.candidate.name < rhs.suggestion.candidate.name
-            }.map(\.suggestion))
-            index = end
-        }
+        }.map(\.suggestion)
 
         return suggestions
             .prefix(limit)
@@ -189,7 +219,16 @@ public enum ExerciseSwapSuggester {
 
         let viable = pool.filter { candidate in
             guard candidate.id != target.id, !excluding.contains(candidate.id) else { return false }
-            return !targetPrimary.intersection(candidate.primaryMuscles.map(normalize)).isEmpty
+            guard !targetPrimary.intersection(candidate.primaryMuscles.map(normalize)).isEmpty else { return false }
+            let targetFamily = ExerciseMovementFamily.infer(
+                movementPattern: target.movementPattern,
+                primaryMuscles: target.primaryMuscles
+            )
+            let candidateFamily = ExerciseMovementFamily.infer(
+                movementPattern: candidate.movementPattern,
+                primaryMuscles: candidate.primaryMuscles
+            )
+            return targetFamily == nil || candidateFamily == nil || targetFamily == candidateFamily
         }
         let currentPreference = preference(for: target.equipment)
         return SwapPreference.allCases.filter { preference in
@@ -233,5 +272,29 @@ public enum ExerciseSwapSuggester {
 
     private static func normalize(_ value: String) -> String {
         value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizePattern(_ value: String?) -> String {
+        guard let value else { return "" }
+        return value
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    private static func usageAffinity(_ usage: UsageProfile, referenceDate: Date) -> Double {
+        guard let lastUsedAt = usage.sessionDates.first else { return 0 }
+        let recency = 1.2 * pow(2, -elapsedDays(since: lastUsedAt, referenceDate: referenceDate) / 28)
+        let weightedUses = usage.sessionDates.reduce(0.0) { total, date in
+            total + pow(2, -elapsedDays(since: date, referenceDate: referenceDate) / 56)
+        }
+        let frequency = 1.4 * (1 - exp(-weightedUses / 3))
+        return recency + frequency
+    }
+
+    private static func elapsedDays(since date: Date, referenceDate: Date) -> Double {
+        max(0, referenceDate.timeIntervalSince(date) / 86_400)
     }
 }

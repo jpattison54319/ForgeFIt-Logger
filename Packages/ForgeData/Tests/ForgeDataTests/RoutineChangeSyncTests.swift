@@ -336,6 +336,248 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(sorted.last?.exerciseID, exerciseA)
         XCTAssertEqual(sorted.last?.position, 1)
     }
+
+    // MARK: - Reported: "I said yes and the routine didn't change"
+
+    /// An in-place swap keeps the routine lineage and changes only which
+    /// movement the row points at. That was invisible to the diff, so a
+    /// session where the lifter swapped an exercise reported "no changes" and
+    /// the prompt never appeared — or appeared for some other edit and then
+    /// applied everything except the swap.
+    func testExerciseSwapIsDetectedAndApplied() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let original = UUID()
+        let replacement = UUID()
+        let seeded = try seed(userID: userID, exerciseID: original, in: context)
+
+        seeded.workout.exercises[0].exerciseID = replacement
+
+        let plan = RoutineChangeSync.detect(workout: seeded.workout, routine: seeded.routine)
+        XCTAssertTrue(plan.hasChanges, "A swapped exercise is a structural change.")
+        XCTAssertTrue(plan.exercisePlans[0].exerciseChanged)
+        XCTAssertTrue(plan.summary.contains("swapped"), "Prompt must name the swap: \(plan.summary)")
+
+        RoutineChangeSync.apply(plan, to: seeded.routine, from: seeded.workout, in: context)
+        try context.save()
+
+        XCTAssertEqual(seeded.routine.exercises[0].exerciseID, replacement,
+                       "Saying yes must repoint the routine at the exercise actually performed.")
+    }
+
+    /// A swap must not cost the row its standing targets — only the movement
+    /// changes, the programming stays.
+    func testExerciseSwapPreservesStandingTargets() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let seeded = try seed(userID: userID, exerciseID: UUID(), in: context)
+        seeded.workout.exercises[0].exerciseID = UUID()
+        // Performed something different from the standing target today.
+        seeded.workout.exercises[0].sets[0].reps = 5
+        seeded.workout.exercises[0].sets[0].weight = 100
+
+        let plan = RoutineChangeSync.detect(workout: seeded.workout, routine: seeded.routine)
+        RoutineChangeSync.apply(plan, to: seeded.routine, from: seeded.workout, in: context)
+        try context.save()
+
+        let target = seeded.routine.exercises[0].sets[0]
+        XCTAssertEqual(target.targetRepsLow, 8)
+        XCTAssertEqual(target.targetRepsHigh, 12)
+        XCTAssertEqual(target.targetWeight, 60)
+    }
+
+    /// The reported session: sets changed, a set type changed, and an exercise
+    /// was swapped, all before tapping yes. Every one must land.
+    func testSetTypeSetCountAndSwapAllApplyTogether() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let replacement = UUID()
+        let seeded = try seed(userID: userID, exerciseID: UUID(), in: context)
+        let we = seeded.workout.exercises[0]
+
+        we.exerciseID = replacement                       // swap
+        we.sets[0].setType = .drop                     // set type
+        let added = SetModel(userID: userID, position: 1, setType: .working, reps: 6, weight: 70)
+        context.insert(added)
+        we.sets.append(added)                             // added set
+
+        let plan = RoutineChangeSync.detect(workout: seeded.workout, routine: seeded.routine)
+        XCTAssertTrue(plan.hasChanges)
+        RoutineChangeSync.apply(plan, to: seeded.routine, from: seeded.workout, in: context)
+        try context.save()
+
+        let re = seeded.routine.exercises[0]
+        XCTAssertEqual(re.exerciseID, replacement, "swap applied")
+        XCTAssertEqual(re.sets.count, 2, "added set applied")
+        let ordered = re.sets.sorted { $0.position < $1.position }
+        XCTAssertEqual(ordered[0].setType, .drop, "set type applied")
+        XCTAssertEqual(ordered[1].targetRepsLow, 6, "new set seeded from performed values")
+    }
+
+    /// Regression guard for the wipe this fix also closes: a routine whose row
+    /// is a cardio duration target has no workout sets to rebuild from, so the
+    /// rebuild had to be skipped rather than run against an empty list.
+    func testAcceptingAnUnrelatedChangeDoesNotWipeCardioTargets() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+
+        let cardioTarget = RoutineSetModel(userID: userID, position: 0, targetDurationSeconds: 1_800)
+        let cardioRoutineExercise = RoutineExerciseModel(
+            userID: userID, exerciseID: UUID(), position: 0, sets: [cardioTarget]
+        )
+        let liftTarget = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 5, targetRepsHigh: 5)
+        let liftRoutineExercise = RoutineExerciseModel(
+            userID: userID, exerciseID: UUID(), position: 1, sets: [liftTarget]
+        )
+        let routine = RoutineModel(
+            userID: userID, name: "Mixed",
+            exercises: [cardioRoutineExercise, liftRoutineExercise]
+        )
+
+        // Cardio rows carry no strength sets in the workout (WorkoutFactory).
+        let cardioRow = WorkoutExerciseModel(
+            userID: userID, exerciseID: cardioRoutineExercise.exerciseID, position: 0,
+            sourceRoutineExerciseID: cardioRoutineExercise.id, sets: []
+        )
+        let liftSet = SetModel(userID: userID, position: 0, setType: .working,
+                               reps: 5, sourceRoutineSetID: liftTarget.id)
+        let liftRow = WorkoutExerciseModel(
+            userID: userID, exerciseID: liftRoutineExercise.exerciseID, position: 1,
+            sourceRoutineExerciseID: liftRoutineExercise.id, sets: [liftSet]
+        )
+        let workout = WorkoutModel(
+            userID: userID, routineID: routine.id, title: routine.name,
+            exercises: [cardioRow, liftRow]
+        )
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        // Unrelated change elsewhere in the session.
+        liftRow.sets[0].setType = .drop
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let cardio = routine.exercises.first { $0.id == cardioRoutineExercise.id }
+        XCTAssertEqual(cardio?.sets.count, 1, "The cardio duration target must survive.")
+        XCTAssertEqual(cardio?.sets.first?.targetDurationSeconds, 1_800)
+    }
+
+    func testBlockChangesSyncAndGeneratedMovementRowsStayOutOfRoutine() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let (routine, workout) = try seed(userID: userID, exerciseID: UUID(), in: context)
+
+        let matchedRoutineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 1,
+            planJSON: #"{"name":"Original"}"#
+        )
+        let removedRoutineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 2,
+            planJSON: #"{"name":"Removed"}"#
+        )
+        context.insert(matchedRoutineBlock)
+        context.insert(removedRoutineBlock)
+        routine.blocks = [matchedRoutineBlock, removedRoutineBlock]
+
+        let matchedWorkoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .conditioning,
+            position: 0,
+            planSnapshotJSON: #"{"name":"Edited"}"#,
+            sourceRoutineBlockID: matchedRoutineBlock.id
+        )
+        let addedWorkoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 2,
+            planSnapshotJSON: #"{"name":"Added"}"#
+        )
+        context.insert(matchedWorkoutBlock)
+        context.insert(addedWorkoutBlock)
+        workout.blocks = [matchedWorkoutBlock, addedWorkoutBlock]
+
+        // Conditioning movement rows are execution detail, not visible
+        // routine items. Sync must not turn one into a normal exercise.
+        let generated = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 1,
+            generatedByWorkoutBlockID: matchedWorkoutBlock.id
+        )
+        context.insert(generated)
+        workout.exercises.append(generated)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertTrue(plan.hasChanges)
+        XCTAssertEqual(plan.addedBlockIDs, [addedWorkoutBlock.id])
+        XCTAssertEqual(plan.removedRoutineBlockIDs, [removedRoutineBlock.id])
+        XCTAssertFalse(plan.addedExerciseIDs.contains(generated.id))
+        XCTAssertEqual(plan.blockPlans.first?.movedPosition, true)
+        XCTAssertEqual(plan.blockPlans.first?.planChanged, true)
+        XCTAssertTrue(plan.summary.contains("order changed"))
+        XCTAssertTrue(plan.summary.contains("block plan updated"))
+
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let synced = routine.blocks.sorted { $0.position < $1.position }
+        XCTAssertEqual(synced.count, 2)
+        XCTAssertEqual(synced.first?.id, matchedRoutineBlock.id)
+        XCTAssertEqual(synced.first?.position, 0)
+        XCTAssertEqual(synced.first?.planJSON, #"{"name":"Edited"}"#)
+        XCTAssertEqual(synced.last?.kind, .yoga)
+        XCTAssertEqual(synced.last?.planJSON, #"{"name":"Added"}"#)
+        XCTAssertEqual(routine.exercises.count, 1)
+    }
+
+    func testSyncingYogaBlockDoesNotEraseLegacyConditioningPlan() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let legacyConditioning = #"{"legacy":true}"#
+        let routineBlock = RoutineBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 0,
+            planJSON: #"{"flow":"original"}"#
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Hybrid",
+            conditioningPlanJSON: legacyConditioning,
+            blocks: [routineBlock]
+        )
+        let workoutBlock = WorkoutBlockModel(
+            userID: userID,
+            kind: .yoga,
+            position: 0,
+            planSnapshotJSON: #"{"flow":"edited"}"#,
+            sourceRoutineBlockID: routineBlock.id
+        )
+        let workout = WorkoutModel(userID: userID, blocks: [workoutBlock])
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+
+        XCTAssertEqual(routine.conditioningPlanJSON, legacyConditioning)
+        XCTAssertEqual(routine.blocks.first?.planJSON, #"{"flow":"edited"}"#)
+    }
 }
 
 // MARK: - Yoga flow drift

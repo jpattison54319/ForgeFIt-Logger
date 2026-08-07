@@ -27,7 +27,7 @@ struct FolderShareCard: View {
     let theme: AppTheme
 
     private var allRoutines: [RoutineModel] { sections.flatMap(\.routines) }
-    private var totalExercises: Int { allRoutines.reduce(0) { $0 + $1.exercises.count } }
+    private var totalItems: Int { allRoutines.reduce(0) { $0 + $1.exercises.count + $1.blocks.count } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -78,7 +78,7 @@ struct FolderShareCard: View {
                 RoutineShareStat(value: "\(sections.count)", label: "Mesocycles", color: theme.accent, theme: theme)
             }
             RoutineShareStat(value: "\(allRoutines.count)", label: "Routines", color: theme.secondaryAccent, theme: theme)
-            RoutineShareStat(value: "\(totalExercises)", label: "Exercises", color: theme.textPrimary, theme: theme)
+            RoutineShareStat(value: "\(totalItems)", label: "Items", color: theme.textPrimary, theme: theme)
         }
     }
 
@@ -86,27 +86,28 @@ struct FolderShareCard: View {
     /// target set summaries — enough to read the plan without the full set table.
     private func routineBlock(_ routine: RoutineModel) -> some View {
         let sortedExercises = routine.exercises.sorted { $0.position < $1.position }
+        let orderedItems = OrderedRoutineItem.ordered(in: routine)
         let setCount = sortedExercises.reduce(0) { $0 + $1.sets.count }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "list.bullet").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accent)
                 Text(routine.name).font(.system(size: 16, weight: .bold)).foregroundStyle(theme.textPrimary)
                 Spacer(minLength: 0)
-                Text("\(sortedExercises.count) ex · \(setCount) sets")
+                Text("\(orderedItems.count) items · \(setCount) sets")
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
             }
-            if sortedExercises.isEmpty {
-                Text("No exercises").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+            if orderedItems.isEmpty {
+                Text("Nothing added").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
             } else {
-                ForEach(Array(sortedExercises.enumerated()), id: \.element.id) { index, re in
+                ForEach(Array(orderedItems.enumerated()), id: \.element.id) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(index + 1).")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(theme.textTertiary).frame(width: 22, alignment: .leading)
-                        Text(exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise")
+                        Text(itemName(item))
                             .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
                         Spacer(minLength: 8)
-                        Text(targetSummary(re))
+                        Text(itemSummary(item))
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(theme.secondaryAccent)
                     }
@@ -117,6 +118,30 @@ struct FolderShareCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func itemName(_ item: OrderedRoutineItem) -> String {
+        switch item {
+        case .exercise(let exercise):
+            exercises.first { $0.id == exercise.exerciseID }?.name ?? "Exercise"
+        case .block(let block):
+            block.kind.title
+        }
+    }
+
+    private func itemSummary(_ item: OrderedRoutineItem) -> String {
+        switch item {
+        case .exercise(let exercise): return targetSummary(exercise)
+        case .block(let block):
+            if block.kind == .conditioning,
+               let plan = ConditioningPlan.decode(from: block.planJSON) {
+                return "\(plan.sections.count) section\(plan.sections.count == 1 ? "" : "s")"
+            }
+            if let plan = YogaFlowPlan.decode(from: block.planJSON) {
+                return plan.structureSummary
+            }
+            return "—"
+        }
     }
 
     /// e.g. "3 × 8–12" for strength, "3 × 30s" for timed/cardio work.

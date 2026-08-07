@@ -9,7 +9,7 @@ import UIKit
 /// Heart-rate zone helper. Classifies single readings (and, via
 /// `CardioMetrics.measuredZoneSecondsArray`, the per-10s series a completed
 /// session stores) against the user's configured zone model.
-enum HRZone {
+nonisolated enum HRZone {
     /// The user's configured zone model (personalized max HR + boundaries),
     /// loaded from the shared store. Defaults to the classic 190/60-90% model.
     static var config: HRZoneConfig { HRZoneConfigStore.load() }
@@ -43,8 +43,9 @@ struct CardioExerciseCard: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Bindable var workout: WorkoutModel
-    let workoutExercise: WorkoutExerciseModel
+    @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
+    let pinnedNote: UserExerciseNoteModel?
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -53,6 +54,10 @@ struct CardioExerciseCard: View {
     var onShowExerciseDetail: (ExerciseLibraryModel) -> Void = { _ in }
     let onReplace: () -> Void
     let onRemove: () -> Void
+    /// Hold-to-reorder stream — see `ReorderHandle`/`ReorderCollapseOverlay`.
+    var onReorderDragChanged: (CGFloat) -> Void = { _ in }
+    var onReorderDragEnded: () -> Void = {}
+    var onAccessibilityMoveBy: (Int) -> Void = { _ in }
     /// Completed workouts, for the "Last time" line — cardio's PREVIOUS column.
     var history: [WorkoutModel] = []
 
@@ -60,6 +65,7 @@ struct CardioExerciseCard: View {
     @State private var showManual = false
     @State private var importing = false
     @State private var showIntervalEditor = false
+    @State private var activeSegmentMessage: String?
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
@@ -73,14 +79,14 @@ struct CardioExerciseCard: View {
         CardioKind.providesGPSDistance(name: exercise?.name ?? "", equipment: exercise?.equipment)
     }
 
-    /// Best live distance while recording: the Apple Watch's streamed distance
-    /// if it's flowing, else the phone's GPS running total, else whatever the
-    /// session already holds. Treadmills / indoor machines stay manual-only.
+    /// One authoritative distance for UI and audio. Treadmills / indoor
+    /// machines stay manual-only.
     private func liveDistance(_ session: CardioSessionModel) -> Double? {
         guard providesGPSDistance else { return session.distanceMeters }
-        if let watch = LiveMetricsHub.shared.liveMetrics?.distanceMeters, watch > 0 { return watch }
-        if let gps = CardioRouteRecorder.shared.liveDistanceMeters(for: session.id), gps > 0 { return gps }
-        return session.distanceMeters
+        return CardioRouteRecorder.shared.authoritativeLiveDistance(
+            for: session.id,
+            storedMeters: session.distanceMeters
+        )
     }
 
     private var currentZoneTarget: Int {
@@ -249,6 +255,13 @@ struct CardioExerciseCard: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 header
+                if workoutExercise.notes != nil {
+                    StickyNoteView(
+                        workoutExercise: workoutExercise,
+                        exerciseID: workoutExercise.exerciseID,
+                        pinnedNote: pinnedNote
+                    )
+                }
                 if let session {
                     content(session)
                 } else {
@@ -258,6 +271,13 @@ struct CardioExerciseCard: View {
             }
         }
         .onAppear(perform: ensureSession)
+        .alert("Another Segment Is Active", isPresented: Binding(
+            get: { activeSegmentMessage != nil },
+            set: { if !$0 { activeSegmentMessage = nil } }
+        )) {
+        } message: {
+            Text(activeSegmentMessage ?? "Complete the current segment first.")
+        }
     }
 
     @ViewBuilder
@@ -559,13 +579,17 @@ struct CardioExerciseCard: View {
     // MARK: - Segment lifecycle
 
     private func start(_ session: CardioSessionModel) {
-        Task { await HealthService.shared.requestAuthorization() }
-        if providesGPSDistance {
-            CardioRouteRecorder.shared.start(session: session)
+        if let active = WorkoutTimedSegmentPolicy.activeSegment(in: workout) {
+            activeSegmentMessage = "\(active) is already recording. Complete it before starting cardio."
+            return
         }
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
         session.liveStartedAt = now
         session.startedAt = now
+        if providesGPSDistance {
+            CardioRouteRecorder.shared.start(session: session)
+        }
         try? modelContext.save()
         // Structured session: begin the step engine with the segment. The
         // runner drives the zone guard per step (work Z4, recover Z3...).
@@ -583,6 +607,8 @@ struct CardioExerciseCard: View {
     private func complete(_ session: CardioSessionModel) {
         IntervalRunnerHub.shared.stop(for: session.id)
         HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
+        NotificationScheduler.shared.cancelCardioCues()
         let end = Date()
         let start = session.liveStartedAt ?? session.startedAt
         session.endedAt = end
@@ -647,26 +673,52 @@ struct CardioExerciseCard: View {
                 }
             }
             Spacer()
-            Menu {
-                if let exercise {
-                    Button("Exercise Details", systemImage: "info.circle") { onShowExerciseDetail(exercise) }
-                    Divider()
-                }
-                SupersetMenuItems(
-                    currentGroup: workoutExercise.supersetGroup,
-                    availableGroups: availableSupersetGroups,
-                    onAssign: onAssignSuperset,
-                    onCreate: onCreateSuperset,
-                    onUngroup: onUngroupSuperset
-                )
-                Button("Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)
-                Divider()
-                Button("Remove Exercise", systemImage: "trash", role: .destructive, action: onRemove)
-            } label: {
+            ReorderHandle(
+                onDragChanged: onReorderDragChanged,
+                onDragEnded: onReorderDragEnded,
+                onAccessibilityMoveBy: onAccessibilityMoveBy
+            )
+            // ScrollSafeMenu, not Menu: this card lives on the live-workout
+            // scroll surface — the ⋯ glyph must never dead-stop a scroll
+            // (same conversion as the strength card's 2026-07-16 fix, which
+            // missed the yoga and cardio cards).
+            ScrollSafeMenu(sections: overflowMenuSections) {
                 Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(theme.textSecondary).frame(width: 44, height: 44)   // HIG minimum touch target
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel("Exercise options")
+            .accessibilityIdentifier("exercise-overflow-menu")
         }
+    }
+
+    /// Section-for-section identical to the old SwiftUI Menu
+    /// (details | supersets + replace | destructive remove).
+    private var overflowMenuSections: [[ScrollSafeMenuItem]] {
+        var details: [ScrollSafeMenuItem] = []
+        if let exercise {
+            details.append(ScrollSafeMenuItem(title: "Exercise Details", systemImage: "info.circle") {
+                onShowExerciseDetail(exercise)
+            })
+        }
+        var actions: [ScrollSafeMenuItem] = []
+        if workoutExercise.notes == nil {
+            actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
+                workoutExercise.notes = ""
+                workoutExercise.updatedAt = .now
+                try? modelContext.save()
+            })
+        }
+        actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
+            currentGroup: workoutExercise.supersetGroup,
+            availableGroups: availableSupersetGroups,
+            onAssign: onAssignSuperset,
+            onCreate: onCreateSuperset,
+            onUngroup: onUngroupSuperset
+        ))
+        actions.append(ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace))
+        let remove = [ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)]
+        return [details, actions, remove].filter { !$0.isEmpty }
     }
 
     private func ensureSession() {
@@ -1325,9 +1377,7 @@ struct CardioSummaryCard: View {
 
 // MARK: - Cardio zone distribution + adaptations (Insights tab)
 
-/// Evidence-based reference for what training in each HR zone develops. The
-/// configured zone model may be %HRmax or %HRR/Karvonen; adaptations reflect
-/// established endurance-training physiology, not the specific percentage basis.
+/// Plain-language descriptions shown beside each heart-rate zone.
 struct CardioZoneInfo: Identifiable {
     let zone: Int
     let name: String
@@ -1423,7 +1473,7 @@ struct CardioZoneInsightsCard: View {
                     if showAdaptations {
                         VStack(alignment: .leading, spacing: Space.md) {
                             ForEach(CardioZoneInfo.all) { adaptationRow($0) }
-                            Text("Zones are % of \(zoneBasis); adaptations reflect established endurance-training science (Seiler intensity model, ACSM guidance).")
+                            Text("Zones use \(zoneBasis). Your time in each zone comes from recorded heart-rate samples.")
                                 .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

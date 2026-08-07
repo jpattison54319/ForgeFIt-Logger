@@ -62,30 +62,37 @@ struct HomeMetricGrid: View {
     }
 
     private var recoveryTile: some View {
-        let score: Double
+        let score: Double?
         let baselineReady: Bool
         let actionTitle: String
         switch source {
         case .loading:
             return loadingTile(title: "Recovery", systemImage: "heart.text.square.fill")
-        case .cached(_, let cache):
+        case .cached(let snapshot, let cache):
             score = cache.recoveryDisplayScore
             baselineReady = cache.baselineReady
-            actionTitle = RecoveryEngine.Action(rawValue: cache.actionRaw)?.title ?? ""
+            let action = RecoveryEngine.Action(rawValue: cache.actionRaw)?.title ?? ""
+            actionTitle = snapshot.daily == nil && snapshot.trend != nil
+                ? "7-day trend · \(action)"
+                : action
         case .live:
             score = recovery.displayScore
             baselineReady = recovery.baselineReady
-            actionTitle = recovery.action.title
+            actionTitle = recovery.recovery.daily.state.value == nil
+                && recovery.recovery.systemic.state.value != nil
+                ? "7-day trend · \(recovery.action.title)"
+                : recovery.action.title
         }
-        let isBuilding = !baselineReady
+        let isBuilding = !baselineReady || score == nil
+        let resolvedScore = score ?? 0
         return HomeMetricTile(
             title: "Recovery",
             systemImage: "heart.text.square.fill",
-            value: isBuilding ? "Building" : "\(Int((score * 100).rounded()))",
-            suffix: isBuilding ? nil : "%",
+            value: isBuilding ? "Building" : "\(Int((resolvedScore * 100).rounded()))",
+            suffix: nil,
             caption: isBuilding ? "Personal baseline in progress" : actionTitle,
-            tint: isBuilding ? theme.textTertiary : theme.readinessColor(score),
-            progress: isBuilding ? nil : score,
+            tint: isBuilding ? theme.textTertiary : theme.readinessColor(resolvedScore),
+            progress: isBuilding ? nil : resolvedScore,
             isRefreshing: isRefreshing
         )
     }
@@ -114,7 +121,13 @@ struct HomeMetricGrid: View {
             systemImage: "moon.zzz.fill",
             value: value,
             caption: caption,
-            tint: looksPartial ? theme.warmup : theme.zone2,
+            // No progress means no measurement to plot — an untracked night, a
+            // night with no sleep recorded, or Health not connected at all.
+            // Those read as "No data" / "Not tracked", and tinting them like a
+            // reading made the absence of data the loudest thing on Home.
+            tint: progress == nil
+                ? theme.textTertiary
+                : looksPartial ? theme.warmup : theme.zone2,
             progress: progress,
             isRefreshing: isRefreshing
         )
@@ -123,25 +136,25 @@ struct HomeMetricGrid: View {
     private var strainTile: some View {
         let score: Double?
         let target: ClosedRange<Double>?
+        let isLoading: Bool
         switch source {
         case .loading:
-            return loadingTile(title: "Strain", systemImage: "flame.fill")
+            score = nil
+            target = nil
+            isLoading = true
         case .cached(let snapshot, _):
             score = snapshot.strain
             target = snapshot.strainTargetRange
+            isLoading = false
         case .live:
             score = strain.score
             target = strain.targetRange
+            isLoading = false
         }
-        let status = DailyStrainEngine.Report.status(score: score, targetRange: target)
-        return HomeMetricTile(
-            title: "Strain",
-            systemImage: "flame.fill",
-            value: score?.formatted(.number.precision(.fractionLength(1))) ?? "Building",
-            suffix: score == nil ? nil : "/10",
-            caption: strainCaption(score: score, target: target, status: status),
-            tint: status == .aboveTarget ? theme.warmup : theme.secondaryAccent,
-            progress: score.map { min(1, max(0, $0 / 10)) },
+        return HomeStrainTile(
+            score: score,
+            usualRange: target,
+            isLoading: isLoading,
             isRefreshing: isRefreshing
         )
     }
@@ -173,7 +186,9 @@ struct HomeMetricGrid: View {
             tint: evaluated == 0
                 ? theme.textTertiary
                 : outside > 0 ? theme.recoveryLow : theme.success,
-            progress: evaluated > 0 ? Double(evaluated - outside) / Double(evaluated) : nil,
+            // Health is a set of readings, not a combined score. A progress
+            // fill made the in-range fraction look like another health grade.
+            progress: nil,
             isRefreshing: isRefreshing
         )
     }
@@ -189,21 +204,298 @@ struct HomeMetricGrid: View {
         )
     }
 
-    private func strainCaption(
-        score: Double?,
-        target: ClosedRange<Double>?,
-        status: DailyStrainEngine.Report.Status
-    ) -> String {
-        guard let score else { return "7 days builds your target" }
-        switch status {
-        case .building: return "Building movement baseline"
-        case .targetBuilding: return "Recovery target building"
-        case .belowTarget:
-            guard let lower = target?.lowerBound else { return "Below today's target" }
-            return "\(max(0, lower - score).formatted(.number.precision(.fractionLength(1)))) to target"
-        case .inTarget: return "Today's target reached"
-        case .aboveTarget: return "Above today's target"
+}
+
+struct DailyStrainGaugePresentation: Equatable {
+    enum Band: Equatable {
+        case muchLower
+        case belowUsual
+        case usual
+        case aboveUsual
+        case muchHigher
+        case collectingBaseline
+        case rangePending
+
+        var title: String {
+            switch self {
+            case .muchLower: "Far below usual"
+            case .belowUsual: "Below usual"
+            case .usual: "In your usual range"
+            case .aboveUsual: "Above usual"
+            case .muchHigher: "Far above usual"
+            case .collectingBaseline: "Collecting baseline"
+            case .rangePending: "More history needed"
+            }
         }
+    }
+
+    let band: Band
+    /// Position around the semicircle: 0 is the far-left low end, 0.5 is the
+    /// top-center usual baseline, and 1 is the far-right high end.
+    let position: Double?
+
+    init(score: Double?, usualRange: ClosedRange<Double>?) {
+        guard let score else {
+            band = .collectingBaseline
+            position = nil
+            return
+        }
+        guard let usualRange else {
+            band = .rangePending
+            position = nil
+            return
+        }
+
+        let clampedScore = min(10, max(0, score))
+        let lower = min(10, max(0, usualRange.lowerBound))
+        let upper = min(10, max(lower, usualRange.upperBound))
+        let farLowerBoundary = lower / 2
+        let farUpperBoundary = upper + (10 - upper) / 2
+
+        switch clampedScore {
+        case ..<farLowerBoundary:
+            band = .muchLower
+            position = Self.interpolate(clampedScore, from: 0...farLowerBoundary, to: 0...0.2)
+        case ..<lower:
+            band = .belowUsual
+            position = Self.interpolate(clampedScore, from: farLowerBoundary...lower, to: 0.2...0.4)
+        case ...upper:
+            band = .usual
+            position = Self.interpolate(clampedScore, from: lower...upper, to: 0.4...0.6)
+        case ...farUpperBoundary:
+            band = .aboveUsual
+            position = Self.interpolate(clampedScore, from: upper...farUpperBoundary, to: 0.6...0.8)
+        default:
+            band = .muchHigher
+            position = Self.interpolate(clampedScore, from: farUpperBoundary...10, to: 0.8...1)
+        }
+    }
+
+    private static func interpolate(
+        _ value: Double,
+        from source: ClosedRange<Double>,
+        to destination: ClosedRange<Double>
+    ) -> Double {
+        guard source.upperBound > source.lowerBound else {
+            return (destination.lowerBound + destination.upperBound) / 2
+        }
+        let progress = min(1, max(0, (value - source.lowerBound) / (source.upperBound - source.lowerBound)))
+        return destination.lowerBound + progress * (destination.upperBound - destination.lowerBound)
+    }
+}
+
+private struct HomeStrainTile: View {
+    @Environment(\.theme) private var theme
+
+    let score: Double?
+    let usualRange: ClosedRange<Double>?
+    let isLoading: Bool
+    let isRefreshing: Bool
+
+    private var presentation: DailyStrainGaugePresentation {
+        DailyStrainGaugePresentation(score: score, usualRange: usualRange)
+    }
+
+    private var tint: Color {
+        switch presentation.band {
+        case .usual: theme.success
+        case .aboveUsual, .muchHigher: theme.warmup
+        case .muchLower, .belowUsual: theme.zone2
+        case .collectingBaseline, .rangePending: theme.textTertiary
+        }
+    }
+
+    var body: some View {
+        Card(padding: Space.md) {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(tint)
+                    Text("Strain")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(theme.textSecondary)
+                        .textCase(.uppercase)
+                    Spacer(minLength: 0)
+                    if isRefreshing || isLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(theme.textTertiary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+
+                StrainSemicircleGauge(
+                    position: presentation.position,
+                    label: isLoading ? "Loading today" : presentation.band.title,
+                    tint: tint
+                )
+            }
+            .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Opens Strain details")
+    }
+
+    private var accessibilityLabel: String {
+        guard !isLoading else { return "Strain, loading today's data" }
+        guard let score else {
+            return "Strain, collecting baseline. Your personal score needs more comparable history."
+        }
+        let scoreText = score.formatted(.number.precision(.fractionLength(1)))
+        guard let usualRange else {
+            return "Strain, score \(scoreText) out of 10. More history needed to show your usual range."
+        }
+        let lower = usualRange.lowerBound.formatted(.number.precision(.fractionLength(1)))
+        let upper = usualRange.upperBound.formatted(.number.precision(.fractionLength(1)))
+        return "Strain, \(presentation.band.title), score \(scoreText) out of 10, usual range \(lower) to \(upper)"
+    }
+}
+
+struct StrainSemicircleGauge: View {
+    @Environment(\.theme) private var theme
+
+    let position: Double?
+    let label: String
+    let tint: Color
+    var showsDirectionLabels = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let lineWidth = 8.0
+            let directionLabelHeight = showsDirectionLabels ? 17.0 : 0
+            let center = CGPoint(
+                x: proxy.size.width / 2,
+                y: proxy.size.height - directionLabelHeight - lineWidth / 2
+            )
+            let radius = min(
+                proxy.size.width / 2 - lineWidth / 2,
+                center.y - lineWidth / 2
+            )
+
+            ZStack {
+                gaugeSegments(
+                    center: center,
+                    radius: radius,
+                    lineWidth: lineWidth
+                )
+
+                marker(
+                    at: 0.5,
+                    center: center,
+                    radius: radius,
+                    width: 2,
+                    height: 10,
+                    color: theme.textPrimary.opacity(0.45)
+                )
+
+                if let position {
+                    let clamped = min(1, max(0, position))
+                    marker(
+                        at: clamped,
+                        center: center,
+                        radius: radius,
+                        width: 4,
+                        height: 18,
+                        color: tint
+                    )
+                }
+
+                Text(label)
+                    .font(.system(size: label.count > 11 ? 14 : 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(position == nil ? theme.textTertiary : tint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .position(x: center.x, y: center.y - radius * 0.34)
+
+                if showsDirectionLabels {
+                    HStack {
+                        Text("Lower")
+                        Spacer()
+                        Text("Higher")
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+                    .textCase(.uppercase)
+                    .position(
+                        x: proxy.size.width / 2,
+                        y: proxy.size.height - 5
+                    )
+                }
+            }
+            .animation(Motion.stateChange, value: position)
+            .animation(Motion.stateChange, value: label)
+        }
+        .frame(height: 76)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func gaugeSegments(
+        center: CGPoint,
+        radius: Double,
+        lineWidth: Double
+    ) -> some View {
+        ForEach(0..<5, id: \.self) { segment in
+            StrainSemicircleArc(center: center, radius: radius)
+                .trim(
+                    from: Double(segment) / 5 + 0.007,
+                    to: Double(segment + 1) / 5 - 0.007
+                )
+                .stroke(
+                    segment == 2 ? theme.success.opacity(0.22) : theme.surfaceElevated,
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+        }
+    }
+
+    private func marker(
+        at progress: Double,
+        center: CGPoint,
+        radius: Double,
+        width: Double,
+        height: Double,
+        color: Color
+    ) -> some View {
+        let clamped = min(1, max(0, progress))
+        let angle = .pi + .pi * clamped
+        return Capsule()
+            .fill(color)
+            .frame(width: width, height: height)
+            .rotationEffect(.radians(angle - 1.5 * .pi))
+            .position(point(on: center, radius: radius, progress: clamped))
+    }
+
+    private func point(on center: CGPoint, radius: Double, progress: Double) -> CGPoint {
+        let angle = .pi + .pi * progress
+        return CGPoint(
+            x: center.x + radius * cos(angle),
+            y: center.y + radius * sin(angle)
+        )
+    }
+}
+
+private struct StrainSemicircleArc: Shape {
+    var center: CGPoint?
+    var radius: Double?
+
+    func path(in rect: CGRect) -> Path {
+        let lineAllowance = 4.0
+        let resolvedCenter = center ?? CGPoint(x: rect.midX, y: rect.maxY - 2)
+        let resolvedRadius = radius ?? min(rect.width / 2 - lineAllowance, rect.height - lineAllowance)
+        var path = Path()
+        path.addArc(
+            center: resolvedCenter,
+            radius: max(0, resolvedRadius),
+            startAngle: .degrees(180),
+            endAngle: .degrees(360),
+            clockwise: false
+        )
+        return path
     }
 }
 
@@ -271,18 +563,20 @@ private struct HomeMetricTile: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
 
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(theme.surfaceElevated)
-                        if let progress {
+                if let progress {
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(theme.surfaceElevated)
                             Capsule()
                                 .fill(tint)
                                 .frame(width: max(5, proxy.size.width * min(1, max(0, progress))))
                         }
+                        .animation(Motion.stateChange, value: progress)
                     }
-                    .animation(Motion.stateChange, value: progress)
+                    .frame(height: 5)
+                } else {
+                    Color.clear.frame(height: 5)
                 }
-                .frame(height: 5)
             }
             .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
         }
@@ -329,22 +623,20 @@ struct TrainingLoadGauge: View {
             let days = comparison.baselineDaysRemaining
             return "Needs \(days) more prior day\(days == 1 ? "" : "s") before comparing the last 7 days."
         case .noRecentLoad:
-            return "No logged load in the prior 4 weeks, so ForgeFit does not show a percentage."
+            return "No usable load exists in the available prior complete weeks, so ForgeFit does not show a percentage."
         case .sparseBaseline:
-            return "The prior 4 weeks carry too little load for a percentage against them to mean anything."
+            return "The prior complete weeks have a zero median, so a percentage would be misleading."
         case .ready:
-            let estimated = comparison.estimatedEffortSessionCount
-            if estimated > 0 {
-                return "Set-by-set effort + zone-weighted cardio · effort estimated for \(estimated) session\(estimated == 1 ? "" : "s") · descriptive only"
-            }
-            return "Set-by-set effort + zone-weighted cardio · descriptive only"
+            return comparison.estimatedEffortSessionCount > 0
+                ? "Session CR10 + estimated components · descriptive only"
+                : "Duration × whole-session CR10 · descriptive only"
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(comparison.state == .building ? "Training load baseline" : "Last 7 days vs prior 4 weeks")
+                Text(comparison.state == .building ? "Training load baseline" : "Last 7 days vs prior weeks")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
                 Spacer()

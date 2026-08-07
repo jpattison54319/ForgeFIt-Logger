@@ -10,7 +10,7 @@ import Foundation
 /// card, no notification (an empty story is worse than none). Periods with
 /// PARTIAL data still produce a report — pages whose data is absent are
 /// simply not emitted.
-struct WrappedBuilder {
+nonisolated struct WrappedBuilder {
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     /// Daily readiness/recovery series covering (at least) the period — the
@@ -18,6 +18,7 @@ struct WrappedBuilder {
     /// gracefully when it's empty.
     var healthMetrics: [RecoveryEngine.DailyHealthMetric] = []
     var calendar = Calendar.current
+    var weightUnit: WeightUnit = .lb
 
     /// All user-facing date text must format in the builder's calendar's
     /// timezone — `.formatted(.dateTime...)` alone uses the device timezone,
@@ -302,6 +303,7 @@ struct WrappedBuilder {
         }
 
         return WrappedInsights.Ingredients(
+            weightUnit: weightUnit,
             workouts: report.workouts,
             workoutsDelta: report.workoutsDelta,
             volumeKg: report.volume,

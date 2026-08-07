@@ -4,7 +4,7 @@ import Foundation
 /// One Sunday-to-Saturday training week shared by Home's calendar strip and
 /// its headline totals. This intentionally ignores the device locale's first
 /// weekday because the product presents Sunday first everywhere.
-enum TrainingWeekSupport {
+nonisolated enum TrainingWeekSupport {
     struct Day: Identifiable, Equatable {
         let date: Date
         let symbol: String

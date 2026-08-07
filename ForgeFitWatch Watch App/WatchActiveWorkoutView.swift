@@ -10,13 +10,22 @@ struct WatchActiveWorkoutView: View {
     @State private var selection = 1
 
     var body: some View {
+        Group {
+            if let plan = workout.conditioningPlan,
+               let progress = workout.conditioningProgress {
+                WatchConditioningWorkoutView(store: store, workout: workout, plan: plan, progress: progress)
+            } else {
+                standardWorkout
+            }
+        }
+        .task { await store.recoverOrStartWorkoutSession() }
+    }
+
+    private var standardWorkout: some View {
         TabView(selection: $selection) {
-            WatchMetricsPage(store: store, workout: workout)
-                .tag(0)
-            WatchExercisesPage(store: store, workout: workout)
-                .tag(1)
-            WatchControlsPage(store: store)
-                .tag(2)
+            WatchMetricsPage(store: store, workout: workout).tag(0)
+            WatchExercisesPage(store: store, workout: workout).tag(1)
+            WatchControlsPage(store: store).tag(2)
         }
         .tabViewStyle(.verticalPage)
         .overlay(alignment: .top) {
@@ -28,9 +37,204 @@ struct WatchActiveWorkoutView: View {
                 WatchRestBanner(workout: workout)
             }
         }
+    }
+}
+
+private struct WatchConditioningWorkoutView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let store: WatchStore
+    let workout: WatchWorkoutSnapshot
+    let plan: ConditioningPlan
+    let progress: ConditioningProgress
+    let blockID: UUID?
+    let movementNames: [UUID: String]
+
+    @State private var page = 0
+    @State private var engine = WatchWorkoutEngine.shared
+
+    init(
+        store: WatchStore,
+        workout: WatchWorkoutSnapshot,
+        plan: ConditioningPlan,
+        progress: ConditioningProgress,
+        blockID: UUID? = nil,
+        movementNames: [UUID: String] = [:]
+    ) {
+        self.store = store
+        self.workout = workout
+        self.plan = plan
+        self.progress = progress
+        self.blockID = blockID
+        self.movementNames = movementNames
+    }
+
+    private var section: ConditioningSection? {
+        plan.sections.indices.contains(progress.sectionIndex) ? plan.sections[progress.sectionIndex] : nil
+    }
+
+    var body: some View {
+        TabView(selection: $page) {
+            workPage.tag(0)
+            controlPage.tag(1)
+        }
+        .tabViewStyle(.verticalPage)
         .task {
             await store.recoverOrStartWorkoutSession()
+            if progress.status == .ready { store.applyConditioning(.start, blockID: blockID) }
         }
+    }
+
+    private var workPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    let heartRate = engine.liveHeartRate(at: context.date)
+                    HStack(alignment: .bottom, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(section?.format.title ?? "WORKOUT")
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(WTheme.accent)
+                            Text(clock(at: context.date))
+                                .font(.system(size: 38, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(WTheme.gold)
+                                .contentTransition(.numericText())
+                        }
+                        Spacer(minLength: 0)
+                        VStack(alignment: .trailing, spacing: 0) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(WTheme.danger)
+                                .symbolEffect(.pulse, isActive: heartRate != nil)
+                            Text(heartRate.map(String.init) ?? "—")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(heartRate == nil ? .secondary : WTheme.danger)
+                            Text("bpm").font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(
+                            heartRate.map { "Live heart rate, \($0) beats per minute" }
+                                ?? "Live heart rate, acquiring"
+                        )
+                    }
+                }
+
+                HStack {
+                    Text(roundLabel)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Spacer()
+                    Text(roundTargetLabel)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                if let section {
+                    ForEach(section.movements) { movement in
+                        Button {
+                            store.applyConditioning(.toggleMovement(movement.id), blockID: blockID)
+                        } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: progress.completedMovementIDs.contains(movement.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(progress.completedMovementIDs.contains(movement.id) ? WTheme.teal : .secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(name(for: movement)).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                                    Text(target(for: movement, in: section))
+                                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button {
+                    store.applyConditioning(.completeRound, blockID: blockID)
+                } label: {
+                    Label(section?.format == .emom ? "Complete Interval" : "Complete Round", systemImage: "checkmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(WTheme.accent)
+            }
+            .padding(.horizontal, 5)
+        }
+    }
+
+    private var controlPage: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "stopwatch.fill").font(.system(size: 30)).foregroundStyle(WTheme.gold)
+            Text(section?.name ?? workout.title ?? "Conditioning")
+                .font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
+            Button(progress.status == .paused ? "Resume" : "Pause") {
+                store.applyConditioning(progress.status == .paused ? .resume : .pause, blockID: blockID)
+            }
+            .buttonStyle(.bordered)
+            Button(blockID == nil ? "Finish Workout" : "Finish Conditioning") {
+                if let blockID {
+                    store.finishConditioningBlock(blockID)
+                    dismiss()
+                } else {
+                    store.finishWorkout()
+                }
+            }
+                .buttonStyle(.borderedProminent).tint(WTheme.teal)
+                .disabled(requiredRoundsRemaining > 0)
+            if requiredRoundsRemaining > 0 {
+                Text("\(requiredRoundsRemaining) round\(requiredRoundsRemaining == 1 ? "" : "s") left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var requiredRoundsRemaining: Int {
+        ConditioningProgressEngine.requiredRoundsRemaining(for: progress, plan: plan)
+    }
+
+    private func clock(at date: Date) -> String {
+        guard let section else { return "0:00" }
+        let elapsed = ConditioningProgressEngine.elapsedSeconds(for: progress, at: date)
+        let limit = section.durationSeconds ?? section.timeCapSeconds
+        if [.amrap, .emom, .intervals].contains(section.format), let limit {
+            return WFmt.rest(max(0, limit - elapsed))
+        }
+        return WFmt.elapsed(elapsed)
+    }
+
+    private func name(for movement: ConditioningMovement) -> String {
+        movementNames[movement.exerciseID]
+            ?? workout.exercises.first { $0.exerciseID == movement.exerciseID }?.name
+            ?? "Exercise"
+    }
+
+    private func target(for movement: ConditioningMovement, in section: ConditioningSection) -> String {
+        let amount = section.target(for: movement, round: progress.round)
+            .formatted(.number.precision(.fractionLength(0...1)))
+        let load = movement.targetLoad.map {
+            " · \($0.formatted(.number.precision(.fractionLength(0...1)))) \(store.context?.unitSuffix ?? "lb")"
+        } ?? ""
+        return "\(amount) \(movement.targetUnit.shortLabel)\(load)"
+    }
+
+    private var roundLabel: String {
+        guard let rounds = section?.prescribedRounds else { return "Round \(progress.round)" }
+        return "Round \(progress.round)/\(rounds)"
+    }
+
+    private var roundTargetLabel: String {
+        guard let section,
+              section.repScheme.indices.contains(progress.round - 1) else {
+            return "\(progress.fullRounds) done"
+        }
+        return "\(section.repScheme[progress.round - 1]) reps"
     }
 }
 
@@ -214,7 +418,22 @@ struct WatchExercisesPage: View {
                 heartRateRow
 
                 ForEach(workout.exercises) { exercise in
-                    if exercise.isCardio {
+                    if exercise.workoutBlockKindRaw == "conditioning",
+                       let plan = exercise.conditioningPlan,
+                       let progress = exercise.conditioningProgress {
+                        NavigationLink {
+                            WatchConditioningWorkoutView(
+                                store: store,
+                                workout: workout,
+                                plan: plan,
+                                progress: progress,
+                                blockID: exercise.id,
+                                movementNames: exercise.conditioningMovementNames ?? [:]
+                            )
+                        } label: {
+                            blockRow(exercise, systemImage: "stopwatch.fill")
+                        }
+                    } else if exercise.isCardio {
                         cardioRow(exercise)
                     } else {
                         NavigationLink {
@@ -226,6 +445,21 @@ struct WatchExercisesPage: View {
                 }
             }
             .navigationTitle("Exercises")
+        }
+    }
+
+    private func blockRow(_ exercise: WatchExerciseSnapshot, systemImage: String) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(exercise.name)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(cardioSubtitle(exercise.cardioState))
+                    .font(.system(size: 12))
+                    .foregroundStyle(WTheme.teal)
+            }
+            Spacer()
+            Image(systemName: systemImage)
+                .foregroundStyle(WTheme.teal)
         }
     }
 
@@ -436,6 +670,14 @@ struct WatchControlsPage: View {
             }
             .tint(WTheme.success)
             .buttonStyle(.borderedProminent)
+            .disabled(store.conditioningFinishBlocker != nil)
+
+            if let blocker = store.conditioningFinishBlocker {
+                Text(blocker)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
 
             Button {
                 confirmDiscard = true

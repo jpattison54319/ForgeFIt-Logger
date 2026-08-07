@@ -137,6 +137,10 @@ enum BackupRestoreService {
 
             let graph = BackupMapper.workoutModel(from: resolved, userID: userID)
             context.insert(graph.workout)
+            for block in graph.blocks {
+                context.insert(block)
+                graph.workout.blocks.append(block)
+            }
             for exercise in graph.exercises {
                 context.insert(exercise)
                 graph.workout.exercises.append(exercise)
@@ -199,7 +203,7 @@ enum BackupRestoreService {
     }
 
     private static func attachCardioChildren(
-        graph: (workout: WorkoutModel, exercises: [WorkoutExerciseModel], sets: [SetModel], sessions: [CardioSessionModel], splits: [CardioSplitModel], points: [CardioRoutePointModel]),
+        graph: (workout: WorkoutModel, blocks: [WorkoutBlockModel], exercises: [WorkoutExerciseModel], sets: [SetModel], sessions: [CardioSessionModel], splits: [CardioSplitModel], points: [CardioRoutePointModel]),
         in context: ModelContext
     ) {
         let sessionsByID = Dictionary(graph.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

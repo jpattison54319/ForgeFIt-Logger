@@ -138,4 +138,104 @@ struct ExerciseSwapSuggesterTests {
         let pool = [candidate("Barbell Bench Press", primary: ["chest"])]
         #expect(ExerciseSwapSuggester.suggest(replacing: target, from: pool).isEmpty)
     }
+
+    @Test func recentFrequentUseCanOutrankACloserEquipmentMatch() {
+        let now = Date(timeIntervalSince1970: 1_753_161_600) // 2025-07-22 UTC
+        let target = candidate("Barbell Bench Press", pattern: "horizontal push",
+                               primary: ["chest"], equipment: "barbell")
+        let familiar = candidate("Cable Chest Press", pattern: "horizontal push",
+                                 primary: ["chest"], equipment: "cable")
+        let unfamiliar = candidate("Paused Barbell Bench Press", pattern: "horizontal push",
+                                   primary: ["chest"], equipment: "barbell")
+        let dates = (0..<6).map { now.addingTimeInterval(-Double($0 * 7) * 86_400) }
+
+        let out = ExerciseSwapSuggester.suggest(
+            replacing: target,
+            from: [unfamiliar, familiar],
+            usageByID: [familiar.id: .init(sessionDates: dates)],
+            referenceDate: now
+        )
+
+        #expect(out.first?.candidate.id == familiar.id)
+        #expect(out.first?.facets.contains(.usage(recentSessionCount: 6, lastUsedAt: now)) == true)
+    }
+
+    @Test func repeatedRecentUseScoresAboveOneRecentUse() {
+        let now = Date(timeIntervalSince1970: 1_753_161_600)
+        let target = candidate("Bench Press", pattern: "horizontal push",
+                               primary: ["chest"], equipment: "barbell")
+        let once = candidate("Single Use Press", pattern: "horizontal push",
+                             primary: ["chest"], equipment: "cable")
+        let repeated = candidate("Repeated Press", pattern: "horizontal push",
+                                 primary: ["chest"], equipment: "cable")
+
+        let out = ExerciseSwapSuggester.suggest(
+            replacing: target,
+            from: [once, repeated],
+            usageByID: [
+                once.id: .init(sessionDates: [now]),
+                repeated.id: .init(sessionDates: [now, now.addingTimeInterval(-7 * 86_400)])
+            ],
+            referenceDate: now
+        )
+
+        #expect(out.first?.candidate.id == repeated.id)
+        #expect(out[0].score > out[1].score)
+    }
+
+    @Test func oldFrequencyDecaysBelowOneRecentUse() {
+        let now = Date(timeIntervalSince1970: 1_753_161_600)
+        let target = candidate("Bench Press", pattern: "horizontal push", primary: ["chest"])
+        let oldFavorite = candidate("Old Favorite", pattern: "horizontal push", primary: ["chest"])
+        let recent = candidate("Recent Press", pattern: "horizontal push", primary: ["chest"])
+        let oldDates = (0..<8).map { now.addingTimeInterval(-Double(180 + $0 * 14) * 86_400) }
+
+        let out = ExerciseSwapSuggester.suggest(
+            replacing: target,
+            from: [oldFavorite, recent],
+            usageByID: [
+                oldFavorite.id: .init(sessionDates: oldDates),
+                recent.id: .init(sessionDates: [now.addingTimeInterval(-7 * 86_400)])
+            ],
+            referenceDate: now
+        )
+
+        #expect(out.first?.candidate.id == recent.id)
+    }
+
+    @Test func knownMovementFamilyMismatchIsExcludedDespiteUsage() {
+        let now = Date(timeIntervalSince1970: 1_753_161_600)
+        let target = candidate("Shoulder Press", pattern: "vertical push", primary: ["shoulders"])
+        let wrongFamily = candidate("Shoulder Row", pattern: "horizontal pull", primary: ["shoulders"])
+        let dates = (0..<20).map { now.addingTimeInterval(-Double($0) * 86_400) }
+
+        let out = ExerciseSwapSuggester.suggest(
+            replacing: target,
+            from: [wrongFamily],
+            usageByID: [wrongFamily.id: .init(sessionDates: dates)],
+            referenceDate: now
+        )
+
+        #expect(out.isEmpty)
+    }
+
+    @Test func unknownMovementFamilyFallsBackToSharedPrimaryMuscle() {
+        let target = candidate("Shoulder Movement", primary: ["shoulders"])
+        let candidate = candidate("Another Shoulder Movement", primary: ["shoulders"])
+
+        let out = ExerciseSwapSuggester.suggest(replacing: target, from: [candidate])
+
+        #expect(out.map(\.candidate.id) == [candidate.id])
+    }
+
+    @Test func forceDoesNotDoubleCountTheSameMovementPattern() {
+        let target = candidate("Target", pattern: "push", primary: ["chest"], force: "push")
+        let duplicated = candidate("Duplicated", pattern: "push", primary: ["chest"], force: "push")
+        let patternOnly = candidate("Pattern Only", pattern: "push", primary: ["chest"])
+
+        let out = ExerciseSwapSuggester.suggest(replacing: target, from: [duplicated, patternOnly])
+        let scores = Dictionary(uniqueKeysWithValues: out.map { ($0.candidate.id, $0.score) })
+
+        #expect(scores[duplicated.id] == scores[patternOnly.id])
+    }
 }

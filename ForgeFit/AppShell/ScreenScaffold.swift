@@ -126,3 +126,37 @@ extension View {
         modifier(KeyboardAdaptiveBottomInset())
     }
 }
+
+// MARK: - Keyboard visibility
+
+/// Drives a binding true while the software keyboard overlaps the screen.
+/// The app shell uses it to hide the floating tab bar / quick-action bubble
+/// during text entry: SwiftUI's automatic keyboard avoidance on a pushed
+/// editor (e.g. `RoutineEditorView`) otherwise lifts that whole layer above
+/// the keyboard into a black gap, despite its `.ignoresSafeArea(.keyboard)`
+/// opt-out. Behind the keyboard the bar is unusable anyway, so not drawing it
+/// is both the fix and the intended result.
+struct KeyboardVisibilityReporter: ViewModifier {
+    @Binding var isVisible: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                // Overlap with the screen, 0 once the keyboard is off-screen —
+                // so a docked hardware keyboard (frame below the screen) reads
+                // as hidden, matching `KeyboardAdaptiveBottomInset`.
+                isVisible = (UIScreen.main.bounds.height - frame.origin.y) > 0
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                isVisible = false
+            }
+    }
+}
+
+extension View {
+    /// See `KeyboardVisibilityReporter`.
+    func onKeyboardVisibilityChange(_ isVisible: Binding<Bool>) -> some View {
+        modifier(KeyboardVisibilityReporter(isVisible: isVisible))
+    }
+}

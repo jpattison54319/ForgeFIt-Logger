@@ -26,7 +26,7 @@ struct HealthMetricSupportTests {
         #expect(assessment.readings.count == 4)
         #expect(assessment.evaluatedCount == 4)
         #expect(assessment.outsideRangeCount == 0)
-        #expect(assessment.headline == "All in range")
+        #expect(assessment.headline == "Within usual bands")
     }
 
     @Test func HealthTileCountsSignalsOutsidePersonalRange() {
@@ -36,7 +36,7 @@ struct HealthMetricSupportTests {
         )
 
         #expect(assessment.outsideRangeCount == 2)
-        #expect(assessment.headline == "2 outside range")
+        #expect(assessment.headline == "2 outside usual band")
         #expect(assessment.readings.first { $0.id == "hrv" }?.status == .belowRange)
         #expect(assessment.readings.first { $0.id == "resting-heart-rate" }?.status == .aboveRange)
     }
@@ -57,7 +57,7 @@ struct HealthMetricSupportTests {
         #expect(assessment.readings.first { $0.id == "blood-oxygen" }?.status == .belowRange)
     }
 
-    @Test func fewerThanSevenNightsIsLabeledBuilding() {
+    @Test func fewerThanTwentyEightReadingsIsLabeledBuilding() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let metrics = (0..<5).map { offset in
             metric(date: calendar.date(byAdding: .day, value: offset, to: start)!, hrv: 60, heartRate: 58)
@@ -68,9 +68,9 @@ struct HealthMetricSupportTests {
         #expect(assessment.evaluatedCount == 0)
     }
 
-    @Test func partialNightFallsBackToMatchingAllDayBaselines() {
+    @Test func partialNightDoesNotSilentlySubstituteAllDayChannels() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        var metrics = (0..<10).map { offset in
+        var metrics = (0..<43).map { offset in
             RecoveryEngine.DailyHealthMetric(
                 date: calendar.date(byAdding: .day, value: offset, to: start)!,
                 hrvSDNN: 60 + Double(offset % 2),
@@ -81,7 +81,7 @@ struct HealthMetricSupportTests {
             )
         }
         var latest = RecoveryEngine.DailyHealthMetric(
-            date: calendar.date(byAdding: .day, value: 10, to: start)!,
+            date: calendar.date(byAdding: .day, value: 43, to: start)!,
             hrvSDNN: 60,
             restingHR: 58,
             sleepTotalMinutes: 180,
@@ -93,10 +93,8 @@ struct HealthMetricSupportTests {
 
         let assessment = HealthRangeAssessment.make(metrics: metrics, calendar: calendar)
 
-        #expect(assessment.headline == "All in range")
-        #expect(assessment.readings.first { $0.id == "hrv" }?.value == 60)
-        #expect(assessment.readings.first { $0.id == "resting-heart-rate" }?.name == "Resting HR")
-        #expect(assessment.readings.first { $0.id == "resting-heart-rate" }?.value == 58)
+        #expect(assessment.headline == "No readings")
+        #expect(assessment.readings.isEmpty)
     }
 
     private func history(
@@ -107,7 +105,7 @@ struct HealthMetricSupportTests {
     ) -> [RecoveryEngine.DailyHealthMetric] {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         var metrics: [RecoveryEngine.DailyHealthMetric] = []
-        for offset in 0..<10 {
+        for offset in 0..<43 {
             let date = calendar.date(byAdding: .day, value: offset, to: start)!
             let respiratoryRate = 14.4 + Double(offset % 2) * 0.2
             let oxygenSaturation = 97 + Double(offset % 2)
@@ -120,13 +118,52 @@ struct HealthMetricSupportTests {
             ))
         }
         metrics.append(metric(
-            date: calendar.date(byAdding: .day, value: 10, to: start)!,
+            date: calendar.date(byAdding: .day, value: 43, to: start)!,
             hrv: latestHRV,
             heartRate: latestHeartRate,
             respiratoryRate: latestRespiratoryRate,
             oxygenSaturation: latestOxygenSaturation
         ))
         return metrics
+    }
+
+    @Test func sourceChangeStartsANewUsualBand() {
+        var metrics = history(latestHRV: 60, latestHeartRate: 58)
+        metrics[metrics.count - 1].hrvSourceBundleID = "new-device"
+
+        let assessment = HealthRangeAssessment.make(metrics: metrics, calendar: calendar)
+
+        #expect(assessment.readings.first { $0.id == "hrv" }?.status == .building)
+    }
+
+    @Test func dedicatedSleepingHeartRateIsNotRepeatedUnderOtherReadings() {
+        let signals = [
+            RecoveryEngine.Signal(
+                name: "Sleeping HR",
+                systemImage: "heart.fill",
+                value: "52 bpm",
+                detail: "Last night",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "HRV",
+                systemImage: "waveform.path.ecg",
+                value: "61 ms",
+                detail: "Last night",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Post-workout HR drop",
+                systemImage: "arrow.down.heart.fill",
+                value: "31 bpm",
+                detail: "Average first-minute decrease after exercise · 30 days",
+                connected: true
+            ),
+        ]
+
+        let supplemental = HealthDetailSignalFilter.supplemental(from: signals)
+
+        #expect(supplemental.map(\.name) == ["Post-workout HR drop"])
     }
 
     private func metric(

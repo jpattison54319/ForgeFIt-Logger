@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<!-- Nothing is collected in the App Store sense: the training log lives in
+	     a local SwiftData store, the training plan syncs through the user's own
+	     private CloudKit database (which the developer cannot read), and health
+	     data never leaves the device at all. There is no analytics SDK, no ad
+	     network, and no developer-operated server. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<!-- Preferences (units, theme, reminders, quick starts) read and
+				     written only by this app. -->
+				<string>1C8F.1</string>
+				<!-- The group.org.xpetsllc.ForgeFit suite the widget extension
+				     reads for the readiness / live-workout snapshot. -->
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

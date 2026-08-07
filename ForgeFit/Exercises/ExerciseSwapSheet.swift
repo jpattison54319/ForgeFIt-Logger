@@ -4,9 +4,9 @@ import SwiftUI
 
 /// The "gym swap" replacement sheet: the station you wanted is taken, so lead
 /// with a handful of close substitutes — same muscles first, free-weight
-/// alternatives flagged for machine-based exercises, exercises you've trained
-/// before boosted so ghosts light up immediately. Search stays one tap away as
-/// the escape hatch, not the first move.
+/// alternatives flagged for machine-based exercises, and exercises that fit
+/// the lifter's current training block boosted by recent, repeated use. Search
+/// stays one tap away as the escape hatch, not the first move.
 struct ExerciseSwapSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
@@ -17,7 +17,7 @@ struct ExerciseSwapSheet: View {
     let allExercises: [ExerciseLibraryModel]
     /// Exercises already in the workout/routine — never suggested.
     let inUseIDs: Set<UUID>
-    /// Completed workouts, for the trained-before boost.
+    /// Completed workouts, for recency and frequency ranking.
     let history: [WorkoutModel]
     let onPick: (ExerciseLibraryModel) -> Void
 
@@ -26,15 +26,13 @@ struct ExerciseSwapSheet: View {
     @State private var preference: ExerciseSwapSuggester.SwapPreference?
     @State private var computed = false
     @State private var showSearch = false
+    @State private var selectedDetent: PresentationDetent = .large
+    @State private var referenceDate = Date()
 
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: Space.lg) {
-                    Text("Sets and set types carry over. Weight, reps and RPE start fresh from the new exercise's own history.")
-                        .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-
                     if !availablePreferences.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: Space.sm) {
@@ -79,14 +77,17 @@ struct ExerciseSwapSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
         .task { computeSuggestions() }
         .sheet(isPresented: $showSearch) {
             ExercisePickerView(
                 singleSelection: true,
+                presetModality: current.modality,
                 excludeYogaPoses: true,
                 context: [current],
-                history: history
+                history: history,
+                navigationTitle: "Replace Exercise",
+                excludedIDs: inUseIDs.union([current.id])
             ) { picked in
                 if let first = picked.first {
                     onPick(first)
@@ -106,7 +107,7 @@ struct ExerciseSwapSheet: View {
                     Text(exercise.name)
                         .font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         .multilineTextAlignment(.leading)
-                    Text(caption(for: facets))
+                    Text(ExerciseSwapPresentation.caption(for: facets, referenceDate: referenceDate))
                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)
@@ -129,42 +130,16 @@ struct ExerciseSwapSheet: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Replace with \(exercise.name). \(caption(for: facets))")
-    }
-
-    /// One caption line, most useful facts first: shared muscles, then how the
-    /// equipment relates, then whether history will prefill.
-    private func caption(for facets: [ExerciseSwapSuggester.MatchFacet]) -> String {
-        var parts: [String] = []
-        for facet in facets {
-            switch facet {
-            case .sharedMuscles(let muscles):
-                parts.append(muscles.prefix(2).map(\.capitalized).joined(separator: " · "))
-            case .samePattern:
-                parts.append("Same movement pattern")
-            case .sameEquipment:
-                parts.append("Same equipment")
-            case .freeWeightAlternative:
-                parts.append("No machine needed")
-            case .preferredEquipment:
-                parts.append("Matches your equipment choice")
-            case .trainedBefore:
-                parts.append("In your history")
-            }
-        }
-        return parts.joined(separator: " · ")
+        .accessibilityLabel(
+            "Replace with \(exercise.name). \(ExerciseSwapPresentation.caption(for: facets, referenceDate: referenceDate))"
+        )
     }
 
     private func computeSuggestions() {
         let pool = allExercises
             .filter { $0.deletedAt == nil && !$0.isYoga && $0.modality == current.modality }
             .map(candidate(for:))
-        var trained: Set<UUID> = []
-        for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
-            for we in workout.exercises where we.sets.contains(where: { $0.completedAt != nil }) {
-                trained.insert(we.exerciseID)
-            }
-        }
+        let usageByID = ExerciseSwapUsageBuilder.profiles(from: history)
         let target = candidate(for: current)
         if !computed {
             availablePreferences = ExerciseSwapSuggester.availablePreferences(
@@ -176,9 +151,10 @@ struct ExerciseSwapSheet: View {
         suggestions = ExerciseSwapSuggester.suggest(
             replacing: target,
             from: pool,
-            trainedIDs: trained,
             excluding: inUseIDs,
-            preference: preference
+            preference: preference,
+            usageByID: usageByID,
+            referenceDate: referenceDate
         )
         computed = true
     }

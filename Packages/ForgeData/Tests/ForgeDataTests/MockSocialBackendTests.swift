@@ -59,6 +59,34 @@ import Testing
         #expect(try await backend.workoutDetail(id: newer) == nil)
     }
 
+    @Test func recentWorkoutsPaginatesByPublishedAtKeyset() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        // Nine workouts a minute apart, published out of order to prove the
+        // pages come from the sorted list, not insertion order.
+        for minute in [4, 8, 0, 6, 2, 7, 1, 5, 3] {
+            try await backend.publishWorkout(
+                dto(UUID(), "W\(minute)"), summary: summary,
+                publishedAt: epoch.addingTimeInterval(Double(minute) * 60)
+            )
+        }
+        let me = SocialUserID("me")
+
+        let page1 = try await backend.recentWorkouts(for: me, limit: 4, before: nil)
+        #expect(page1.map(\.title) == ["W8", "W7", "W6", "W5"])
+
+        let page2 = try await backend.recentWorkouts(for: me, limit: 4, before: page1.last?.publishedAt)
+        #expect(page2.map(\.title) == ["W4", "W3", "W2", "W1"])
+
+        // Final short page, then an empty one past the end.
+        let page3 = try await backend.recentWorkouts(for: me, limit: 4, before: page2.last?.publishedAt)
+        #expect(page3.map(\.title) == ["W0"])
+        #expect(try await backend.recentWorkouts(for: me, limit: 4, before: page3.last?.publishedAt).isEmpty)
+
+        // `before` is strict: a boundary equal to a ref's publishedAt excludes it.
+        let strict = try await backend.recentWorkouts(for: me, limit: 9, before: epoch.addingTimeInterval(8 * 60))
+        #expect(strict.map(\.title).first == "W7")
+    }
+
     @Test func likesToggle() async throws {
         let backend = MockSocialBackend(me: SocialUserID("me"))
         let w = UUID()
@@ -68,6 +96,81 @@ import Testing
         #expect(try await backend.likeCount(workoutID: w) == 1)
         try await backend.setLike(false, workoutID: w)
         #expect(try await backend.likeCount(workoutID: w) == 0)
+    }
+
+    @Test func likersReturnNewestFirstWithStableTiebreak() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        let w = UUID()
+        // Deliberately seeded out of order; the newest heart must lead.
+        await backend.seedLike(workoutID: w, by: SocialUserID("older"), at: epoch)
+        await backend.seedLike(workoutID: w, by: SocialUserID("newest"), at: epoch.addingTimeInterval(600))
+        await backend.seedLike(workoutID: w, by: SocialUserID("middle"), at: epoch.addingTimeInterval(300))
+
+        let likers = try await backend.likers(workoutID: w)
+        #expect(likers.map(\.userID.rawValue) == ["newest", "middle", "older"])
+        #expect(try await backend.likeCount(workoutID: w) == 3)
+
+        // Identical timestamps break on userID so ordering never flickers.
+        let tie = UUID()
+        await backend.seedLike(workoutID: tie, by: SocialUserID("bravo"), at: epoch)
+        await backend.seedLike(workoutID: tie, by: SocialUserID("alpha"), at: epoch)
+        #expect(try await backend.likers(workoutID: tie).map(\.userID.rawValue) == ["alpha", "bravo"])
+    }
+
+    @Test func unlikeRemovesLikerFromList() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        let w = UUID()
+        await backend.seedLike(workoutID: w, by: SocialUserID("friend"), at: epoch)
+        try await backend.setLike(true, workoutID: w)
+        #expect(try await backend.likers(workoutID: w).count == 2)
+
+        try await backend.setLike(false, workoutID: w)
+        let remaining = try await backend.likers(workoutID: w)
+        // Unliking removes only my heart; the friend's survives.
+        #expect(remaining.map(\.userID.rawValue) == ["friend"])
+        #expect(try await backend.hasLiked(workoutID: w) == false)
+    }
+
+    @Test func likersIsEmptyForUnheartedWorkout() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        #expect(try await backend.likers(workoutID: UUID()).isEmpty)
+    }
+
+    @Test func deleteAllMyDataRemovesOnlyMineAndFreesHandle() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        try await backend.upsertMyProfile(profile("me", handle: "james"))
+        #expect(try await backend.claimHandle("james") == true)
+        let mine = UUID()
+        try await backend.publishWorkout(dto(mine, "Push"), summary: summary, publishedAt: epoch)
+        let friendWorkout = UUID()
+        await backend.seed(profile: profile("friend", handle: "friendly"),
+                           workouts: [(dto: dto(friendWorkout, "Legs"), summary: summary, publishedAt: epoch)],
+                           follow: true)
+        try await backend.setLike(true, workoutID: friendWorkout)
+
+        try await backend.deleteAllMyData()
+
+        // Everything the user created is gone…
+        #expect(try await backend.profile(for: SocialUserID("me")) == nil)
+        #expect(try await backend.profile(forHandle: "james") == nil)
+        #expect(try await backend.recentWorkouts(for: SocialUserID("me"), limit: 10).isEmpty)
+        #expect(try await backend.workoutDetail(id: mine) == nil)
+        #expect(try await backend.following().isEmpty)
+        #expect(try await backend.hasLiked(workoutID: friendWorkout) == false)
+        // …the friend's presence is untouched…
+        #expect(try await backend.profile(forHandle: "friendly") != nil)
+        #expect(try await backend.workoutDetail(id: friendWorkout) != nil)
+        // …and the handle is free to claim again.
+        #expect(try await backend.claimHandle("james") == true)
+    }
+
+    @Test func deleteAllMyDataIsIdempotent() async throws {
+        let backend = MockSocialBackend(me: SocialUserID("me"))
+        try await backend.deleteAllMyData() // nothing to delete — must not trap
+        try await backend.upsertMyProfile(profile("me", handle: "james"))
+        try await backend.deleteAllMyData()
+        try await backend.deleteAllMyData() // second pass after a full delete
+        #expect(try await backend.profile(for: SocialUserID("me")) == nil)
     }
 
     @Test func friendsLeaderboardExcludesNonFriendsButIncludesSelf() async throws {

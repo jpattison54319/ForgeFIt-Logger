@@ -6,7 +6,7 @@ import ForgeData
 /// distribution, training split, top exercises, rep ranges, weekday habits,
 /// strength progression, cardio breakdowns, and monthly reports. Pure and
 /// deterministic like the rest of `TrainingAnalytics` so it's testable.
-extension TrainingAnalytics {
+nonisolated extension TrainingAnalytics {
 
     // MARK: - Range plumbing
 
@@ -271,19 +271,17 @@ extension TrainingAnalytics {
             .sorted { $0.minutes > $1.minutes }
     }
 
-    /// Aggregate seconds per HR zone across the range: measured zone data
-    /// when the watch captured it, estimated from average HR otherwise.
+    /// Aggregate measured seconds per HR zone across the range.
     func cardioZoneTotals(in range: TimeChartRange) -> [Int] {
         var totals = [Int](repeating: 0, count: 5)
         for item in cardioSessions(in: range) {
             let zones: [Int]
-            if item.session.hrZoneSeconds.count == 5, item.session.hrZoneSeconds.contains(where: { $0 > 0 }) {
+            if item.session.sampleSeriesJSON != nil,
+               item.session.hrZoneSeconds.count == 5,
+               item.session.hrZoneSeconds.contains(where: { $0 > 0 }) {
                 zones = item.session.hrZoneSeconds
             } else {
-                zones = CardioMetrics.estimatedZoneSecondsArray(
-                    avgHR: item.session.avgHR,
-                    durationSeconds: item.session.durationSeconds
-                )
+                zones = [Int](repeating: 0, count: 5)
             }
             for index in 0..<5 { totals[index] += zones[index] }
         }

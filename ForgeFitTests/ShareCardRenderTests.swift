@@ -12,11 +12,17 @@ struct ShareCardRenderTests {
     private let userID = ForgeFitDemo.userID
     private let benchID = UUID(uuidString: "00000000-0000-7000-8000-0000000000E1")!
     private let squatID = UUID(uuidString: "00000000-0000-7000-8000-0000000000E2")!
+    private let pullUpID = UUID(uuidString: "00000000-0000-7000-8000-0000000000E3")!
+    private let runID = UUID(uuidString: "00000000-0000-7000-8000-0000000000E4")!
+    private let yogaID = UUID(uuidString: "00000000-0000-7000-8000-0000000000E5")!
 
     private var library: [ExerciseLibraryModel] {
         [
             ExerciseLibraryModel(id: benchID, name: "Bench Press", equipment: "barbell"),
             ExerciseLibraryModel(id: squatID, name: "Back Squat", equipment: "barbell"),
+            ExerciseLibraryModel(id: pullUpID, name: "Assisted Pull-Up", equipment: "machine", defaultWeightMode: .bodyweightAssisted),
+            ExerciseLibraryModel(id: runID, name: "Run", isCardio: true, cardioKindRaw: "run", modalityRaw: "cardio"),
+            ExerciseLibraryModel(id: yogaID, name: "Sun Salutation", modalityRaw: "yoga", defaultHoldSeconds: 60),
         ]
     }
 
@@ -60,6 +66,108 @@ struct ShareCardRenderTests {
         let re = RoutineExerciseModel(userID: userID, exerciseID: benchID, position: 0, sets: [set])
         let routine = RoutineModel(userID: userID, name: "Upper A", exercises: [re])
         #expect(RoutineShareRenderer.image(for: routine, exercises: library, theme: .sage) != nil)
+    }
+
+    @Test func conditioningOnlyAndMixedSavedImagesRenderMeaningfulScores() throws {
+        let cindyMovements = [
+            ConditioningMovement(exerciseID: pullUpID, targetValue: 5, targetLoad: 35, weightMode: .bodyweightAssisted),
+            ConditioningMovement(exerciseID: benchID, targetValue: 10, weightMode: .bodyweight),
+            ConditioningMovement(exerciseID: squatID, targetValue: 15, weightMode: .bodyweight),
+        ]
+        let cindy = ConditioningSection(name: "Cindy", format: .amrap, durationSeconds: 1_200, movements: cindyMovements)
+        let routineExercises = cindyMovements.enumerated().map {
+            RoutineExerciseModel(userID: userID, exerciseID: $0.element.exerciseID, position: $0.offset)
+        }
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Cindy",
+            conditioningPlanJSON: ConditioningPlan(sections: [cindy]).encodedJSON(),
+            exercises: routineExercises
+        )
+        #expect(RoutineShareRenderer.image(for: routine, exercises: library, theme: .sage) != nil)
+        #expect(ConditioningSharePresentation.prescription(cindy) == "AMRAP · 20 min")
+        #expect(ConditioningSharePresentation.movement(
+            cindyMovements[0],
+            section: cindy,
+            exercise: library.first { $0.id == pullUpID }
+        ).contains("assisted"))
+
+        let mixedMovements = [
+            ConditioningMovement(exerciseID: benchID, targetValue: 8, targetLoad: 100),
+            ConditioningMovement(exerciseID: runID, targetValue: 400, targetUnit: .meters),
+            ConditioningMovement(exerciseID: yogaID, targetValue: 60, targetUnit: .seconds, weightMode: .bodyweight),
+        ]
+        let mixedSection = ConditioningSection(
+            name: "Strength + Engine + Flow",
+            format: .forTime,
+            timeCapSeconds: 1_800,
+            rounds: 3,
+            movements: mixedMovements
+        )
+        let plan = ConditioningPlan(sections: [mixedSection])
+        let result = ConditioningResult(sectionResults: [
+            ConditioningSectionResult(
+                id: mixedSection.id,
+                format: .forTime,
+                scoreKind: .elapsedTime,
+                elapsedSeconds: 1_425,
+                totalReps: 24,
+                completed: true
+            )
+        ])
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let strength = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: benchID,
+            position: 0,
+            sets: [SetModel(userID: userID, reps: 24, weight: 100, completedAt: start.addingTimeInterval(1_000))]
+        )
+        let run = WorkoutExerciseModel(userID: userID, exerciseID: runID, position: 1)
+        let yoga = WorkoutExerciseModel(userID: userID, exerciseID: yogaID, position: 2)
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Mixed Modal Sprint",
+            startedAt: start,
+            endedAt: start.addingTimeInterval(1_425),
+            conditioningPlanSnapshotJSON: plan.encodedJSON(),
+            conditioningResultJSON: result.encodedJSON(),
+            activeEnergyKcal: 310,
+            exercises: [strength, run, yoga],
+            cardioSessions: [
+                CardioSessionModel(userID: userID, workoutExerciseID: run.id, modality: "run", startedAt: start, endedAt: start.addingTimeInterval(1_425), durationSeconds: 360, distanceMeters: 1_200),
+                CardioSessionModel(userID: userID, workoutExerciseID: yoga.id, modality: CardioSessionModel.yogaModality, startedAt: start, endedAt: start.addingTimeInterval(1_425), durationSeconds: 180, yogaStyleRaw: "vinyasa", posesCompleted: 6),
+            ]
+        )
+
+        let full = WorkoutShareRenderer.image(for: workout, exercises: library, theme: .sage)
+        let compact = ShareRenderer.image(
+            WorkoutShareCardTrainingLog(workout: workout, exercises: library, theme: .sage),
+            theme: .sage
+        )
+        let minimal = ShareRenderer.image(
+            WorkoutShareCardMinimal(workout: workout, exercises: library, theme: .sage),
+            theme: .sage
+        )
+        #expect(full != nil)
+        #expect((full?.size.height ?? 0) > (full?.size.width ?? 0))
+        #expect(compact?.size == WorkoutShareCardTrainingLog.size)
+        #expect(minimal?.size == WorkoutShareCardMinimal.size)
+        #expect(ConditioningSharePresentation.score(result.sectionResults.first) == "23:45")
+        #expect(ConditioningSharePresentation.movement(
+            mixedMovements[0],
+            section: mixedSection,
+            exercise: library.first { $0.id == benchID }
+        ).contains("8 reps"))
+        #expect(ConditioningSharePresentation.movement(
+            mixedMovements[1],
+            section: mixedSection,
+            exercise: library.first { $0.id == runID }
+        ) == "400 m")
+        #expect(ConditioningSharePresentation.movement(
+            mixedMovements[2],
+            section: mixedSection,
+            exercise: library.first { $0.id == yogaID }
+        ) == "60 sec")
     }
 
     @Test func folderCardRendersMesoAndMacro() {

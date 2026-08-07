@@ -8,7 +8,7 @@ import Foundation
 /// window — supine, stable, and free of daytime posture / stress / caffeine
 /// confounds (Plews et al. 2013, Sports Med; Buchheit 2014, Front Physiol).
 /// Apple's all-day HRV mean and daytime-derived resting HR are noisier proxies.
-enum NocturnalAggregator {
+nonisolated enum NocturnalAggregator {
     /// A merged sleep period, tagged with the morning it belongs to.
     struct SleepWindow: Equatable {
         let start: Date
@@ -21,9 +21,13 @@ enum NocturnalAggregator {
         var hrv: Double?
         var sleepingHR: Int?
         var hrvSampleCount: Int
+        var hrvOccupiedBinCount: Int
+        var hrvSampleSpanMinutes: Int
         /// Nocturnal HR sample count — coverage of the sleep window, used to
         /// tell a real short night (dense samples) from a partial-wear fragment.
         var sleepingHRSampleCount: Int
+        var sleepingHROccupiedBinCount: Int
+        var sleepingHRSampleSpanMinutes: Int
     }
 
     /// Merge asleep segments into whole sleep windows, stitching brief
@@ -47,49 +51,90 @@ enum NocturnalAggregator {
         return merged.map { SleepWindow(start: $0.start, end: $0.end, day: calendar.startOfDay(for: $0.end)) }
     }
 
-    /// Below this many overnight HR samples, a "sleeping HR" is really just
-    /// one or two spot readings — a single spurious sample (restless moment,
-    /// bad optical contact) would define the whole night. Sparse sources like
-    /// Garmin's smart recording synced through Apple Health still clear this
-    /// easily (a sample every 5–15 min is dozens per night).
-    static let minSleepingHRSamples = 3
+    static let minHRVBins = 4
+    static let minSleepingHRBins = 6
+    static let minimumSpanMinutes = 180
 
-    /// Per-night nocturnal HRV (mean, ms) and sleeping HR (mean, bpm), keyed by
-    /// readiness day. Samples are attributed to the window that contains them;
-    /// windows sharing a day are pooled.
+    /// Time-balanced nightly summaries keyed by the day sleep ended. HRV uses
+    /// the median of hourly log-median bins; heart rate uses the median of
+    /// 30-minute median bins. Equal bin weighting prevents a dense burst of
+    /// samples from dominating the entire night.
     static func nightly(
         windows: [SleepWindow],
         hrv: [(date: Date, value: Double)],
         hr: [(date: Date, bpm: Int)]
     ) -> [Date: NightlyMetric] {
         guard !windows.isEmpty else { return [:] }
-        var hrvByDay: [Date: [Double]] = [:]
-        var hrByDay: [Date: [Int]] = [:]
+        var hrvByDay: [Date: [(date: Date, value: Double)]] = [:]
+        var hrByDay: [Date: [(date: Date, value: Int)]] = [:]
 
         for sample in hrv {
             if let window = windows.first(where: { sample.date >= $0.start && sample.date <= $0.end }) {
-                hrvByDay[window.day, default: []].append(sample.value)
+                guard sample.value > 0 else { continue }
+                hrvByDay[window.day, default: []].append(sample)
             }
         }
         for sample in hr {
             if let window = windows.first(where: { sample.date >= $0.start && sample.date <= $0.end }) {
-                hrByDay[window.day, default: []].append(sample.bpm)
+                guard sample.bpm > 0 else { continue }
+                hrByDay[window.day, default: []].append((sample.date, sample.bpm))
             }
         }
 
         var out: [Date: NightlyMetric] = [:]
         for day in Set(hrvByDay.keys).union(hrByDay.keys) {
-            let hrvValues = hrvByDay[day] ?? []
-            let hrValues = hrByDay[day] ?? []
+            let hrvSamples = hrvByDay[day] ?? []
+            let hrSamples = hrByDay[day] ?? []
+            let hrvBins = binnedValues(
+                hrvSamples.map { ($0.date, log($0.value)) },
+                binWidth: 60 * 60
+            )
+            let hrBins = binnedValues(
+                hrSamples.map { ($0.date, Double($0.value)) },
+                binWidth: 30 * 60
+            )
+            let hrvSpan = sampleSpanMinutes(hrvSamples.map(\.date))
+            let hrSpan = sampleSpanMinutes(hrSamples.map(\.date))
+            let eligibleHRV = hrvBins.count >= minHRVBins && hrvSpan >= minimumSpanMinutes
+            let eligibleHR = hrBins.count >= minSleepingHRBins && hrSpan >= minimumSpanMinutes
             out[day] = NightlyMetric(
-                hrv: hrvValues.isEmpty ? nil : hrvValues.reduce(0, +) / Double(hrvValues.count),
-                sleepingHR: hrValues.count >= minSleepingHRSamples
-                    ? Int((Double(hrValues.reduce(0, +)) / Double(hrValues.count)).rounded())
-                    : nil,
-                hrvSampleCount: hrvValues.count,
-                sleepingHRSampleCount: hrValues.count
+                hrv: eligibleHRV ? median(hrvBins).map(exp) : nil,
+                sleepingHR: eligibleHR ? median(hrBins).map { Int($0.rounded()) } : nil,
+                hrvSampleCount: hrvSamples.count,
+                hrvOccupiedBinCount: hrvBins.count,
+                hrvSampleSpanMinutes: hrvSpan,
+                sleepingHRSampleCount: hrSamples.count,
+                sleepingHROccupiedBinCount: hrBins.count,
+                sleepingHRSampleSpanMinutes: hrSpan
             )
         }
         return out
+    }
+
+    private static func binnedValues(
+        _ samples: [(date: Date, value: Double)],
+        binWidth: TimeInterval
+    ) -> [Double] {
+        let groups = Dictionary(grouping: samples) {
+            Int(floor($0.date.timeIntervalSince1970 / binWidth))
+        }
+        return groups.keys.sorted().compactMap { key in
+            median(groups[key, default: []].map(\.value))
+        }
+    }
+
+    private static func sampleSpanMinutes(_ dates: [Date]) -> Int {
+        guard let first = dates.min(), let last = dates.max() else { return 0 }
+        return Int(last.timeIntervalSince(first) / 60)
+    }
+
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let midpoint = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[midpoint - 1] + sorted[midpoint]) / 2
+        }
+        return sorted[midpoint]
     }
 }

@@ -60,6 +60,7 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
     public enum WorkoutActivityMode: String, Codable, Hashable {
         case strength
         case cardio
+        case conditioning
         case yoga
     }
 
