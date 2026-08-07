@@ -1162,9 +1162,12 @@ struct ActiveWorkoutLoggerView: View {
 
     private func performReplace(_ target: WorkoutExerciseModel, with exercise: ExerciseLibraryModel) {
         let previousExercise = exerciseByID[target.exerciseID]
+        let previousSession = workout.cardioSessions.first { $0.workoutExerciseID == target.id }
+        let wasCardio = previousExercise?.isCardio == true
+            || (previousSession != nil && previousSession?.isYogaSession == false)
         let wasSessionBased = previousExercise?.isCardio == true
             || previousExercise?.isYoga == true
-            || workout.cardioSessions.contains { $0.workoutExerciseID == target.id }
+            || previousSession != nil
         let replacement = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
         // `exercise` may have been created inside the replacement picker's
         // nested sheet. Cache the concrete model before either replacement path
@@ -1211,6 +1214,7 @@ struct ActiveWorkoutLoggerView: View {
         previousSetsByExerciseID[replacement.id] = []
         recordBaselines[replacement.id] = nil
         if exercise.isYoga {
+            target.intervalPlanJSON = nil
             let plan = YogaFlowPlan.fromSelectedPoses([exercise]) ?? YogaFlowPlan.decode(from: target.yogaFlowJSON)
             target.yogaFlowJSON = plan?.encodedJSON()
             for set in target.sets {
@@ -1242,6 +1246,7 @@ struct ActiveWorkoutLoggerView: View {
                 workout.cardioSessions.append(session)
             }
         } else if exercise.isCardio {
+            if !wasCardio { target.intervalPlanJSON = nil }
             target.yogaFlowJSON = nil
             for set in target.sets {
                 modelContext.delete(set)
@@ -1268,6 +1273,7 @@ struct ActiveWorkoutLoggerView: View {
                 workout.cardioSessions.append(session)
             }
         } else {
+            target.intervalPlanJSON = nil
             target.yogaFlowJSON = nil
             if wasSessionBased {
                 deleteCardioSessions(for: target.id)

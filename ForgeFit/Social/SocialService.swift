@@ -184,6 +184,19 @@ final class SocialService {
     /// opt-in gate.
     func deleteProfile() async throws {
         try await backend.deleteAllMyData()
+        clearDeletedProfileState()
+    }
+
+    /// Deletes public data left by an earlier Community-enabled build while
+    /// keeping the disabled feature from contacting CloudKit at launch. The
+    /// production backend is constructed only after the user selects the
+    /// explicit deletion action in Settings.
+    func deleteLegacyProfile() async throws {
+        try await CloudKitSocialBackend().deleteAllMyData()
+        clearDeletedProfileState()
+    }
+
+    private func clearDeletedProfileState() {
         myProfile = nil
         status = .notOptedIn
         // The wipe removed every shared workout — nothing left to act on.

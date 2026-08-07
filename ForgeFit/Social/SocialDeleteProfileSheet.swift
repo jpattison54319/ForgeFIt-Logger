@@ -10,6 +10,8 @@ struct SocialDeleteProfileSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SocialService.self) private var social
 
+    var allowsLegacyDeletion = false
+
     @State private var isDeleting = false
     @State private var errorMessage: String?
 
@@ -80,7 +82,11 @@ struct SocialDeleteProfileSheet: View {
         isDeleting = true
         errorMessage = nil
         do {
-            try await social.deleteProfile()
+            if allowsLegacyDeletion && !social.isEnabled {
+                try await social.deleteLegacyProfile()
+            } else {
+                try await social.deleteProfile()
+            }
             dismiss()
         } catch {
             errorMessage = "Couldn't finish deleting — your profile is still in the community. Check your connection and try again."

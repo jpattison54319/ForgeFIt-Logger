@@ -1,6 +1,6 @@
 # ForgeFit Privacy Policy
 
-_Last updated: August 5, 2026_
+_Last updated: August 6, 2026_
 
 ForgeFit is built local-first: your training data belongs to you and lives on
 your device, with optional iCloud sync for your training plan and an optional
@@ -84,6 +84,13 @@ If you pair a Bluetooth heart-rate monitor, its readings are used live during
 your workout and stored with the session on your device, like any other
 workout metric. The pairing is remembered only on that device.
 
+## Earlier Community data
+
+An earlier test build included an optional Community feature backed by Apple's
+public CloudKit database. This version does not publish new Community data. If
+you used that feature, Settings → Delete Community data permanently removes your
+public profile and handle, shared workouts, follows, and likes.
+
 ## Data export
 
 Settings → Export data creates JSON or CSV files of your workouts and routines
@@ -101,11 +108,13 @@ Deleting the app deletes all local ForgeFit data on that device, including
 experiments and their custom entries. Deleting one experiment removes only
 that experiment and its entries; it does not delete the workouts or Apple
 Health data shown in its results. Your training plan in iCloud can be removed
-by deleting routines in the app (deletions sync) or via Settings → Erase All
-Data. Your training-log backup is an ordinary file you control: delete it in
-the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Erase All
-Data, which also removes the backup. Workouts written to Apple Health remain
-there under your control and can be deleted in the Health app.
+by deleting routines in the app (deletions sync) or via Settings → Reset all
+app data. Your training-log backup is an ordinary file you control: delete it
+in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Reset
+all app data, which also removes the backup. Any earlier public Community data
+must be removed separately with Settings → Delete Community data. Workouts
+written to Apple Health remain there under your control and can be deleted in
+the Health app.
 
 ## Changes
 

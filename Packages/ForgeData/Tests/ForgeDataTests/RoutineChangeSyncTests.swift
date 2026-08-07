@@ -388,6 +388,76 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(target.targetWeight, 60)
     }
 
+    func testCardioToStrengthSwapClearsIntervalPlanAndRebuildsTargets() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let cardioTarget = RoutineSetModel(
+            userID: userID,
+            position: 0,
+            targetDurationSeconds: 1_800
+        )
+        let routineExercise = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            intervalPlanJSON: #"{"steps":[{"kind":"work","seconds":60}]}"#,
+            sets: [cardioTarget]
+        )
+        let routine = RoutineModel(userID: userID, name: "Mixed", exercises: [routineExercise])
+        let strengthSet = SetModel(userID: userID, position: 0, reps: 8, weight: 50)
+        let workoutExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            sourceRoutineExerciseID: routineExercise.id,
+            sets: [strengthSet]
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            routineID: routine.id,
+            title: routine.name,
+            exercises: [workoutExercise]
+        )
+        context.insert(routine)
+        context.insert(workout)
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        XCTAssertNil(routineExercise.intervalPlanJSON)
+        XCTAssertEqual(routineExercise.sets.count, 1)
+        XCTAssertNil(routineExercise.sets[0].targetDurationSeconds)
+        XCTAssertEqual(routineExercise.sets[0].targetRepsLow, 8)
+        XCTAssertEqual(routineExercise.sets[0].targetWeight, 50)
+    }
+
+    func testStrengthToYogaSwapClearsIntervalPlanAndCopiesFlow() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let seeded = try seed(userID: userID, exerciseID: UUID(), in: context)
+        let workoutExercise = seeded.workout.exercises[0]
+        let flow = #"{"style":"vinyasa","steps":[{"name":"Warrior II","seconds":30}]}"#
+        workoutExercise.exerciseID = UUID()
+        workoutExercise.sets = []
+        workoutExercise.intervalPlanJSON = nil
+        workoutExercise.yogaFlowJSON = flow
+        seeded.workout.cardioSessions = [CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: workoutExercise.id,
+            modality: CardioSessionModel.yogaModality
+        )]
+
+        let plan = RoutineChangeSync.detect(workout: seeded.workout, routine: seeded.routine)
+        RoutineChangeSync.apply(plan, to: seeded.routine, from: seeded.workout, in: context)
+        try context.save()
+
+        let routineExercise = seeded.routine.exercises[0]
+        XCTAssertNil(routineExercise.intervalPlanJSON)
+        XCTAssertEqual(routineExercise.yogaFlowJSON, flow)
+        XCTAssertTrue(routineExercise.sets.isEmpty)
+    }
+
     /// The reported session: sets changed, a set type changed, and an exercise
     /// was swapped, all before tapping yes. Every one must land.
     func testSetTypeSetCountAndSwapAllApplyTogether() throws {

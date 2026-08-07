@@ -45,14 +45,14 @@ final class WorkoutActivityController {
         }
     }
 
-    /// When the system should stop presenting this content as current.
+    /// When the system should mark this content as no longer current.
     ///
     /// Updates arrive on set completion, rest start/stop, and heart-rate
     /// changes, so a live workout refreshes this window long before it lapses.
     /// It matters when the app is force-quit mid-session: without a stale date
     /// the lock screen keeps showing a frozen exercise, set count, and heart
-    /// rate as though they were current, for hours. Thirty minutes clears a
-    /// genuinely slow set-and-rest cycle while still catching a dead app.
+    /// rate as though they were current, for hours. After thirty minutes the
+    /// widget replaces those values with an explicit reopen action.
     private static func staleDate() -> Date {
         Date().addingTimeInterval(30 * 60)
     }

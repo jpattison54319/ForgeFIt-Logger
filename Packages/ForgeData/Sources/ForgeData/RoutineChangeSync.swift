@@ -258,7 +258,7 @@ public enum RoutineChangeSync {
         // AMRAP is a strength set with a time window, not a session-based
         // cardio target. Treating every duration target as cardio made later
         // AMRAP type changes invisible to the routine sync.
-        let isCardio = routineSets.allSatisfy {
+        let isCardio = we.sets.isEmpty && routineSets.allSatisfy {
             $0.targetDurationSeconds != nil && $0.setType != .amrap
         }
         if isCardio {
@@ -341,7 +341,11 @@ public enum RoutineChangeSync {
         for ep in plan.exercisePlans {
             guard let we = workoutByID[ep.workoutExerciseID],
                   let re = ep.matchedRoutineExerciseID.flatMap({ routineByID[$0] }) else { continue }
-            if ep.exerciseChanged { re.exerciseID = we.exerciseID }
+            if ep.exerciseChanged {
+                re.exerciseID = we.exerciseID
+                re.intervalPlanJSON = we.intervalPlanJSON
+                re.yogaFlowJSON = we.yogaFlowJSON
+            }
             if ep.movedPosition { re.position = we.position }
             if ep.supersetChanged { re.supersetGroup = we.supersetGroup }
             if ep.flowChanged { re.yogaFlowJSON = we.yogaFlowJSON }
@@ -380,6 +384,8 @@ public enum RoutineChangeSync {
                 position: we.position,
                 supersetGroup: we.supersetGroup,
                 notes: we.notes,
+                intervalPlanJSON: we.intervalPlanJSON,
+                yogaFlowJSON: we.yogaFlowJSON,
                 sets: []
             )
             context.insert(re)

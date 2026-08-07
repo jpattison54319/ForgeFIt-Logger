@@ -64,6 +64,7 @@ struct HomeMetricGrid: View {
     private var recoveryTile: some View {
         let score: Double?
         let baselineReady: Bool
+        let isDailyScore: Bool
         let actionTitle: String
         switch source {
         case .loading:
@@ -71,6 +72,7 @@ struct HomeMetricGrid: View {
         case .cached(let snapshot, let cache):
             score = cache.recoveryDisplayScore
             baselineReady = cache.baselineReady
+            isDailyScore = snapshot.daily != nil
             let action = RecoveryEngine.Action(rawValue: cache.actionRaw)?.title ?? ""
             actionTitle = snapshot.daily == nil && snapshot.trend != nil
                 ? "7-day trend · \(action)"
@@ -78,6 +80,7 @@ struct HomeMetricGrid: View {
         case .live:
             score = recovery.displayScore
             baselineReady = recovery.baselineReady
+            isDailyScore = recovery.recovery.daily.state.value != nil
             actionTitle = recovery.recovery.daily.state.value == nil
                 && recovery.recovery.systemic.state.value != nil
                 ? "7-day trend · \(recovery.action.title)"
@@ -91,8 +94,8 @@ struct HomeMetricGrid: View {
             value: isBuilding ? "Building" : "\(Int((resolvedScore * 100).rounded()))",
             suffix: nil,
             caption: isBuilding ? "Personal baseline in progress" : actionTitle,
-            tint: isBuilding ? theme.textTertiary : theme.readinessColor(resolvedScore),
-            progress: isBuilding ? nil : resolvedScore,
+            tint: isBuilding || !isDailyScore ? theme.textTertiary : theme.readinessColor(resolvedScore),
+            progress: isBuilding || !isDailyScore ? nil : resolvedScore,
             isRefreshing: isRefreshing
         )
     }

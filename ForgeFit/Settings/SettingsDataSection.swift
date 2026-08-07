@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsDataSection: View {
     @Environment(\.theme) private var theme
     @Binding var showExportSheet: Bool
+    @Binding var showCommunityDeletionSheet: Bool
     @Binding var showResetSheet: Bool
 
     var body: some View {
@@ -22,6 +23,20 @@ struct SettingsDataSection: View {
             .buttonStyle(.plain)
             .themedListRow()
             .accessibilityIdentifier("export-data-row")
+
+            Button(role: .destructive) {
+                showCommunityDeletionSheet = true
+            } label: {
+                SettingsRowLabel(
+                    icon: "person.crop.circle.badge.xmark",
+                    iconTint: theme.danger,
+                    title: "Delete Community data",
+                    subtitle: "Remove any public profile and shared workouts created with an earlier build."
+                )
+            }
+            .buttonStyle(.plain)
+            .themedListRow()
+            .accessibilityIdentifier("delete-community-data-row")
 
             Button(role: .destructive) {
                 showResetSheet = true

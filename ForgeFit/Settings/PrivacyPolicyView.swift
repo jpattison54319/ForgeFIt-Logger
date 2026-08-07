@@ -11,7 +11,7 @@ struct PrivacyPolicyView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Last updated: July 27, 2026")
+                    Text("Last updated: August 6, 2026")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                     Text("ForgeFit is built local-first: your training data belongs to you and lives on your device, with optional iCloud sync for your training plan and an optional iCloud Drive backup of your training log.")
                         .font(.system(size: 14)).foregroundStyle(theme.textPrimary)
@@ -35,12 +35,15 @@ struct PrivacyPolicyView: View {
                 section("Bluetooth heart-rate monitors",
                         "If you pair a Bluetooth heart-rate monitor, its readings are used live during your workout and stored with the session on your device, like any other workout metric. The pairing is remembered only on that device.")
 
+                section("Earlier Community data",
+                        "An earlier test build included an optional Community feature backed by Apple's public CloudKit database. This version does not publish new Community data. If you used that feature, Settings → Delete Community data permanently removes your public profile and handle, shared workouts, follows, and likes.")
+
 
                 section("Data export",
                         "Settings → Export data creates JSON or CSV files of your workouts and routines on demand, including the health metrics ForgeFit has stored with them. An experiment's results screen can separately export the observations used in that experiment, including custom entries and available daily Health summaries. These exports happen only when you request them. You choose the format and where the files go — they are handed directly to you through the iOS share sheet and are never transmitted to us or anyone else. Files shared outside ForgeFit are then controlled by the destination you choose.")
 
                 section("Data deletion",
-                        "Deleting the app deletes all local ForgeFit data on that device, including experiments and their custom entries. Deleting one experiment removes only that experiment and its entries; it does not delete the workouts or Apple Health data shown in its results. Your training plan in iCloud can be removed by deleting routines in the app (deletions sync) or via Settings → Erase All Data. Your training-log backup is an ordinary file you control: delete it in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Erase All Data, which also removes the backup. Workouts written to Apple Health remain there under your control and can be deleted in the Health app.")
+                        "Deleting the app deletes all local ForgeFit data on that device, including experiments and their custom entries. Deleting one experiment removes only that experiment and its entries; it does not delete the workouts or Apple Health data shown in its results. Your training plan in iCloud can be removed by deleting routines in the app (deletions sync) or via Settings → Reset all app data. Your training-log backup is an ordinary file you control: delete it in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Reset all app data, which also removes the backup. Any earlier public Community data must be removed separately with Settings → Delete Community data. Workouts written to Apple Health remain there under your control and can be deleted in the Health app.")
 
                 section("Changes",
                         "This privacy policy will be updated if any future version changes how data is stored or synced. Any changes will be documented here first.")

@@ -121,16 +121,47 @@ struct IncompleteWorkSummaryTests {
         #expect(summary.isEmpty)
     }
 
-    /// Cardio and yoga rows carry no sets — their completion is a
-    /// CardioSessionModel and is covered by the conditioning target guard.
-    @Test func sessionBasedRowsAreIgnored() {
+    @Test func untouchedSessionBasedRowIsNamed() {
         let cardio = UUID()
         let lift = UUID()
         let summary = IncompleteWorkSummary.make(
             for: workout([(cardio, []), (lift, [set(0, completed: true)])]),
             exerciseNames: [cardio: "Treadmill", lift: "Bench Press"]
         )
+        #expect(summary.untouchedExerciseNames == ["Treadmill"])
+    }
+
+    @Test func startedSessionBasedRowRaisesNothing() {
+        let cardio = UUID()
+        let row = WorkoutExerciseModel(userID: userID, exerciseID: cardio, position: 0)
+        let session = CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: row.id,
+            modality: CardioKind.run.rawValue,
+            liveStartedAt: .now
+        )
+        let sessionWorkout = WorkoutModel(
+            userID: userID,
+            title: "Run",
+            exercises: [row],
+            cardioSessions: [session]
+        )
+
+        let summary = IncompleteWorkSummary.make(
+            for: sessionWorkout,
+            exerciseNames: [cardio: "Treadmill"]
+        )
+
         #expect(summary.isEmpty)
+    }
+
+    @Test func untouchedYogaBlockIsNamed() {
+        let block = WorkoutBlockModel(userID: userID, kind: .yoga)
+        let blockWorkout = WorkoutModel(userID: userID, title: "Mobility", blocks: [block])
+
+        let summary = IncompleteWorkSummary.make(for: blockWorkout, exerciseNames: [:])
+
+        #expect(summary.untouchedExerciseNames == ["Yoga"])
     }
 
     @Test func unresolvedExerciseNameFallsBackRatherThanDisappearing() {

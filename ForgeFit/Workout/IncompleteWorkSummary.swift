@@ -72,10 +72,27 @@ struct IncompleteWorkSummary: Equatable {
 
         for row in rows {
             let working = row.sets.filter { $0.setType.countsAsWorkingVolume }
-            // Session-based rows (cardio, yoga) carry no sets — their
-            // completion lives in a CardioSessionModel and is already covered
-            // by the conditioning/target guards.
-            guard !working.isEmpty else { continue }
+            // Session-based rows carry no strength sets. They still represent
+            // planned work, so an untouched cardio or yoga session belongs in
+            // the same finish warning as an untouched strength exercise.
+            guard !working.isEmpty else {
+                // A strength row containing only warm-ups is intentionally
+                // quiet; it is not a session-based row with missing work.
+                guard row.sets.isEmpty else { continue }
+                let session = workout.cardioSessions.first {
+                    $0.workoutExerciseID == row.id && $0.deletedAt == nil
+                }
+                let sessionHasSubstance: Bool
+                if let session {
+                    sessionHasSubstance = hasSessionSubstance(session)
+                } else {
+                    sessionHasSubstance = false
+                }
+                if !sessionHasSubstance {
+                    untouchedExerciseNames.append(exerciseNames[row.exerciseID] ?? "an exercise")
+                }
+                continue
+            }
 
             let completed = working.filter { $0.completedAt != nil }
             if completed.isEmpty {
@@ -85,9 +102,42 @@ struct IncompleteWorkSummary: Equatable {
             }
         }
 
+        for block in workout.blocks.sorted(by: { $0.position < $1.position }) {
+            let session = workout.cardioSessions.first {
+                $0.workoutBlockID == block.id && $0.deletedAt == nil
+            }
+            let sessionHasSubstance: Bool
+            if let session {
+                sessionHasSubstance = hasSessionSubstance(session)
+            } else {
+                sessionHasSubstance = false
+            }
+            let hasRecordedBlockWork: Bool
+            switch block.kind {
+            case .yoga:
+                hasRecordedBlockWork = sessionHasSubstance
+            case .conditioning:
+                let progress = ConditioningProgress.decode(from: block.progressJSON)
+                let result = ConditioningResult.decode(from: block.resultJSON)
+                hasRecordedBlockWork = sessionHasSubstance
+                    || (progress?.fullRounds ?? 0) > 0
+                    || progress?.completedMovementIDs.isEmpty == false
+                    || result?.sectionResults.isEmpty == false
+            }
+            if !hasRecordedBlockWork {
+                untouchedExerciseNames.append(block.kind.title)
+            }
+        }
+
         return IncompleteWorkSummary(
             unfinishedSetCount: unfinishedSetCount,
             untouchedExerciseNames: untouchedExerciseNames
         )
+    }
+
+    private static func hasSessionSubstance(_ session: CardioSessionModel) -> Bool {
+        session.endedAt != nil
+            || session.liveStartedAt != nil
+            || (session.isYogaSession && session.sourceDevice == CardioSessionModel.yogaManualSource)
     }
 }

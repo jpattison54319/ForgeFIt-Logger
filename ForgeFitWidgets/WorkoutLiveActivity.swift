@@ -20,22 +20,33 @@ struct WorkoutLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Image(systemName: WActivityTheme.icon(for: context.state.mode))
+                        Image(systemName: context.isStale ? "pause.circle.fill" : WActivityTheme.icon(for: context.state.mode))
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(WActivityTheme.accent)
-                        Text(headerTitle(context))
+                        Text(context.isStale ? "Workout paused" : headerTitle(context))
                             .font(.system(size: 14, weight: .bold))
                             .lineLimit(1)
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    elapsedText(context)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(WActivityTheme.gold)
+                    if context.isStale {
+                        Text("Open app")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(WActivityTheme.accent)
+                    } else {
+                        elapsedText(context)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(WActivityTheme.gold)
+                    }
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
+                    if context.isStale {
+                        Text("ForgeFit stopped receiving workout updates")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .multilineTextAlignment(.center)
+                    } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                         restCountdown(until: restEndsAt, size: 30)
                     } else if context.state.mode == .yoga {
                         VStack(spacing: 1) {
@@ -71,12 +82,12 @@ struct WorkoutLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
-                        Text(detailLine(context))
+                        Text(context.isStale ? "Open ForgeFit to resume or finish" : detailLine(context))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(WActivityTheme.accent)
                             .lineLimit(1)
                         Spacer()
-                        if let hr = context.state.heartRate {
+                        if !context.isStale, let hr = context.state.heartRate {
                             Label("\(hr)", systemImage: "heart.fill")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(WActivityTheme.danger)
@@ -84,7 +95,10 @@ struct WorkoutLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
+                if context.isStale {
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundStyle(WActivityTheme.accent)
+                } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     Image(systemName: "timer")
                         .foregroundStyle(WActivityTheme.accent)
                 } else {
@@ -92,7 +106,11 @@ struct WorkoutLiveActivity: Widget {
                         .foregroundStyle(WActivityTheme.accent)
                 }
             } compactTrailing: {
-                if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
+                if context.isStale {
+                    Text("Open")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(WActivityTheme.accent)
+                } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     restCountdown(until: restEndsAt, size: 14)
                         .frame(maxWidth: 44)
                 } else if context.state.mode == .yoga,
@@ -108,7 +126,10 @@ struct WorkoutLiveActivity: Widget {
                         .frame(maxWidth: 52)
                 }
             } minimal: {
-                if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
+                if context.isStale {
+                    Image(systemName: "pause.circle.fill")
+                        .foregroundStyle(WActivityTheme.accent)
+                } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     restCountdown(until: restEndsAt, size: 11)
                 } else if context.state.mode == .yoga,
                           let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
@@ -167,10 +188,29 @@ private struct LockScreenWorkoutView: View {
     }
 
     var body: some View {
-        switch family {
-        case .small: watchBody
-        default: phoneBody
+        if context.isStale {
+            staleBody
+        } else {
+            switch family {
+            case .small: watchBody
+            default: phoneBody
+            }
         }
+    }
+
+    private var staleBody: some View {
+        VStack(alignment: family == .small ? .center : .leading, spacing: 4) {
+            Label("Workout paused", systemImage: "pause.circle.fill")
+                .font(.system(size: family == .small ? 13 : 16, weight: .bold))
+                .foregroundStyle(WActivityTheme.accent)
+            Text("Open ForgeFit to resume or finish")
+                .font(.system(size: family == .small ? 11 : 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+                .multilineTextAlignment(family == .small ? .center : .leading)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: family == .small ? .center : .leading)
+        .padding(family == .small ? 8 : 16)
     }
 
     /// Apple Watch Smart Stack. A wrist glance mid-set is worth exactly one

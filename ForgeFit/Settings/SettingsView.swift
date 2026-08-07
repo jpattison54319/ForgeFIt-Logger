@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var showHRMPairing = false
     @State private var showHistoryImporter = false
     @State private var showExportSheet = false
+    @State private var showCommunityDeletionSheet = false
     @State private var showResetSheet = false
 
     var body: some View {
@@ -35,7 +36,11 @@ struct SettingsView: View {
                 SettingsTrainingSection()
                 SettingsUnitsSection()
                 SettingsEquipmentSection()
-                SettingsDataSection(showExportSheet: $showExportSheet, showResetSheet: $showResetSheet)
+                SettingsDataSection(
+                    showExportSheet: $showExportSheet,
+                    showCommunityDeletionSheet: $showCommunityDeletionSheet,
+                    showResetSheet: $showResetSheet
+                )
                 SettingsAboutSection()
             }
             .listStyle(.insetGrouped)
@@ -72,6 +77,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showExportSheet) {
             ExportDataSheet()
+        }
+        .sheet(isPresented: $showCommunityDeletionSheet) {
+            SocialDeleteProfileSheet(allowsLegacyDeletion: true)
         }
         .sheet(isPresented: $showResetSheet) {
             ResetDataSheet {
