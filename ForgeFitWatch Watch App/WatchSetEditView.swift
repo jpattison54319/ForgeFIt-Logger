@@ -2,9 +2,9 @@ import SwiftUI
 import WatchKit
 import ForgeCore
 
-/// Minimal one-screen set editor for the wrist: pick weight or reps, turn the
-/// digital crown (or tap ±), Done commits a single update to the phone.
-/// No keyboards, no set types — everything else stays on the iPhone.
+/// One-screen straight-set editor for the wrist: pick load or reps, turn the
+/// digital crown (or tap ±), then commit to the phone. Pure bodyweight work
+/// correctly omits a meaningless load field; added/assisted work keeps it.
 struct WatchSetEditView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -13,7 +13,7 @@ struct WatchSetEditView: View {
     let set: WatchSetSnapshot
 
     private enum Field { case weight, reps }
-    @State private var field: Field = .weight
+    @State private var field: Field
     /// Weight edited in kg internally; stepped and shown in the display unit.
     @State private var weightKg: Double
     @State private var reps: Int
@@ -34,6 +34,7 @@ struct WatchSetEditView: View {
         self.exercise = exercise
         self.set = set
         self.unitSuffix = set.unitSuffix ?? store.context?.unitSuffix ?? "lb"
+        _field = State(initialValue: set.supportsLoadEntry ? .weight : .reps)
         _weightKg = State(initialValue: set.weightKg ?? 0)
         _reps = State(initialValue: set.reps ?? 0)
     }
@@ -46,12 +47,14 @@ struct WatchSetEditView: View {
                 .lineLimit(1)
 
             HStack(spacing: 8) {
-                valueTile(
-                    label: unitSuffix,
-                    value: WFmt.weight(displayWeight),
-                    selected: field == .weight,
-                    tint: WTheme.accent
-                ) { field = .weight }
+                if set.supportsLoadEntry {
+                    valueTile(
+                        label: loadLabel,
+                        value: WFmt.weight(displayWeight),
+                        selected: field == .weight,
+                        tint: WTheme.accent
+                    ) { field = .weight }
+                }
                 valueTile(
                     label: "reps",
                     value: "\(reps)",
@@ -66,7 +69,12 @@ struct WatchSetEditView: View {
             }
 
             Button {
-                store.updateSet(set, in: exercise, weightKg: weightKg > 0 ? weightKg : nil, reps: reps > 0 ? reps : nil)
+                store.updateSet(
+                    set,
+                    in: exercise,
+                    weightKg: set.supportsLoadEntry && weightKg > 0 ? weightKg : nil,
+                    reps: reps > 0 ? reps : nil
+                )
                 dismiss()
             } label: {
                 Text("Done").font(.system(size: 15, weight: .bold))
@@ -96,6 +104,14 @@ struct WatchSetEditView: View {
             reps = max(0, reps + steps)
         }
         WKInterfaceDevice.current().play(.click)
+    }
+
+    private var loadLabel: String {
+        switch set.weightMode {
+        case .bodyweightAdded: "+\(unitSuffix)"
+        case .bodyweightAssisted: "assist \(unitSuffix)"
+        default: unitSuffix
+        }
     }
 
     private func valueTile(label: String, value: String, selected: Bool, tint: Color, onTap: @escaping () -> Void) -> some View {

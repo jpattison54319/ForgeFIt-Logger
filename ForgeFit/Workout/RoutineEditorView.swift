@@ -856,72 +856,26 @@ private struct ExerciseEditRow: View {
     }
 
     private var cardioTargetEditor: some View {
-        let kind = CardioKind.infer(name: exercise?.name ?? "Cardio", equipment: exercise?.equipment)
-        return VStack(alignment: .leading, spacing: Space.md) {
-            HStack(spacing: 8) {
-                Image(systemName: kind.systemImage)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(theme.secondaryAccent)
-                Text("Cardio target")
-                    .font(.tag)
-                    .foregroundStyle(theme.textTertiary)
+        Button {
+            showIntervalBuilder = true
+        } label: {
+            HStack(spacing: 4) {
+                Text("Add goal")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(theme.accent)
                 Spacer()
             }
-
-            if let first = sortedSets.first {
-                CardioDurationTargetRow(set: first)
-            }
-
-            // Pacing goal — a steady zone lock or structured intervals. Both
-            // live behind one CTA so zone locking is discoverable without being
-            // mislabeled as an "interval".
-            Button {
-                showIntervalBuilder = true
-            } label: {
-                let plan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
-                HStack(spacing: 6) {
-                    Image(systemName: cardioGoalIcon(plan))
-                        .font(.system(size: 12, weight: .bold))
-                    Text(cardioGoalLabel(plan))
-                        .font(.system(size: 13, weight: .semibold))
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).opacity(0.7)
-                    Spacer()
-                }
-                .foregroundStyle(theme.secondaryAccent)
-            }
-            .buttonStyle(.plain)
-            .sheet(isPresented: $showIntervalBuilder) {
-                IntervalPlanBuilderView(routineExercise: routineExercise)
-            }
-
-            Text(kind.metricLabels.joined(separator: " · "))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(theme.secondaryAccent)
-                .fixedSize(horizontal: false, vertical: true)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .onAppear(perform: ensureCardioTarget)
-    }
-
-    /// Icon for the cardio pacing-goal CTA: a target for a steady zone lock,
-    /// a bar chart for structured intervals, a plain target when unset.
-    private func cardioGoalIcon(_ plan: IntervalPlan?) -> String {
-        if plan?.hasSteps == true { return "chart.bar.doc.horizontal" }
-        return "target"
-    }
-
-    /// Label for the cardio pacing-goal CTA, reflecting whichever shape is set.
-    private func cardioGoalLabel(_ plan: IntervalPlan?) -> String {
-        if let plan, plan.hasSteps {
-            let workCount = plan.steps.count { $0.kind == .work }
-            let tail = plan.hasDistanceSteps
-                ? "\(IntervalPlan.metricDistance(plan.totalDistanceMeters)) of reps"
-                : "\(Fmt.durationShort(plan.totalSeconds)) total"
-            return "Intervals: \(workCount)× · \(tail)"
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("routine-cardio-goal")
+        .sheet(isPresented: $showIntervalBuilder) {
+            IntervalPlanBuilderView(routineExercise: routineExercise)
         }
-        if let plan, plan.isMeaningful {
-            return plan.displaySummary
-        }
-        return "Add goal, zone lock, or intervals"
     }
 
     private func addSet(type: SetType) {
@@ -1039,15 +993,6 @@ private struct ExerciseEditRow: View {
         let minimum = displayUnit == .lb ? 5.0 : 2.5
         let dropped = max(minimum, (displayed * 0.75 / step).rounded() * step)
         return displayUnit.kilograms(fromDisplayValue: dropped)
-    }
-
-    private func ensureCardioTarget() {
-        if sortedSets.isEmpty {
-            let set = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
-            modelContext.insert(set)
-            routineExercise.sets = [set]
-            save()
-        }
     }
 
     /// Every row mutation routes through the debounce: the model updates in
@@ -1297,39 +1242,6 @@ private struct SetTargetEditRow: View {
                 .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct CardioDurationTargetRow: View {
-    @Environment(\.theme) private var theme
-    @Bindable var set: RoutineSetModel
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("Goal")
-                .font(.rowValue)
-                .foregroundStyle(theme.secondaryAccent)
-                .frame(width: 52, alignment: .leading)
-            OptionalIntField(placeholder: "Minutes", value: Binding(
-                get: { set.targetDurationSeconds.map { $0 / 60 } },
-                set: { set.targetDurationSeconds = $0.map { $0 * 60 } }
-            ))
-            .accessibilityIdentifier("cardio-target-minutes")
-            Text("min")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.textSecondary)
-            // Duration and distance are peer goals — either, both, or
-            // neither. Distance starts the session with a live goal ring,
-            // never a pre-filled logged distance.
-            OptionalDecimalField(placeholder: "Distance", value: Binding(
-                get: { set.targetDistanceMeters.map { Fmt.distanceUnit.distance(fromMeters: $0) } },
-                set: { set.targetDistanceMeters = $0.map { Fmt.distanceUnit.meters(fromDistance: $0) } }
-            ))
-            .accessibilityIdentifier("cardio-target-distance")
-            Text(Fmt.distanceUnit.abbreviation)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.textSecondary)
-        }
     }
 }
 

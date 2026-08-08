@@ -103,6 +103,11 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
     /// True while the countdown is a block micro-rest (myo-rep / drop / cluster)
     /// so the wrist can style it distinctly. Additive-optional.
     public var restIsMicro: Bool?
+    /// Timer identity lets the wrist distinguish AMRAP work from ordinary
+    /// post-set rest and keep the controls attached to the set that owns it.
+    /// Additive optionals preserve mixed-version decoding.
+    public var restLabel: String?
+    public var restOwnerID: UUID?
     /// Mirror of the phone's interval runner (structured cardio): current
     /// step name + when it ends. Display only — the phone drives execution.
     public var intervalStepName: String?
@@ -132,6 +137,8 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         restEndsAt: Date? = nil,
         restTotalSeconds: Int? = nil,
         restIsMicro: Bool? = nil,
+        restLabel: String? = nil,
+        restOwnerID: UUID? = nil,
         intervalStepName: String? = nil,
         intervalStepEndsAt: Date? = nil,
         intervalStepKind: String? = nil,
@@ -149,6 +156,8 @@ public struct WatchWorkoutSnapshot: Codable, Sendable, Equatable {
         self.restEndsAt = restEndsAt
         self.restTotalSeconds = restTotalSeconds
         self.restIsMicro = restIsMicro
+        self.restLabel = restLabel
+        self.restOwnerID = restOwnerID
         self.intervalStepName = intervalStepName
         self.intervalStepEndsAt = intervalStepEndsAt
         self.intervalStepKind = intervalStepKind
@@ -249,6 +258,18 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     public var weightKg: Double?
     public var reps: Int?
     public var completed: Bool
+    /// Additive set semantics for full wrist execution. Older peers omit
+    /// these and continue to render the original flat weight/reps row.
+    public var setTypeRaw: String?
+    public var weightModeRaw: String?
+    public var durationSeconds: Int?
+    public var isUnilateral: Bool?
+    public var miniReps: [Int]?
+    public var side2Reps: Int?
+    public var side2MiniReps: [Int]?
+    public var plannedMiniSetCount: Int?
+    public var plannedMiniReps: [Int]?
+    public var microRestSeconds: Int?
 
     public init(
         id: UUID,
@@ -257,7 +278,17 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         unitSuffix: String? = nil,
         weightKg: Double? = nil,
         reps: Int? = nil,
-        completed: Bool = false
+        completed: Bool = false,
+        setTypeRaw: String? = nil,
+        weightModeRaw: String? = nil,
+        durationSeconds: Int? = nil,
+        isUnilateral: Bool? = nil,
+        miniReps: [Int]? = nil,
+        side2Reps: Int? = nil,
+        side2MiniReps: [Int]? = nil,
+        plannedMiniSetCount: Int? = nil,
+        plannedMiniReps: [Int]? = nil,
+        microRestSeconds: Int? = nil
     ) {
         self.id = id
         self.label = label
@@ -266,6 +297,110 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.weightKg = weightKg
         self.reps = reps
         self.completed = completed
+        self.setTypeRaw = setTypeRaw
+        self.weightModeRaw = weightModeRaw
+        self.durationSeconds = durationSeconds
+        self.isUnilateral = isUnilateral
+        self.miniReps = miniReps
+        self.side2Reps = side2Reps
+        self.side2MiniReps = side2MiniReps
+        self.plannedMiniSetCount = plannedMiniSetCount
+        self.plannedMiniReps = plannedMiniReps
+        self.microRestSeconds = microRestSeconds
+    }
+
+    public var setType: SetType {
+        setTypeRaw.flatMap(SetType.init(rawValue:)) ?? .working
+    }
+
+    public var weightMode: WeightMode {
+        weightModeRaw.flatMap(WeightMode.init(rawValue:)) ?? .external
+    }
+
+    public var supportsLoadEntry: Bool { weightMode != .bodyweight }
+    public var usesSides: Bool { isUnilateral == true }
+    public var isStructured: Bool { setType.isBlockType }
+    public var isAMRAP: Bool { setType == .amrap }
+    public var effectiveMicroRestSeconds: Int {
+        microRestSeconds ?? setType.defaultMicroRestSeconds ?? 15
+    }
+
+    public var structuredProgress: WatchStructuredSetProgress {
+        WatchStructuredSetProgress(
+            activationReps: setType == .cluster ? nil : reps,
+            miniReps: miniReps ?? [],
+            side2ActivationReps: setType == .cluster ? nil : side2Reps,
+            side2MiniReps: side2MiniReps ?? []
+        )
+    }
+}
+
+/// The performed state of one Myo/rest-pause/cluster block. It is sent as one
+/// atomic value so activation and every mini-set stay in order across a queued
+/// WatchConnectivity delivery.
+public struct WatchStructuredSetProgress: Codable, Sendable, Equatable {
+    public var activationReps: Int?
+    public var miniReps: [Int]
+    public var side2ActivationReps: Int?
+    public var side2MiniReps: [Int]
+
+    public init(
+        activationReps: Int? = nil,
+        miniReps: [Int] = [],
+        side2ActivationReps: Int? = nil,
+        side2MiniReps: [Int] = []
+    ) {
+        self.activationReps = activationReps
+        self.miniReps = miniReps
+        self.side2ActivationReps = side2ActivationReps
+        self.side2MiniReps = side2MiniReps
+    }
+
+    public func activation(for side: Int) -> Int? {
+        side == 2 ? side2ActivationReps : activationReps
+    }
+
+    public func minis(for side: Int) -> [Int] {
+        side == 2 ? side2MiniReps : miniReps
+    }
+
+    public mutating func setActivation(_ reps: Int?, for side: Int) {
+        if side == 2 { side2ActivationReps = reps } else { activationReps = reps }
+    }
+
+    public mutating func setMinis(_ reps: [Int], for side: Int) {
+        if side == 2 { side2MiniReps = reps } else { miniReps = reps }
+    }
+}
+
+public enum WatchStructuredSetEventKind: String, Codable, Sendable, Equatable {
+    case activation
+    case miniSet
+    case correction
+}
+
+/// Describes why structured progress changed. The timestamp lets the phone
+/// avoid starting a stale micro-rest when an offline Watch command arrives
+/// after the athlete has already moved on.
+public struct WatchStructuredSetUpdate: Codable, Sendable, Equatable {
+    public var progress: WatchStructuredSetProgress
+    public var event: WatchStructuredSetEventKind
+    public var side: Int
+    public var occurredAt: Date
+    public var weightKg: Double?
+
+    public init(
+        progress: WatchStructuredSetProgress,
+        event: WatchStructuredSetEventKind,
+        side: Int,
+        occurredAt: Date = Date(),
+        weightKg: Double? = nil
+    ) {
+        self.progress = progress
+        self.event = event
+        self.side = side
+        self.occurredAt = occurredAt
+        self.weightKg = weightKg
     }
 }
 
@@ -403,6 +538,13 @@ public enum WatchCommand: Codable, Sendable {
     /// Edit a set's load/reps from the wrist. `weightKg` is in kilograms
     /// (the data-layer unit); nil fields are left unchanged.
     case updateSet(setID: UUID, weightKg: Double?, reps: Int?)
+    /// Perform activation and mini-set progress for Myo/rest-pause/cluster
+    /// blocks. The phone remains the persisted source of truth.
+    case updateStructuredSet(setID: UUID, update: WatchStructuredSetUpdate)
+    /// Run the fixed work window belonging to an AMRAP set. `endsAt` is an
+    /// absolute wrist timestamp so delayed delivery never shifts the workout.
+    case startSetTimer(setID: UUID, durationSeconds: Int, endsAt: Date)
+    case stopSetTimer(setID: UUID, elapsedSeconds: Int)
     case startCardio(workoutExerciseID: UUID)
     case completeCardio(workoutExerciseID: UUID)
     case liveMetrics(WatchLiveMetrics)

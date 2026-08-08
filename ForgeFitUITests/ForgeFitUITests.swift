@@ -678,6 +678,58 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(configured.waitForExistence(timeout: 3), "Expected the Yoga Session row to show the saved pose flow.")
     }
 
+    /// A routine cardio card has one visible goal affordance. Goal inputs and
+    /// modality capability copy belong behind that disclosure, not inline.
+    @MainActor
+    func testRoutineCardioUsesSingleAddGoalDisclosure() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(newRoutine)
+
+        let addExercise = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
+        tapWhenReady(addExercise)
+
+        let searchField = app.searchFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.tap()
+        searchField.typeText("Outdoor Run")
+
+        let outdoorRun = app.descendants(matching: .any)["exercise-row-Outdoor Run"].firstMatch
+        XCTAssertTrue(outdoorRun.waitForExistence(timeout: 5))
+        tapWhenReady(outdoorRun)
+
+        let commit = app.buttons["Add 1 exercise"].firstMatch
+        XCTAssertTrue(commit.waitForExistence(timeout: 3))
+        tapWhenReady(commit)
+
+        let addGoal = app.buttons["routine-cardio-goal"].firstMatch
+        XCTAssertTrue(addGoal.waitForExistence(timeout: 5))
+        XCTAssertEqual(addGoal.label, "Add goal")
+        XCTAssertFalse(app.staticTexts["Cardio target"].exists)
+        XCTAssertFalse(app.staticTexts["Add goal, zone lock, or intervals"].exists)
+        XCTAssertFalse(app.textFields["cardio-target-minutes"].exists)
+        XCTAssertFalse(app.textFields["cardio-target-distance"].exists)
+        XCTAssertFalse(
+            app.staticTexts["Time · Heart rate · Effort · Distance · Pace · Elevation · Incline · Power · Cadence"].exists
+        )
+        attachScreenshot(app, name: "routine-cardio-single-add-goal")
+
+        tapWhenReady(addGoal)
+        XCTAssertTrue(app.navigationBars["Cardio goal"].waitForExistence(timeout: 5))
+        let existingMinutes = app.textFields["cardio-goal-minutes"].firstMatch
+        XCTAssertTrue(
+            existingMinutes.waitForExistence(timeout: 3),
+            "Existing routine targets should remain editable in the goal sheet."
+        )
+        XCTAssertEqual(existingMinutes.value as? String, "30")
+    }
+
     /// New and existing routines use the same editor row as the live logger:
     /// creating Superset A promises purple in the menu, then renders the same
     /// compact lettered marker after assignment.

@@ -60,6 +60,21 @@ final class MyoActivationUITests: XCTestCase {
     /// Myo-reps. Ends with the activation row on screen.
     @MainActor
     private func startMyoBlock(in app: XCUIApplication) {
+        // A previous onboarding test can leave the simulator's app defaults
+        // cleared even though this launch supplies `-didOnboard YES`. Recover
+        // through the real visible flow so the Myo assertion never depends on
+        // whichever defaults happened to survive on this simulator.
+        let getStarted = app.buttons["Get started"].firstMatch
+        if getStarted.waitForExistence(timeout: 1) {
+            tapWhenHittable(getStarted)
+            let continueSetup = app.buttons["Continue"].firstMatch
+            XCTAssertTrue(continueSetup.waitForExistence(timeout: 3))
+            tapWhenHittable(continueSetup)
+            let continueWithoutHealth = app.buttons["Continue without Health"].firstMatch
+            XCTAssertTrue(continueWithoutHealth.waitForExistence(timeout: 3))
+            tapWhenHittable(continueWithoutHealth)
+        }
+
         // Start from Home's inline "Empty" tile, never the floating bubble.
         //
         // This used to branch on whether the quick-actions trigger existed,
@@ -212,6 +227,41 @@ final class MyoActivationUITests: XCTestCase {
             app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '0:'")).firstMatch
                 .waitForExistence(timeout: 3),
             "Myo activation should start a seconds-scale micro-rest, not a 2-minute exercise rest."
+        )
+    }
+
+    /// Only the activation fields need the activation clarification. Manual
+    /// mini-set entry is already inside that context, so its keyboard action
+    /// stays the concise "Log" label.
+    @MainActor
+    func testManualMiniSetKeyboardUsesPlainLogAction() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding",
+            "-didOnboard", "YES", "-initialTab", "home",
+            "-weightUnitRaw", "kg", "-quickActionBubble.v1", ""
+        ]
+        app.launch()
+
+        startMyoBlock(in: app)
+        let repsField = element(app, "activation-reps-1")
+        repsField.tap()
+        repsField.typeText("12")
+        let logActivation = app.buttons["Log Activation"].firstMatch
+        XCTAssertTrue(logActivation.waitForExistence(timeout: 3))
+        logActivation.tap()
+
+        let addMini = element(app, "add-mini-1")
+        XCTAssertTrue(addMini.waitForExistence(timeout: 3))
+        addMini.tap()
+
+        XCTAssertTrue(
+            app.buttons["Log"].firstMatch.waitForExistence(timeout: 3),
+            "Manual mini-set entry should use the plain Log keyboard action."
+        )
+        XCTAssertFalse(
+            app.buttons["Log Activation"].firstMatch.exists,
+            "The activation clarification must not leak into mini-set entry."
         )
     }
 

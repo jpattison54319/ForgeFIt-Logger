@@ -19,6 +19,34 @@ public enum SetType: String, Codable, CaseIterable, Sendable {
     public var countsAsWorkingVolume: Bool {
         self != .warmup
     }
+
+    /// Rest after completing a whole set. Drop sets deliberately flow into
+    /// the next drop without a timer; every other performed set gets a
+    /// contextual default unless the exercise overrides it.
+    public var defaultRestSeconds: Int? {
+        switch self {
+        case .warmup: 60
+        case .working, .backoff: 120
+        case .amrap: 180
+        case .drop: nil
+        case .myoRep, .restPause, .cluster: 120
+        }
+    }
+
+    /// Rest between the activation/segments inside one structured set.
+    public var defaultMicroRestSeconds: Int? {
+        switch self {
+        case .myoRep: 15
+        case .restPause, .cluster: 20
+        default: nil
+        }
+    }
+
+    /// Structured sets are performed as activation/segment progress rather
+    /// than a single flat row completion.
+    public var isBlockType: Bool {
+        self == .myoRep || self == .restPause || self == .cluster
+    }
 }
 
 /// How the load on a set is interpreted, mirroring `weight_mode` in the schema.

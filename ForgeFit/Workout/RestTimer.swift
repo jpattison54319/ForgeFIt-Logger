@@ -6,40 +6,6 @@ import UserNotifications
 import UIKit
 #endif
 
-// MARK: - Contextual rest defaults
-
-/// Every set type carries a sensible rest default so the timer is contextual:
-/// straight work gets minutes, intra-set structures get seconds. Users can
-/// always override per exercise (`restSeconds` / `microRestSeconds`).
-extension SetType {
-    /// Rest after completing a whole set of this type. nil = no timer (drops
-    /// happen back-to-back with zero rest).
-    var defaultRestSeconds: Int? {
-        switch self {
-        case .warmup: 60
-        case .working, .backoff: 120
-        case .amrap: 180
-        case .drop: nil
-        case .myoRep, .restPause, .cluster: 120 // after the whole block
-        }
-    }
-
-    /// Micro-rest between segments inside one set of this type.
-    var defaultMicroRestSeconds: Int? {
-        switch self {
-        case .myoRep: 15
-        case .restPause, .cluster: 20
-        default: nil
-        }
-    }
-
-    /// Whether this type logs as an intra-set block (activation/segments +
-    /// micro-rests) instead of a flat row.
-    var isBlockType: Bool {
-        self == .myoRep || self == .restPause || self == .cluster
-    }
-}
-
 // MARK: - Rest timer controller
 
 enum RestAlertDeliveryPolicy {

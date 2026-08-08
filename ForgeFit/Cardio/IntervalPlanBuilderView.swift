@@ -137,9 +137,31 @@ struct IntervalPlanBuilderView: View {
 
     /// Edit a routine exercise's stored template in place.
     init(routineExercise: RoutineExerciseModel) {
-        self.init(planJSON: routineExercise.intervalPlanJSON) { json in
+        let legacyTarget = routineExercise.sets.sorted { $0.position < $1.position }.first
+        var existingPlan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
+            ?? IntervalPlan(steps: [])
+        if !existingPlan.hasSteps, existingPlan.goal == nil {
+            if let meters = legacyTarget?.targetDistanceMeters, meters > 0 {
+                existingPlan.goal = .init(kind: .distance, value: meters)
+            } else if let seconds = legacyTarget?.targetDurationSeconds, seconds > 0 {
+                existingPlan.goal = .init(kind: .duration, value: Double(seconds))
+            }
+        }
+
+        self.init(planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil) { json in
             routineExercise.intervalPlanJSON = json
             routineExercise.updatedAt = Date()
+
+            // Older routines stored duration/distance on their synthetic set.
+            // Keep that compatibility projection aligned until those fields can
+            // be removed from the persisted/exported routine format.
+            let savedGoal = IntervalPlan.decode(from: json)?.goal
+            legacyTarget?.targetDurationSeconds = savedGoal?.kind == .duration
+                ? Int(savedGoal?.value ?? 0)
+                : nil
+            legacyTarget?.targetDistanceMeters = savedGoal?.kind == .distance
+                ? savedGoal?.value
+                : nil
         }
     }
 

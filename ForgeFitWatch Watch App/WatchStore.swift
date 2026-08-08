@@ -130,7 +130,15 @@ final class WatchStore: NSObject {
             guard let ei = workout.exercises.firstIndex(where: { $0.id == exercise.id }),
                   let si = workout.exercises[ei].sets.firstIndex(where: { $0.id == set.id }) else { return }
             workout.exercises[ei].sets[si].completed = newValue
+            if newValue, workout.restOwnerID == set.id {
+                workout.restEndsAt = nil
+                workout.restTotalSeconds = nil
+                workout.restIsMicro = nil
+                workout.restLabel = nil
+                workout.restOwnerID = nil
+            }
         }
+        if newValue { restHapticTask?.cancel() }
         send(.toggleSet(setID: set.id, completed: newValue))
         WKInterfaceDevice.current().play(newValue ? .success : .click)
     }
@@ -152,6 +160,103 @@ final class WatchStore: NSObject {
         }
         send(.updateSet(setID: set.id, weightKg: weightKg, reps: reps))
         WKInterfaceDevice.current().play(.click)
+    }
+
+    /// Persist one activation, mini-set, or correction while immediately
+    /// mirroring the full structured block on the wrist. Each performed step
+    /// owns its micro-rest even when the phone is temporarily unreachable.
+    func updateStructuredSet(
+        _ set: WatchSetSnapshot,
+        in exercise: WatchExerciseSnapshot,
+        progress: WatchStructuredSetProgress,
+        event: WatchStructuredSetEventKind,
+        side: Int,
+        weightKg: Double?
+    ) {
+        let occurredAt = Date.now
+        let update = WatchStructuredSetUpdate(
+            progress: progress,
+            event: event,
+            side: side,
+            occurredAt: occurredAt,
+            weightKg: weightKg
+        )
+        mutateWorkout { workout in
+            guard let exerciseIndex = workout.exercises.firstIndex(where: { $0.id == exercise.id }),
+                  let setIndex = workout.exercises[exerciseIndex].sets.firstIndex(where: { $0.id == set.id }) else { return }
+            var snapshot = workout.exercises[exerciseIndex].sets[setIndex]
+            snapshot.reps = set.setType == .cluster
+                ? progress.miniReps.reduce(0, +)
+                : progress.activationReps
+            snapshot.miniReps = progress.miniReps
+            snapshot.side2Reps = set.setType == .cluster ? nil : progress.side2ActivationReps
+            snapshot.side2MiniReps = progress.side2MiniReps
+            if let weightKg {
+                snapshot.weightKg = weightKg
+                let suffix = snapshot.unitSuffix ?? "lb"
+                snapshot.weight = weightKg * (suffix == "kg" ? 1 : 2.2046226218)
+            }
+            workout.exercises[exerciseIndex].sets[setIndex] = snapshot
+
+            if event != .correction, !snapshot.completed {
+                let seconds = snapshot.effectiveMicroRestSeconds
+                let endsAt = occurredAt.addingTimeInterval(TimeInterval(seconds))
+                workout.restEndsAt = endsAt
+                workout.restTotalSeconds = seconds
+                workout.restIsMicro = true
+                workout.restLabel = "Mini-rest"
+                workout.restOwnerID = snapshot.id
+            }
+        }
+        if event != .correction {
+            scheduleRestHaptic(endsAt: occurredAt.addingTimeInterval(TimeInterval(set.effectiveMicroRestSeconds)))
+        }
+        send(.updateStructuredSet(setID: set.id, update: update))
+        WKInterfaceDevice.current().play(event == .correction ? .click : .success)
+    }
+
+    /// Start an AMRAP against an absolute end time so the wrist remains the
+    /// accurate clock if WatchConnectivity delivery is delayed.
+    func startSetTimer(_ set: WatchSetSnapshot, in exercise: WatchExerciseSnapshot, seconds: Int) {
+        let duration = max(1, seconds)
+        let endsAt = Date.now.addingTimeInterval(TimeInterval(duration))
+        mutateWorkout { workout in
+            guard let exerciseIndex = workout.exercises.firstIndex(where: { $0.id == exercise.id }),
+                  let setIndex = workout.exercises[exerciseIndex].sets.firstIndex(where: { $0.id == set.id }) else { return }
+            workout.exercises[exerciseIndex].sets[setIndex].durationSeconds = duration
+            workout.restEndsAt = endsAt
+            workout.restTotalSeconds = duration
+            workout.restIsMicro = false
+            workout.restLabel = "AMRAP"
+            workout.restOwnerID = set.id
+        }
+        scheduleRestHaptic(endsAt: endsAt)
+        send(.startSetTimer(setID: set.id, durationSeconds: duration, endsAt: endsAt))
+        WKInterfaceDevice.current().play(.start)
+    }
+
+    func stopSetTimer(_ set: WatchSetSnapshot, in exercise: WatchExerciseSnapshot) {
+        let total = activeWorkout?.restTotalSeconds ?? set.durationSeconds ?? 1
+        let remaining = activeWorkout?.restEndsAt.map {
+            max(0, Int($0.timeIntervalSinceNow.rounded(.up)))
+        } ?? 0
+        let elapsed = max(1, total - remaining)
+        mutateWorkout { workout in
+            if let exerciseIndex = workout.exercises.firstIndex(where: { $0.id == exercise.id }),
+               let setIndex = workout.exercises[exerciseIndex].sets.firstIndex(where: { $0.id == set.id }) {
+                workout.exercises[exerciseIndex].sets[setIndex].durationSeconds = elapsed
+            }
+            if workout.restOwnerID == set.id {
+                workout.restEndsAt = nil
+                workout.restTotalSeconds = nil
+                workout.restIsMicro = nil
+                workout.restLabel = nil
+                workout.restOwnerID = nil
+            }
+        }
+        restHapticTask?.cancel()
+        send(.stopSetTimer(setID: set.id, elapsedSeconds: elapsed))
+        WKInterfaceDevice.current().play(.stop)
     }
 
     func startCardio(_ exercise: WatchExerciseSnapshot) {

@@ -248,10 +248,13 @@ private struct WatchRestBanner: View {
             if let endsAt = workout.restEndsAt, endsAt > context.date {
                 let remaining = max(0, Int(endsAt.timeIntervalSince(context.date).rounded(.up)))
                 let isMicro = workout.restIsMicro == true
-                let tint = isMicro ? WTheme.teal : WTheme.accent
+                let isAMRAP = workout.restLabel == "AMRAP"
+                let tint = isAMRAP ? WTheme.gold : (isMicro ? WTheme.teal : WTheme.accent)
                 HStack(spacing: 5) {
                     Image(systemName: "timer").font(.system(size: 11, weight: .bold)).foregroundStyle(tint)
-                    Text(isMicro ? "MINI" : "REST").font(.system(size: 11, weight: .heavy)).foregroundStyle(tint)
+                    Text(isAMRAP ? "AMRAP" : (isMicro ? "MINI" : "REST"))
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(tint)
                     Spacer(minLength: 4)
                     Text(WFmt.rest(remaining))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -293,7 +296,12 @@ struct WatchMetricsPage: View {
                         round: workout.intervalRound,
                         next: workout.intervalNextName)
                 } else if let restEndsAt = workout.restEndsAt, restEndsAt > context.date {
-                    restHeadline(endsAt: restEndsAt, now: context.date, isMicro: workout.restIsMicro == true)
+                    restHeadline(
+                        endsAt: restEndsAt,
+                        now: context.date,
+                        isMicro: workout.restIsMicro == true,
+                        label: workout.restLabel
+                    )
                 } else {
                     Text(WFmt.elapsed(max(0, Int(context.date.timeIntervalSince(workout.startedAt)))))
                         .font(.system(size: 40, weight: .bold, design: .rounded))
@@ -377,12 +385,12 @@ struct WatchMetricsPage: View {
         }
     }
 
-    private func restHeadline(endsAt: Date, now: Date, isMicro: Bool) -> some View {
+    private func restHeadline(endsAt: Date, now: Date, isMicro: Bool, label: String?) -> some View {
         let remaining = max(0, Int(endsAt.timeIntervalSince(now).rounded(.up)))
-        // Micro-rests (myo-rep / drop / cluster) read teal, matching the phone.
-        let tint = isMicro ? WTheme.teal : WTheme.accent
+        let isAMRAP = label == "AMRAP"
+        let tint = isAMRAP ? WTheme.gold : (isMicro ? WTheme.teal : WTheme.accent)
         return VStack(alignment: .leading, spacing: 0) {
-            Text(isMicro ? "MINI-REST" : "REST")
+            Text(isAMRAP ? "AMRAP" : (isMicro ? "MINI-REST" : "REST"))
                 .font(.system(size: 12, weight: .heavy))
                 .foregroundStyle(tint)
             Text(WFmt.rest(remaining))
@@ -563,9 +571,9 @@ struct WatchExercisesPage: View {
     }
 }
 
-/// One exercise's sets: tap a row to check it off (mirrors to the phone
-/// instantly); the trailing pencil (or a long-press, as a shortcut) edits
-/// weight × reps. Values are shown as logged on the phone.
+/// One exercise's sets. Flat rows complete directly; structured and timed
+/// types visibly navigate into their full execution flow instead of treating
+/// the entire protocol as one checkmark.
 struct WatchSetListView: View {
     let store: WatchStore
     let exerciseID: UUID
@@ -576,63 +584,71 @@ struct WatchSetListView: View {
         store.activeWorkout?.exercises.first { $0.id == exerciseID }
     }
 
-    /// The set the double-tap gesture targets.
+    /// The flat set the double-tap gesture targets. A structured/AMRAP block
+    /// must never be collapsed into the whole-set completion shortcut.
     private var firstUncompletedSetID: UUID? {
-        exercise?.sets.first { !$0.completed }?.id
+        exercise?.sets.first { !$0.completed && !$0.isStructured && !$0.isAMRAP }?.id
     }
 
     var body: some View {
         List {
             if let exercise {
                 ForEach(exercise.sets) { set in
-                    HStack(spacing: 6) {
-                        Button {
-                            store.toggleSet(set, in: exercise)
+                    if set.isStructured {
+                        NavigationLink {
+                            WatchStructuredSetView(store: store, exercise: exercise, set: set)
                         } label: {
-                            HStack(spacing: 8) {
-                                Text(set.label.isEmpty ? "–" : set.label)
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
-                                    .frame(width: 26, alignment: .leading)
-                                Text(setDescription(set))
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .monospacedDigit()
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                                Spacer()
-                                Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 18))
-                                    .foregroundStyle(set.completed ? WTheme.success : .secondary)
-                            }
+                            specialtySetLabel(set)
                         }
-                        .buttonStyle(.plain)
-                        // Long-press stays as a shortcut — the pencil is the
-                        // discoverable path.
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        .listRowBackground(specialtyRowBackground(set))
+                    } else if set.isAMRAP {
+                        NavigationLink {
+                            WatchAMRAPSetView(store: store, exercise: exercise, set: set)
+                        } label: {
+                            specialtySetLabel(set)
+                        }
+                        .listRowBackground(specialtyRowBackground(set))
+                    } else {
+                        HStack(spacing: 6) {
+                            Button {
+                                store.toggleSet(set, in: exercise)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    setBadge(set)
+                                    Text(setDescription(set))
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .monospacedDigit()
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.8)
+                                    Spacer()
+                                    Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(set.completed ? WTheme.success : .secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            // Long-press stays as a shortcut — the pencil is
+                            // the discoverable path.
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                                    editingSet = set
+                                }
+                            )
+                            .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
+                            Button {
                                 editingSet = set
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(WTheme.accent)
+                                    .frame(width: 28, height: 28)
+                                    .contentShape(Circle())
                             }
-                        )
-                        // Double-tap (watch hand gesture) completes the NEXT
-                        // uncompleted set — mid-set, hands on the bar, no screen
-                        // touch needed (T3-5).
-                        .handGestureShortcut(.primaryAction, isEnabled: set.id == firstUncompletedSetID)
-                        Button {
-                            editingSet = set
-                        } label: {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(WTheme.accent)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Circle())
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Edit load and reps")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Edit weight and reps")
+                        .listRowBackground(specialtyRowBackground(set))
                     }
-                    .listRowBackground(
-                        (set.completed ? WTheme.success.opacity(0.12) : WTheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                    )
                 }
             }
         }
@@ -645,11 +661,71 @@ struct WatchSetListView: View {
     }
 
     private func setDescription(_ set: WatchSetSnapshot) -> String {
+        if set.isStructured {
+            let progress = set.structuredProgress
+            let sideOne: String
+            if set.setType == .cluster {
+                sideOne = progress.miniReps.map(String.init).joined(separator: "+")
+            } else {
+                let activation = progress.activationReps.map(String.init) ?? "—"
+                let minis = progress.miniReps.map(String.init).joined(separator: "+")
+                sideOne = minis.isEmpty ? activation : "\(activation) + \(minis)"
+            }
+            if set.usesSides, !progress.side2MiniReps.isEmpty || progress.side2ActivationReps != nil {
+                return "S1 \(sideOne) · S2 logged"
+            }
+            return sideOne.isEmpty ? "Ready" : sideOne
+        }
+        if set.isAMRAP {
+            let window = set.durationSeconds.map {
+                "\($0 / 60):\(String(format: "%02d", $0 % 60))"
+            } ?? "—"
+            let reps = set.reps.map { " · \($0) reps" } ?? ""
+            return "\(window)\(reps)"
+        }
         let unit = set.unitSuffix ?? store.context?.unitSuffix ?? "lb"
         let weight = set.weight.map { "\(WFmt.weight($0))\(unit)" }
         let reps = set.reps.map { "× \($0)" }
         let parts = [weight, reps].compactMap { $0 }
         return parts.isEmpty ? "—" : parts.joined(separator: " ")
+    }
+
+    private func specialtySetLabel(_ set: WatchSetSnapshot) -> some View {
+        HStack(spacing: 8) {
+            setBadge(set)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(set.isAMRAP ? "AMRAP" : structuredTitle(set.setType))
+                    .font(.system(size: 13, weight: .bold))
+                Text(setDescription(set))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: set.completed ? "checkmark.circle.fill" : "chevron.right.circle")
+                .foregroundStyle(set.completed ? WTheme.success : WTheme.teal)
+        }
+    }
+
+    private func setBadge(_ set: WatchSetSnapshot) -> some View {
+        Text(set.label.isEmpty ? "–" : set.label)
+            .font(.system(size: 14, weight: .bold, design: .rounded))
+            .foregroundStyle(set.completed ? WTheme.success : WTheme.accent)
+            .frame(width: 26, alignment: .leading)
+    }
+
+    private func specialtyRowBackground(_ set: WatchSetSnapshot) -> some View {
+        (set.completed ? WTheme.success.opacity(0.12) : WTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func structuredTitle(_ type: SetType) -> String {
+        switch type {
+        case .myoRep: "Myo-Reps"
+        case .restPause: "Rest-Pause"
+        case .cluster: "Cluster"
+        default: "Structured Set"
+        }
     }
 }
 

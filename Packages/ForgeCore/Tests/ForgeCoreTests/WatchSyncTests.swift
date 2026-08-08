@@ -34,13 +34,26 @@ struct WatchSyncTests {
                                 unitSuffix: "lb",
                                 weightKg: 102.058,
                                 reps: 5,
-                                completed: true
+                                completed: true,
+                                setTypeRaw: SetType.myoRep.rawValue,
+                                weightModeRaw: WeightMode.bodyweightAdded.rawValue,
+                                durationSeconds: 60,
+                                isUnilateral: true,
+                                miniReps: [3, 3, 2],
+                                side2Reps: 5,
+                                side2MiniReps: [3, 2],
+                                plannedMiniSetCount: 4,
+                                plannedMiniReps: [3, 3, 3, 3],
+                                microRestSeconds: 15
                             )
                         ]
                     )
                 ],
                 restEndsAt: restEndsAt,
                 restTotalSeconds: 120,
+                restIsMicro: true,
+                restLabel: "Mini-set 4",
+                restOwnerID: setID,
                 intervalStepName: "Work 1/6",
                 intervalStepEndsAt: intervalEndsAt,
                 intervalStepKind: "work",
@@ -63,6 +76,12 @@ struct WatchSyncTests {
         #expect(decoded.workout?.completedSets == 1)
         #expect(decoded.workout?.totalSets == 1)
         #expect(decoded.readinessAction == "Train as planned")
+        let decodedSet = try #require(decoded.workout?.exercises.first?.sets.first)
+        #expect(decodedSet.setType == .myoRep)
+        #expect(decodedSet.weightMode == .bodyweightAdded)
+        #expect(decodedSet.isStructured)
+        #expect(decodedSet.structuredProgress.miniReps == [3, 3, 2])
+        #expect(decoded.workout?.restOwnerID == setID)
     }
 
     @Test func watchCommandsRoundTripAllPayloadShapes() throws {
@@ -94,6 +113,32 @@ struct WatchSyncTests {
         try expectCommand(.updateSet(setID: setID, weightKg: 100.5, reps: 8)) {
             guard case .updateSet(let decodedID, let weightKg, let reps) = $0 else { return false }
             return decodedID == setID && weightKg == 100.5 && reps == 8
+        }
+        let progress = WatchStructuredSetProgress(
+            activationReps: 12,
+            miniReps: [3, 3],
+            side2ActivationReps: 11,
+            side2MiniReps: [3]
+        )
+        let structuredUpdate = WatchStructuredSetUpdate(
+            progress: progress,
+            event: .miniSet,
+            side: 2,
+            occurredAt: Date(timeIntervalSince1970: 1_800_000_350),
+            weightKg: 42.5
+        )
+        try expectCommand(.updateStructuredSet(setID: setID, update: structuredUpdate)) {
+            guard case .updateStructuredSet(let decodedID, let update) = $0 else { return false }
+            return decodedID == setID && update == structuredUpdate
+        }
+        let timerEnd = Date(timeIntervalSince1970: 1_800_000_410)
+        try expectCommand(.startSetTimer(setID: setID, durationSeconds: 60, endsAt: timerEnd)) {
+            guard case .startSetTimer(let decodedID, let seconds, let endsAt) = $0 else { return false }
+            return decodedID == setID && seconds == 60 && endsAt == timerEnd
+        }
+        try expectCommand(.stopSetTimer(setID: setID, elapsedSeconds: 41)) {
+            guard case .stopSetTimer(let decodedID, let seconds) = $0 else { return false }
+            return decodedID == setID && seconds == 41
         }
         try expectCommand(.startCardio(workoutExerciseID: cardioID)) {
             guard case .startCardio(let decodedID) = $0 else { return false }
@@ -131,6 +176,32 @@ struct WatchSyncTests {
             guard case .workoutFinished = $0 else { return false }
             return true
         }
+    }
+
+    @Test func everySetTypeHasTheCorrectWatchExecutionShape() {
+        for type in SetType.allCases {
+            let set = WatchSetSnapshot(id: UUID(), label: "", setTypeRaw: type.rawValue)
+            #expect(set.isStructured == [.myoRep, .restPause, .cluster].contains(type))
+            #expect(set.isAMRAP == (type == .amrap))
+        }
+
+        #expect(SetType.myoRep.defaultMicroRestSeconds == 15)
+        #expect(SetType.restPause.defaultMicroRestSeconds == 20)
+        #expect(SetType.cluster.defaultMicroRestSeconds == 20)
+        #expect(SetType.drop.defaultRestSeconds == nil)
+    }
+
+    @Test func structuredProgressKeepsBothSidesIndependent() {
+        var progress = WatchStructuredSetProgress()
+        progress.setActivation(12, for: 1)
+        progress.setMinis([3, 3], for: 1)
+        progress.setActivation(11, for: 2)
+        progress.setMinis([3, 2], for: 2)
+
+        #expect(progress.activation(for: 1) == 12)
+        #expect(progress.minis(for: 1) == [3, 3])
+        #expect(progress.activation(for: 2) == 11)
+        #expect(progress.minis(for: 2) == [3, 2])
     }
 
     @Test func widgetSnapshotStoreHandlesMissingInvalidAndSavedData() throws {

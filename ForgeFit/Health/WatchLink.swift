@@ -275,6 +275,8 @@ final class WatchLink: NSObject {
                 restEndsAt: timer.isRunning ? timer.endsAt : nil,
                 restTotalSeconds: timer.isRunning ? timer.totalSeconds : nil,
                 restIsMicro: timer.isRunning ? timer.isMicro : nil,
+                restLabel: timer.isRunning ? timer.label : nil,
+                restOwnerID: timer.isRunning ? timer.ownerID : nil,
                 intervalStepName: stepName,
                 intervalStepEndsAt: stepEndsAt,
                 intervalStepKind: stepKind,
@@ -325,7 +327,17 @@ final class WatchLink: NSObject {
                 unitSuffix: unit.suffix,
                 weightKg: set.modeWeight,
                 reps: set.reps,
-                completed: set.completedAt != nil
+                completed: set.completedAt != nil,
+                setTypeRaw: set.setType.rawValue,
+                weightModeRaw: set.weightMode.rawValue,
+                durationSeconds: set.durationSeconds,
+                isUnilateral: exercise?.isUnilateral == true || set.isUnilateral,
+                miniReps: set.miniReps,
+                side2Reps: set.side2Reps,
+                side2MiniReps: set.side2MiniReps,
+                plannedMiniSetCount: set.plannedMiniSetCount,
+                plannedMiniReps: set.plannedMiniReps,
+                microRestSeconds: we.microRestSeconds
             )
         }
     }
@@ -347,7 +359,9 @@ final class WatchLink: NSObject {
 
     // MARK: - Handle (watch → phone)
 
-    private func handle(_ command: WatchCommand) {
+    /// Internal so focused tests can exercise the real Watch command →
+    /// SwiftData persistence path without routing through WCSession.
+    func handle(_ command: WatchCommand) {
         guard let context = modelContext else { return }
         var activeDescriptor = FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
@@ -391,6 +405,71 @@ final class WatchLink: NSObject {
             if let reps { set.reps = reps }
             set.recomputeDerivedMetrics()
             active?.recomputeTotalVolume()
+            try? context.save()
+            publishState(policy: .immediate)
+
+        case .updateStructuredSet(let setID, let update):
+            guard let set = fetchSet(setID, in: context), set.setType.isBlockType else { return }
+            let previous = WatchStructuredSetProgress(
+                activationReps: set.setType == .cluster ? nil : set.reps,
+                miniReps: set.miniReps,
+                side2ActivationReps: set.setType == .cluster ? nil : set.side2Reps,
+                side2MiniReps: set.side2MiniReps
+            )
+            if let weightKg = update.weightKg { set.setModeWeight(weightKg) }
+            set.miniReps = update.progress.miniReps
+            set.side2MiniReps = update.progress.side2MiniReps
+            if set.setType == .cluster {
+                // Cluster `reps` mirrors side 1 only; side 2 is counted from
+                // `side2MiniReps` by SetModel's derived-metric policy.
+                set.reps = update.progress.miniReps.reduce(0, +)
+                set.side2Reps = nil
+            } else {
+                set.reps = update.progress.activationReps
+                set.side2Reps = update.progress.side2ActivationReps
+            }
+            set.recomputeDerivedMetrics()
+            active?.recomputeTotalVolume()
+
+            if structuredEventWasLogged(update, previous: previous),
+               let workoutExercise = set.workoutExercise {
+                startStructuredMicroRest(
+                    after: update,
+                    set: set,
+                    workoutExercise: workoutExercise
+                )
+            }
+            try? context.save()
+            publishState(policy: .immediate)
+
+        case .startSetTimer(let setID, let durationSeconds, let endsAt):
+            guard let set = fetchSet(setID, in: context), set.setType == .amrap else { return }
+            let duration = max(1, durationSeconds)
+            set.durationSeconds = duration
+            let remaining = max(0, Int(endsAt.timeIntervalSinceNow.rounded(.up)))
+            if remaining > 0 {
+                let startedAt = endsAt.addingTimeInterval(-TimeInterval(duration))
+                RestTimerController.shared.start(
+                    seconds: remaining,
+                    label: "AMRAP",
+                    ownerID: set.id,
+                    soundOnEnd: true,
+                    endNotification: (title: "Time's up", body: "Log the reps you got."),
+                    onComplete: { [weak set] _ in
+                        let elapsed = max(1, min(duration, Int(Date.now.timeIntervalSince(startedAt))))
+                        set?.durationSeconds = elapsed
+                    }
+                )
+            }
+            try? context.save()
+            publishState(policy: .immediate)
+
+        case .stopSetTimer(let setID, let elapsedSeconds):
+            guard let set = fetchSet(setID, in: context), set.setType == .amrap else { return }
+            if RestTimerController.shared.ownerID == set.id {
+                RestTimerController.shared.skip()
+            }
+            set.durationSeconds = max(1, elapsedSeconds)
             try? context.save()
             publishState(policy: .immediate)
 
@@ -858,6 +937,50 @@ final class WatchLink: NSObject {
         )
         descriptor.fetchLimit = 1
         return try? context.fetch(descriptor).first
+    }
+
+    /// Guard micro-rests with the actual state transition so a retried or
+    /// duplicated WatchConnectivity packet cannot restart the timer.
+    private func structuredEventWasLogged(
+        _ update: WatchStructuredSetUpdate,
+        previous: WatchStructuredSetProgress
+    ) -> Bool {
+        switch update.event {
+        case .activation:
+            return previous.activation(for: update.side) == nil
+                && update.progress.activation(for: update.side) != nil
+        case .miniSet:
+            return update.progress.minis(for: update.side).count
+                > previous.minis(for: update.side).count
+        case .correction:
+            return false
+        }
+    }
+
+    /// Reconstruct the absolute wrist-side micro-rest. Offline commands that
+    /// arrive after the interval expired still persist the reps but never
+    /// start a stale countdown on the phone.
+    private func startStructuredMicroRest(
+        after update: WatchStructuredSetUpdate,
+        set: SetModel,
+        workoutExercise: WorkoutExerciseModel
+    ) {
+        let seconds = workoutExercise.microRestSeconds
+            ?? set.setType.defaultMicroRestSeconds
+            ?? 15
+        let endsAt = update.occurredAt.addingTimeInterval(TimeInterval(seconds))
+        let remaining = max(0, Int(endsAt.timeIntervalSinceNow.rounded(.up)))
+        guard remaining > 0, set.completedAt == nil else { return }
+        let nextMini = update.progress.minis(for: update.side).count + 1
+        let label = set.isUnilateral
+            ? "S\(update.side) mini-set \(nextMini)"
+            : "Mini-set \(nextMini)"
+        RestTimerController.shared.start(
+            seconds: remaining,
+            label: label,
+            micro: true,
+            ownerID: set.id
+        )
     }
 
     private func startRestIfNeeded(after set: SetModel, in workoutExercise: WorkoutExerciseModel, active: WorkoutModel?) {
