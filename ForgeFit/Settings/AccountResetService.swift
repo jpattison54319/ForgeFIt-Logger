@@ -28,6 +28,9 @@ enum AccountResetService {
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
         WorkoutFinisher.cancelLiveRuntime()
+        try deleteAll(RestDayModel.self, in: context)
+        try deleteAll(MicrocycleWindowModel.self, in: context)
+        try deleteAll(MicrocycleTrackingModel.self, in: context)
         try deleteAll(ExperimentEntryModel.self, in: context)
         try deleteAll(ExperimentTrackerModel.self, in: context)
         try deleteAll(ExperimentModel.self, in: context)

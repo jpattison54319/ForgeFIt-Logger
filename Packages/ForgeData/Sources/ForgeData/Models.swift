@@ -50,7 +50,10 @@ public enum ForgeDataSchema {
             DailyCheckinModel.self,
             ExperimentModel.self,
             ExperimentTrackerModel.self,
-            ExperimentEntryModel.self
+            ExperimentEntryModel.self,
+            MicrocycleTrackingModel.self,
+            MicrocycleWindowModel.self,
+            RestDayModel.self
         ]
     }
 
@@ -67,10 +70,13 @@ public final class RoutineFolderModel {
     public var userID: UUID = UUID()
     public var name: String = ""
     public var position: Int = 0
-    /// Folders nest one level to model training cycles: a top-level folder
-    /// with children is a macrocycle, its children are mesocycles, and the
-    /// routines inside are the microcycles.
+    /// Folders nest one level to model training cycles: a parent folder is a
+    /// mesocycle, its leaf children are microcycles, and routines are the
+    /// workout sessions performed inside a microcycle.
     public var parentID: UUID?
+    /// Preferred duration when this leaf folder is tracked as a microcycle.
+    /// Nil means it has not been configured. Additive-optional for CloudKit.
+    public var defaultMicrocycleLengthDays: Int?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -88,6 +94,7 @@ public final class RoutineFolderModel {
         name: String,
         position: Int = 0,
         parentID: UUID? = nil,
+        defaultMicrocycleLengthDays: Int? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil,
@@ -98,6 +105,7 @@ public final class RoutineFolderModel {
         self.name = name
         self.position = position
         self.parentID = parentID
+        self.defaultMicrocycleLengthDays = defaultMicrocycleLengthDays
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -1776,7 +1784,7 @@ public final class CoachingProfileModel {
     }
 }
 
-/// Links a coached plan to the mesocycle folder it manages. Either wraps a
+/// Links a coached plan to the routine folder it manages. Either wraps a
 /// catalog program import (`catalogProgramID` set) or simply "owns" a
 /// folder the user already built by hand (`catalogProgramID == ""`), so the
 /// weekly-review pipeline knows which folders are coach-managed without
@@ -2298,5 +2306,187 @@ public final class ExperimentEntryModel {
                 valueTypeRaw = ""
             }
         }
+    }
+}
+
+// MARK: - Microcycle Tracking
+
+/// One locally evaluated run of a leaf routine folder. Folder configuration
+/// belongs to the synced plan store; this row stays with the local workout log
+/// because its progress is derived from local workout history.
+@Model
+public final class MicrocycleTrackingModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var folderID: UUID = UUID()
+    public var folderName: String = ""
+    /// Start-of-day anchor for window zero in `timeZoneIdentifier`.
+    public var anchorDate: Date = Date()
+    public var durationDays: Int = 7
+    public var timeZoneIdentifier: String = "UTC"
+    /// Persisted values are `active`, `needsAttention`, and `ended`.
+    public var stateRaw: String = "active"
+    /// Presentation choices are independent from tracking itself.
+    public var showsOnHome: Bool = true
+    public var showsFolderHeader: Bool = true
+    public var endedAt: Date?
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        folderID: UUID,
+        folderName: String,
+        anchorDate: Date,
+        durationDays: Int,
+        timeZoneIdentifier: String = TimeZone.current.identifier,
+        stateRaw: String = "active",
+        showsOnHome: Bool = true,
+        showsFolderHeader: Bool = true,
+        endedAt: Date? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.folderID = folderID
+        self.folderName = folderName
+        self.anchorDate = anchorDate
+        self.durationDays = durationDays
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.stateRaw = stateRaw
+        self.showsOnHome = showsOnHome
+        self.showsFolderHeader = showsFolderHeader
+        self.endedAt = endedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
+
+    public var isActive: Bool {
+        stateRaw == "active" && endedAt == nil && deletedAt == nil
+    }
+
+    public var needsAttention: Bool {
+        stateRaw == "needsAttention" && endedAt == nil && deletedAt == nil
+    }
+}
+
+/// Frozen expectation for one fixed microcycle window. Scalar identifiers
+/// avoid relationships between the CloudKit plan and local log stores.
+@Model
+public final class MicrocycleWindowModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var trackingID: UUID = UUID()
+    public var folderID: UUID = UUID()
+    public var folderName: String = ""
+    public var index: Int = 0
+    public var startsAt: Date = Date()
+    public var endsAt: Date = Date()
+    public var timeZoneIdentifier: String = "UTC"
+    public var routineSnapshotJSON: String = "[]"
+    /// Reversible links that credit existing completed workouts to specific
+    /// days without rewriting their real workout-history timestamps.
+    public var dayAssignmentSnapshotJSON: String = "[]"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        trackingID: UUID,
+        folderID: UUID,
+        folderName: String,
+        index: Int,
+        startsAt: Date,
+        endsAt: Date,
+        timeZoneIdentifier: String,
+        routines: [MicrocycleRoutineSnapshot],
+        dayAssignments: [MicrocycleDayAssignment] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.trackingID = trackingID
+        self.folderID = folderID
+        self.folderName = folderName
+        self.index = index
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+        self.routines = routines
+        self.dayAssignments = dayAssignments
+    }
+
+    public var routines: [MicrocycleRoutineSnapshot] {
+        get {
+            guard let data = routineSnapshotJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([MicrocycleRoutineSnapshot].self, from: data)) ?? []
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let json = String(data: data, encoding: .utf8) else {
+                routineSnapshotJSON = "[]"
+                return
+            }
+            routineSnapshotJSON = json
+        }
+    }
+
+    public var dayAssignments: [MicrocycleDayAssignment] {
+        get {
+            guard let data = dayAssignmentSnapshotJSON.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([MicrocycleDayAssignment].self, from: data)) ?? []
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let json = String(data: data, encoding: .utf8) else {
+                dayAssignmentSnapshotJSON = "[]"
+                return
+            }
+            dayAssignmentSnapshotJSON = json
+        }
+    }
+}
+
+/// An explicit user statement that no training occurred on one calendar day.
+/// It is optional context, never a completion requirement.
+@Model
+public final class RestDayModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    /// Start-of-day in `timeZoneIdentifier`.
+    public var date: Date = Date()
+    public var timeZoneIdentifier: String = "UTC"
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        date: Date,
+        timeZoneIdentifier: String = TimeZone.current.identifier,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.date = date
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }

@@ -1,4 +1,3 @@
-import AudioToolbox
 import CoreLocation
 import ForgeCore
 import ForgeData
@@ -97,14 +96,22 @@ struct CardioExerciseCard: View {
         IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)
     }
 
-    /// The live reading a session goal grades against — nil when nothing
-    /// can honestly feed it yet (no watch calories, no live elevation).
+    /// The live reading a session goal grades against — nil when no honest
+    /// source is available for that metric yet.
     private func liveGoalCurrent(_ goal: IntervalPlan.SessionGoal, session: CardioSessionModel, liveDistance: Double?, elapsed: Int) -> Double? {
         switch goal.kind {
         case .distance: return liveDistance
         case .duration: return Double(elapsed)
-        case .calories: return LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal ?? session.activeEnergyKcal
-        case .elevation: return nil   // fills from Apple Health at completion
+        case .calories:
+            return CardioGoalAnnouncer.shared.segmentActiveEnergy(
+                sessionID: session.id,
+                cumulativeTotal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal
+            ) ?? session.activeEnergyKcal
+        case .elevation:
+            if CardioRouteRecorder.shared.recordingSessionID == session.id {
+                return CardioRouteRecorder.shared.liveElevationGainMeters
+            }
+            return session.elevationGainMeters
         }
     }
 
@@ -446,6 +453,8 @@ struct CardioExerciseCard: View {
                     }
                     if let goal = decodedPlan?.goal, goal.isMeaningful {
                         GoalProgressView(
+                            sessionID: session.id,
+                            startedAt: session.liveStartedAt ?? session.startedAt,
                             goal: goal,
                             current: liveGoalCurrent(goal, session: session, liveDistance: liveDist, elapsed: elapsed),
                             kind: kind
@@ -587,6 +596,12 @@ struct CardioExerciseCard: View {
         let now = Date()
         session.liveStartedAt = now
         session.startedAt = now
+        CardioGoalAnnouncer.shared.activate(
+            sessionID: session.id,
+            goal: decodedPlan?.goal,
+            startedAt: now,
+            cardioKind: kind
+        )
         if providesGPSDistance {
             CardioRouteRecorder.shared.start(session: session)
         }
@@ -611,9 +626,22 @@ struct CardioExerciseCard: View {
         NotificationScheduler.shared.cancelCardioCues()
         let end = Date()
         let start = session.liveStartedAt ?? session.startedAt
+        let distanceAtEnd = liveDistance(session)
+        let elevationAtEnd = CardioRouteRecorder.shared.recordingSessionID == session.id
+            ? CardioRouteRecorder.shared.liveElevationGainMeters
+            : session.elevationGainMeters
         session.endedAt = end
         session.durationSeconds = max(1, Int(end.timeIntervalSince(start)))
         CardioRouteRecorder.shared.stop(session: session, in: modelContext)
+        CardioGoalAnnouncer.shared.evaluate(
+            sessionID: session.id,
+            distanceMeters: distanceAtEnd,
+            elapsedSeconds: session.durationSeconds,
+            liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
+            elevationGainMeters: elevationAtEnd,
+            at: end
+        )
+        CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
         try? modelContext.save()
         importing = true
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
@@ -641,6 +669,13 @@ struct CardioExerciseCard: View {
             // Capture the time-series (measured zones) and auto-detect intervals (free-form runs).
             await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: modelContext)
             await MainActor.run {
+                CardioGoalAnnouncer.shared.finish(
+                    sessionID: session.id,
+                    distanceMeters: session.distanceMeters ?? distanceAtEnd,
+                    durationSeconds: session.durationSeconds,
+                    activeEnergyKcal: session.activeEnergyKcal,
+                    elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
+                )
                 importing = false
                 recompute()
             }
@@ -724,6 +759,14 @@ struct CardioExerciseCard: View {
     private func ensureSession() {
         if let existing = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
             session = existing
+            if let startedAt = existing.liveStartedAt, existing.endedAt == nil {
+                CardioGoalAnnouncer.shared.activate(
+                    sessionID: existing.id,
+                    goal: decodedPlan?.goal,
+                    startedAt: startedAt,
+                    cardioKind: kind
+                )
+            }
             return
         }
         let new = CardioSessionModel(
@@ -995,10 +1038,11 @@ private struct CardioSessionEditor: View {
 /// honest wait-state instead of a frozen zero.
 private struct GoalProgressView: View {
     @Environment(\.theme) private var theme
+    let sessionID: UUID
+    let startedAt: Date
     let goal: IntervalPlan.SessionGoal
     let current: Double?
     let kind: CardioKind
-    @State private var celebrated = false
 
     private var fraction: Double? { current.map { goal.fraction(current: $0) } }
     private var reached: Bool { (fraction ?? 0) >= 1 }
@@ -1025,7 +1069,7 @@ private struct GoalProgressView: View {
                     .tint(reached ? theme.success : theme.secondaryAccent)
             } else {
                 Text(goal.kind == .elevation
-                     ? "Climb fills in from Apple Health when you complete."
+                     ? "Climb fills in when the session provides elevation data."
                      : "Waiting for Apple Watch data…")
                     .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
             }
@@ -1033,11 +1077,17 @@ private struct GoalProgressView: View {
         .padding(Space.sm)
         .background((reached ? theme.success : theme.secondaryAccent).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-        .onChange(of: reached) { _, isReached in
-            guard isReached, !celebrated else { return }
-            celebrated = true
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            AudioServicesPlaySystemSound(1057)
+        .onAppear {
+            CardioGoalAnnouncer.shared.activate(
+                sessionID: sessionID,
+                goal: goal,
+                startedAt: startedAt,
+                cardioKind: kind
+            )
+            CardioGoalAnnouncer.shared.evaluateCurrent(sessionID: sessionID, current: current)
+        }
+        .onChange(of: current) { _, newValue in
+            CardioGoalAnnouncer.shared.evaluateCurrent(sessionID: sessionID, current: newValue)
         }
         .accessibilityIdentifier("cardio-goal-progress")
     }

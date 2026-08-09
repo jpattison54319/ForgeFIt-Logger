@@ -131,6 +131,48 @@ import Testing
         }
     }
 
+    @Test func microcycleModelsHaveCloudKitSafeDefaultsAndScalarReferences() {
+        let userID = UUID()
+        let folder = RoutineFolderModel(userID: userID, name: "Upper Lower")
+        let tracking = MicrocycleTrackingModel(
+            userID: userID,
+            folderID: folder.id,
+            folderName: folder.name,
+            anchorDate: .now,
+            durationDays: 10
+        )
+        let window = MicrocycleWindowModel(
+            userID: userID,
+            trackingID: tracking.id,
+            folderID: folder.id,
+            folderName: folder.name,
+            index: 0,
+            startsAt: .now,
+            endsAt: Date().addingTimeInterval(10 * 86_400),
+            timeZoneIdentifier: "UTC",
+            routines: []
+        )
+        let restDay = RestDayModel(userID: userID, date: .now)
+
+        #expect(folder.defaultMicrocycleLengthDays == nil)
+        #expect(tracking.stateRaw == "active")
+        #expect(tracking.showsOnHome)
+        #expect(tracking.showsFolderHeader)
+        #expect(window.routineSnapshotJSON == "[]")
+        #expect(window.dayAssignmentSnapshotJSON == "[]")
+        #expect(restDay.deletedAt == nil)
+
+        let localEntities = Set([
+            "MicrocycleTrackingModel",
+            "MicrocycleWindowModel",
+            "RestDayModel",
+        ])
+        let schema = Schema(ForgeDataSchema.models)
+        for entity in schema.entities where localEntities.contains(entity.name) {
+            #expect(entity.relationships.isEmpty)
+        }
+    }
+
     @Test func intervalPresetModelHasCloudKitSafeDefaults() {
         let preset = IntervalPresetModel(userID: UUID(), name: "My VO2")
 

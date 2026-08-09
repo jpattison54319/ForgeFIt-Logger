@@ -17,6 +17,9 @@ public enum BackupMapper {
         preferences: [String: BackupPreferenceValue],
         userID: UUID,
         appVersion: String?,
+        microcycleTrackings: [MicrocycleTrackingModel] = [],
+        microcycleWindows: [MicrocycleWindowModel] = [],
+        restDays: [RestDayModel] = [],
         now: Date = Date()
     ) -> ForgeFitBackupFile {
         ForgeFitBackupFile(
@@ -27,7 +30,10 @@ public enum BackupMapper {
             workouts: workouts
                 .sorted { $0.startedAt < $1.startedAt }
                 .map { backupWorkout(from: $0, exerciseNames: exerciseNames) },
-            importBatches: batches.map(backupBatch(from:))
+            importBatches: batches.map(backupBatch(from:)),
+            microcycleTrackings: microcycleTrackings.map(backupTracking(from:)),
+            microcycleWindows: microcycleWindows.map(backupWindow(from:)),
+            restDays: restDays.map(backupRestDay(from:))
         )
     }
 
@@ -213,10 +219,118 @@ public enum BackupMapper {
         )
     }
 
+    public static func backupTracking(from tracking: MicrocycleTrackingModel) -> BackupMicrocycleTracking {
+        BackupMicrocycleTracking(
+            id: tracking.id,
+            folderID: tracking.folderID,
+            folderName: tracking.folderName,
+            anchorDate: tracking.anchorDate,
+            durationDays: tracking.durationDays,
+            timeZoneIdentifier: tracking.timeZoneIdentifier,
+            stateRaw: tracking.stateRaw,
+            showsOnHome: tracking.showsOnHome,
+            showsFolderHeader: tracking.showsFolderHeader,
+            endedAt: tracking.endedAt,
+            createdAt: tracking.createdAt,
+            updatedAt: tracking.updatedAt,
+            deletedAt: tracking.deletedAt
+        )
+    }
+
+    public static func backupWindow(from window: MicrocycleWindowModel) -> BackupMicrocycleWindow {
+        BackupMicrocycleWindow(
+            id: window.id,
+            trackingID: window.trackingID,
+            folderID: window.folderID,
+            folderName: window.folderName,
+            index: window.index,
+            startsAt: window.startsAt,
+            endsAt: window.endsAt,
+            timeZoneIdentifier: window.timeZoneIdentifier,
+            routineSnapshotJSON: window.routineSnapshotJSON,
+            dayAssignmentSnapshotJSON: window.dayAssignmentSnapshotJSON,
+            createdAt: window.createdAt,
+            updatedAt: window.updatedAt,
+            deletedAt: window.deletedAt
+        )
+    }
+
+    public static func backupRestDay(from restDay: RestDayModel) -> BackupRestDay {
+        BackupRestDay(
+            id: restDay.id,
+            date: restDay.date,
+            timeZoneIdentifier: restDay.timeZoneIdentifier,
+            createdAt: restDay.createdAt,
+            updatedAt: restDay.updatedAt,
+            deletedAt: restDay.deletedAt
+        )
+    }
+
     private static func round6(_ value: Double) -> Double { (value * 1_000_000).rounded() / 1_000_000 }
     private static func round2(_ value: Double) -> Double { (value * 100).rounded() / 100 }
 
     // MARK: - DTO → Model (restore)
+
+    public static func trackingModel(
+        from backup: BackupMicrocycleTracking,
+        userID: UUID
+    ) -> MicrocycleTrackingModel {
+        MicrocycleTrackingModel(
+            id: backup.id,
+            userID: userID,
+            folderID: backup.folderID,
+            folderName: backup.folderName,
+            anchorDate: backup.anchorDate,
+            durationDays: backup.durationDays,
+            timeZoneIdentifier: backup.timeZoneIdentifier,
+            stateRaw: backup.stateRaw,
+            showsOnHome: backup.showsOnHome ?? true,
+            showsFolderHeader: backup.showsFolderHeader ?? true,
+            endedAt: backup.endedAt,
+            createdAt: backup.createdAt,
+            updatedAt: backup.updatedAt,
+            deletedAt: backup.deletedAt
+        )
+    }
+
+    public static func windowModel(
+        from backup: BackupMicrocycleWindow,
+        userID: UUID
+    ) -> MicrocycleWindowModel {
+        let model = MicrocycleWindowModel(
+            id: backup.id,
+            userID: userID,
+            trackingID: backup.trackingID,
+            folderID: backup.folderID,
+            folderName: backup.folderName,
+            index: backup.index,
+            startsAt: backup.startsAt,
+            endsAt: backup.endsAt,
+            timeZoneIdentifier: backup.timeZoneIdentifier,
+            routines: [],
+            createdAt: backup.createdAt,
+            updatedAt: backup.updatedAt,
+            deletedAt: backup.deletedAt
+        )
+        model.routineSnapshotJSON = backup.routineSnapshotJSON
+        model.dayAssignmentSnapshotJSON = backup.dayAssignmentSnapshotJSON ?? "[]"
+        return model
+    }
+
+    public static func restDayModel(
+        from backup: BackupRestDay,
+        userID: UUID
+    ) -> RestDayModel {
+        RestDayModel(
+            id: backup.id,
+            userID: userID,
+            date: backup.date,
+            timeZoneIdentifier: backup.timeZoneIdentifier,
+            createdAt: backup.createdAt,
+            updatedAt: backup.updatedAt,
+            deletedAt: backup.deletedAt
+        )
+    }
 
     /// Materializes the full workout graph with ORIGINAL ids. Health fields
     /// start nil/empty and are refilled from Apple Health by the enrichment

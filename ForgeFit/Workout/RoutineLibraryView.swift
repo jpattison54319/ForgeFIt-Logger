@@ -1,9 +1,8 @@
 import ForgeData
 import SwiftUI
 
-/// Explore surface for prebuilt training programs (mesocycles). Each card is a
-/// full program — a folder of day routines imported together — rather than a
-/// one-off routine.
+/// Explore surface for prebuilt training programs. Each card imports one
+/// microcycle folder of day routines rather than a one-off routine.
 struct RoutineLibraryView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss

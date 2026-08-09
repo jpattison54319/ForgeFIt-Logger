@@ -862,12 +862,11 @@ private struct ExerciseEditRow: View {
             HStack(spacing: 4) {
                 Text("Add goal")
                     .font(.bodyStrong)
-                    .foregroundStyle(theme.textPrimary)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(theme.accent)
                 Spacer()
             }
+            .foregroundStyle(theme.accent)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }

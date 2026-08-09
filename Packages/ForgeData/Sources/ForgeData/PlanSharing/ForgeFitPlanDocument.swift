@@ -1,0 +1,287 @@
+import Foundation
+
+/// A user-created training plan that can leave ForgeFit without carrying any
+/// workout history, Health data, account identity, or local progress state.
+public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
+    public static let currentVersion = 1
+
+    public var formatVersion: Int
+    public var packageID: UUID
+    public var createdAt: Date
+    public var appVersion: String?
+    public var kind: ForgeFitPlanKind
+    public var name: String
+    public var folders: [SharedPlanFolder]
+    public var routines: [SharedPlanRoutine]
+    public var exercises: [SharedPlanExercise]
+
+    public init(
+        formatVersion: Int = Self.currentVersion,
+        packageID: UUID = UUID(),
+        createdAt: Date,
+        appVersion: String? = nil,
+        kind: ForgeFitPlanKind,
+        name: String,
+        folders: [SharedPlanFolder] = [],
+        routines: [SharedPlanRoutine],
+        exercises: [SharedPlanExercise]
+    ) {
+        self.formatVersion = formatVersion
+        self.packageID = packageID
+        self.createdAt = createdAt
+        self.appVersion = appVersion
+        self.kind = kind
+        self.name = name
+        self.folders = folders
+        self.routines = routines
+        self.exercises = exercises
+    }
+}
+
+public enum ForgeFitPlanKind: String, Codable, CaseIterable, Sendable {
+    case routine
+    case microcycle
+    case mesocycle
+
+    public var title: String {
+        switch self {
+        case .routine: "Routine"
+        case .microcycle: "Microcycle"
+        case .mesocycle: "Mesocycle"
+        }
+    }
+}
+
+public struct SharedPlanFolder: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var position: Int
+    public var parentID: UUID?
+    public var defaultMicrocycleLengthDays: Int?
+
+    public init(
+        id: UUID,
+        name: String,
+        position: Int,
+        parentID: UUID? = nil,
+        defaultMicrocycleLengthDays: Int? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.position = position
+        self.parentID = parentID
+        self.defaultMicrocycleLengthDays = defaultMicrocycleLengthDays
+    }
+}
+
+public struct SharedPlanRoutine: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var notes: String?
+    public var folderID: UUID?
+    public var position: Int
+    public var conditioningPlanJSON: String?
+    public var exercises: [SharedPlanRoutineExercise]
+    public var blocks: [SharedPlanRoutineBlock]
+
+    public init(
+        id: UUID,
+        name: String,
+        notes: String? = nil,
+        folderID: UUID? = nil,
+        position: Int,
+        conditioningPlanJSON: String? = nil,
+        exercises: [SharedPlanRoutineExercise] = [],
+        blocks: [SharedPlanRoutineBlock] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.notes = notes
+        self.folderID = folderID
+        self.position = position
+        self.conditioningPlanJSON = conditioningPlanJSON
+        self.exercises = exercises
+        self.blocks = blocks
+    }
+}
+
+public struct SharedPlanRoutineBlock: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var kindRaw: String
+    public var position: Int
+    public var planJSON: String?
+
+    public init(id: UUID, kindRaw: String, position: Int, planJSON: String? = nil) {
+        self.id = id
+        self.kindRaw = kindRaw
+        self.position = position
+        self.planJSON = planJSON
+    }
+}
+
+public struct SharedPlanRoutineExercise: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var exerciseID: UUID
+    public var position: Int
+    public var supersetGroup: Int?
+    public var progressionRuleID: UUID?
+    public var progressionRuleJSON: String?
+    public var notes: String?
+    public var intervalPlanJSON: String?
+    public var yogaFlowJSON: String?
+    public var sets: [SharedPlanRoutineSet]
+
+    public init(
+        id: UUID,
+        exerciseID: UUID,
+        position: Int,
+        supersetGroup: Int? = nil,
+        progressionRuleID: UUID? = nil,
+        progressionRuleJSON: String? = nil,
+        notes: String? = nil,
+        intervalPlanJSON: String? = nil,
+        yogaFlowJSON: String? = nil,
+        sets: [SharedPlanRoutineSet] = []
+    ) {
+        self.id = id
+        self.exerciseID = exerciseID
+        self.position = position
+        self.supersetGroup = supersetGroup
+        self.progressionRuleID = progressionRuleID
+        self.progressionRuleJSON = progressionRuleJSON
+        self.notes = notes
+        self.intervalPlanJSON = intervalPlanJSON
+        self.yogaFlowJSON = yogaFlowJSON
+        self.sets = sets
+    }
+}
+
+public struct SharedPlanRoutineSet: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var position: Int
+    public var setTypeRaw: String
+    public var targetRepsLow: Int?
+    public var targetRepsHigh: Int?
+    public var targetWeight: Double?
+    public var targetRPE: Double?
+    public var targetRIR: Int?
+    public var targetDurationSeconds: Int?
+    public var targetDistanceMeters: Double?
+    public var plannedMiniSetCount: Int?
+    public var plannedMiniRepsJSON: String?
+
+    public init(
+        id: UUID,
+        position: Int,
+        setTypeRaw: String,
+        targetRepsLow: Int? = nil,
+        targetRepsHigh: Int? = nil,
+        targetWeight: Double? = nil,
+        targetRPE: Double? = nil,
+        targetRIR: Int? = nil,
+        targetDurationSeconds: Int? = nil,
+        targetDistanceMeters: Double? = nil,
+        plannedMiniSetCount: Int? = nil,
+        plannedMiniRepsJSON: String? = nil
+    ) {
+        self.id = id
+        self.position = position
+        self.setTypeRaw = setTypeRaw
+        self.targetRepsLow = targetRepsLow
+        self.targetRepsHigh = targetRepsHigh
+        self.targetWeight = targetWeight
+        self.targetRPE = targetRPE
+        self.targetRIR = targetRIR
+        self.targetDurationSeconds = targetDurationSeconds
+        self.targetDistanceMeters = targetDistanceMeters
+        self.plannedMiniSetCount = plannedMiniSetCount
+        self.plannedMiniRepsJSON = plannedMiniRepsJSON
+    }
+}
+
+/// A self-contained exercise fallback. Account/import bookkeeping is omitted;
+/// only fields needed to understand and execute a shared plan are present.
+public struct SharedPlanExercise: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var isCustom: Bool
+    public var name: String
+    public var movementPattern: String?
+    public var primaryMuscles: [String]
+    public var secondaryMuscles: [String]
+    public var equipment: String?
+    public var isUnilateral: Bool
+    public var defaultWeightModeRaw: String
+    public var preferredWeightUnitRaw: String?
+    public var difficulty: String?
+    public var isCardio: Bool
+    public var cardioKindRaw: String?
+    public var modalityRaw: String?
+    public var defaultHoldSeconds: Int?
+    public var mappedGlobalID: UUID?
+    public var instructions: [String]
+    public var mechanic: String?
+    public var mediaSlug: String?
+    public var category: String?
+    public var force: String?
+
+    public init(
+        id: UUID,
+        isCustom: Bool,
+        name: String,
+        movementPattern: String? = nil,
+        primaryMuscles: [String] = [],
+        secondaryMuscles: [String] = [],
+        equipment: String? = nil,
+        isUnilateral: Bool = false,
+        defaultWeightModeRaw: String,
+        preferredWeightUnitRaw: String? = nil,
+        difficulty: String? = nil,
+        isCardio: Bool = false,
+        cardioKindRaw: String? = nil,
+        modalityRaw: String? = nil,
+        defaultHoldSeconds: Int? = nil,
+        mappedGlobalID: UUID? = nil,
+        instructions: [String] = [],
+        mechanic: String? = nil,
+        mediaSlug: String? = nil,
+        category: String? = nil,
+        force: String? = nil
+    ) {
+        self.id = id
+        self.isCustom = isCustom
+        self.name = name
+        self.movementPattern = movementPattern
+        self.primaryMuscles = primaryMuscles
+        self.secondaryMuscles = secondaryMuscles
+        self.equipment = equipment
+        self.isUnilateral = isUnilateral
+        self.defaultWeightModeRaw = defaultWeightModeRaw
+        self.preferredWeightUnitRaw = preferredWeightUnitRaw
+        self.difficulty = difficulty
+        self.isCardio = isCardio
+        self.cardioKindRaw = cardioKindRaw
+        self.modalityRaw = modalityRaw
+        self.defaultHoldSeconds = defaultHoldSeconds
+        self.mappedGlobalID = mappedGlobalID
+        self.instructions = instructions
+        self.mechanic = mechanic
+        self.mediaSlug = mediaSlug
+        self.category = category
+        self.force = force
+    }
+}
+
+public enum ForgeFitPlanCodec {
+    public static func encode(_ document: ForgeFitPlanDocument) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(document)
+    }
+
+    public static func decode(_ data: Data) throws -> ForgeFitPlanDocument {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(ForgeFitPlanDocument.self, from: data)
+    }
+}

@@ -20,6 +20,9 @@ public enum ExportMapper {
                 workout.cardioSessions = workout.cardioSessions.filter { $0.deletedAt == nil }
                 return workout
             }
+        filtered.microcycleTrackings = file.microcycleTrackings?.filter { $0.deletedAt == nil }
+        filtered.microcycleWindows = file.microcycleWindows?.filter { $0.deletedAt == nil }
+        filtered.restDays = file.restDays?.filter { $0.deletedAt == nil }
         return filtered
     }
 
@@ -69,7 +72,16 @@ public enum ExportMapper {
         let exportFolders = folders
             .filter { $0.deletedAt == nil }
             .sorted { ($0.parentID == nil ? 0 : 1, $0.position) < ($1.parentID == nil ? 0 : 1, $1.position) }
-            .map { ExportRoutineFolder(id: $0.id, name: $0.name, position: $0.position, parentID: $0.parentID, archivedAt: $0.archivedAt) }
+            .map {
+                ExportRoutineFolder(
+                    id: $0.id,
+                    name: $0.name,
+                    position: $0.position,
+                    parentID: $0.parentID,
+                    archivedAt: $0.archivedAt,
+                    defaultMicrocycleLengthDays: $0.defaultMicrocycleLengthDays
+                )
+            }
 
         let exportRoutines = routines
             .filter { $0.deletedAt == nil }

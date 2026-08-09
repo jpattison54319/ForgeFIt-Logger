@@ -51,11 +51,17 @@ enum DataExportService {
             case .csv:
                 let workoutsURL = directory.appendingPathComponent("ForgeFit-Workouts-\(stamp).csv")
                 let routinesURL = directory.appendingPathComponent("ForgeFit-Routines-\(stamp).csv")
+                let microcyclesURL = directory.appendingPathComponent("ForgeFit-Microcycles-\(stamp).csv")
+                let restDaysURL = directory.appendingPathComponent("ForgeFit-Rest-Days-\(stamp).csv")
                 try WorkoutCSVExport.csv(workouts: trainingLog.workouts, health: health)
                     .write(to: workoutsURL, atomically: true, encoding: .utf8)
                 try RoutineCSVExport.csv(library: library)
                     .write(to: routinesURL, atomically: true, encoding: .utf8)
-                return [workoutsURL, routinesURL]
+                try MicrocycleCSVExport.windows(file: trainingLog, routines: library)
+                    .write(to: microcyclesURL, atomically: true, encoding: .utf8)
+                try MicrocycleCSVExport.restDays(file: trainingLog)
+                    .write(to: restDaysURL, atomically: true, encoding: .utf8)
+                return [workoutsURL, routinesURL, microcyclesURL, restDaysURL]
             }
         }.value
     }

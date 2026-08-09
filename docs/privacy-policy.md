@@ -1,6 +1,6 @@
 # ForgeFit Privacy Policy
 
-_Last updated: August 6, 2026_
+_Last updated: August 8, 2026_
 
 ForgeFit is built local-first: your training data belongs to you and lives on
 your device, with optional iCloud sync for your training plan and an optional
@@ -16,23 +16,35 @@ anywhere we can read it.
 ## iCloud sync & backup
 
 If you are signed into iCloud, ForgeFit syncs your **training plan** —
-routines, folders, your exercise library, notes, saved interval and yoga
-presets, saved insight charts (their definitions only — the numbers they show
-are recomputed on each device), and your XP progress — across your Apple
-devices using Apple's CloudKit, stored in your private CloudKit database,
-encrypted by Apple and accessible only to you.
+routines, folders, each microcycle folder's default day target, your exercise
+library, notes, saved interval and yoga presets, saved insight charts (their
+definitions only — the numbers they show are recomputed on each device), and
+your XP progress — across your Apple devices using Apple's CloudKit, stored in
+your private CloudKit database, encrypted by Apple and accessible only to you.
 
 Your **workout history** is different: it stays in a local database on each
 device. To protect it against a lost or replaced phone, ForgeFit writes an
 optional backup file of your training log to your iCloud Drive, visible in the
-Files app under ForgeFit. This backup contains only what you logged — sets,
-reps, weights, durations, effort ratings, notes, cardio splits, and outdoor
-route maps.
+Files app under ForgeFit. This backup contains what you logged — sets, reps,
+weights, durations, effort ratings, notes, cardio splits, outdoor route maps,
+microcycle tracking windows, and explicit rest-day markers.
 
 **It never includes experiments or their custom entries, heart rate, calories
 or active energy, step counts, sleep, readiness scores, body weight, daily
 check-ins, or any other Apple Health data.** In line with App Store guidelines,
 ForgeFit does not store personal health information in iCloud.
+
+## Microcycle tracking
+
+A leaf routine folder can be tracked as a repeating microcycle with a day
+target. The folder's default day target is part of your synced training plan.
+Active tracking runs, frozen window snapshots, Home and folder-header display
+choices, and rest-day markers stay in the local training log; they are included
+in ForgeFit's sanitized iCloud Drive backup and in user-directed data exports.
+Progress is derived from completed workouts linked to routines in that
+microcycle. A rest-day marker adds calendar context but never completes a
+routine. Workouts completed on Apple Watch can contribute after they reconcile
+to that iPhone.
 
 ## Experiments
 
@@ -93,28 +105,41 @@ public profile and handle, shared workouts, follows, and likes.
 
 ## Data export
 
-Settings → Export data creates JSON or CSV files of your workouts and routines
-on demand, including the health metrics ForgeFit has stored with them. An
-experiment's results screen can separately export the observations used in
-that experiment, including custom entries and available daily Health
-summaries. These exports happen only when you request them. You choose the
-format and where the files go — they are handed directly to you through the
-iOS share sheet and are never transmitted to us or anyone else. Files shared
-outside ForgeFit are then controlled by the destination you choose.
+Settings → Export data creates JSON or CSV files of your workouts, routines,
+microcycle tracking windows, and rest-day markers on demand, including the
+health metrics ForgeFit has stored with workouts. An experiment's results
+screen can separately export the observations used in that experiment,
+including custom entries and available daily Health summaries. These exports
+happen only when you request them. You choose the format and where the files
+go — they are handed directly to you through the iOS share sheet and are never
+transmitted to us or anyone else. Files shared outside ForgeFit are then
+controlled by the destination you choose.
+
+## Plan sharing
+
+When you share a routine, microcycle, or mesocycle, ForgeFit creates a preview
+image and a ForgeFit Plan file only after you choose Share. The plan file can
+include routine and cycle names, routine notes, exercise definitions, ordering,
+and planned targets so another ForgeFit user can save an independent copy. It
+never includes your account identity, setup notes, workout history, cycle
+progress, experiments, Apple Health data, readiness, or recovery information.
+You choose the destination through the iOS share sheet; after sharing, the file
+is controlled by that destination and its recipient.
 
 ## Data deletion
 
 Deleting the app deletes all local ForgeFit data on that device, including
-experiments and their custom entries. Deleting one experiment removes only
-that experiment and its entries; it does not delete the workouts or Apple
-Health data shown in its results. Your training plan in iCloud can be removed
-by deleting routines in the app (deletions sync) or via Settings → Reset all
-app data. Your training-log backup is an ordinary file you control: delete it
-in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings → Reset
-all app data, which also removes the backup. Any earlier public Community data
-must be removed separately with Settings → Delete Community data. Workouts
-written to Apple Health remain there under your control and can be deleted in
-the Health app.
+microcycle tracking runs, rest-day markers, experiments, and their custom
+entries. Ending microcycle tracking does not delete workouts or rest-day
+markers; deleting one experiment removes only that experiment and its entries.
+Neither action deletes Apple Health data. Your training plan in iCloud can be
+removed by deleting routines in the app (deletions sync) or via Settings →
+Reset all app data. Your training-log backup is an ordinary file you control:
+delete it in the Files app (iCloud Drive → ForgeFit → Backups), or use Settings
+→ Reset all app data, which also removes the backup. Any earlier public
+Community data must be removed separately with Settings → Delete Community
+data. Workouts written to Apple Health remain there under your control and can
+be deleted in the Health app.
 
 ## Changes
 

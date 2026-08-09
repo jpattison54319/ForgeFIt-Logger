@@ -8,8 +8,10 @@ import SwiftUI
 /// the standard workout detail screen.
 struct WorkoutCalendarView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Query(sort: \RestDayModel.date, order: .reverse) private var restDays: [RestDayModel]
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
 
@@ -20,6 +22,8 @@ struct WorkoutCalendarView: View {
     /// change so paging direction matches the button/jump that caused it.
     @State private var monthSlideEdge: Edge = .trailing
     @State private var groupMemo = Memo<String, [Date: [WorkoutModel]]>()
+    @State private var recentlyRemovedRestDayID: UUID?
+    @State private var restDayError: String?
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
 
@@ -47,6 +51,13 @@ struct WorkoutCalendarView: View {
             if let w = workouts.first(where: { $0.id == id }) {
                 WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
             }
+        }
+        .alert("Couldn't update rest day", isPresented: Binding(
+            get: { restDayError != nil },
+            set: { if !$0 { restDayError = nil } }
+        )) {
+        } message: {
+            Text(restDayError ?? "")
         }
     }
 
@@ -141,6 +152,7 @@ struct WorkoutCalendarView: View {
     private func dayCell(_ day: Date) -> some View {
         let key = WorkoutCalendarSupport.dayKey(for: day, calendar: calendar)
         let dayWorkouts = workoutsByDay[key] ?? []
+        let isRestDay = restDay(on: key) != nil
         let isSelected = selectedDay == key
         let isToday = calendar.isDateInToday(day)
         let snapshot = RecoverySnapshotStore.shared.snapshot(for: day)
@@ -172,6 +184,11 @@ struct WorkoutCalendarView: View {
                     ForEach(Array(dayWorkouts.prefix(3).enumerated()), id: \.offset) { _, workout in
                         markerDot(for: workout)
                     }
+                    if isRestDay {
+                        Image(systemName: "moon.fill")
+                            .font(.system(size: 6, weight: .bold))
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
                 .frame(height: 4)
             }
@@ -187,12 +204,22 @@ struct WorkoutCalendarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(dayAccessibilityLabel(day, snapshot: snapshot, workoutCount: dayWorkouts.count))
+        .accessibilityLabel(dayAccessibilityLabel(
+            day,
+            snapshot: snapshot,
+            workoutCount: dayWorkouts.count,
+            isRestDay: isRestDay
+        ))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("calendar-day")
     }
 
-    private func dayAccessibilityLabel(_ day: Date, snapshot: RecoverySnapshot?, workoutCount: Int) -> String {
+    private func dayAccessibilityLabel(
+        _ day: Date,
+        snapshot: RecoverySnapshot?,
+        workoutCount: Int,
+        isRestDay: Bool
+    ) -> String {
         var parts = [day.formatted(date: .abbreviated, time: .omitted)]
         if let daily = snapshot?.daily { parts.append("daily recovery \(Int((daily * 100).rounded()))") }
         if let trend = snapshot?.trend { parts.append("trend \(Int((trend * 100).rounded()))") }
@@ -200,6 +227,7 @@ struct WorkoutCalendarView: View {
             parts.append("strain \(strain.formatted(.number.precision(.fractionLength(1)))) out of 10")
         }
         parts.append(workoutCount == 0 ? "no workouts" : "\(workoutCount) workout\(workoutCount == 1 ? "" : "s")")
+        if isRestDay { parts.append("rest day") }
         return parts.joined(separator: ", ")
     }
 
@@ -234,15 +262,52 @@ struct WorkoutCalendarView: View {
     @ViewBuilder
     private var selectedDaySection: some View {
         let items = (workoutsByDay[selectedDay] ?? []).sorted { $0.startedAt < $1.startedAt }
+        let selectedRestDay = restDay(on: selectedDay)
         SectionHeader(selectedDay.formatted(.dateTime.weekday(.wide).month(.wide).day()))
         // Recovery leads the day — it's the read that frames the workouts below.
         RecoveryDaySummaryCard(snapshot: RecoverySnapshotStore.shared.snapshot(for: selectedDay))
-        if items.isEmpty {
+        if let selectedRestDay {
+            Card {
+                HStack(spacing: Space.md) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.title3)
+                        .foregroundStyle(theme.accent)
+                        .accessibilityHidden(true)
+                    Text("Rest day")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Button("Remove", role: .destructive) {
+                        removeRestDay(selectedRestDay)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("calendar-remove-rest-day")
+                }
+            }
+        } else if items.isEmpty {
             EmptyStateCard(
                 title: "No workouts this day",
-                message: "Rest days count too.",
+                message: "Log it as a rest day if that was part of your routine.",
                 systemImage: "moon.zzz"
             )
+            if selectedDay <= calendar.startOfDay(for: .now) {
+                if let removedID = recentlyRemovedRestDayID,
+                   restDays.contains(where: {
+                       $0.id == removedID
+                           && $0.deletedAt != nil
+                           && calendar.isDate($0.date, inSameDayAs: selectedDay)
+                   }) {
+                    SecondaryButton(title: "Undo Rest Day", systemImage: "arrow.uturn.backward") {
+                        logRestDay(on: selectedDay)
+                    }
+                    .accessibilityIdentifier("calendar-undo-rest-day")
+                } else {
+                    SecondaryButton(title: "Log Rest Day", systemImage: "moon.zzz.fill") {
+                        logRestDay(on: selectedDay)
+                    }
+                    .accessibilityIdentifier("calendar-log-rest-day")
+                }
+            }
         } else {
             ForEach(items) { workout in
                 NavigationLink(value: workout.id) {
@@ -250,6 +315,30 @@ struct WorkoutCalendarView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    private func restDay(on date: Date) -> RestDayModel? {
+        restDays.first {
+            $0.deletedAt == nil && calendar.isDate($0.date, inSameDayAs: date)
+        }
+    }
+
+    private func logRestDay(on date: Date) {
+        do {
+            _ = try RestDayService.log(date: date, workouts: workouts, in: modelContext)
+            recentlyRemovedRestDayID = nil
+        } catch {
+            restDayError = error.localizedDescription
+        }
+    }
+
+    private func removeRestDay(_ restDay: RestDayModel) {
+        do {
+            try RestDayService.remove(restDay, in: modelContext)
+            recentlyRemovedRestDayID = restDay.id
+        } catch {
+            restDayError = error.localizedDescription
         }
     }
 }

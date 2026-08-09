@@ -22,8 +22,8 @@ enum AppPreferenceKeys {
         "trainingFocusRaw",
         "homeQuickStartActions.v1",
         AppQuickActionStore.key,
-        "activeMacroFolderID",
-        "activeMesoFolderID",
+        CyclePreferenceMigration.activeMesocycleKey,
+        CyclePreferenceMigration.activeMicrocycleKey,
         ThemeManager.modeDefaultsKey,
         "liveSyncEnabled",
         "healthWriteEnabled",
@@ -55,6 +55,7 @@ enum AppPreferenceKeys {
         "openSettings",
         LaunchSeedPolicy.defaultsKey,
         PlanMaintenancePolicy.defaultsKey,
+        CyclePreferenceMigration.migrationKey,
         "lastActiveDate",
         "hasCompletedFirstLaunch",
         "welcomeBackPendingGapDays",
@@ -66,11 +67,17 @@ enum AppPreferenceKeys {
         HealthWorkoutImporter.lastAutomaticAttemptKey,
         ExperimentNotificationRoute.pendingURLDefaultsKey,
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
+        PlanImportService.importedPackagesDefaultsKey,
     ]
 
     /// Retired preferences kept only so Erase All Data also cleans installs
     /// that previously used the streak feature.
-    static let deprecated = ["weeklyWorkoutGoal", "streakNudgeEnabled"]
+    static let deprecated = [
+        "weeklyWorkoutGoal",
+        "streakNudgeEnabled",
+        "activeMacroFolderID",
+        "activeMesoFolderID",
+    ]
 
     static var allResettable: [String] { backedUp + localOnly + deprecated }
 }

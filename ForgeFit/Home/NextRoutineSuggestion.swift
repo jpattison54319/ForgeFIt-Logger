@@ -2,17 +2,15 @@ import ForgeData
 import Foundation
 
 /// Picks what to suggest training next, drilling through whichever training
-/// cycle is active: a mesocycle (most specific — exactly what you're
-/// running) beats a macrocycle (rotates across every mesocycle nested
+/// cycle is active: a microcycle (most specific — exactly what you're
+/// running) beats a mesocycle (rotates across every microcycle nested
 /// inside it), which beats best-guessing from every routine by what was
 /// done last.
 ///
-/// A macrocycle and one of its mesocycles are independent slots and can be
-/// active at the same time — a macro can hold several mesocycles, so
-/// "active macro" and "active meso" answer different questions ("what
-/// season am I in" vs "what exact block am I running"). If the active
-/// mesocycle turns out to have nothing suggestible (e.g. no routines with
-/// exercises), this falls through to the active macrocycle before falling
+/// A mesocycle and one of its microcycles are independent slots and can be
+/// active at the same time. If the active microcycle has nothing suggestible
+/// (for example, no routines with exercises), this falls through to the
+/// active mesocycle before falling
 /// through to the global list — an active-but-empty slot never produces an
 /// empty suggestion when a broader one would work.
 enum NextRoutineSuggestion {
@@ -24,9 +22,9 @@ enum NextRoutineSuggestion {
     static func suggest(
         routines: [RoutineModel],
         completedWorkouts: [WorkoutModel],
-        activeMesoFolderID: UUID?,
-        activeMacroFolderID: UUID?,
-        macroSubtree: (UUID) -> Set<UUID>,
+        activeMicrocycleFolderID: UUID?,
+        activeMesocycleFolderID: UUID?,
+        mesocycleSubtree: (UUID) -> Set<UUID>,
         now: Date = Date()
     ) -> Result? {
         let active = routines
@@ -35,14 +33,14 @@ enum NextRoutineSuggestion {
         guard !active.isEmpty else { return nil }
 
         let scoped: (pool: [RoutineModel], label: String)? = {
-            if let mesoID = activeMesoFolderID {
-                let pool = active.filter { $0.folderID == mesoID }
-                if !pool.isEmpty { return (pool, "mesocycle") }
+            if let microcycleID = activeMicrocycleFolderID {
+                let pool = active.filter { $0.folderID == microcycleID }
+                if !pool.isEmpty { return (pool, "microcycle") }
             }
-            if let macroID = activeMacroFolderID {
-                let subtree = macroSubtree(macroID)
+            if let mesocycleID = activeMesocycleFolderID {
+                let subtree = mesocycleSubtree(mesocycleID)
                 let pool = active.filter { r in r.folderID.map(subtree.contains) ?? false }
-                if !pool.isEmpty { return (pool, "macrocycle") }
+                if !pool.isEmpty { return (pool, "mesocycle") }
             }
             return nil
         }()

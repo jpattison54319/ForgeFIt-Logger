@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import Testing
 @testable import ForgeData
 
@@ -207,24 +208,24 @@ struct DataExportFormatTests {
 
     // MARK: - Routines CSV
 
-    @Test func cycleHierarchyFlattensAllThreeCases() {
-        let macro = ExportRoutineFolder(id: UUID(), name: "Hypertrophy Block", position: 0)
-        let meso = ExportRoutineFolder(id: UUID(), name: "Week 1-4", position: 0, parentID: macro.id)
-        let byID = [macro.id: macro, meso.id: meso]
+    @Test func cycleHierarchyFlattensMesocycleAndMicrocycle() {
+        let mesocycle = ExportRoutineFolder(id: UUID(), name: "Hypertrophy Block", position: 0)
+        let microcycle = ExportRoutineFolder(id: UUID(), name: "Week 1-4", position: 0, parentID: mesocycle.id)
+        let byID = [mesocycle.id: mesocycle, microcycle.id: microcycle]
 
-        #expect(RoutineCSVExport.cycleNames(folderID: meso.id, foldersByID: byID) == ("Hypertrophy Block", "Week 1-4"))
-        #expect(RoutineCSVExport.cycleNames(folderID: macro.id, foldersByID: byID) == ("Hypertrophy Block", ""))
+        #expect(RoutineCSVExport.cycleNames(folderID: microcycle.id, foldersByID: byID) == ("Hypertrophy Block", "Week 1-4"))
+        #expect(RoutineCSVExport.cycleNames(folderID: mesocycle.id, foldersByID: byID) == ("Hypertrophy Block", ""))
         #expect(RoutineCSVExport.cycleNames(folderID: nil, foldersByID: byID) == ("", ""))
     }
 
     @Test func routinesCSVKeepsEmptyRoutinesAndTargets() throws {
-        let macro = ExportRoutineFolder(id: UUID(), name: "Base", position: 0)
-        let meso = ExportRoutineFolder(id: UUID(), name: "Meso A", position: 0, parentID: macro.id)
+        let mesocycle = ExportRoutineFolder(id: UUID(), name: "Base", position: 0)
+        let microcycle = ExportRoutineFolder(id: UUID(), name: "Micro A", position: 0, parentID: mesocycle.id)
         let library = ExportRoutineLibrary(
-            folders: [macro, meso],
+            folders: [mesocycle, microcycle],
             routines: [
                 ExportRoutine(
-                    id: UUID(), name: "Push Day", folderID: meso.id, position: 0,
+                    id: UUID(), name: "Push Day", folderID: microcycle.id, position: 0,
                     exercises: [
                         ExportRoutineExercise(
                             id: UUID(), exerciseID: UUID(), name: "Bench Press", position: 0,
@@ -246,7 +247,7 @@ struct DataExportFormatTests {
         #expect(String(lines[0]) == RoutineCSVExport.header.joined(separator: ","))
         let setRow = parse(String(lines[1]))
         #expect(setRow[0] == "Base")
-        #expect(setRow[1] == "Meso A")
+        #expect(setRow[1] == "Micro A")
         #expect(setRow[2] == "Push Day")
         #expect(setRow[12] == "8" && setRow[13] == "12" && setRow[14] == "100")
         #expect(setRow[19] == "12|10|8")
@@ -255,6 +256,132 @@ struct DataExportFormatTests {
         #expect(emptyRoutine[2] == "Sketch")
         #expect(emptyRoutine[4] == "ideas only")
         #expect(emptyRoutine.count == RoutineCSVExport.header.count)
+    }
+
+    // MARK: - Microcycle and rest-day CSV
+
+    @Test func microcycleCSVCountsBackfilledExpectedRoutineAndExportsRestMarkers() throws {
+        let mesocycle = ExportRoutineFolder(id: UUID(), name: "Base", position: 0)
+        let microcycle = ExportRoutineFolder(
+            id: UUID(),
+            name: "Upper Lower",
+            position: 0,
+            parentID: mesocycle.id,
+            defaultMicrocycleLengthDays: 10
+        )
+        let routineID = UUID()
+        let trackingID = UUID()
+        let startsAt = Date(timeIntervalSince1970: 1_780_000_000)
+        let endsAt = Date(timeIntervalSince1970: 1_780_864_000)
+        let workout = BackupWorkout(
+            id: UUID(),
+            routineID: routineID,
+            title: "Upper",
+            startedAt: startsAt.addingTimeInterval(-86_400),
+            endedAt: startsAt.addingTimeInterval(-82_800),
+            sourceDevice: nil,
+            notes: nil,
+            externalSource: nil,
+            externalID: nil,
+            importFingerprint: nil,
+            importBatchID: nil,
+            xpAwardedAmount: nil,
+            xpAwardedAt: nil,
+            createdAt: startsAt,
+            updatedAt: startsAt,
+            deletedAt: nil,
+            exercises: [],
+            cardioSessions: []
+        )
+        let snapshotJSON = #"[{"id":"\#(routineID.uuidString)","name":"Upper","position":0}]"#
+        let assignmentData = try JSONEncoder().encode([
+            MicrocycleDayAssignment(
+                day: startsAt.addingTimeInterval(86_400),
+                workoutID: workout.id,
+                assignedAt: startsAt.addingTimeInterval(172_800)
+            ),
+        ])
+        let assignmentJSON = try #require(String(data: assignmentData, encoding: .utf8))
+        let window = BackupMicrocycleWindow(
+            id: UUID(),
+            trackingID: trackingID,
+            folderID: microcycle.id,
+            folderName: microcycle.name,
+            index: 0,
+            startsAt: startsAt,
+            endsAt: endsAt,
+            timeZoneIdentifier: "UTC",
+            routineSnapshotJSON: snapshotJSON,
+            dayAssignmentSnapshotJSON: assignmentJSON,
+            createdAt: startsAt,
+            updatedAt: startsAt,
+            deletedAt: nil
+        )
+        let liveRestDay = BackupRestDay(
+            id: UUID(),
+            date: startsAt.addingTimeInterval(86_400),
+            timeZoneIdentifier: "UTC",
+            createdAt: startsAt,
+            updatedAt: startsAt,
+            deletedAt: nil
+        )
+        let deletedRestDay = BackupRestDay(
+            id: UUID(),
+            date: startsAt.addingTimeInterval(2 * 86_400),
+            timeZoneIdentifier: "UTC",
+            createdAt: startsAt,
+            updatedAt: startsAt,
+            deletedAt: startsAt.addingTimeInterval(3 * 86_400)
+        )
+        let file = ForgeFitBackupFile(
+            exportedAt: endsAt,
+            userID: UUID(),
+            workouts: [workout],
+            microcycleWindows: [window],
+            restDays: [liveRestDay, deletedRestDay]
+        )
+        let library = ExportRoutineLibrary(
+            folders: [mesocycle, microcycle],
+            routines: [ExportRoutine(
+                id: routineID,
+                name: "Upper",
+                folderID: microcycle.id,
+                position: 0
+            )]
+        )
+
+        let windowLines = MicrocycleCSVExport.windows(file: file, routines: library)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+        let windowFields = parse(String(windowLines[1]))
+        #expect(String(windowLines[0]) == MicrocycleCSVExport.windowHeader.joined(separator: ","))
+        #expect(windowFields[0] == trackingID.uuidString)
+        #expect(windowFields[1] == "1")
+        #expect(windowFields[2] == "Base")
+        #expect(windowFields[3] == "Upper Lower")
+        #expect(windowFields[6] == "1")
+        #expect(windowFields[7] == "1")
+
+        let restLines = MicrocycleCSVExport.restDays(file: file)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+        #expect(String(restLines[0]) == MicrocycleCSVExport.restDayHeader.joined(separator: ","))
+        #expect(restLines.count == 3)
+        #expect(parse(String(restLines[1]))[1] == "UTC")
+    }
+
+    @MainActor
+    @Test func routineExportCarriesSyncedMicrocycleDayTarget() throws {
+        let folder = RoutineFolderModel(
+            userID: UUID(),
+            name: "Upper Lower",
+            defaultMicrocycleLengthDays: 10
+        )
+        let library = ExportMapper.routineLibrary(
+            folders: [folder],
+            routines: [],
+            exerciseNames: [:]
+        )
+
+        #expect(try #require(library.folders.first).defaultMicrocycleLengthDays == 10)
     }
 
     // MARK: - Minimal RFC-4180 reader (test-local; the app importer lives in

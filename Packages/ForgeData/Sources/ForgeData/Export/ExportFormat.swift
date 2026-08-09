@@ -10,7 +10,7 @@ import Foundation
 ///   separate appendix keyed by id. The backup's type-system privacy boundary
 ///   stays intact — App Store Guideline 5.1.3(ii) constrains what we put in
 ///   iCloud, not what the user exports into their own hands.
-/// - `routines`: the plan layer (folders as macro/meso cycles, routines,
+/// - `routines`: the plan layer (folders as meso/micro cycles, routines,
 ///   per-set targets), which the backup omits because CloudKit syncs it.
 public struct ForgeFitExportFile: Codable, Sendable {
     /// Version policy matches the backup's: additive optional fields do NOT
@@ -145,18 +145,27 @@ public struct ExportRoutineFolder: Codable, Sendable {
     public var id: UUID
     public var name: String
     public var position: Int
-    /// Folders nest one level: a top-level folder with children is a
-    /// macrocycle, its children are mesocycles.
+    /// Folders nest one level: a parent folder is a mesocycle and its leaf
+    /// children are microcycles.
     public var parentID: UUID?
     /// Present when the folder is archived (hidden but kept). Additive.
     public var archivedAt: Date?
+    public var defaultMicrocycleLengthDays: Int?
 
-    public init(id: UUID, name: String, position: Int, parentID: UUID? = nil, archivedAt: Date? = nil) {
+    public init(
+        id: UUID,
+        name: String,
+        position: Int,
+        parentID: UUID? = nil,
+        archivedAt: Date? = nil,
+        defaultMicrocycleLengthDays: Int? = nil
+    ) {
         self.id = id
         self.name = name
         self.position = position
         self.parentID = parentID
         self.archivedAt = archivedAt
+        self.defaultMicrocycleLengthDays = defaultMicrocycleLengthDays
     }
 }
 

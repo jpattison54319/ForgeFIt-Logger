@@ -7,13 +7,12 @@ import UIKit
 
 /// A branded, full-length snapshot of a training cycle folder. Adapts its layout
 /// to the folder's structure:
-///  - a **mesocycle** (folder of routines) lists each routine with its exercises,
-///  - a **macrocycle** (folder of mesocycle subfolders) groups routines under
-///    each mesocycle heading.
+///  - a **microcycle** (leaf folder) lists each routine with its exercises,
+///  - a **mesocycle** (folder of microcycle subfolders) groups routines under
+///    each microcycle heading.
 /// Renders to a single tall image for sharing.
 struct FolderShareCard: View {
-    /// One block of the cycle: an optional heading (a mesocycle name, for a
-    /// macrocycle) and the routines under it.
+    /// One block of the cycle: an optional microcycle heading and its routines.
     struct Section: Identifiable {
         let id = UUID()
         let title: String?
@@ -21,7 +20,7 @@ struct FolderShareCard: View {
     }
 
     let name: String
-    let isMacro: Bool
+    let isMesocycle: Bool
     let sections: [Section]
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
@@ -33,8 +32,8 @@ struct FolderShareCard: View {
         VStack(alignment: .leading, spacing: 18) {
             RoutineShareHeader(
                 title: name,
-                kicker: isMacro ? "Macrocycle" : "Mesocycle",
-                systemImage: isMacro ? "square.stack.3d.up.fill" : "calendar",
+                kicker: isMesocycle ? "Mesocycle" : "Microcycle",
+                systemImage: isMesocycle ? "square.stack.3d.up.fill" : "calendar",
                 theme: theme
             )
             statBlock
@@ -45,7 +44,7 @@ struct FolderShareCard: View {
             } else {
                 ForEach(sections) { section in
                     if let title = section.title {
-                        // Macrocycle: a mesocycle heading with its routines.
+                        // Mesocycle: a microcycle heading with its routines.
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 8) {
                                 Image(systemName: "calendar").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccent)
@@ -74,8 +73,8 @@ struct FolderShareCard: View {
 
     private var statBlock: some View {
         HStack(spacing: 12) {
-            if isMacro {
-                RoutineShareStat(value: "\(sections.count)", label: "Mesocycles", color: theme.accent, theme: theme)
+            if isMesocycle {
+                RoutineShareStat(value: "\(sections.count)", label: "Microcycles", color: theme.accent, theme: theme)
             }
             RoutineShareStat(value: "\(allRoutines.count)", label: "Routines", color: theme.secondaryAccent, theme: theme)
             RoutineShareStat(value: "\(totalItems)", label: "Items", color: theme.textPrimary, theme: theme)
@@ -169,13 +168,13 @@ struct FolderShareCard: View {
 enum FolderShareRenderer {
     static func image(
         name: String,
-        isMacro: Bool,
+        isMesocycle: Bool,
         sections: [FolderShareCard.Section],
         exercises: [ExerciseLibraryModel],
         theme: AppTheme
     ) -> UIImage? {
         ShareRenderer.image(
-            FolderShareCard(name: name, isMacro: isMacro, sections: sections, exercises: exercises, theme: theme),
+            FolderShareCard(name: name, isMesocycle: isMesocycle, sections: sections, exercises: exercises, theme: theme),
             theme: theme
         )
     }

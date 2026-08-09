@@ -153,7 +153,8 @@ import Testing
     /// these sets fails the walk — a future field addition must be reviewed
     /// (and added here) before it ships in the backup.
     private static let allowedKeys: [String: Set<String>] = [
-        "file": ["schemaVersion", "exportedAt", "userID", "appVersion", "preferences", "workouts", "importBatches"],
+        "file": ["schemaVersion", "exportedAt", "userID", "appVersion", "preferences", "workouts", "importBatches",
+                 "microcycleTrackings", "microcycleWindows", "restDays"],
         "workout": ["id", "routineID", "title", "startedAt", "endedAt", "sourceDevice", "notes",
                     "externalSource", "externalID", "importFingerprint", "importBatchID",
                     "xpAwardedAmount", "xpAwardedAt", "createdAt", "updatedAt", "deletedAt",
@@ -181,6 +182,13 @@ import Testing
         "point": ["t", "lat", "lon", "alt", "acc", "spd"],
         "batch": ["id", "source", "fileName", "importedCount", "skippedDuplicateCount",
                   "warningCount", "startedAt", "endedAt", "createdAt"],
+        "microcycleTracking": ["id", "folderID", "folderName", "anchorDate", "durationDays",
+                               "timeZoneIdentifier", "stateRaw", "showsOnHome", "showsFolderHeader",
+                               "endedAt", "createdAt", "updatedAt", "deletedAt"],
+        "microcycleWindow": ["id", "trackingID", "folderID", "folderName", "index", "startsAt",
+                             "endsAt", "timeZoneIdentifier", "routineSnapshotJSON", "dayAssignmentSnapshotJSON", "createdAt",
+                             "updatedAt", "deletedAt"],
+        "restDay": ["id", "date", "timeZoneIdentifier", "createdAt", "updatedAt", "deletedAt"],
     ]
 
     @MainActor
@@ -206,9 +214,36 @@ import Testing
     @Test func everyObjectLevelStaysWithinDocumentedKeySets() throws {
         let userID = UUID()
         let workout = maximallyPopulatedWorkout(userID: userID)
+        let tracking = MicrocycleTrackingModel(
+            userID: userID,
+            folderID: UUID(),
+            folderName: "Upper Lower",
+            anchorDate: Date(timeIntervalSince1970: 1_780_000_000),
+            durationDays: 10,
+            showsOnHome: false
+        )
+        let window = MicrocycleWindowModel(
+            userID: userID,
+            trackingID: tracking.id,
+            folderID: tracking.folderID,
+            folderName: tracking.folderName,
+            index: 0,
+            startsAt: Date(timeIntervalSince1970: 1_780_000_000),
+            endsAt: Date(timeIntervalSince1970: 1_780_864_000),
+            timeZoneIdentifier: "UTC",
+            routines: []
+        )
+        let restDay = RestDayModel(
+            userID: userID,
+            date: Date(timeIntervalSince1970: 1_780_086_400),
+            timeZoneIdentifier: "UTC"
+        )
         let file = BackupMapper.file(
             workouts: [workout], batches: [], exerciseNames: [workout.exercises[0].exerciseID: "Landmine Press"],
-            preferences: [:], userID: userID, appVersion: nil
+            preferences: [:], userID: userID, appVersion: nil,
+            microcycleTrackings: [tracking],
+            microcycleWindows: [window],
+            restDays: [restDay]
         )
         let data = try BackupMapper.encode(file)
         let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -236,6 +271,85 @@ import Testing
                 for point in session["routePoints"] as? [[String: Any]] ?? [] { check(point, level: "point") }
             }
         }
+        for tracking in root["microcycleTrackings"] as? [[String: Any]] ?? [] {
+            check(tracking, level: "microcycleTracking")
+        }
+        for window in root["microcycleWindows"] as? [[String: Any]] ?? [] {
+            check(window, level: "microcycleWindow")
+        }
+        for restDay in root["restDays"] as? [[String: Any]] ?? [] {
+            check(restDay, level: "restDay")
+        }
+    }
+
+    @MainActor
+    @Test func microcycleAndRestDayBackupRoundTripPreservesDisplayChoicesAndSnapshots() throws {
+        let userID = UUID()
+        let routineID = UUID()
+        let tracking = MicrocycleTrackingModel(
+            userID: userID,
+            folderID: UUID(),
+            folderName: "Upper Lower",
+            anchorDate: Date(timeIntervalSince1970: 1_780_000_000),
+            durationDays: 10,
+            timeZoneIdentifier: "America/New_York",
+            showsOnHome: false,
+            showsFolderHeader: true
+        )
+        let window = MicrocycleWindowModel(
+            userID: userID,
+            trackingID: tracking.id,
+            folderID: tracking.folderID,
+            folderName: tracking.folderName,
+            index: 2,
+            startsAt: Date(timeIntervalSince1970: 1_781_728_000),
+            endsAt: Date(timeIntervalSince1970: 1_782_592_000),
+            timeZoneIdentifier: tracking.timeZoneIdentifier,
+            routines: [.init(id: routineID, name: "Upper A", position: 0)],
+            dayAssignments: [.init(
+                day: Date(timeIntervalSince1970: 1_781_814_400),
+                workoutID: UUID(),
+                assignedAt: Date(timeIntervalSince1970: 1_781_900_000)
+            )]
+        )
+        let restDay = RestDayModel(
+            userID: userID,
+            date: Date(timeIntervalSince1970: 1_781_814_400),
+            timeZoneIdentifier: tracking.timeZoneIdentifier
+        )
+        let file = BackupMapper.file(
+            workouts: [],
+            batches: [],
+            exerciseNames: [:],
+            preferences: [:],
+            userID: userID,
+            appVersion: nil,
+            microcycleTrackings: [tracking],
+            microcycleWindows: [window],
+            restDays: [restDay]
+        )
+        let decoded = try BackupMapper.decode(try BackupMapper.encode(file))
+        let restoredTracking = BackupMapper.trackingModel(
+            from: try #require(decoded.microcycleTrackings?.first),
+            userID: userID
+        )
+        let restoredWindow = BackupMapper.windowModel(
+            from: try #require(decoded.microcycleWindows?.first),
+            userID: userID
+        )
+        let restoredRestDay = BackupMapper.restDayModel(
+            from: try #require(decoded.restDays?.first),
+            userID: userID
+        )
+
+        #expect(!restoredTracking.showsOnHome)
+        #expect(restoredTracking.showsFolderHeader)
+        #expect(restoredTracking.durationDays == 10)
+        #expect(restoredWindow.routines.map(\.id) == [routineID])
+        #expect(restoredWindow.dayAssignments == window.dayAssignments)
+        #expect(restoredWindow.index == 2)
+        #expect(restoredRestDay.date == restDay.date)
+        #expect(restoredRestDay.timeZoneIdentifier == tracking.timeZoneIdentifier)
     }
 
     @MainActor
@@ -354,6 +468,32 @@ import Testing
         #expect(session.lengthsCompleted == nil)
         #expect(session.totalStrokes == nil)
         #expect(session.strokeStyleRaw == nil)
+        #expect(decoded.microcycleTrackings == nil)
+        #expect(decoded.microcycleWindows == nil)
+        #expect(decoded.restDays == nil)
+    }
+
+    @MainActor
+    @Test func backupWithoutDisplayFlagsDefaultsBothMicrocycleSurfacesToVisible() throws {
+        let json = """
+        {"schemaVersion":1,"exportedAt":"2026-08-08T12:00:00Z",
+         "userID":"11111111-1111-1111-1111-111111111111","preferences":{},"workouts":[],
+         "importBatches":[],"microcycleTrackings":[{
+           "id":"22222222-2222-2222-2222-222222222222",
+           "folderID":"33333333-3333-3333-3333-333333333333",
+           "folderName":"Upper Lower","anchorDate":"2026-08-01T04:00:00Z",
+           "durationDays":10,"timeZoneIdentifier":"America/New_York","stateRaw":"active",
+           "createdAt":"2026-08-01T12:00:00Z","updatedAt":"2026-08-01T12:00:00Z"
+         }],"microcycleWindows":[],"restDays":[]}
+        """
+        let decoded = try BackupMapper.decode(Data(json.utf8))
+        let model = BackupMapper.trackingModel(
+            from: try #require(decoded.microcycleTrackings?.first),
+            userID: decoded.userID
+        )
+
+        #expect(model.showsOnHome)
+        #expect(model.showsFolderHeader)
     }
 
     @MainActor

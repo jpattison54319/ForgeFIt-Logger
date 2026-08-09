@@ -2,13 +2,13 @@ import Foundation
 
 /// The routines CSV: one row per routine target set with the training-cycle
 /// hierarchy flattened into leading columns. Folder nesting is one level —
-/// a routine in a child folder belongs to that mesocycle inside its parent
-/// macrocycle; a routine in a top-level folder belongs to a macrocycle with
-/// no mesocycle; ungrouped routines leave both empty. Routines with no sets
+/// a routine in a child folder belongs to that microcycle inside its parent
+/// mesocycle; a routine in a standalone leaf folder belongs to a microcycle
+/// with no mesocycle; ungrouped routines leave both empty. Routines with no sets
 /// still get one row so their name and notes survive the export.
 public enum RoutineCSVExport {
     public static let header: [String] = [
-        "macrocycle", "mesocycle", "routine", "routine_position", "routine_notes",
+        "mesocycle", "microcycle", "routine", "routine_position", "routine_notes",
         "exercise", "exercise_position", "superset_group", "progression_rule", "exercise_notes",
         "set_position", "set_type", "target_reps_low", "target_reps_high",
         "target_weight_kg", "target_rpe", "target_rir", "target_duration_seconds",
@@ -22,10 +22,10 @@ public enum RoutineCSVExport {
         )
         var rows: [[String]] = []
         for routine in library.routines {
-            let (macro, meso) = cycleNames(folderID: routine.folderID, foldersByID: foldersByID)
+            let (meso, micro) = cycleNames(folderID: routine.folderID, foldersByID: foldersByID)
             let routineColumns = [
-                macro,
                 meso,
+                micro,
                 routine.name,
                 CSVWriter.number(routine.position),
                 routine.notes ?? "",
@@ -60,15 +60,18 @@ public enum RoutineCSVExport {
         return CSVWriter.document(header: header, rows: rows)
     }
 
-    /// (macrocycle, mesocycle) for a routine's owning folder.
+    /// (mesocycle, microcycle) for a routine's owning folder.
     static func cycleNames(
         folderID: UUID?,
         foldersByID: [UUID: ExportRoutineFolder]
-    ) -> (macro: String, meso: String) {
+    ) -> (meso: String, micro: String) {
         guard let folderID, let folder = foldersByID[folderID] else { return ("", "") }
         if let parentID = folder.parentID, let parent = foldersByID[parentID] {
             return (parent.name, folder.name)
         }
-        return (folder.name, "")
+        if foldersByID.values.contains(where: { $0.parentID == folder.id }) {
+            return (folder.name, "")
+        }
+        return ("", folder.name)
     }
 }

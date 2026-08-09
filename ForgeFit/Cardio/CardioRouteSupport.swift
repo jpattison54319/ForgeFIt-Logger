@@ -137,6 +137,10 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     /// Phone GPS running total. Consumers must use
     /// `authoritativeLiveDistance` so a fresh Watch stream and speech agree.
     private(set) var liveDistanceMeters: Double = 0
+    /// Positive altitude deltas accumulated from the same accepted GPS fixes.
+    /// This lets an outdoor climb goal progress while the route is recording;
+    /// the persisted route remains the final source of truth at completion.
+    private(set) var liveElevationGainMeters: Double = 0
 
     @ObservationIgnored private let manager = CLLocationManager()
     private(set) var recordingSessionID: UUID?
@@ -145,6 +149,7 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     @ObservationIgnored private var pendingStartSessionID: UUID?
     private var watchDistanceReading: LiveDistanceReading?
     private var phoneGPSDistanceReading: LiveDistanceReading?
+    @ObservationIgnored private var watchDistanceBaselineMeters: Double?
     @ObservationIgnored private var milestoneTracker = DistanceMilestoneTracker(
         boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
     )
@@ -190,8 +195,14 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
         locations = []
         lastLiveLocation = nil
         liveDistanceMeters = 0
+        liveElevationGainMeters = 0
         watchDistanceReading = nil
         phoneGPSDistanceReading = nil
+        // Watch workout metrics are cumulative across a mixed workout. A
+        // cardio segment starts at zero, so retain the total already accrued.
+        watchDistanceBaselineMeters = LiveMetricsHub.shared.liveMetrics?.distanceMeters.map {
+            max(0, $0)
+        }
         milestoneTracker = DistanceMilestoneTracker(
             boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
         )
@@ -228,8 +239,17 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
               let meters,
               meters.isFinite,
               meters >= 0 else { return }
+        if watchDistanceBaselineMeters == nil {
+            // If phone GPS has already covered part of the segment, align the
+            // first Watch packet to that value rather than making live distance
+            // jump backward to zero when Watch becomes authoritative.
+            watchDistanceBaselineMeters = max(
+                0,
+                meters - (phoneGPSDistanceReading?.meters ?? 0)
+            )
+        }
         watchDistanceReading = LiveDistanceReading(
-            meters: meters,
+            meters: max(0, meters - (watchDistanceBaselineMeters ?? meters)),
             observedAt: receivedAt,
             source: .watch
         )
@@ -260,14 +280,15 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
         manager.pausesLocationUpdatesAutomatically = true
-        PaceAnnouncer.shared.stop()
         recordingSessionID = nil
         pendingStartSessionID = nil
         locations = []
         lastLiveLocation = nil
         liveDistanceMeters = 0
+        liveElevationGainMeters = 0
         watchDistanceReading = nil
         phoneGPSDistanceReading = nil
+        watchDistanceBaselineMeters = nil
         milestoneTracker = DistanceMilestoneTracker(
             boundaryMeters: CardioRouteMath.defaultSplitDistanceMeters
         )
@@ -295,6 +316,11 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
                 if let last = self.lastLiveLocation {
                     let segment = location.distance(from: last)
                     if segment >= 1 { self.liveDistanceMeters += segment }
+                    if last.verticalAccuracy >= 0,
+                       location.verticalAccuracy >= 0,
+                       location.altitude > last.altitude {
+                        self.liveElevationGainMeters += location.altitude - last.altitude
+                    }
                 }
                 self.lastLiveLocation = location
                 let receivedAt = Date.now
@@ -311,6 +337,13 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
     private func announceMilestonesIfCrossed(at timestamp: Date) {
         guard let sessionID = recordingSessionID,
               let distance = authoritativeLiveDistance(for: sessionID, at: timestamp) else { return }
+
+        CardioGoalAnnouncer.shared.evaluate(
+            sessionID: sessionID,
+            distanceMeters: distance,
+            elevationGainMeters: liveElevationGainMeters,
+            at: timestamp
+        )
 
         for milestone in milestoneTracker.consume(distanceMeters: distance) {
             let splitSeconds = splitAnchorDate.map { max(1, Int(timestamp.timeIntervalSince($0))) } ?? 0

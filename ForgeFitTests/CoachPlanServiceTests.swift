@@ -7,7 +7,8 @@ import Testing
 
 @MainActor
 struct CoachPlanServiceTests {
-    private static let activeMesoFolderKey = "activeMesoFolderID"
+    private static let activeMicrocycleFolderKey = CyclePreferenceMigration.activeMicrocycleKey
+    private static let activeMesocycleFolderKey = CyclePreferenceMigration.activeMesocycleKey
 
     private static func answers(
         focus: TrainingFocus = .strength,
@@ -34,18 +35,25 @@ struct CoachPlanServiceTests {
         ProgramCandidate(id: id, name: id, focus: .strength, goal: "muscle gain", level: "beginner", daysPerWeek: 3, weeks: 6, equipment: [])
     }
 
-    /// Runs `body` with `activeMesoFolderID` reset to nil beforehand and
-    /// restored to its original value afterward, so these tests never leak
-    /// state into `UserDefaults.standard` (shared with the rest of the app).
-    private static func withIsolatedActiveMesoDefault(_ body: () throws -> Void) rethrows {
+    /// Runs `body` with both cycle selections reset beforehand and restored
+    /// afterward, so these tests never leak state into `UserDefaults.standard`
+    /// (shared with the rest of the app).
+    private static func withIsolatedCycleDefaults(_ body: () throws -> Void) rethrows {
         let defaults = UserDefaults.standard
-        let original = defaults.string(forKey: activeMesoFolderKey)
-        defaults.removeObject(forKey: activeMesoFolderKey)
+        let originalMicrocycle = defaults.string(forKey: activeMicrocycleFolderKey)
+        let originalMesocycle = defaults.string(forKey: activeMesocycleFolderKey)
+        defaults.removeObject(forKey: activeMicrocycleFolderKey)
+        defaults.removeObject(forKey: activeMesocycleFolderKey)
         defer {
-            if let original {
-                defaults.set(original, forKey: activeMesoFolderKey)
+            if let originalMicrocycle {
+                defaults.set(originalMicrocycle, forKey: activeMicrocycleFolderKey)
             } else {
-                defaults.removeObject(forKey: activeMesoFolderKey)
+                defaults.removeObject(forKey: activeMicrocycleFolderKey)
+            }
+            if let originalMesocycle {
+                defaults.set(originalMesocycle, forKey: activeMesocycleFolderKey)
+            } else {
+                defaults.removeObject(forKey: activeMesocycleFolderKey)
             }
         }
         try body()
@@ -53,8 +61,8 @@ struct CoachPlanServiceTests {
 
     // MARK: - confirmPlan
 
-    @Test func confirmPlanImportsFolderCreatesActiveProgramAndSyncsActiveMesoDefault() throws {
-        try Self.withIsolatedActiveMesoDefault {
+    @Test func confirmPlanImportsFolderCreatesActiveProgramAndSyncsActiveMicrocycleDefault() throws {
+        try Self.withIsolatedCycleDefaults {
             let (container, context) = try TestStore.make()
 
             // A pre-existing routine that must survive untouched.
@@ -80,14 +88,14 @@ struct CoachPlanServiceTests {
             #expect(routines.contains { $0.folderID == folderID })
             #expect(routines.contains { $0.id == priorRoutine.id && $0.folderID == nil })
 
-            #expect(UserDefaults.standard.string(forKey: Self.activeMesoFolderKey) == folderID.uuidString)
+            #expect(UserDefaults.standard.string(forKey: Self.activeMicrocycleFolderKey) == folderID.uuidString)
             #expect(CoachPlanService.activeProgram(in: context)?.id == program.id)
             _ = container
         }
     }
 
     @Test func confirmingSecondPlanDeactivatesFirstWithoutTouchingItsFolder() throws {
-        try Self.withIsolatedActiveMesoDefault {
+        try Self.withIsolatedCycleDefaults {
             let (container, context) = try TestStore.make()
 
             let first = try #require(CoachPlanService.confirmPlan(
@@ -139,7 +147,7 @@ struct CoachPlanServiceTests {
     // MARK: - attachPlan
 
     @Test func attachPlanActivatesWithoutModifyingTheFolder() throws {
-        try Self.withIsolatedActiveMesoDefault {
+        try Self.withIsolatedCycleDefaults {
             let (container, context) = try TestStore.make()
 
             let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Hand Built Split")
@@ -163,7 +171,7 @@ struct CoachPlanServiceTests {
             let routines = try context.fetch(FetchDescriptor<RoutineModel>()).filter { $0.folderID == folder.id }
             #expect(routines.map(\.name) == ["Day 1"])
 
-            #expect(UserDefaults.standard.string(forKey: Self.activeMesoFolderKey) == folder.id.uuidString)
+            #expect(UserDefaults.standard.string(forKey: Self.activeMicrocycleFolderKey) == folder.id.uuidString)
             _ = container
         }
     }
@@ -194,7 +202,7 @@ struct CoachPlanServiceTests {
     // MARK: - updatePlan / stopCoaching
 
     @Test func updatePlanEditsWeeksAndTargetAndSyncsProfileCadence() throws {
-        try Self.withIsolatedActiveMesoDefault {
+        try Self.withIsolatedCycleDefaults {
             let (container, context) = try TestStore.make()
 
             let coached = try #require(CoachPlanService.confirmPlan(
@@ -238,7 +246,7 @@ struct CoachPlanServiceTests {
     }
 
     @Test func stopCoachingDeactivatesWithoutDeletingAnything() throws {
-        try Self.withIsolatedActiveMesoDefault {
+        try Self.withIsolatedCycleDefaults {
             let (container, context) = try TestStore.make()
 
             let coached = try #require(CoachPlanService.confirmPlan(

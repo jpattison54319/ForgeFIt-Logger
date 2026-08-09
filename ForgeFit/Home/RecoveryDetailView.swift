@@ -108,8 +108,6 @@ struct RecoveryDetailView: View {
                     onToggle: toggleCheckinTag
                 )
 
-                AdvancedLoadDisclosure(report: report) { selectedInfo = $0 }
-
             case .trends:
                 if HealthMetricsStore.shared.hrvGapDetected {
                     GarminHRVGapCard()
@@ -854,103 +852,6 @@ private struct HealthSignalRows: View {
     }
 }
 
-// MARK: - Advanced load
-
-private struct AdvancedLoadDisclosure: View {
-    @Environment(\.theme) private var theme
-    let report: RecoveryEngine.Report
-    let onInfo: (RecoveryInfoTopic) -> Void
-    @State private var expanded = false
-
-    private var baselineValue: String {
-        report.trainingLoad.state == .building
-            ? "—"
-            : Int(report.chronicLoad.rounded()).formatted()
-    }
-
-    private var comparisonValue: String {
-        switch report.trainingLoad.state {
-        case .building:
-            return "\(report.trainingLoad.baselineDaysAvailable)/42d"
-        case .noRecentLoad:
-            return "No baseline"
-        case .sparseBaseline:
-            return "Too light"
-        case .ready:
-            guard let ratio = report.loadRatio else { return "—" }
-            let percent = Int((abs(ratio - 1) * 100).rounded())
-            if percent <= 5 { return "Near" }
-            return "\(percent)% \(ratio > 1 ? "above" : "below")"
-        }
-    }
-
-    var body: some View {
-        Card {
-            DisclosureGroup(isExpanded: $expanded) {
-                VStack(alignment: .leading, spacing: Space.lg) {
-                    Text("Descriptive context only. This comparison does not change readiness or predict injury.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    HStack {
-                        StatColumn(label: "Last 7d", value: Int(report.acuteLoad.rounded()).formatted())
-                        StatColumn(label: "Prior weeks median", value: baselineValue)
-                        StatColumn(label: "Comparison", value: comparisonValue)
-                    }
-
-                    HStack {
-                        StatColumn(label: "Variability", value: report.loadVariability.map { "\(Int($0.rounded()))" } ?? "-")
-                        StatColumn(label: "Top-day share", value: report.loadConcentration.map { "\(Int($0.rounded()))%" } ?? "-")
-                        StatColumn(label: "Recent sessions", value: "\(report.trainingLoad.recentSessionCount)")
-                    }
-
-                    if report.trainingLoad.state == .building {
-                        Text("ForgeFit needs \(report.trainingLoad.baselineDaysRemaining) more prior day\(report.trainingLoad.baselineDaysRemaining == 1 ? "" : "s") before showing a comparison.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if report.trainingLoad.state == .sparseBaseline {
-                        Text("The prior complete weeks have a zero median, so a percentage comparison would be misleading.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if report.trainingLoad.comparisonSessionCount == 0 {
-                        Text("No workout has enough duration or component detail to estimate load yet.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if report.trainingLoad.estimatedEffortSessionCount > 0 {
-                        Text("\(report.trainingLoad.estimatedEffortSessionCount) comparison session\(report.trainingLoad.estimatedEffortSessionCount == 1 ? "" : "s") use component estimates because whole-session CR10 was not logged.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if !report.missingInputs.isEmpty {
-                        Text("Missing: \(report.missingInputs.joined(separator: ", "))")
-                            .font(.label)
-                            .foregroundStyle(theme.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.top, Space.md)
-            } label: {
-                HStack(spacing: Space.sm) {
-                    Text("Advanced load details")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                    InfoButton { onInfo(.trainingLoad) }
-                    Spacer()
-                }
-            }
-            .tint(theme.textSecondary)
-        }
-    }
-}
-
 // MARK: - Info sheets
 
 private struct MetricInfoSheet: View {
@@ -1000,7 +901,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
     case systemicScore
     case muscleScore
     case cardioScore
-    case trainingLoad
     case confidence
 
     var id: String { rawValue }
@@ -1011,7 +911,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .systemicScore: "Seven-day recovery trend"
         case .muscleScore: "Muscle freshness"
         case .cardioScore: "Cardio freshness"
-        case .trainingLoad: "Training load"
         case .confidence: "Data coverage"
         }
     }
@@ -1026,8 +925,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
             return "A recency-weighted estimate of logged training exposure. Primary and secondary muscle work use consistent weights, and recent high-effort sets add modestly more exposure. The decay setting is a display model, not a biological recovery clock."
         case .cardioScore:
             return "A recency-weighted cardio-exposure estimate using one locked load method: preferably duration × whole-session CR10, otherwise genuinely measured zone-duration load. Methods are never mixed."
-        case .trainingLoad:
-            return "The shared scale prefers duration minutes × whole-session CR10. If that rating is missing, ForgeFit estimates strength from completed effective sets and set RPE or RIR, and cardio from duration plus logged effort or heart-rate zones. The last seven days compare with at least six prior complete, non-overlapping weeks."
         case .confidence:
             return "Shows comparable data availability and baseline maturity. It is not a statistical confidence interval. Missing data shrinks the score toward 50 and can withhold it entirely."
         }
@@ -1043,8 +940,6 @@ private enum RecoveryInfoTopic: String, Identifiable {
             return "Lower freshness means more recent modeled exposure, not incomplete biological recovery."
         case .cardioScore:
             return "A score of 50 means modeled remaining exposure equals one typical same-method session; it does not mean 50% recovered."
-        case .trainingLoad:
-            return "Use this to understand how recent training differs from your own history, not as an injury warning or an automatic reason to change today's workout."
         case .confidence:
             return "Low coverage means the score should be interpreted less strongly or withheld."
         }
