@@ -364,7 +364,7 @@ struct ActiveWorkoutLoggerView: View {
                 if orderedItems.isEmpty {
                     emptyLoggerState
                 }
-                SecondaryButton(title: "Add to Workout", systemImage: "plus") { showAddPicker = true }
+                SecondaryButton(title: "Add to Workout", systemImage: "plus", action: presentExercisePicker)
                     .accessibilityIdentifier("add-to-workout")
             }
             .padding(.horizontal, Space.lg)
@@ -731,58 +731,21 @@ struct ActiveWorkoutLoggerView: View {
         }
     }
 
-    /// Guided empty state (F5): one-tap picks so the first exercise never
-    /// requires a search — recents first, focus-matched staples otherwise.
+    /// The empty state keeps the add affordance visible where users first look;
+    /// the full-width action below remains the primary path.
     private var emptyLoggerState: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            EmptyStateCard(
-                title: "Ready to log",
-                message: "Add your first exercise — quick picks below, or search the full library.",
-                systemImage: "plus.circle"
-            )
-            ForEach(suggestedStarterExercises, id: \.id) { exercise in
-                Button {
-                    addExercises([exercise])
-                } label: {
-                    HStack(spacing: Space.md) {
-                        Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Spacer()
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(theme.accent)
-                    }
-                    .padding(Space.md)
-                    .background(theme.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(PressableButtonStyle())
-            }
-        }
+        EmptyStateCard(
+            title: "Ready to log",
+            message: "Add your first exercise to this workout.",
+            systemImage: "plus.circle",
+            iconActionLabel: "Add first exercise",
+            iconActionIdentifier: "empty-workout-add-exercise",
+            iconAction: presentExercisePicker
+        )
     }
 
-    private var suggestedStarterExercises: [ExerciseLibraryModel] {
-        var picks: [ExerciseLibraryModel] = []
-        let completed = history
-            .filter { $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-        for past in completed {
-            for we in past.exercises {
-                guard picks.count < 4 else { return picks }
-                if let exercise = exerciseByID[we.exerciseID],
-                   !exercise.isYoga,
-                   !picks.contains(where: { $0.id == exercise.id }) {
-                    picks.append(exercise)
-                }
-            }
-        }
-        for slug in TrainingFocus.stored.starterExerciseSlugs where picks.count < 4 {
-            let id = ExerciseCatalog.deterministicID(for: slug)
-            if let exercise = exerciseByID[id],
-               !picks.contains(where: { $0.id == exercise.id }) {
-                picks.append(exercise)
-            }
-        }
-        return picks
+    private func presentExercisePicker() {
+        showAddPicker = true
     }
 
     private struct ReferenceCaches {

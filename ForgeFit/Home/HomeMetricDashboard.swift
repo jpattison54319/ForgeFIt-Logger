@@ -88,7 +88,7 @@ struct HomeMetricGrid: View {
         }
         let isBuilding = !baselineReady || score == nil
         let resolvedScore = score ?? 0
-        return HomeMetricTile(
+        return MetricSummaryTile(
             title: "Recovery",
             systemImage: "heart.text.square.fill",
             value: isBuilding ? "Building" : "\(Int((resolvedScore * 100).rounded()))",
@@ -119,7 +119,7 @@ struct HomeMetricGrid: View {
             progress = SleepMetricPresentation.progress(for: sleep)
             looksPartial = sleep?.sleepLikelyPartial == true && sleep?.sleepUserCorrected == false
         }
-        return HomeMetricTile(
+        return MetricSummaryTile(
             title: "Sleep",
             systemImage: "moon.zzz.fill",
             value: value,
@@ -154,7 +154,7 @@ struct HomeMetricGrid: View {
             target = strain.targetRange
             isLoading = false
         }
-        return HomeStrainTile(
+        return StrainSummaryTile(
             score: score,
             usualRange: target,
             isLoading: isLoading,
@@ -181,7 +181,7 @@ struct HomeMetricGrid: View {
             evaluated = health.evaluatedCount
             outside = health.outsideRangeCount
         }
-        return HomeMetricTile(
+        return MetricSummaryTile(
             title: "Health",
             systemImage: "waveform.path.ecg.rectangle.fill",
             value: headline,
@@ -196,8 +196,8 @@ struct HomeMetricGrid: View {
         )
     }
 
-    private func loadingTile(title: String, systemImage: String) -> HomeMetricTile {
-        HomeMetricTile(
+    private func loadingTile(title: String, systemImage: String) -> MetricSummaryTile {
+        MetricSummaryTile(
             title: title,
             systemImage: systemImage,
             value: "Loading",
@@ -287,13 +287,15 @@ struct DailyStrainGaugePresentation: Equatable {
     }
 }
 
-private struct HomeStrainTile: View {
+struct StrainSummaryTile: View {
     @Environment(\.theme) private var theme
 
     let score: Double?
     let usualRange: ClosedRange<Double>?
     let isLoading: Bool
     let isRefreshing: Bool
+    var showsDisclosure = true
+    var missingLabel: String? = nil
 
     private var presentation: DailyStrainGaugePresentation {
         DailyStrainGaugePresentation(score: score, usualRange: usualRange)
@@ -325,14 +327,16 @@ private struct HomeStrainTile: View {
                             .controlSize(.mini)
                             .tint(theme.textTertiary)
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(theme.textTertiary)
+                    if showsDisclosure {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                 }
 
                 StrainSemicircleGauge(
                     position: presentation.position,
-                    label: isLoading ? "Loading today" : presentation.band.title,
+                    label: isLoading ? "Loading today" : missingLabel ?? presentation.band.title,
                     tint: tint
                 )
             }
@@ -341,13 +345,14 @@ private struct HomeStrainTile: View {
         .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Opens Strain details")
+        .accessibilityHint(showsDisclosure ? "Opens Strain details" : "")
     }
 
     private var accessibilityLabel: String {
         guard !isLoading else { return "Strain, loading today's data" }
         guard let score else {
-            return "Strain, collecting baseline. Your personal score needs more comparable history."
+            return missingLabel.map { "Strain, \($0.lowercased())" }
+                ?? "Strain, collecting baseline. Your personal score needs more comparable history."
         }
         let scoreText = score.formatted(.number.precision(.fractionLength(1)))
         guard let usualRange else {
@@ -502,7 +507,7 @@ private struct StrainSemicircleArc: Shape {
     }
 }
 
-private struct HomeMetricTile: View {
+struct MetricSummaryTile: View {
     @Environment(\.theme) private var theme
 
     let title: String
@@ -516,6 +521,7 @@ private struct HomeMetricTile: View {
     /// Fresh data is being fetched behind the numbers currently shown —
     /// distinct from `isLoading`, which means there is nothing to show yet.
     var isRefreshing = false
+    var showsDisclosure = true
 
     var body: some View {
         Card(padding: Space.md) {
@@ -534,9 +540,11 @@ private struct HomeMetricTile: View {
                             .controlSize(.mini)
                             .tint(theme.textTertiary)
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(theme.textTertiary)
+                    if showsDisclosure {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -586,7 +594,7 @@ private struct HomeMetricTile: View {
         .contentShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title), \(value)\(suffix.map { " \($0)" } ?? ""), \(caption)\(isRefreshing ? ", updating" : "")")
-        .accessibilityHint("Opens \(title) details")
+        .accessibilityHint(showsDisclosure ? "Opens \(title) details" : "")
     }
 }
 

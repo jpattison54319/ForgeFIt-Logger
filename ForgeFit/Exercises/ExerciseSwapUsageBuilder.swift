@@ -7,11 +7,9 @@ enum ExerciseSwapUsageBuilder {
     static func profiles(
         from workouts: [WorkoutModel]
     ) -> [UUID: ExerciseSwapSuggester.UsageProfile] {
-        var datesByExerciseID: [UUID: [Date]] = [:]
+        var completedWorkoutCountByExerciseID: [UUID: Int] = [:]
 
         for workout in workouts where workout.endedAt != nil && workout.deletedAt == nil {
-            guard let endedAt = workout.endedAt else { continue }
-
             let completedCardioRowIDs = Set(
                 workout.cardioSessions.compactMap { session -> UUID? in
                     guard session.endedAt != nil, session.deletedAt == nil else { return nil }
@@ -29,10 +27,12 @@ enum ExerciseSwapUsageBuilder {
             }
 
             for exerciseID in exerciseIDsUsedInWorkout {
-                datesByExerciseID[exerciseID, default: []].append(endedAt)
+                completedWorkoutCountByExerciseID[exerciseID, default: 0] += 1
             }
         }
 
-        return datesByExerciseID.mapValues(ExerciseSwapSuggester.UsageProfile.init(sessionDates:))
+        return completedWorkoutCountByExerciseID.mapValues {
+            ExerciseSwapSuggester.UsageProfile(completedWorkoutCount: $0)
+        }
     }
 }

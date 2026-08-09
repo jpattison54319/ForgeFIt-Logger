@@ -5,6 +5,7 @@ struct MicrocycleDayPresentation: Identifiable, Equatable {
     let date: Date
     let index: Int
     let status: MicrocycleDayStatus
+    let routineMarkers: [String]
     let isToday: Bool
 
     var id: Date { date }
@@ -36,12 +37,17 @@ enum MicrocycleDayTimeline {
             return (date, index)
         }
         let base = dates.map { day -> MicrocycleDayPresentation in
-            let status: MicrocycleDayStatus
-            if !MicrocycleDayAssignmentService.dayWorkouts(
+            let dayWorkouts = MicrocycleDayAssignmentService.dayWorkouts(
                 on: day.date,
                 in: window,
                 workouts: workouts
-            ).isEmpty {
+            )
+            let routineMarkers = MicrocycleRoutineMarker.markers(
+                for: dayWorkouts.compactMap(\.workout.routineID),
+                in: window.routines
+            )
+            let status: MicrocycleDayStatus
+            if !dayWorkouts.isEmpty {
                 status = .trained
             } else if restDays.contains(where: {
                 $0.deletedAt == nil && calendar.isDate($0.date, inSameDayAs: day.date)
@@ -54,6 +60,7 @@ enum MicrocycleDayTimeline {
                 date: day.date,
                 index: day.index,
                 status: status,
+                routineMarkers: routineMarkers,
                 isToday: calendar.isDate(day.date, inSameDayAs: now)
             )
         }
@@ -69,6 +76,7 @@ enum MicrocycleDayTimeline {
                 date: day.date,
                 index: day.index,
                 status: .ready,
+                routineMarkers: day.routineMarkers,
                 isToday: day.isToday
             )
         }

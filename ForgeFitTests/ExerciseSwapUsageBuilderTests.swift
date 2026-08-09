@@ -32,7 +32,7 @@ struct ExerciseSwapUsageBuilderTests {
 
         let profiles = ExerciseSwapUsageBuilder.profiles(from: [workout])
 
-        #expect(profiles[exerciseID]?.sessionDates == [endedAt])
+        #expect(profiles[exerciseID]?.completedWorkoutCount == 1)
         _ = container
     }
 
@@ -85,7 +85,32 @@ struct ExerciseSwapUsageBuilderTests {
 
         let profiles = ExerciseSwapUsageBuilder.profiles(from: [workout])
 
-        #expect(profiles[exerciseID]?.sessionDates == [endedAt])
+        #expect(profiles[exerciseID]?.completedWorkoutCount == 1)
+        _ = container
+    }
+
+    @Test func repeatedCompletedWorkoutsIncrementLifetimeFavoriteCount() throws {
+        let (container, context) = try TestStore.make()
+        let exerciseID = UUID()
+        let workouts = (0..<4).map { offset in
+            let completedAt = Date(timeIntervalSince1970: 1_750_000_000 + Double(offset * 86_400))
+            return WorkoutModel(
+                userID: userID,
+                endedAt: completedAt,
+                exercises: [
+                    WorkoutExerciseModel(
+                        userID: userID,
+                        exerciseID: exerciseID,
+                        sets: [SetModel(userID: userID, completedAt: completedAt)]
+                    )
+                ]
+            )
+        }
+        workouts.forEach(context.insert)
+
+        let profiles = ExerciseSwapUsageBuilder.profiles(from: workouts)
+
+        #expect(profiles[exerciseID]?.completedWorkoutCount == 4)
         _ = container
     }
 }

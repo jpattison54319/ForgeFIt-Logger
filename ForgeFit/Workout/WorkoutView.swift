@@ -61,6 +61,7 @@ struct WorkoutHomeView: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
     @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let routines: [RoutineModel]
     let workouts: [WorkoutModel]
@@ -96,12 +97,15 @@ struct WorkoutHomeView: View {
     /// make folder hover feedback specific instead of vague.
     @State private var draggedPayload: DragPayload?
     @State private var dropFeedback: DropFeedback?
+    /// Reference-backed so per-frame finger updates invalidate only the small
+    /// collapse overlay, never the model-backed routine library underneath.
+    @State private var routineReorderSession: RoutineReorderSession?
     @State private var showExploreLibrary = false
-    /// Accessible alternative to drag-reordering: a List with drag handles
-    /// that VoiceOver / Switch Control can operate, matching the reorder mode
-    /// already used in the routine editor and the live logger.
+    /// Accessible alternative to direct card dragging: a List with native drag
+    /// handles that VoiceOver and Switch Control can operate.
     @State private var editingOrder = false
     @State private var trackingFolder: RoutineFolderModel?
+    @State private var editingMicrocycleTracking: MicrocycleTrackingModel?
     @State private var alternationRoutine: RoutineModel?
 
     /// A mesocycle can contain several microcycles. Home uses the active
@@ -114,7 +118,11 @@ struct WorkoutHomeView: View {
     private var ungroupedCollapsed = false
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.position < $1.position }
+        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted {
+            if $0.position != $1.position { return $0.position < $1.position }
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
     }
     private var folders: [RoutineFolderModel] {
         // CloudKit can deliver a pre-split record after launch cleanup. Keep
@@ -153,19 +161,60 @@ struct WorkoutHomeView: View {
             workouts: workouts
         )
     }
-    private func displayRoutines(_ source: [RoutineModel]) -> [RoutineModel] {
+    private func reorderItems(_ source: [RoutineModel]) -> [RoutineReorderSession.Item] {
         let sourceIDs = Set(source.map(\.id))
         let states = RoutineAlternationService.states(
             alternations: alternations,
             routines: activeRoutines,
             workouts: workouts
         )
-        let suppressedPartners: Set<UUID> = Set(states.compactMap { state -> UUID? in
-            guard state.owner.folderID == state.partner.folderID,
-               sourceIDs.contains(state.owner.id), sourceIDs.contains(state.partner.id) else { return nil }
-            return state.partner.id
-        })
-        return source.filter { !suppressedPartners.contains($0.id) }
+        let pairedStates = states.filter {
+            sourceIDs.contains($0.owner.id) && sourceIDs.contains($0.partner.id)
+        }
+        var statesByOwner: [UUID: RoutineAlternationService.State] = [:]
+        for state in pairedStates where statesByOwner[state.owner.id] == nil {
+            statesByOwner[state.owner.id] = state
+        }
+        let suppressedPartners = Set(pairedStates.map(\.partner.id))
+
+        return source.compactMap { routine in
+            if suppressedPartners.contains(routine.id) { return nil }
+            guard let state = statesByOwner[routine.id] else {
+                return RoutineReorderSession.Item(
+                    id: routine.id,
+                    routineIDs: [routine.id],
+                    name: routine.name
+                )
+            }
+            let pairIDs = Set([state.owner.id, state.partner.id])
+            let orderedPairIDs = source.filter { pairIDs.contains($0.id) }.map(\.id)
+            return RoutineReorderSession.Item(
+                id: state.owner.id,
+                routineIDs: orderedPairIDs,
+                name: "\(state.owner.name) / \(state.partner.name)"
+            )
+        }
+    }
+
+    private func routineRows(in destination: RoutineReorderSession.Destination) -> [RoutineModel] {
+        // Deliberately ignore the gesture-local session. The original source
+        // card must stay mounted and the full library must not re-layout while
+        // the finger is moving; the compact overlay owns all live snapping.
+        let ids = reorderItems(routines(at: destination)).map(\.id)
+        var routinesByID: [UUID: RoutineModel] = [:]
+        for routine in activeRoutines where routinesByID[routine.id] == nil {
+            routinesByID[routine.id] = routine
+        }
+        return ids.compactMap { routinesByID[$0] }
+    }
+
+    private func routines(at destination: RoutineReorderSession.Destination) -> [RoutineModel] {
+        switch destination {
+        case .ungrouped:
+            ungrouped
+        case .folder(let id):
+            activeRoutines.filter { $0.folderID == id }
+        }
     }
     private var activeTracking: MicrocycleTrackingModel? {
         MicrocycleTrackingService.activeTracking(microcycleTrackings)
@@ -208,7 +257,11 @@ struct WorkoutHomeView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            ScreenScaffold("Workout") {
+            ZStack(alignment: .top) {
+                // Keep the source handle mounted for the entire continuous
+                // gesture. Removing this tree as the overlay appears would
+                // cancel the UIKit recognizer at lift-off.
+                ScreenScaffold("Workout") {
                 SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
                     appState.requestStart {
                         _ = WorkoutFactory.startEmpty(in: modelContext)
@@ -218,10 +271,8 @@ struct WorkoutHomeView: View {
 
                 SectionHeader("Routines") {
                     HStack(spacing: Space.lg) {
-                        // Accessible alternative to drag-reordering — VoiceOver /
-                        // Switch Control have no other way to reorder routines
-                        // or folders (drag/drop only ever moved things BETWEEN
-                        // folders; nothing reordered position within one).
+                        // The native edit list remains the accessibility path
+                        // for exact ordering without a spatial drag.
                         if !ungrouped.isEmpty || !folders.isEmpty {
                             Button("Edit Order") { editingOrder = true }
                                 .font(.system(size: 13, weight: .semibold))
@@ -254,7 +305,8 @@ struct WorkoutHomeView: View {
                     )
                 }
 
-                if ungrouped.isEmpty {
+                let ungroupedRows = routineRows(in: .ungrouped)
+                if ungroupedRows.isEmpty {
                     Color.clear
                         .frame(maxWidth: .infinity, minHeight: Space.lg)
                         .contentShape(Rectangle())
@@ -267,7 +319,9 @@ struct WorkoutHomeView: View {
                         onDrop: { providers in handleDrop(providers, into: nil) }
                     ) {
                         VStack(spacing: Space.md) {
-                            ForEach(displayRoutines(ungrouped)) { routine in routineCard(routine) }
+                            ForEach(ungroupedRows) { routine in
+                                routineCard(routine)
+                            }
                         }
                     }
                 }
@@ -279,6 +333,22 @@ struct WorkoutHomeView: View {
                 if archiveInventory.rootCount > 0 {
                     archiveRow
                 }
+                }
+                .accessibilityHidden(routineReorderSession != nil)
+
+                if let routineReorderSession {
+                    RoutineReorderCollapseOverlay(session: routineReorderSession)
+                        .transition(.opacity)
+                        .zIndex(1)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("routine-library-reorder-overlay")
+                }
+            }
+            // The whole routine canvas represents the root level. Child card
+            // and folder targets take precedence, while a release on any
+            // remaining canvas area moves a routine to Ungrouped.
+            .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                handleDrop(providers, into: nil)
             }
             .navigationDestination(for: RoutineModel.self) { routine in
                 RoutineDetailView(routine: routine, exercises: exercises, setupNotes: setupNotes)
@@ -394,6 +464,15 @@ struct WorkoutHomeView: View {
                     setActiveMicrocycle(folder)
                 }
             }
+            .sheet(item: $editingMicrocycleTracking) { tracking in
+                MicrocycleTrackingEditView(tracking: tracking) { durationDays in
+                    try MicrocycleTrackingService.updateDuration(
+                        tracking,
+                        durationDays: durationDays,
+                        in: modelContext
+                    )
+                }
+            }
             .sheet(item: $alternationRoutine) { routine in
                 RoutineAlternationSheet(
                     anchor: routine,
@@ -418,6 +497,7 @@ struct WorkoutHomeView: View {
             _ = try? MicrocycleTrackingService.reconcile(in: modelContext)
         }
         .interactiveBackSwipeEnabled()
+        .bottomChromeHidden(routineReorderSession != nil)
     }
 
     private func openPendingImportedRoutineIfAvailable() {
@@ -468,8 +548,8 @@ struct WorkoutHomeView: View {
 
     private func folderSection(_ folder: RoutineFolderModel) -> AnyView {
         let isCollapsed = collapsed.contains(folder.id)
-        let items = routines(in: folder)
-        let displayedItems = displayRoutines(items)
+        let destination = RoutineReorderSession.Destination.folder(folder.id)
+        let displayedItems = routineRows(in: destination)
         let children = childFolders(of: folder)
         // Parent folders are mesocycles; leaf folders holding routines are
         // microcycles. Routines themselves are workout sessions.
@@ -532,8 +612,10 @@ struct WorkoutHomeView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("routine-folder-\(folder.name)")
                     // Folders drag like routines — drop one onto another to nest.
                     .onDrag {
+                        cancelRoutineReorder()
                         let payload = DragPayload.folder(folder.id)
                         draggedPayload = payload
                         return dragProvider(for: payload)
@@ -569,7 +651,7 @@ struct WorkoutHomeView: View {
                                         .foregroundStyle(theme.textTertiary)
                                     Text(activeTracking.needsAttention
                                         ? "Add a routine to continue tracking"
-                                        : "Day \(MicrocycleTrackingService.dayNumber(for: trackedWindow)) of \(activeTracking.durationDays) · \(progress.completedCount) of \(progress.requiredCount) workouts")
+                                        : "Day \(MicrocycleTrackingService.dayNumber(for: trackedWindow)) of \(MicrocycleTrackingService.windowDurationDays(for: trackedWindow)) · \(progress.completedCount) of \(progress.requiredCount) workouts")
                                         .font(.subheadline)
                                         .foregroundStyle(theme.textSecondary)
                                 }
@@ -604,10 +686,19 @@ struct WorkoutHomeView: View {
                 }
 
                 if !isCollapsed {
-                    if items.isEmpty && children.isEmpty && !isTargeted {
-                        dropHint("Drop routines or a folder here")
+                    if displayedItems.isEmpty && children.isEmpty && !isTargeted {
+                        Button("Add Routine", systemImage: "plus") {
+                            createRoutine(folderID: folder.id)
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("add-routine-to-empty-folder-\(folder.name)")
                     } else {
-                        ForEach(displayedItems) { routine in routineCard(routine) }
+                        ForEach(displayedItems) { routine in
+                            routineCard(routine)
+                        }
                         ForEach(children) { child in folderSection(child) }
                     }
                 }
@@ -633,9 +724,16 @@ struct WorkoutHomeView: View {
                 get: { dropFeedback?.target == target },
                 set: { hovering in
                     if hovering {
-                        dropFeedback = folderDropFeedback(for: folder)
+                        let feedback = folderDropFeedback(for: folder)
+                        dropFeedback = feedback
                         // Spring open so the user can see where things will land.
-                        withAnimation(.easeOut(duration: 0.2)) { _ = collapsed.remove(folder.id) }
+                        if reduceMotion {
+                            collapsed.remove(folder.id)
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                _ = collapsed.remove(folder.id)
+                            }
+                        }
                     } else if dropFeedback?.target == target {
                         dropFeedback = nil
                     }
@@ -720,6 +818,9 @@ struct WorkoutHomeView: View {
                         "View Microcycle",
                         value: WorkoutRoute.microcycle(activeTracking.id)
                     )
+                    Button("Edit Day Target", systemImage: "calendar") {
+                        editingMicrocycleTracking = activeTracking
+                    }
                     if !activeTracking.showsOnHome {
                         Button("Show on Home", systemImage: "house") {
                             updateMicrocyclePresentation(
@@ -863,6 +964,80 @@ struct WorkoutHomeView: View {
         return parent.parentID == nil && parent.id != folder.id && folder.parentID != parent.id
     }
 
+    // MARK: - Hold-to-reorder routines
+
+    private var routineReorderSections: [RoutineReorderSession.Section] {
+        [RoutineReorderSession.Section(
+            destination: .ungrouped,
+            title: "Ungrouped",
+            items: reorderItems(ungrouped)
+        )] + routineDestinationFolders.map { folder in
+            RoutineReorderSession.Section(
+                destination: .folder(folder.id),
+                title: destinationLabel(folder),
+                items: reorderItems(routines(in: folder))
+            )
+        }
+    }
+
+    /// One continuous gesture from the visible handle. Only the reference-
+    /// backed session changes per frame; the full card tree stays fixed below.
+    private func routineReorderDragChanged(_ routine: RoutineModel, fingerY: CGFloat) {
+        if let routineReorderSession {
+            guard routineReorderSession.draggedItemID == routine.id else { return }
+            routineReorderSession.fingerGlobalY = fingerY
+            return
+        }
+
+        guard let session = RoutineReorderSession(
+            draggedItemID: routine.id,
+            fingerGlobalY: fingerY,
+            sections: routineReorderSections
+        ) else { return }
+        dropFeedback = nil
+        if reduceMotion {
+            routineReorderSession = session
+        } else {
+            withAnimation(.snappy(duration: 0.2)) {
+                routineReorderSession = session
+            }
+        }
+    }
+
+    private func routineReorderDragEnded() {
+        guard let routineReorderSession else { return }
+        if routineReorderSession.hasChanges,
+           RoutineReorderPersistence.apply(routineReorderSession, to: activeRoutines) {
+            save()
+        }
+        if reduceMotion {
+            self.routineReorderSession = nil
+        } else {
+            withAnimation(.snappy(duration: 0.25)) {
+                self.routineReorderSession = nil
+            }
+        }
+    }
+
+    /// VoiceOver fallback: move one visible slot at a time, including across a
+    /// folder header, and commit that single move immediately.
+    private func accessibilityMoveRoutine(_ routine: RoutineModel, by offset: Int) {
+        guard let session = RoutineReorderSession(
+            draggedItemID: routine.id,
+            fingerGlobalY: 0,
+            sections: routineReorderSections
+        ),
+        let index = session.entries.firstIndex(where: { $0.id == .item(routine.id) }) else { return }
+        let target = min(max(0, index + offset), session.entries.count - 1)
+        guard session.moveHeld(toFlatIndex: target),
+              RoutineReorderPersistence.apply(session, to: activeRoutines) else { return }
+        save()
+    }
+
+    private func cancelRoutineReorder() {
+        routineReorderSession = nil
+    }
+
     /// Routes a drop of routines and/or folders onto `folder` (nil = root).
     private func handleDrop(_ providers: [NSItemProvider], into folder: RoutineFolderModel?) -> Bool {
         let usableProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }
@@ -900,20 +1075,13 @@ struct WorkoutHomeView: View {
                 guard let routine = activeRoutines.first(where: { $0.id == id }) else {
                     continue
                 }
-                if routine.folderID == folder?.id { continue }
                 // Folders that contain subfolders hold folders only.
                 if let folder, !childFolders(of: folder).isEmpty { continue }
-                routine.folderID = folder?.id
-                routine.updatedAt = Date()
-                handled = true
+                handled = relocateRoutineToEnd(routine, folderID: folder?.id) || handled
             }
         }
         if handled { save() }
         return handled
-    }
-
-    private func dropHint(_ text: String) -> some View {
-        dropHint(DropFeedback(target: .root, accepts: true, title: text, detail: nil))
     }
 
     private func dropHint(_ feedback: DropFeedback) -> some View {
@@ -964,14 +1132,15 @@ struct WorkoutHomeView: View {
             onArchive: { archive(routine) },
             moveDestinations: destinations.map { ($0.id, destinationLabel($0)) },
             showsMoveToRoot: routine.folderID != nil,
-            onMove: { folderID in moveRoutine(routine, toFolder: folderID) }
+            onMove: { folderID in moveRoutine(routine, toFolder: folderID) },
+            onReorderDragChanged: { fingerY in
+                routineReorderDragChanged(routine, fingerY: fingerY)
+            },
+            onReorderDragEnded: routineReorderDragEnded,
+            onAccessibilityMoveBy: { offset in
+                accessibilityMoveRoutine(routine, by: offset)
+            }
         )
-        .contentShape(Rectangle())
-        .onDrag {
-            let payload = DragPayload.routine(routine.id)
-            draggedPayload = payload
-            return dragProvider(for: payload)
-        }
     }
 
     private func dragProvider(for payload: DragPayload) -> NSItemProvider {
@@ -1153,7 +1322,10 @@ struct WorkoutHomeView: View {
     /// Microcycle folders can directly hold routines. A mesocycle containing
     /// child folders holds only those microcycles, matching the drag/drop rule.
     private var routineDestinationFolders: [RoutineFolderModel] {
-        folders.filter { childFolders(of: $0).isEmpty }
+        topLevelFolders.flatMap { folder in
+            let children = childFolders(of: folder)
+            return children.isEmpty ? [folder] : children
+        }
     }
 
     /// "Off-Season / Block 1" for a nested folder, plain name for a top-level
@@ -1166,10 +1338,29 @@ struct WorkoutHomeView: View {
     }
 
     private func moveRoutine(_ routine: RoutineModel, toFolder folderID: UUID?) {
-        guard routine.folderID != folderID else { return }
+        if relocateRoutineToEnd(routine, folderID: folderID) { save() }
+    }
+
+    @discardableResult
+    private func relocateRoutineToEnd(_ routine: RoutineModel, folderID: UUID?) -> Bool {
+        guard routine.folderID != folderID else { return false }
+        let sourceFolderID = routine.folderID
+        let source = activeRoutines.filter { $0.id != routine.id && $0.folderID == sourceFolderID }
+        let destination = activeRoutines.filter { $0.id != routine.id && $0.folderID == folderID }
+        let now = Date.now
+
+        for (index, sourceRoutine) in source.enumerated() where sourceRoutine.position != index {
+            sourceRoutine.position = index
+            sourceRoutine.updatedAt = now
+        }
+        for (index, destinationRoutine) in destination.enumerated() where destinationRoutine.position != index {
+            destinationRoutine.position = index
+            destinationRoutine.updatedAt = now
+        }
         routine.folderID = folderID
-        routine.updatedAt = Date()
-        save()
+        routine.position = destination.count
+        routine.updatedAt = now
+        return true
     }
 
     // MARK: - Edit Order (accessible alternative to drag reordering)
@@ -1196,9 +1387,8 @@ struct WorkoutHomeView: View {
     }
 }
 
-/// Drag-handle reordering for routines and top-level folders — the
-/// accessible counterpart to the Workout tab's drag & drop, which only ever
-/// moves things BETWEEN folders and never reorders position within one.
+/// Native drag-handle reordering for routines and top-level folders — the
+/// accessible counterpart to direct spatial card dragging on the Workout tab.
 private struct RoutineOrderEditorView: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
@@ -1289,6 +1479,9 @@ private struct RoutineCard: View {
     var moveDestinations: [(id: UUID, label: String)] = []
     var showsMoveToRoot: Bool = false
     var onMove: (UUID?) -> Void = { _ in }
+    var onReorderDragChanged: (CGFloat) -> Void = { _ in }
+    var onReorderDragEnded: () -> Void = {}
+    var onAccessibilityMoveBy: (Int) -> Void = { _ in }
 
     private var displayRoutine: RoutineModel {
         isAlternationOwner ? (alternationState?.due ?? routine) : routine
@@ -1355,6 +1548,14 @@ private struct RoutineCard: View {
                         .disabled(orderedItems.isEmpty)
                         .accessibilityLabel("Start \(displayRoutine.name)")
                         .accessibilityIdentifier("start-routine-\(displayRoutine.name)")
+                        ReorderHandle(
+                            onDragChanged: onReorderDragChanged,
+                            onDragEnded: onReorderDragEnded,
+                            onAccessibilityMoveBy: onAccessibilityMoveBy,
+                            accessibilityLabelText: "Reorder \(routine.name)",
+                            accessibilityHintText: "Hold, then drag to reorder this routine or move it between folders",
+                            accessibilityIdentifierText: "reorder-routine-\(routine.name)"
+                        )
                         Menu {
                             Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
                             Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
@@ -1445,6 +1646,7 @@ private struct RoutineCard: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("routine-card-\(routine.name)")
     }
 
     private func itemName(_ item: OrderedRoutineItem) -> String {

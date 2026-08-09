@@ -67,6 +67,28 @@ final class QuickActionsBubbleUITests: XCTestCase {
                       "Expected the live logger after starting an empty workout from the bubble.")
     }
 
+    /// The empty-state plus is an add control, not decorative artwork.
+    @MainActor
+    func testEmptyWorkoutPlusOpensExercisePicker() throws {
+        let app = launchApp(initialTab: "insights")
+
+        let trigger = button(app, "quick-actions-trigger")
+        XCTAssertTrue(trigger.waitForExistence(timeout: 5))
+        trigger.tap()
+
+        let emptyAction = button(app, "quick-action-empty")
+        XCTAssertTrue(emptyAction.waitForExistence(timeout: 3))
+        tapWhenHittable(emptyAction)
+
+        let addExercise = button(app, "empty-workout-add-exercise")
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5),
+                      "Expected the plus icon to be exposed as a button.")
+        tapWhenHittable(addExercise)
+
+        XCTAssertTrue(app.searchFields["Search exercises"].waitForExistence(timeout: 5),
+                      "Expected the plus icon to open the exercise picker.")
+    }
+
     @MainActor
     func testScrimTapCollapsesFan() throws {
         let app = launchApp()
@@ -83,6 +105,44 @@ final class QuickActionsBubbleUITests: XCTestCase {
         // reappearance IS the collapsed state.
         XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected the fan to collapse on a scrim tap.")
         XCTAssertFalse(element(app, "quick-actions-scrim").exists, "Expected the scrim to unmount after collapse.")
+    }
+
+    /// Repeatedly exercises both collapse paths. Persistent Liquid Glass keeps
+    /// its SwiftUI views mounted, so the accessibility tree is the observable
+    /// contract that hidden controls are not left interactive between cycles.
+    @MainActor
+    func testRepeatedRelayCyclesLeaveOnlyCollapsedTriggerInteractive() throws {
+        let app = launchApp()
+        let trigger = button(app, "quick-actions-trigger")
+
+        XCTAssertTrue(trigger.waitForExistence(timeout: 5))
+        for cycle in 0..<10 {
+            tapWhenHittable(trigger)
+
+            let dismiss = button(app, "quick-actions-dismiss")
+            XCTAssertTrue(dismiss.waitForExistence(timeout: 3), "Expected dismiss control in cycle \(cycle).")
+            XCTAssertTrue(button(app, "quick-action-empty").waitForExistence(timeout: 3))
+
+            if cycle.isMultiple(of: 2) {
+                tapWhenHittable(dismiss)
+            } else {
+                let scrim = button(app, "quick-actions-scrim")
+                XCTAssertTrue(scrim.waitForExistence(timeout: 3))
+                scrim.tap()
+            }
+
+            XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected collapsed trigger in cycle \(cycle).")
+            // SwiftUI keeps the glass-backed nodes mounted intentionally;
+            // XCTest may still report those implementation nodes as existing.
+            // The user-facing contract is that none can receive interaction.
+            XCTAssertFalse(button(app, "quick-action-empty").isHittable)
+            XCTAssertFalse(button(app, "quick-actions-dismiss").isHittable)
+            XCTAssertFalse(button(app, "quick-actions-edit").isHittable)
+        }
+
+        tapWhenHittable(trigger)
+        XCTAssertTrue(button(app, "quick-action-empty").waitForExistence(timeout: 3),
+                      "Expected the fan to remain usable after repeated relay cycles.")
     }
 
     /// Gesture boundary: a long press opens the editor WITHOUT also expanding
@@ -144,6 +204,15 @@ final class QuickActionsBubbleUITests: XCTestCase {
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
         let triggerMidX = trigger.frame.midX
+        let triggerMidY = trigger.frame.midY
+        XCTAssertEqual(trigger.frame.width, 52, accuracy: 1.5)
+        XCTAssertEqual(trigger.frame.height, 52, accuracy: 1.5)
+        XCTAssertEqual(
+            app.windows.firstMatch.frame.maxX - trigger.frame.maxX,
+            20,
+            accuracy: 1.5,
+            "The persistent fan must preserve the trigger's original trailing inset."
+        )
         trigger.tap()
 
         let edit = button(app, "quick-actions-edit")
@@ -155,6 +224,12 @@ final class QuickActionsBubbleUITests: XCTestCase {
             triggerMidX,
             accuracy: 1.5,
             "The fan must remain centered over the original quick-actions trigger."
+        )
+        XCTAssertEqual(
+            dismiss.frame.midY,
+            triggerMidY,
+            accuracy: 1.5,
+            "The dismiss control must replace the trigger without moving it."
         )
         for actionID in ["quick-action-empty", "quick-action-bodyweight", "quick-action-cardio-run"] {
             let action = button(app, actionID)

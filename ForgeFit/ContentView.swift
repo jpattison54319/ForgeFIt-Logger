@@ -119,7 +119,9 @@ struct ContentView: View {
     @State private var microcycleTransitionTask: Task<Void, Never>?
     @State private var experimentWorkoutPrompt: ExperimentWorkoutPrompt?
     @State private var pendingPlanImport: PendingPlanImport?
+    @State private var onboardingPlanImport: PendingPlanImport?
     @State private var planImportErrorMessage: String?
+    @State private var onboardingPlanImportErrorMessage: String?
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
     @State private var didFinishLaunchTasks = false
@@ -135,6 +137,9 @@ struct ContentView: View {
     /// True while the software keyboard is up — hides the floating tab bar /
     /// quick-action bubble so keyboard avoidance can't lift them into view.
     @State private var keyboardVisible = false
+    /// A visible tab can temporarily yield the shared bottom chrome for a
+    /// full-screen interaction such as direct routine reordering.
+    @State private var screenHidesBottomChrome = false
     /// Local-log → cloud pipeline (backup + community). Built once the shell
     /// appears; see `SyncCoordinator`.
     @State private var syncCoordinator: SyncCoordinator?
@@ -273,13 +278,7 @@ struct ContentView: View {
             }
             }
             .fullScreenCover(isPresented: Binding(
-                get: {
-                    #if DEBUG
-                    showOnboarding && !ProcessInfo.processInfo.arguments.contains("--skip-onboarding")
-                    #else
-                    showOnboarding
-                    #endif
-                },
+                get: { isOnboardingCoverPresented },
                 set: { showOnboarding = $0 }
             )) {
                 // `showOnboarding` can already be `true` on the very first
@@ -295,6 +294,20 @@ struct ContentView: View {
                     // Mirrors the app-root Dynamic Type clamp — this cover can
                     // present before the root environment lands (see above).
                     .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                    .sheet(item: $onboardingPlanImport) { pending in
+                        PlanImportView(pending: pending, onSaved: handlePlanImportSaved)
+                            .environment(\.theme, activeTheme)
+                            .preferredColorScheme(resolvedColorScheme)
+                    }
+                    .alert(
+                        "Couldn't open plan",
+                        isPresented: Binding(
+                            get: { onboardingPlanImportErrorMessage != nil },
+                            set: { if !$0 { onboardingPlanImportErrorMessage = nil } }
+                        )
+                    ) { } message: {
+                        Text(onboardingPlanImportErrorMessage ?? "")
+                    }
             }
             .confirmationDialog(
                 "You have a workout in progress",
@@ -484,6 +497,8 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             quickActionsScrim
+                .opacity(bottomChromeHidden ? 0 : 1)
+                .allowsHitTesting(!bottomChromeHidden)
 
             VStack(spacing: Space.sm) {
                 // The quick-action bubble and the mini bar never coexist: an
@@ -524,11 +539,18 @@ struct ContentView: View {
             // black gap above the keyboard anyway. Behind the keyboard it's
             // unusable, so hide it outright while editing; it can't be raised
             // into view if it isn't drawn.
-            .opacity(keyboardVisible ? 0 : 1)
-            .allowsHitTesting(!keyboardVisible)
-            .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: keyboardVisible)
+            .opacity(bottomChromeHidden ? 0 : 1)
+            .allowsHitTesting(!bottomChromeHidden)
+            .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: bottomChromeHidden)
         }
         .onKeyboardVisibilityChange($keyboardVisible)
+        .onPreferenceChange(BottomChromeHiddenPreferenceKey.self) {
+            screenHidesBottomChrome = $0
+        }
+    }
+
+    private var bottomChromeHidden: Bool {
+        keyboardVisible || screenHidesBottomChrome
     }
 
     /// Dimmed tap-catcher behind the open quick-action fan: above the tab
@@ -906,9 +928,18 @@ struct ContentView: View {
     private func receivePlanFile(_ url: URL) {
         guard url.pathExtension.lowercased() == "forgefitplan" else { return }
         do {
-            pendingPlanImport = try PlanImportService.load(from: url)
+            let plan = try PlanImportService.load(from: url)
+            if isOnboardingCoverPresented {
+                onboardingPlanImport = plan
+            } else {
+                pendingPlanImport = plan
+            }
         } catch {
-            planImportErrorMessage = error.localizedDescription
+            if isOnboardingCoverPresented {
+                onboardingPlanImportErrorMessage = error.localizedDescription
+            } else {
+                planImportErrorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -916,6 +947,15 @@ struct ContentView: View {
         appState.pendingRoutineDetailID = result.routineIDs.first
         appState.selectedTab = .workout
         pendingPlanImport = nil
+        onboardingPlanImport = nil
+    }
+
+    private var isOnboardingCoverPresented: Bool {
+        #if DEBUG
+        showOnboarding && !ProcessInfo.processInfo.arguments.contains("--skip-onboarding")
+        #else
+        showOnboarding
+        #endif
     }
 
     private func consumePendingExperimentNotificationRoute() {
@@ -1500,6 +1540,9 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-experiment-demo") {
                 try ExperimentDemoSeed.seed(in: modelContext)
             }
+            if ProcessInfo.processInfo.arguments.contains("--seed-routine-reorder") {
+                try RoutineReorderUITestFixture.seed(in: modelContext)
+            }
             #endif
             if ProcessInfo.processInfo.arguments.contains("--seed-history") {
                 try seedHistoryFixtures()
@@ -1664,7 +1707,9 @@ struct ContentView: View {
         appState.showingLogger = false
         appState.pendingRoutineDetailID = nil
         pendingPlanImport = nil
+        onboardingPlanImport = nil
         planImportErrorMessage = nil
+        onboardingPlanImportErrorMessage = nil
         appState.pendingWorkoutStart = nil
         quickActionsReloadToken += 1
         InsightDataCoordinator.shared.invalidate()

@@ -477,4 +477,162 @@ struct MicrocycleTrackingServiceTests {
         #expect(second.showsOnHome)
         #expect(!second.showsFolderHeader)
     }
+
+    @Test func editingDayTargetPreservesAssignmentsAndUsesNewLengthGoingForward() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Nine Day")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 10,
+            in: context,
+            now: date(2026, 8, 2),
+            timeZone: timeZone
+        )
+        let firstWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let assignment = MicrocycleDayAssignment(
+            day: date(2026, 8, 2, 0),
+            workoutID: UUID(),
+            assignedAt: date(2026, 8, 3)
+        )
+        firstWindow.dayAssignments = [assignment]
+        try context.save()
+
+        try MicrocycleTrackingService.updateDuration(
+            tracking,
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 4)
+        )
+
+        #expect(tracking.durationDays == 9)
+        #expect(folder.defaultMicrocycleLengthDays == 9)
+        #expect(firstWindow.startsAt == date(2026, 8, 1, 0))
+        #expect(firstWindow.endsAt == date(2026, 8, 10, 0))
+        #expect(firstWindow.dayAssignments == [assignment])
+
+        _ = try MicrocycleTrackingService.reconcile(
+            in: context,
+            now: date(2026, 8, 10)
+        )
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id }
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 2)
+        #expect(windows[1].startsAt == date(2026, 8, 10, 0))
+        #expect(windows[1].endsAt == date(2026, 8, 19, 0))
+        #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 9)
+    }
+
+    @Test func shorteningCurrentCycleNeverRemovesAnElapsedDay() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Late Edit")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 10,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let firstWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+
+        try MicrocycleTrackingService.updateDuration(
+            tracking,
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 10)
+        )
+
+        #expect(tracking.durationDays == 9)
+        #expect(firstWindow.endsAt == date(2026, 8, 11, 0))
+        #expect(MicrocycleTrackingService.windowDurationDays(for: firstWindow) == 10)
+
+        _ = try MicrocycleTrackingService.reconcile(
+            in: context,
+            now: date(2026, 8, 11)
+        )
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id }
+            .sorted { $0.index < $1.index }
+        #expect(windows[1].startsAt == date(2026, 8, 11, 0))
+        #expect(windows[1].endsAt == date(2026, 8, 20, 0))
+    }
+
+    @Test func addingADayExtendsOnlyTheCurrentCycle() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Rest Flex")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let firstWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+
+        try MicrocycleTrackingService.addDayToCurrentWindow(
+            tracking,
+            in: context,
+            now: date(2026, 8, 3)
+        )
+
+        #expect(tracking.durationDays == 9)
+        #expect(folder.defaultMicrocycleLengthDays == 9)
+        #expect(firstWindow.endsAt == date(2026, 8, 11, 0))
+        #expect(MicrocycleTrackingService.windowDurationDays(for: firstWindow) == 10)
+
+        _ = try MicrocycleTrackingService.reconcile(
+            in: context,
+            now: date(2026, 8, 11)
+        )
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id }
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 2)
+        #expect(windows[1].startsAt == date(2026, 8, 11, 0))
+        #expect(windows[1].endsAt == date(2026, 8, 20, 0))
+        #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 9)
+    }
 }

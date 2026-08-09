@@ -799,10 +799,33 @@ struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let itemProviders = explicitItemProviders {
+            let configuration = UIActivityItemsConfiguration(itemProviders: itemProviders)
+            return UIActivityViewController(activityItemsConfiguration: configuration)
+        }
+        return UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+
+    /// A raw file URL lets transport services infer a generic JSON type. Use
+    /// an explicitly typed item provider whenever this share includes a plan.
+    private var explicitItemProviders: [NSItemProvider]? {
+        guard items.contains(where: { $0 is ForgeFitPlanActivityItem }) else { return nil }
+        var providers: [NSItemProvider] = []
+        for item in items {
+            if let image = item as? UIImage {
+                providers.append(NSItemProvider(object: image))
+            } else if let plan = item as? ForgeFitPlanActivityItem {
+                providers.append(plan.itemProvider())
+            } else if let url = item as? URL, let provider = NSItemProvider(contentsOf: url) {
+                providers.append(provider)
+            } else {
+                return nil
+            }
+        }
+        return providers
+    }
 }
 
 /// Identifiable wrapper so any rendered share image can drive `.sheet(item:)`.
@@ -816,6 +839,13 @@ struct ShareImagePayload: Identifiable {
         self.attachments = attachments
     }
 
-    var items: [Any] { [image] + attachments }
+    var items: [Any] {
+        [image] + attachments.map { url in
+            if url.pathExtension.lowercased() == ForgeFitPlanFileType.filenameExtension {
+                return ForgeFitPlanActivityItem(fileURL: url)
+            }
+            return url
+        }
+    }
 }
 #endif

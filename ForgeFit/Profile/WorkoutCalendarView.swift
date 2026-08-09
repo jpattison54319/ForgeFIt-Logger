@@ -22,6 +22,8 @@ struct WorkoutCalendarView: View {
     /// change so paging direction matches the button/jump that caused it.
     @State private var monthSlideEdge: Edge = .trailing
     @State private var groupMemo = Memo<String, [Date: [WorkoutModel]]>()
+    @State private var health = HealthMetricsStore.shared
+    @State private var calendarHealth = CalendarHealthStore()
     @State private var recentlyRemovedRestDayID: UUID?
     @State private var restDayError: String?
 
@@ -58,6 +60,14 @@ struct WorkoutCalendarView: View {
         )) {
         } message: {
             Text(restDayError ?? "")
+        }
+        .task(id: selectedDay) {
+            // Let SwiftUI commit the selected-day frame before starting even
+            // the lightweight loading-state publication. The actual HealthKit
+            // query and aggregation then run on CalendarHealthStore's worker.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            await calendarHealth.load(day: selectedDay, fallback: health.metrics)
         }
     }
 
@@ -222,7 +232,7 @@ struct WorkoutCalendarView: View {
     ) -> String {
         var parts = [day.formatted(date: .abbreviated, time: .omitted)]
         if let daily = snapshot?.daily { parts.append("daily recovery \(Int((daily * 100).rounded()))") }
-        if let trend = snapshot?.trend { parts.append("trend \(Int((trend * 100).rounded()))") }
+        if let trend = snapshot?.trend { parts.append("trend recovery \(Int((trend * 100).rounded()))") }
         if let strain = snapshot?.strain {
             parts.append("strain \(strain.formatted(.number.precision(.fractionLength(1)))) out of 10")
         }
@@ -264,8 +274,13 @@ struct WorkoutCalendarView: View {
         let items = (workoutsByDay[selectedDay] ?? []).sorted { $0.startedAt < $1.startedAt }
         let selectedRestDay = restDay(on: selectedDay)
         SectionHeader(selectedDay.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-        // Recovery leads the day — it's the read that frames the workouts below.
-        RecoveryDaySummaryCard(snapshot: RecoverySnapshotStore.shared.snapshot(for: selectedDay))
+        RecoveryDaySummaryCard(
+            snapshot: RecoverySnapshotStore.shared.snapshot(for: selectedDay),
+            selectedDay: selectedDay,
+            healthMetrics: calendarHealth.metrics(for: selectedDay, fallback: health.metrics),
+            isLoadingHealth: calendarHealth.isLoading(selectedDay)
+        )
+        SectionHeader("Workouts")
         if let selectedRestDay {
             Card {
                 HStack(spacing: Space.md) {

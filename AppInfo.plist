@@ -94,7 +94,7 @@
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.content</string>
-				<string>public.json</string>
+				<string>public.data</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>
@@ -102,6 +102,8 @@
 				<array>
 					<string>forgefitplan</string>
 				</array>
+				<key>public.mime-type</key>
+				<string>application/vnd.xpetsllc.forgefit-plan</string>
 			</dict>
 		</dict>
 	</array>
@@ -111,7 +113,7 @@
 			<key>CFBundleTypeName</key>
 			<string>ForgeFit Plan</string>
 			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
+			<string>Viewer</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -121,7 +123,7 @@
 		</dict>
 	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
+	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

@@ -55,11 +55,7 @@ enum PlanImportService {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        if let size = values?.fileSize, size > maximumFileSize { throw ImportError.tooLarge }
-        guard let data = try? Data(contentsOf: url), data.count <= maximumFileSize else {
-            throw dataTooLarge(at: url) ? ImportError.tooLarge : ImportError.unreadable
-        }
+        let data = try coordinatedData(from: url)
 
         let document: ForgeFitPlanDocument
         do {
@@ -75,6 +71,38 @@ enum PlanImportService {
             document: document,
             isDuplicate: importedPackageIDs().contains(document.packageID)
         )
+    }
+
+    /// Open-in-place URLs belong to a file provider and can change while they
+    /// are being read. Coordinate the short read, then import an independent
+    /// model copy; ForgeFit never edits the shared source document.
+    private static func coordinatedData(from url: URL) throws -> Data {
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        var readResult: Result<Data, Error>?
+
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) {
+            coordinatedURL in
+            readResult = Result {
+                let values = try coordinatedURL.resourceValues(forKeys: [.fileSizeKey])
+                if let size = values.fileSize, size > maximumFileSize {
+                    throw ImportError.tooLarge
+                }
+                let data = try Data(contentsOf: coordinatedURL, options: .mappedIfSafe)
+                guard data.count <= maximumFileSize else { throw ImportError.tooLarge }
+                return data
+            }
+        }
+
+        if let coordinationError { throw coordinationError }
+        guard let readResult else { throw ImportError.unreadable }
+        do {
+            return try readResult.get()
+        } catch let error as ImportError {
+            throw error
+        } catch {
+            throw dataTooLarge(at: url) ? ImportError.tooLarge : ImportError.unreadable
+        }
     }
 
     static func commit(

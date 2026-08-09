@@ -75,7 +75,15 @@ struct MicrocycleDayStrip: View {
                     .fill(fill(for: day.status))
                     .strokeBorder(stroke(for: day.status), lineWidth: day.status == .ready ? 2 : 1)
                     .frame(width: 36, height: 36)
-                if let icon = icon(for: day.status) {
+                if !day.routineMarkers.isEmpty {
+                    Text(day.routineMarkers.joined(separator: "·"))
+                        .font(.caption.bold())
+                        .foregroundStyle(foreground(for: day.status))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .padding(.horizontal, 3)
+                        .accessibilityHidden(true)
+                } else if let icon = icon(for: day.status) {
                     Image(systemName: icon)
                         .font(.caption.bold())
                         .foregroundStyle(foreground(for: day.status))
@@ -128,7 +136,12 @@ struct MicrocycleDayStrip: View {
 
     private func accessibilityLabel(for day: MicrocycleDayPresentation) -> String {
         let state = switch day.status {
-        case .trained: "training completed"
+        case .trained where day.routineMarkers.count == 1:
+            "routine \(day.routineMarkers[0]) completed"
+        case .trained where !day.routineMarkers.isEmpty:
+            "routines \(day.routineMarkers.joined(separator: ", ")) completed"
+        case .trained:
+            "training completed"
         case .rest: "rest day"
         case .ready: "ready next"
         case .empty: "not logged"

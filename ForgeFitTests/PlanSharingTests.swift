@@ -10,6 +10,54 @@ import Testing
 struct PlanSharingTests {
     private let userID = UUID()
 
+    @Test func planFileIsRegisteredAsAnOpaqueOwnedDocument() throws {
+        let appBundle = try #require(Bundle(identifier: "org.xpetsllc.ForgeFit"))
+        let exportedTypes = try #require(
+            appBundle.object(forInfoDictionaryKey: "UTExportedTypeDeclarations")
+                as? [[String: Any]]
+        )
+        let planType = try #require(exportedTypes.first {
+            $0["UTTypeIdentifier"] as? String == ForgeFitPlanFileType.identifier
+        })
+        #expect(Set(planType["UTTypeConformsTo"] as? [String] ?? []) == [
+            "public.content",
+            "public.data",
+        ])
+        let tags = try #require(planType["UTTypeTagSpecification"] as? [String: Any])
+        #expect(tags["public.filename-extension"] as? [String] == [
+            ForgeFitPlanFileType.filenameExtension,
+        ])
+        #expect(tags["public.mime-type"] as? String == ForgeFitPlanFileType.mimeType)
+
+        let documentTypes = try #require(
+            appBundle.object(forInfoDictionaryKey: "CFBundleDocumentTypes")
+                as? [[String: Any]]
+        )
+        let planDocument = try #require(documentTypes.first {
+            ($0["LSItemContentTypes"] as? [String])?.contains(
+                ForgeFitPlanFileType.identifier
+            ) == true
+        })
+        #expect(planDocument["CFBundleTypeRole"] as? String == "Viewer")
+        #expect(planDocument["LSHandlerRank"] as? String == "Owner")
+        #expect(
+            appBundle.object(forInfoDictionaryKey: "LSSupportsOpeningDocumentsInPlace")
+                as? Bool == true
+        )
+    }
+
+    @Test func sharedPlanAttachmentCarriesTheForgeFitType() {
+        let url = URL.temporaryDirectory.appending(
+            path: "Shared Plan.\(ForgeFitPlanFileType.filenameExtension)"
+        )
+        let item = ForgeFitPlanActivityItem(fileURL: url)
+        let provider = item.itemProvider()
+
+        #expect(item.contentTypeIdentifier == ForgeFitPlanFileType.identifier)
+        #expect(item.fileURL == url)
+        #expect(provider.registeredTypeIdentifiers.first == ForgeFitPlanFileType.identifier)
+    }
+
     @Test func mesocycleRoundTripPreservesCompletePlanAndExcludesPrivateData() throws {
         UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey) }
