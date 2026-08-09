@@ -389,7 +389,12 @@ struct GlassDivisionMenu<Trigger: View>: View {
             .id(item.contentKey)
             .transition(.opacity)
             .animation(.easeInOut(duration: 0.22), value: item.contentKey)
-            .opacity(usesRelay ? 1 : (isShown ? 1 : 0))
+            // Physical iOS can composite native-glass content outside opacity
+            // applied to the enclosing Button. Hide the glyph before applying
+            // glass so the identity surface stays mounted without leaking its
+            // symbol in the collapsed fan. Stable material still fades as one
+            // outer layer through `transformedChild`.
+            .opacity((usesStableMaterialRelay || isShown) ? 1 : 0)
             .animation(
                 .easeOut(duration: 0.10).delay(isShown ? birth + 0.10 : retract),
                 value: isShown
@@ -590,6 +595,11 @@ struct GlassDivisionMenu<Trigger: View>: View {
             .labelStyle(.iconOnly)
             .font(.system(size: 16, weight: .bold))
             .foregroundStyle(theme.textPrimary)
+            // As with child glyphs, this must precede `glassEffect`; opacity on
+            // the enclosing Button does not reliably hide glass content on a
+            // physical device compositor.
+            .opacity(isShown ? 1 : 0)
+            .animation(.easeOut(duration: 0.15), value: isShown)
             .frame(width: triggerSize, height: triggerSize)
             .contentShape(Circle())
             .glassEffect(isShown ? .regular.interactive() : .identity, in: Circle())
