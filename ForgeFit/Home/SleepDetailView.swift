@@ -8,6 +8,7 @@ struct SleepDetailView: View {
     let metrics: [RecoveryEngine.DailyHealthMetric]
     @State private var selectedTab: MetricDetailTab = .today
     @State private var showingInfo = false
+    @State private var showingHistory = false
 
     private var latest: RecoveryEngine.DailyHealthMetric? {
         metrics.max { $0.date < $1.date }
@@ -39,6 +40,9 @@ struct SleepDetailView: View {
             }
         }
         .refreshable { await AppRefresh.run(in: modelContext) }
+        .navigationDestination(isPresented: $showingHistory) {
+            SleepHistoryView()
+        }
         .sheet(isPresented: $showingInfo) {
             MetricExplanationSheet(
                 title: "How sleep is interpreted",
@@ -121,7 +125,6 @@ struct SleepDetailView: View {
                 }
             }
 
-            recentNights
         } else {
             MetricEmptyCard(
                 title: "Sleep trend is building",
@@ -129,6 +132,7 @@ struct SleepDetailView: View {
                 systemImage: "chart.line.uptrend.xyaxis"
             )
         }
+        recentNights
     }
 
     private func sleepSummary(_ metric: RecoveryEngine.DailyHealthMetric) -> some View {
@@ -236,7 +240,7 @@ struct SleepDetailView: View {
                 Text("Recent nights")
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
-                ForEach(Array(nights.enumerated()), id: \.offset) { index, metric in
+                ForEach(nights.enumerated(), id: \.element.date) { index, metric in
                     if index > 0 { Divider().overlay(theme.separator) }
                     MetricReadingRow(
                         title: metric.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()),
@@ -246,8 +250,28 @@ struct SleepDetailView: View {
                         tint: metric.sleepLikelyPartial && !metric.sleepUserCorrected ? theme.warmup : theme.zone2
                     )
                 }
+                Divider().overlay(theme.separator)
+                Button(action: showHistory) {
+                    HStack {
+                        Text("See all sleep")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.accent)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sleep-see-all-history")
             }
         }
+    }
+
+    private func showHistory() {
+        showingHistory = true
     }
 
     private func summaryIcon(_ metric: RecoveryEngine.DailyHealthMetric) -> String {

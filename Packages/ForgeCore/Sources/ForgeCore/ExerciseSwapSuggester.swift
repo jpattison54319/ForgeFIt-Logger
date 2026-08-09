@@ -1,31 +1,34 @@
 import Foundation
 
-/// Ranks replacement candidates for the "gym swap" flow: the machine you
-/// wanted is taken (or gone), so lead with a handful of close substitutes
-/// instead of a full library search. Pure scoring over lightweight snapshots —
-/// the app maps its exercise models in and copy for the match facets out.
+/// Ranks candidates for replacing an exercise. Muscle region and movement
+/// family define what is a valid substitute; the lifter's completed-workout
+/// count then puts familiar favorites first inside that honest candidate set.
 public enum ExerciseSwapSuggester {
 
-    /// An explicit equipment direction selected by the lifter. This is a
-    /// ranking preference rather than a filter: movement quality still wins,
-    /// and the full set of useful substitutes remains available.
-    public enum SwapPreference: CaseIterable, Equatable, Sendable {
+    /// A strict equipment filter for replacement results.
+    public enum EquipmentFilter: CaseIterable, Equatable, Hashable, Sendable {
         case freeWeights
         case machineOrCable
         case bodyweight
     }
 
-    /// Completed workout dates for one exercise. The engine derives a bounded
-    /// current-block affinity at a caller-supplied date; nothing is persisted.
+    /// Lifetime completed-workout count for one exercise. One workout counts
+    /// once regardless of how many sets or duplicate rows it contains.
     public struct UsageProfile: Equatable, Sendable {
-        public let sessionDates: [Date]
+        public let completedWorkoutCount: Int
 
+        public init(completedWorkoutCount: Int) {
+            self.completedWorkoutCount = max(0, completedWorkoutCount)
+        }
+
+        /// Compatibility initializer for callers that already hold session
+        /// dates. Replacement ranking intentionally uses only the total count.
         public init(sessionDates: [Date]) {
-            self.sessionDates = sessionDates.sorted(by: >)
+            completedWorkoutCount = sessionDates.count
         }
     }
 
-    /// A snapshot of the fields that matter for similarity.
+    /// A lightweight snapshot of the fields that define replacement quality.
     public struct Candidate: Equatable, Sendable {
         public let id: UUID
         public let name: String
@@ -33,6 +36,7 @@ public enum ExerciseSwapSuggester {
         public let primaryMuscles: [String]
         public let secondaryMuscles: [String]
         public let equipment: String?
+        public let weightMode: WeightMode
         public let mechanic: String?
         public let force: String?
 
@@ -43,6 +47,7 @@ public enum ExerciseSwapSuggester {
             primaryMuscles: [String] = [],
             secondaryMuscles: [String] = [],
             equipment: String? = nil,
+            weightMode: WeightMode = .external,
             mechanic: String? = nil,
             force: String? = nil
         ) {
@@ -52,29 +57,23 @@ public enum ExerciseSwapSuggester {
             self.primaryMuscles = primaryMuscles
             self.secondaryMuscles = secondaryMuscles
             self.equipment = equipment
+            self.weightMode = weightMode
             self.mechanic = mechanic
             self.force = force
         }
     }
 
-    /// Why a candidate matched — the UI turns these into row captions.
+    /// Testable reasons a candidate matched. The concise replacement UI does
+    /// not render these as explanatory copy.
     public enum MatchFacet: Equatable, Sendable {
-        /// Primary muscles shared with the exercise being replaced.
         case sharedMuscles([String])
+        case sameMuscleRegion([String])
         case samePattern
         case sameEquipment(String)
-        /// The target is machine/cable-based and this candidate needs no
-        /// machine — the "station is taken" escape route.
         case freeWeightAlternative(String)
-        /// The candidate matches the equipment direction the lifter selected.
-        case preferredEquipment(String)
-        /// The lifter has completed sets of this exercise before, so ghosts
-        /// and records light up immediately after the swap.
         case trainedBefore
-        /// Broad compatibility inferred from movement metadata and muscles.
         case sameMovementFamily(ExerciseMovementFamily)
-        /// Honest personal context for the recommendation row.
-        case usage(recentSessionCount: Int, lastUsedAt: Date)
+        case usage(completedWorkoutCount: Int)
     }
 
     public struct Suggestion: Equatable, Sendable {
@@ -83,191 +82,242 @@ public enum ExerciseSwapSuggester {
         public let facets: [MatchFacet]
     }
 
-    /// Top substitutes for `target`, best first. Candidates with no
-    /// primary-muscle overlap are dropped — a swap that trains something else
-    /// isn't a substitute. `trainedIDs` are exercises the user has completed
-    /// sets for; `excluding` removes exercises already in the workout/routine.
+    /// Returns valid substitutes with favorites first. A candidate must share
+    /// a primary muscle region with the target, and known movement families
+    /// must agree. Secondary-muscle overlap improves similarity but can never
+    /// admit a candidate from another primary region.
     public static func suggest(
         replacing target: Candidate,
         from pool: [Candidate],
         trainedIDs: Set<UUID> = [],
         excluding: Set<UUID> = [],
-        preference: SwapPreference? = nil,
+        equipmentFilter: EquipmentFilter? = nil,
         usageByID: [UUID: UsageProfile] = [:],
         referenceDate: Date = .now,
         limit: Int = 6
     ) -> [Suggestion] {
-        let targetPrimary = Set(target.primaryMuscles.map(normalize))
-        guard !targetPrimary.isEmpty else { return [] }
-        let targetMachineBased = isMachineBased(target.equipment)
+        // Kept in the source-compatible API so existing call sites can supply
+        // a deterministic clock; favorite-first ranking does not use recency.
+        _ = referenceDate
+
+        guard !canonicalMuscles(target.primaryMuscles).isEmpty else { return [] }
+
+        var ranked: [(suggestion: Suggestion, completedWorkoutCount: Int)] = []
+        for candidate in pool {
+            guard candidate.id != target.id,
+                  !excluding.contains(candidate.id),
+                  isStructurallyCompatible(candidate, with: target),
+                  equipmentFilter.map({ matches($0, candidate: candidate) }) ?? true else {
+                continue
+            }
+
+            let similarity = similarityScore(candidate, target: target)
+            var facets = similarity.facets
+            let completedWorkoutCount = usageByID[candidate.id]?.completedWorkoutCount
+                ?? (trainedIDs.contains(candidate.id) ? 1 : 0)
+            if completedWorkoutCount > 0 {
+                facets.append(.trainedBefore)
+                facets.append(.usage(completedWorkoutCount: completedWorkoutCount))
+            }
+
+            ranked.append((
+                Suggestion(candidate: candidate, score: similarity.score, facets: facets),
+                completedWorkoutCount
+            ))
+        }
+
+        return ranked.sorted { lhs, rhs in
+            if lhs.completedWorkoutCount != rhs.completedWorkoutCount {
+                return lhs.completedWorkoutCount > rhs.completedWorkoutCount
+            }
+            if lhs.suggestion.score != rhs.suggestion.score {
+                return lhs.suggestion.score > rhs.suggestion.score
+            }
+            return lhs.suggestion.candidate.name.localizedStandardCompare(
+                rhs.suggestion.candidate.name
+            ) == .orderedAscending
+        }
+        .prefix(limit)
+        .map(\.suggestion)
+    }
+
+    /// Strict equipment filters that have at least one structurally valid
+    /// candidate after current/in-use exercises are excluded.
+    public static func availableFilters(
+        replacing target: Candidate,
+        from pool: [Candidate],
+        excluding: Set<UUID> = []
+    ) -> [EquipmentFilter] {
+        EquipmentFilter.allCases.filter { filter in
+            pool.contains { candidate in
+                candidate.id != target.id
+                    && !excluding.contains(candidate.id)
+                    && isStructurallyCompatible(candidate, with: target)
+                    && matches(filter, candidate: candidate)
+            }
+        }
+    }
+
+    /// Shared classification used by the quick sheet and full replacement
+    /// search so an active equipment filter cannot leak other categories.
+    public static func matches(_ filter: EquipmentFilter, candidate: Candidate) -> Bool {
+        switch filter {
+        case .freeWeights:
+            isFreeWeight(candidate.equipment)
+        case .machineOrCable:
+            isMachineBased(candidate.equipment)
+        case .bodyweight:
+            !isFreeWeight(candidate.equipment)
+                && !isMachineBased(candidate.equipment)
+                && (candidate.weightMode != .external || isBodyweight(candidate.equipment))
+        }
+    }
+
+    // MARK: - Structural compatibility
+
+    private static func isStructurallyCompatible(_ candidate: Candidate, with target: Candidate) -> Bool {
+        let targetRegions = muscleRegions(target.primaryMuscles)
+        let candidateRegions = muscleRegions(candidate.primaryMuscles)
+        guard !targetRegions.isEmpty,
+              !candidateRegions.isEmpty,
+              !targetRegions.isDisjoint(with: candidateRegions) else {
+            return false
+        }
+
         let targetFamily = ExerciseMovementFamily.infer(
             movementPattern: target.movementPattern,
             primaryMuscles: target.primaryMuscles
         )
-
-        var ranked: [(suggestion: Suggestion, trained: Bool)] = []
-        for candidate in pool {
-            guard candidate.id != target.id, !excluding.contains(candidate.id) else { continue }
-
-            let candidatePrimary = Set(candidate.primaryMuscles.map(normalize))
-            let sharedPrimary = targetPrimary.intersection(candidatePrimary)
-            guard !sharedPrimary.isEmpty else { continue }
-
-            let candidateFamily = ExerciseMovementFamily.infer(
-                movementPattern: candidate.movementPattern,
-                primaryMuscles: candidate.primaryMuscles
-            )
-            if let targetFamily, let candidateFamily, targetFamily != candidateFamily {
-                continue
-            }
-
-            var score = 3.0 * Double(sharedPrimary.count) / Double(targetPrimary.count)
-            var facets: [MatchFacet] = [.sharedMuscles(sharedPrimary.sorted())]
-
-            let candidateSecondary = Set(candidate.secondaryMuscles.map(normalize))
-            score += 0.75 * Double(targetPrimary.intersection(candidateSecondary).count)
-                / Double(targetPrimary.count)
-
-            let targetPattern = normalizePattern(target.movementPattern)
-            let candidatePattern = normalizePattern(candidate.movementPattern)
-            let samePattern = !targetPattern.isEmpty && targetPattern == candidatePattern
-            if samePattern {
-                score += 2.0
-                facets.append(.samePattern)
-            }
-
-            // A complete muscle match in the same movement family is much
-            // more likely to preserve the purpose of the programmed exercise.
-            if sharedPrimary.count == targetPrimary.count, samePattern {
-                score += 1.0
-            }
-
-            if let targetFamily, targetFamily == candidateFamily {
-                score += 0.75
-                facets.append(.sameMovementFamily(targetFamily))
-            }
-
-            let targetForce = normalize(target.force ?? "")
-            let candidateForce = normalize(candidate.force ?? "")
-            let forceDuplicatesPattern = !targetForce.isEmpty
-                && targetForce == targetPattern
-                && candidateForce == candidatePattern
-            if !targetForce.isEmpty, targetForce == candidateForce, !forceDuplicatesPattern {
-                score += 0.4
-            }
-            if let mechanic = target.mechanic, !mechanic.isEmpty,
-               normalize(mechanic) == normalize(candidate.mechanic ?? "") {
-                score += 0.4
-            }
-
-            if let targetEquipment = target.equipment, let candidateEquipment = candidate.equipment,
-               normalize(targetEquipment) == normalize(candidateEquipment) {
-                score += 0.8
-                facets.append(.sameEquipment(candidateEquipment))
-            } else if targetMachineBased, isFreeWeight(candidate.equipment), let equipment = candidate.equipment {
-                score += 1.0
-                facets.append(.freeWeightAlternative(equipment))
-            }
-
-            if let preference, matches(preference, equipment: candidate.equipment),
-               let equipment = candidate.equipment {
-                // Strong enough to reorder close substitutes, but smaller than
-                // the same-pattern signal so equipment never defines quality.
-                score += 0.9
-                facets.append(.preferredEquipment(equipment))
-            }
-
-            if let usage = usageByID[candidate.id],
-               let lastUsedAt = usage.sessionDates.first {
-                score += usageAffinity(usage, referenceDate: referenceDate)
-                let recentCount = usage.sessionDates.count {
-                    elapsedDays(since: $0, referenceDate: referenceDate) <= 90
-                }
-                facets.append(.usage(recentSessionCount: recentCount, lastUsedAt: lastUsedAt))
-            }
-
-            let trained = trainedIDs.contains(candidate.id)
-            if trained {
-                facets.append(.trainedBefore)
-            }
-
-            ranked.append((Suggestion(candidate: candidate, score: score, facets: facets), trained))
+        let candidateFamily = ExerciseMovementFamily.infer(
+            movementPattern: candidate.movementPattern,
+            primaryMuscles: candidate.primaryMuscles
+        )
+        if let targetFamily, let candidateFamily, targetFamily != candidateFamily {
+            return false
         }
-
-        let suggestions = ranked.sorted { lhs, rhs in
-            if lhs.suggestion.score != rhs.suggestion.score {
-                return lhs.suggestion.score > rhs.suggestion.score
-            }
-            if lhs.trained != rhs.trained { return lhs.trained }
-            return lhs.suggestion.candidate.name < rhs.suggestion.candidate.name
-        }.map(\.suggestion)
-
-        return suggestions
-            .prefix(limit)
-            .map { $0 }
+        return true
     }
 
-    /// Equipment shortcuts worth showing for this target and pool. Directions
-    /// with no same-primary-muscle candidate are omitted, avoiding dead chips.
-    public static func availablePreferences(
-        replacing target: Candidate,
-        from pool: [Candidate],
-        excluding: Set<UUID> = []
-    ) -> [SwapPreference] {
-        let targetPrimary = Set(target.primaryMuscles.map(normalize))
-        guard !targetPrimary.isEmpty else { return [] }
+    private static func similarityScore(
+        _ candidate: Candidate,
+        target: Candidate
+    ) -> (score: Double, facets: [MatchFacet]) {
+        let targetPrimary = canonicalMuscles(target.primaryMuscles)
+        let targetSecondary = canonicalMuscles(target.secondaryMuscles)
+        let candidatePrimary = canonicalMuscles(candidate.primaryMuscles)
+        let candidateSecondary = canonicalMuscles(candidate.secondaryMuscles)
 
-        let viable = pool.filter { candidate in
-            guard candidate.id != target.id, !excluding.contains(candidate.id) else { return false }
-            guard !targetPrimary.intersection(candidate.primaryMuscles.map(normalize)).isEmpty else { return false }
-            let targetFamily = ExerciseMovementFamily.infer(
-                movementPattern: target.movementPattern,
-                primaryMuscles: target.primaryMuscles
-            )
-            let candidateFamily = ExerciseMovementFamily.infer(
-                movementPattern: candidate.movementPattern,
-                primaryMuscles: candidate.primaryMuscles
-            )
-            return targetFamily == nil || candidateFamily == nil || targetFamily == candidateFamily
+        let exactPrimary = targetPrimary.intersection(candidatePrimary)
+        let sharedRegions = muscleRegions(target.primaryMuscles)
+            .intersection(muscleRegions(candidate.primaryMuscles))
+
+        var score = 6 * overlapRatio(exactPrimary.count, denominator: targetPrimary.count)
+        score += 3 * overlapRatio(sharedRegions.count, denominator: muscleRegions(target.primaryMuscles).count)
+        score += 1.5 * overlapRatio(
+            targetPrimary.intersection(candidateSecondary).count,
+            denominator: targetPrimary.count
+        )
+        score += 1.25 * overlapRatio(
+            targetSecondary.intersection(candidatePrimary).count,
+            denominator: max(1, targetSecondary.count)
+        )
+        score += 0.5 * overlapRatio(
+            targetSecondary.intersection(candidateSecondary).count,
+            denominator: max(1, targetSecondary.count)
+        )
+
+        var facets: [MatchFacet] = []
+        if !exactPrimary.isEmpty {
+            facets.append(.sharedMuscles(exactPrimary.sorted()))
         }
-        let currentPreference = preference(for: target.equipment)
-        return SwapPreference.allCases.filter { preference in
-            preference != currentPreference && viable.contains { matches(preference, equipment: $0.equipment) }
+        if !sharedRegions.isEmpty {
+            facets.append(.sameMuscleRegion(sharedRegions.sorted()))
         }
+
+        let targetPattern = normalizePattern(target.movementPattern)
+        let candidatePattern = normalizePattern(candidate.movementPattern)
+        let samePattern = !targetPattern.isEmpty && targetPattern == candidatePattern
+        if samePattern {
+            score += 3
+            facets.append(.samePattern)
+        }
+
+        let targetFamily = ExerciseMovementFamily.infer(
+            movementPattern: target.movementPattern,
+            primaryMuscles: target.primaryMuscles
+        )
+        let candidateFamily = ExerciseMovementFamily.infer(
+            movementPattern: candidate.movementPattern,
+            primaryMuscles: candidate.primaryMuscles
+        )
+        if let targetFamily, targetFamily == candidateFamily {
+            score += 1
+            facets.append(.sameMovementFamily(targetFamily))
+        }
+
+        let targetForce = normalize(target.force ?? "")
+        let candidateForce = normalize(candidate.force ?? "")
+        let forceDuplicatesPattern = !targetForce.isEmpty
+            && targetForce == targetPattern
+            && candidateForce == candidatePattern
+        if !targetForce.isEmpty, targetForce == candidateForce, !forceDuplicatesPattern {
+            score += 0.4
+        }
+        if let mechanic = target.mechanic, !mechanic.isEmpty,
+           normalize(mechanic) == normalize(candidate.mechanic ?? "") {
+            score += 0.4
+        }
+
+        if let targetEquipment = target.equipment,
+           let candidateEquipment = candidate.equipment,
+           normalize(targetEquipment) == normalize(candidateEquipment) {
+            score += 0.8
+            facets.append(.sameEquipment(candidateEquipment))
+        } else if isMachineBased(target.equipment),
+                  isFreeWeight(candidate.equipment),
+                  let equipment = candidate.equipment {
+            score += 0.6
+            facets.append(.freeWeightAlternative(equipment))
+        }
+
+        return (score, facets)
+    }
+
+    private static func canonicalMuscles(_ muscles: [String]) -> Set<String> {
+        Set(muscles.map(MuscleTaxonomy.canonical))
+    }
+
+    private static func muscleRegions(_ muscles: [String]) -> Set<String> {
+        Set(muscles.map { MuscleTaxonomy.parent(of: $0) })
+    }
+
+    private static func overlapRatio(_ count: Int, denominator: Int) -> Double {
+        guard denominator > 0 else { return 0 }
+        return Double(count) / Double(denominator)
     }
 
     // MARK: - Equipment classes
 
-    static func isMachineBased(_ equipment: String?) -> Bool {
-        guard let e = equipment?.lowercased() else { return false }
-        return e.contains("machine") || e.contains("smith") || e.contains("cable") || e.contains("leverage")
+    private static func isMachineBased(_ equipment: String?) -> Bool {
+        guard let equipment else { return false }
+        let value = normalize(equipment)
+        return value.contains("machine") || value.contains("smith")
+            || value.contains("cable") || value.contains("leverage")
     }
 
-    static func isFreeWeight(_ equipment: String?) -> Bool {
-        guard let e = equipment?.lowercased() else { return false }
-        return e.contains("barbell") || e.contains("dumbbell") || e.contains("kettlebell")
-            || e.contains("e-z") || e.contains("ez ")
-            || e.contains("medicine") || e.contains("weighted")
+    private static func isFreeWeight(_ equipment: String?) -> Bool {
+        guard let equipment else { return false }
+        let value = normalize(equipment)
+        return value.contains("barbell") || value.contains("dumbbell")
+            || value.contains("kettlebell") || value.contains("e-z")
+            || value.contains("ez ") || value.contains("medicine")
+            || value.contains("weighted")
     }
 
-    static func isBodyweight(_ equipment: String?) -> Bool {
-        guard let e = equipment?.lowercased() else { return false }
-        return e.contains("body") || e.contains("calisthenic") || e == "none"
-    }
-
-    private static func matches(_ preference: SwapPreference, equipment: String?) -> Bool {
-        switch preference {
-        case .freeWeights: isFreeWeight(equipment)
-        case .machineOrCable: isMachineBased(equipment)
-        case .bodyweight: isBodyweight(equipment)
-        }
-    }
-
-    private static func preference(for equipment: String?) -> SwapPreference? {
-        if isFreeWeight(equipment) { return .freeWeights }
-        if isMachineBased(equipment) { return .machineOrCable }
-        if isBodyweight(equipment) { return .bodyweight }
-        return nil
+    private static func isBodyweight(_ equipment: String?) -> Bool {
+        guard let equipment else { return false }
+        let value = normalize(equipment)
+        return value.contains("body") || value.contains("calisthenic") || value == "none"
     }
 
     private static func normalize(_ value: String) -> String {
@@ -278,23 +328,9 @@ public enum ExerciseSwapSuggester {
         guard let value else { return "" }
         return value
             .lowercased()
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
+            .replacing("_", with: " ")
+            .replacing("-", with: " ")
             .split(whereSeparator: \Character.isWhitespace)
             .joined(separator: " ")
-    }
-
-    private static func usageAffinity(_ usage: UsageProfile, referenceDate: Date) -> Double {
-        guard let lastUsedAt = usage.sessionDates.first else { return 0 }
-        let recency = 1.2 * pow(2, -elapsedDays(since: lastUsedAt, referenceDate: referenceDate) / 28)
-        let weightedUses = usage.sessionDates.reduce(0.0) { total, date in
-            total + pow(2, -elapsedDays(since: date, referenceDate: referenceDate) / 56)
-        }
-        let frequency = 1.4 * (1 - exp(-weightedUses / 3))
-        return recency + frequency
-    }
-
-    private static func elapsedDays(since date: Date, referenceDate: Date) -> Double {
-        max(0, referenceDate.timeIntervalSince(date) / 86_400)
     }
 }

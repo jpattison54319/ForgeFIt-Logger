@@ -42,10 +42,50 @@ struct MicrocycleDayTimelineTests {
 
         #expect(days.count == 10)
         #expect(days[0].status == .trained)
+        #expect(days[0].routineMarkers == ["A"])
         #expect(days[0].isToday)
         #expect(days[1].status == .ready)
         #expect(!days[1].isToday)
         #expect(days.dropFirst(2).allSatisfy { $0.status == .empty })
+    }
+
+    @Test func completedDayShowsTheLetterOfTheRoutinePerformed() throws {
+        let firstID = UUID()
+        let secondID = UUID()
+        let thirdID = UUID()
+        let window = MicrocycleWindowModel(
+            userID: ForgeFitDemo.userID,
+            trackingID: UUID(),
+            folderID: UUID(),
+            folderName: "Three Day",
+            index: 0,
+            startsAt: date(1, 0),
+            endsAt: date(11, 0),
+            timeZoneIdentifier: timeZone.identifier,
+            routines: [
+                .init(id: firstID, name: "Upper", position: 0),
+                .init(id: secondID, name: "Lower", position: 1),
+                .init(id: thirdID, name: "Conditioning", position: 2)
+            ]
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: thirdID,
+            startedAt: date(1),
+            endedAt: date(1, 13)
+        )
+
+        let days = MicrocycleDayTimeline.days(
+            in: window,
+            workouts: [workout],
+            restDays: [],
+            now: date(1, 14)
+        )
+
+        #expect(days[0].status == .trained)
+        #expect(days[0].routineMarkers == ["C"])
+        #expect(days[1].status == .ready)
+        #expect(days[1].routineMarkers.isEmpty)
     }
 
     @Test func aNewWindowRestartsAtDayOneAndTheCompletedWindowStaysFinished() throws {

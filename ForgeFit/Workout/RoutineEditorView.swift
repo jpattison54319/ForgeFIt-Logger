@@ -1260,6 +1260,7 @@ struct DarkTextField: View {
     @Binding var text: String
     var placeholder: String
     var axis: Axis = .horizontal
+    var accessibilityIdentifier = ""
 
     var body: some View {
         TextField(placeholder, text: $text, axis: axis)
@@ -1270,6 +1271,7 @@ struct DarkTextField: View {
             .background(theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 

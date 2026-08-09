@@ -28,6 +28,7 @@ struct MicrocycleDetailView: View {
 
     @State private var showingRestSheet = false
     @State private var showingEndConfirmation = false
+    @State private var showingEditTracking = false
     @State private var actionError: String?
     @State private var selectedDay: MicrocycleDaySelection?
 
@@ -80,6 +81,26 @@ struct MicrocycleDetailView: View {
         .scrollIndicators(.hidden)
         .background(theme.background)
         .navigationTitle(tracking?.folderName ?? "Microcycle")
+        .toolbar {
+            if let tracking, tracking.isActive || tracking.needsAttention {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu("Microcycle options", systemImage: "ellipsis") {
+                        Button("Edit Day Target", systemImage: "calendar") {
+                            showingEditTracking = true
+                        }
+                        if tracking.isActive, currentWindow != nil {
+                            Button(action: addDayToCurrentCycle) {
+                                Text("Add 1 Day")
+                                Text("This cycle only")
+                                Image(systemName: "calendar.badge.plus")
+                            }
+                        }
+                    }
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("microcycle-options")
+                }
+            }
+        }
         .sheet(isPresented: $showingRestSheet) {
             RestDayLogSheet { date in
                 _ = try RestDayService.log(
@@ -87,6 +108,17 @@ struct MicrocycleDetailView: View {
                     workouts: workouts,
                     in: modelContext
                 )
+            }
+        }
+        .sheet(isPresented: $showingEditTracking) {
+            if let tracking {
+                MicrocycleTrackingEditView(tracking: tracking) { durationDays in
+                    try MicrocycleTrackingService.updateDuration(
+                        tracking,
+                        durationDays: durationDays,
+                        in: modelContext
+                    )
+                }
             }
         }
         .sheet(item: $selectedDay) { selection in
@@ -129,6 +161,9 @@ struct MicrocycleDetailView: View {
             windows: trackingWindows,
             workouts: workouts
         )
+        let markersByRoutineID = MicrocycleRoutineMarker.markersByRoutineID(
+            in: progress.routines.map(\.routine)
+        )
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .firstTextBaseline) {
@@ -136,7 +171,7 @@ struct MicrocycleDetailView: View {
                         Text("Current window")
                             .font(.headline)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Day \(MicrocycleTrackingService.dayNumber(for: window)) of \(tracking.durationDays)")
+                        Text("Day \(MicrocycleTrackingService.dayNumber(for: window)) of \(MicrocycleTrackingService.windowDurationDays(for: window))")
                             .font(.subheadline)
                             .foregroundStyle(theme.textSecondary)
                     }
@@ -155,7 +190,10 @@ struct MicrocycleDetailView: View {
 
                 VStack(spacing: Space.sm) {
                     ForEach(progress.routines) { item in
-                        routineRow(item)
+                        routineRow(
+                            item,
+                            marker: markersByRoutineID[item.routine.id] ?? "?"
+                        )
                     }
                 }
 
@@ -164,7 +202,10 @@ struct MicrocycleDetailView: View {
         }
     }
 
-    private func routineRow(_ item: MicrocycleRoutineProgress) -> some View {
+    private func routineRow(
+        _ item: MicrocycleRoutineProgress,
+        marker: String
+    ) -> some View {
         let alternatingState = RoutineAlternationService.state(
             containing: item.routine.id,
             alternations: alternations,
@@ -177,50 +218,42 @@ struct MicrocycleDetailView: View {
             routines.first(where: { $0.id == id })?.name
                 ?? (id == item.routine.alternateRoutineID ? item.routine.alternateRoutineName : item.routine.name)
         }
-        return VStack(alignment: .leading, spacing: Space.sm) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isCompleted ? theme.accent : theme.textTertiary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(startRoutine?.name ?? item.routine.name)
-                        .font(.body)
-                        .foregroundStyle(item.isCompleted ? theme.textSecondary : theme.textPrimary)
-                    if let alternatingState {
-                        Label(
-                            "Alternates with \(alternatingState.other.name)",
-                            systemImage: "arrow.triangle.2.circlepath"
-                        )
+        return HStack(spacing: Space.sm) {
+            MicrocycleRoutineStatusMarker(
+                marker: marker,
+                isCompleted: item.isCompleted
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(startRoutine?.name ?? item.routine.name)
+                    .font(.body)
+                    .foregroundStyle(item.isCompleted ? theme.textSecondary : theme.textPrimary)
+                    .lineLimit(1)
+                if let completedAt = item.completedAt {
+                    Text("Completed\(completedName.map { " \($0)" } ?? "") \(completedAt.formatted(.dateTime.month(.abbreviated).day()))")
                         .font(.caption)
-                        .foregroundStyle(theme.accent)
-                    }
-                    if let completedAt = item.completedAt {
-                        Text("Completed\(completedName.map { " \($0)" } ?? "") \(completedAt.formatted(.dateTime.month(.abbreviated).day()))")
-                            .font(.caption)
-                            .foregroundStyle(theme.textTertiary)
-                    }
+                        .foregroundStyle(theme.textTertiary)
+                        .lineLimit(1)
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(startRoutine?.name ?? item.routine.name), \(item.isCompleted ? "completed" : "remaining")")
+            .accessibilityLabel("Routine \(marker), \(startRoutine?.name ?? item.routine.name), \(item.isCompleted ? "completed" : "remaining")")
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let startRoutine {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: Space.sm) {
-                        routineStartButton(startRoutine, isAlternate: false)
-                        if let other = alternatingState?.other {
-                            routineStartButton(other, isAlternate: true)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                        routineStartButton(startRoutine, isAlternate: false)
-                        if let other = alternatingState?.other {
-                            routineStartButton(other, isAlternate: true)
-                        }
+                HStack(spacing: Space.xs) {
+                    routineStartButton(
+                        startRoutine,
+                        isAlternate: false
+                    )
+                    if let other = alternatingState?.other {
+                        routineStartButton(other, isAlternate: true)
                     }
                 }
+                .layoutPriority(1)
             }
         }
+        .frame(minHeight: 44)
     }
 
     @ViewBuilder
@@ -228,27 +261,53 @@ struct MicrocycleDetailView: View {
         _ routine: RoutineModel,
         isAlternate: Bool
     ) -> some View {
+        let compactName = routine.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = isAlternate
+            ? (!compactName.isEmpty && compactName.count <= 5 ? "Start \(compactName)" : "Start Alt")
+            : "Start"
         if isAlternate {
-            Button("Start \(routine.name) instead") {
+            Button {
                 startRoutine(id: routine.id)
+            } label: {
+                compactStartLabel(title, isAlternate: true)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
-            .font(.subheadline.bold())
-            .buttonStyle(.glass)
-            .controlSize(.small)
-            .buttonBorderShape(.capsule)
-            .frame(minHeight: 44)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Start \(routine.name)")
             .accessibilityIdentifier("microcycle-start-alternate-\(routine.id.uuidString)")
         } else {
-            Button("Start \(routine.name)", systemImage: "play.fill") {
+            Button {
                 startRoutine(id: routine.id)
+            } label: {
+                compactStartLabel(title, isAlternate: false)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
-            .font(.subheadline.bold())
-            .buttonStyle(.glassProminent)
-            .tint(theme.accent)
-            .controlSize(.small)
-            .buttonBorderShape(.capsule)
-            .frame(minHeight: 44)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Start \(routine.name)")
             .accessibilityIdentifier("microcycle-start-routine-\(routine.id.uuidString)")
+        }
+    }
+
+    @ViewBuilder
+    private func compactStartLabel(_ title: String, isAlternate: Bool) -> some View {
+        let label = Text(title)
+            .font(.footnote.bold())
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .allowsTightening(true)
+            .padding(.horizontal, Space.sm)
+            .padding(.vertical, Space.xs)
+
+        if isAlternate {
+            label
+                .foregroundStyle(theme.textPrimary)
+                .glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            label
+                .foregroundStyle(.white)
+                .glassEffect(.regular.tint(theme.accent).interactive(), in: Capsule())
         }
     }
 
@@ -343,6 +402,18 @@ struct MicrocycleDetailView: View {
         do {
             try MicrocycleTrackingService.end(tracking, in: modelContext)
             dismiss()
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func addDayToCurrentCycle() {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.addDayToCurrentWindow(
+                tracking,
+                in: modelContext
+            )
         } catch {
             actionError = error.localizedDescription
         }

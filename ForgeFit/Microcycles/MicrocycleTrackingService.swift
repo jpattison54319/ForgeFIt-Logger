@@ -11,6 +11,8 @@ enum MicrocycleTrackingService {
         case emptyMicrocycle
         case invalidDuration
         case futureStart
+        case trackingInactive
+        case windowUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -19,6 +21,8 @@ enum MicrocycleTrackingService {
             case .emptyMicrocycle: "Add at least one routine before tracking this microcycle."
             case .invalidDuration: "Choose a cycle length from 1 to 31 days."
             case .futureStart: "A microcycle can start today or on a past date."
+            case .trackingInactive: "This microcycle is no longer being tracked."
+            case .windowUnavailable: "The current microcycle window is unavailable."
             }
         }
     }
@@ -199,6 +203,95 @@ enum MicrocycleTrackingService {
         try context.save()
     }
 
+    /// Changes the repeating target without rewriting completed windows. The
+    /// active window can shrink only as far as the current day, so every day
+    /// the user has already reached or backfilled remains available.
+    static func updateDuration(
+        _ tracking: MicrocycleTrackingModel,
+        durationDays: Int,
+        in context: ModelContext,
+        now: Date = .now
+    ) throws {
+        guard tracking.isActive || tracking.needsAttention else {
+            throw ServiceError.trackingInactive
+        }
+        guard (1...31).contains(durationDays) else {
+            throw ServiceError.invalidDuration
+        }
+
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+        if let current = currentWindow(for: tracking, windows: windows, now: now) {
+            let calendar = try MicrocycleEngine.calendar(
+                timeZoneIdentifier: tracking.timeZoneIdentifier
+            )
+            let currentDuration = windowDurationDays(for: current)
+            let temporaryExtension = max(0, currentDuration - tracking.durationDays)
+            let elapsedDays = dayNumber(for: current, now: now)
+            let requestedDuration = durationDays + temporaryExtension
+            let preservedDuration = max(elapsedDays, requestedDuration)
+            guard let adjustedEnd = calendar.date(
+                byAdding: .day,
+                value: preservedDuration,
+                to: current.startsAt
+            ) else {
+                throw ServiceError.windowUnavailable
+            }
+            try resize(
+                current,
+                to: adjustedEnd,
+                shifting: windows,
+                calendar: calendar,
+                now: now
+            )
+        }
+
+        tracking.durationDays = durationDays
+        tracking.updatedAt = now
+        let folders = try context.fetch(FetchDescriptor<RoutineFolderModel>())
+        if let folder = folders.first(where: {
+            $0.id == tracking.folderID && $0.deletedAt == nil
+        }) {
+            folder.defaultMicrocycleLengthDays = durationDays
+            folder.updatedAt = now
+        }
+        try context.save()
+    }
+
+    /// Extends only the active window. Later windows, if already present, move
+    /// with it; newly materialized windows return to the repeating day target.
+    static func addDayToCurrentWindow(
+        _ tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        now: Date = .now
+    ) throws {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+        guard let current = currentWindow(for: tracking, windows: windows, now: now) else {
+            throw ServiceError.windowUnavailable
+        }
+        let calendar = try MicrocycleEngine.calendar(
+            timeZoneIdentifier: tracking.timeZoneIdentifier
+        )
+        guard let adjustedEnd = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: current.endsAt
+        ) else {
+            throw ServiceError.windowUnavailable
+        }
+        try resize(
+            current,
+            to: adjustedEnd,
+            shifting: windows,
+            calendar: calendar,
+            now: now
+        )
+        tracking.updatedAt = now
+        try context.save()
+    }
+
     static func activeTracking(_ trackings: [MicrocycleTrackingModel]) -> MicrocycleTrackingModel? {
         trackings
             .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }
@@ -287,6 +380,17 @@ enum MicrocycleTrackingService {
         ).day ?? 1))
     }
 
+    static func windowDurationDays(for window: MicrocycleWindowModel) -> Int {
+        guard let calendar = try? MicrocycleEngine.calendar(
+            timeZoneIdentifier: window.timeZoneIdentifier
+        ) else { return 1 }
+        return max(1, calendar.dateComponents(
+            [.day],
+            from: window.startsAt,
+            to: window.endsAt
+        ).day ?? 1)
+    }
+
     static func history(
         for tracking: MicrocycleTrackingModel,
         windows: [MicrocycleWindowModel]
@@ -360,23 +464,22 @@ enum MicrocycleTrackingService {
         in context: ModelContext,
         now: Date
     ) throws -> Bool {
-        let current = try MicrocycleEngine.window(
-            anchor: tracking.anchorDate,
-            durationDays: tracking.durationDays,
-            containing: now,
+        let calendar = try MicrocycleEngine.calendar(
             timeZoneIdentifier: tracking.timeZoneIdentifier
         )
-        let existing = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+        var ordered = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
             .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
-        let existingIndices = Set(existing.map(\.index))
-        var currentWindowModel = existing.first { $0.index == current.index }
+            .sorted {
+                if $0.index != $1.index { return $0.index < $1.index }
+                return $0.startsAt < $1.startsAt
+            }
 
         var changed = false
-        for index in 0...current.index where !existingIndices.contains(index) {
-            let window = try MicrocycleEngine.window(
+        if ordered.isEmpty {
+            let first = try MicrocycleEngine.window(
                 anchor: tracking.anchorDate,
                 durationDays: tracking.durationDays,
-                index: index,
+                index: 0,
                 timeZoneIdentifier: tracking.timeZoneIdentifier
             )
             let model = MicrocycleWindowModel(
@@ -384,17 +487,50 @@ enum MicrocycleTrackingService {
                 trackingID: tracking.id,
                 folderID: tracking.folderID,
                 folderName: tracking.folderName,
-                index: index,
-                startsAt: window.startsAt,
-                endsAt: window.endsAt,
+                index: 0,
+                startsAt: first.startsAt,
+                endsAt: first.endsAt,
                 timeZoneIdentifier: tracking.timeZoneIdentifier,
                 routines: routines,
                 createdAt: now,
                 updatedAt: now
             )
             context.insert(model)
-            if index == current.index { currentWindowModel = model }
+            ordered.append(model)
             changed = true
+        }
+
+        // Stored boundaries, rather than anchor arithmetic, are the schedule
+        // source of truth. This lets one active window gain a rest day without
+        // changing the repeating duration of every window that follows.
+        while let previous = ordered.last, now >= previous.endsAt {
+            guard let nextEnd = calendar.date(
+                byAdding: .day,
+                value: tracking.durationDays,
+                to: previous.endsAt
+            ) else {
+                throw ServiceError.windowUnavailable
+            }
+            let model = MicrocycleWindowModel(
+                userID: tracking.userID,
+                trackingID: tracking.id,
+                folderID: tracking.folderID,
+                folderName: tracking.folderName,
+                index: previous.index + 1,
+                startsAt: previous.endsAt,
+                endsAt: nextEnd,
+                timeZoneIdentifier: tracking.timeZoneIdentifier,
+                routines: routines,
+                createdAt: now,
+                updatedAt: now
+            )
+            context.insert(model)
+            ordered.append(model)
+            changed = true
+        }
+
+        let currentWindowModel = ordered.last {
+            $0.startsAt <= now && now < $0.endsAt
         }
 
         // The active window is a live checklist: changing the leaf folder's
@@ -409,5 +545,46 @@ enum MicrocycleTrackingService {
             changed = true
         }
         return changed
+    }
+
+    private static func resize(
+        _ window: MicrocycleWindowModel,
+        to adjustedEnd: Date,
+        shifting windows: [MicrocycleWindowModel],
+        calendar: Calendar,
+        now: Date
+    ) throws {
+        guard adjustedEnd > window.startsAt else {
+            throw ServiceError.invalidDuration
+        }
+        let originalEnd = window.endsAt
+        let dayDelta = calendar.dateComponents(
+            [.day],
+            from: originalEnd,
+            to: adjustedEnd
+        ).day ?? 0
+        guard dayDelta != 0 else { return }
+
+        window.endsAt = adjustedEnd
+        window.updatedAt = now
+        let followingWindows = windows
+            .filter { $0.index > window.index }
+            .sorted { $0.index < $1.index }
+        for following in followingWindows {
+            guard let shiftedStart = calendar.date(
+                byAdding: .day,
+                value: dayDelta,
+                to: following.startsAt
+            ), let shiftedEnd = calendar.date(
+                byAdding: .day,
+                value: dayDelta,
+                to: following.endsAt
+            ) else {
+                throw ServiceError.windowUnavailable
+            }
+            following.startsAt = shiftedStart
+            following.endsAt = shiftedEnd
+            following.updatedAt = now
+        }
     }
 }

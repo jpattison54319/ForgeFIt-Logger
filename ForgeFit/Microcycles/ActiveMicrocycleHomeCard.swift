@@ -51,7 +51,7 @@ struct ActiveMicrocycleHomeCard<Destination: Hashable>: View {
                     .font(.headline)
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
-                Text("Day \(MicrocycleTrackingService.dayNumber(for: window)) of \(tracking.durationDays)")
+                Text("Day \(MicrocycleTrackingService.dayNumber(for: window)) of \(MicrocycleTrackingService.windowDurationDays(for: window))")
                     .font(.subheadline)
                     .foregroundStyle(theme.textSecondary)
             }

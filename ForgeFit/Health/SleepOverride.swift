@@ -60,7 +60,29 @@ final class SleepOverrideStore {
     /// `manual` substitutes the entered duration and clears the fragment-derived
     /// stage/HR fields that no longer describe it.
     func process(_ metrics: [RecoveryEngine.DailyHealthMetric]) -> [RecoveryEngine.DailyHealthMetric] {
-        var corrected = metrics.map { metric -> RecoveryEngine.DailyHealthMetric in
+        var corrected = applyingOverrides(to: metrics)
+        // Re-run detection so a correction immediately clears (or, for a still
+        // genuinely-short confirmed night, keeps) the partial-wear judgment.
+        corrected = SleepIntegrity.annotate(corrected)
+        // `annotate` may re-stamp partialWear on a `confirmed` night; the
+        // correction wins — a night the user vouched for is trustworthy.
+        for index in corrected.indices where override(for: corrected[index].date) != nil {
+            corrected[index].integrityFlags.remove(SleepIntegrity.Flag.partialWear)
+        }
+        return corrected
+    }
+
+    /// Applies durable user choices to sleep-only history. Integrity detection
+    /// needs nocturnal HR/HRV coverage, which this lightweight query does not
+    /// fetch, so it must not invent partial-wear judgments for older nights.
+    func processHistory(_ metrics: [RecoveryEngine.DailyHealthMetric]) -> [RecoveryEngine.DailyHealthMetric] {
+        applyingOverrides(to: metrics)
+    }
+
+    private func applyingOverrides(
+        to metrics: [RecoveryEngine.DailyHealthMetric]
+    ) -> [RecoveryEngine.DailyHealthMetric] {
+        metrics.map { metric -> RecoveryEngine.DailyHealthMetric in
             var copy = metric
             // `process` is also safe when handed a previously processed series:
             // clearing an override must clear its presentation metadata too.
@@ -92,15 +114,6 @@ final class SleepOverrideStore {
             }
             return copy
         }
-        // Re-run detection so a correction immediately clears (or, for a still
-        // genuinely-short confirmed night, keeps) the partial-wear judgment.
-        corrected = SleepIntegrity.annotate(corrected)
-        // `annotate` may re-stamp partialWear on a `confirmed` night; the
-        // correction wins — a night the user vouched for is trustworthy.
-        for index in corrected.indices where override(for: corrected[index].date) != nil {
-            corrected[index].integrityFlags.remove(SleepIntegrity.Flag.partialWear)
-        }
-        return corrected
     }
 
     // MARK: - Persistence

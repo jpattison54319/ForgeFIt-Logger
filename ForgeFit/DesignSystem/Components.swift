@@ -376,15 +376,27 @@ struct EmptyStateCard: View {
     let title: String
     let message: String?
     let systemImage: String
+    var iconActionLabel: String? = nil
+    var iconActionIdentifier: String? = nil
+    var iconAction: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
     var body: some View {
         Card {
             VStack(spacing: Space.md) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(theme.textTertiary)
+                if let iconActionLabel, let iconActionIdentifier, let iconAction {
+                    Button(iconActionLabel, systemImage: systemImage, action: iconAction)
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 34, weight: .regular))
+                        .foregroundStyle(theme.textTertiary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier(iconActionIdentifier)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 34, weight: .regular))
+                        .foregroundStyle(theme.textTertiary)
+                }
                 Text(title)
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)

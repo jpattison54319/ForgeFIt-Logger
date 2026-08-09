@@ -40,6 +40,12 @@ struct ExercisePickerView: View {
     var navigationTitle = "Add Exercise"
     /// Current/in-use exercises that replacement must never offer.
     var excludedIDs: Set<UUID> = []
+    /// When present, this picker is the full-search continuation of a swap.
+    /// Suggested rows use the target's replacement ranking rather than the
+    /// generic add-exercise recommendation policy.
+    var replacementTarget: ExerciseLibraryModel? = nil
+    /// Strict equipment filter selected on the quick replacement sheet.
+    var presetReplacementEquipmentFilter: ExerciseSwapSuggester.EquipmentFilter? = nil
     var onAddConditioningBlock: ((String) -> Void)?
     var onAddYogaBlock: ((String) -> Void)?
     let onAdd: ([ExerciseLibraryModel]) -> Void
@@ -48,6 +54,7 @@ struct ExercisePickerView: View {
     @State private var muscle: String?
     @State private var equipment: String?
     @State private var modalityFilter: Modality?
+    @State private var replacementEquipmentFilter: ExerciseSwapSuggester.EquipmentFilter?
     @State private var selected: Set<UUID> = []
     @State private var showCreate = false
     @State private var showConditioningBuilder = false
@@ -61,6 +68,7 @@ struct ExercisePickerView: View {
     /// made typing lag scale with library size.
     @State private var filteredBaseMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var searchSnapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
+    @State private var appliedInitialFilters = false
 
     private var exerciseFingerprint: String {
         var liveCount = 0
@@ -91,9 +99,26 @@ struct ExercisePickerView: View {
         excludedIDs.map(\.uuidString).sorted().joined(separator: "|")
     }
 
+    private var replacementFingerprint: String {
+        guard let replacementTarget else { return "" }
+        return "\(replacementTarget.id.uuidString):\(replacementTarget.updatedAt.timeIntervalSince1970)"
+    }
+
+    private var filterKey: String {
+        "\(exerciseFingerprint)|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")|\(replacementFilterIdentifier)|\(excludeYogaSession)|\(excludeYogaPoses)|\(excludeYoga)|\(exclusionFingerprint)"
+    }
+
+    private var replacementFilterIdentifier: String {
+        switch replacementEquipmentFilter {
+        case nil: ""
+        case .freeWeights: "free-weights"
+        case .machineOrCable: "machine-or-cable"
+        case .bodyweight: "bodyweight"
+        }
+    }
+
     private var filtered: [ExerciseLibraryModel] {
         let normalizedSearch = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filterKey = "\(exerciseFingerprint)|\(muscle ?? "")|\(equipment ?? "")|\(modalityFilter?.rawValue ?? "")|\(excludeYogaSession)|\(excludeYogaPoses)|\(excludeYoga)|\(exclusionFingerprint)"
         let key = "\(filterKey)|\(normalizedSearch.lowercased())"
         return filteredMemo(key) {
             let base = filteredBase(filterKey: filterKey)
@@ -132,6 +157,11 @@ struct ExercisePickerView: View {
                    !ex.primaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }),
                    !ex.secondaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }) { return false }
                 if let equipment, ex.equipment != equipment { return false }
+                if let replacementEquipmentFilter,
+                   !ExerciseSwapSuggester.matches(
+                    replacementEquipmentFilter,
+                    candidate: swapCandidate(for: ex)
+                   ) { return false }
                 return true
             }
         }
@@ -142,10 +172,23 @@ struct ExercisePickerView: View {
     /// overlap (e.g. chest → push) quieter — and (b) how often the user has
     /// actually logged it. Renders nothing when there's no signal.
     private var suggested: [ExerciseLibraryModel] {
-        guard search.isEmpty, muscle == nil, equipment == nil else { return [] }
+        guard search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
 
-        let key = "\(exerciseFingerprint)|\(historyFingerprint)|\(contextFingerprint)|\(exclusionFingerprint)"
+        let key = "\(filterKey)|\(historyFingerprint)|\(contextFingerprint)|\(replacementFingerprint)"
         return suggestedMemo(key) {
+            let base = filteredBase(filterKey: filterKey)
+
+            if let replacementTarget {
+                let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                return ExerciseSwapSuggester.suggest(
+                    replacing: swapCandidate(for: replacementTarget),
+                    from: base.map(swapCandidate(for:)),
+                    excluding: excludedIDs,
+                    equipmentFilter: replacementEquipmentFilter,
+                    usageByID: ExerciseSwapUsageBuilder.profiles(from: history)
+                ).compactMap { byID[$0.candidate.id] }
+            }
+
             var usage: [UUID: Int] = [:]
             for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
                 for we in workout.exercises { usage[we.exerciseID, default: 0] += 1 }
@@ -159,14 +202,8 @@ struct ExercisePickerView: View {
 
             let alreadyIn = Set(context.map(\.id))
             var seen = Set<UUID>()
-            let scored: [(ExerciseLibraryModel, Double)] = exercises.compactMap { ex in
-                guard ex.deletedAt == nil,
-                      !alreadyIn.contains(ex.id),
-                      !excludedIDs.contains(ex.id),
-                      seen.insert(ex.id).inserted else { return nil }
-                if excludeYoga, ex.isYoga { return nil }
-                if excludeYogaSession, YogaPoseCatalog.isSessionExercise(ex) { return nil }
-                if excludeYogaPoses, ex.isYoga, !YogaPoseCatalog.isSessionExercise(ex) { return nil }
+            let scored: [(ExerciseLibraryModel, Double)] = base.compactMap { ex in
+                guard !alreadyIn.contains(ex.id), seen.insert(ex.id).inserted else { return nil }
                 var score = 0.0
                 for m in ex.primaryMuscles { score += (muscleScore[m] ?? 0) }
                 for m in ex.secondaryMuscles { score += (muscleScore[m] ?? 0) * 0.4 }
@@ -243,15 +280,18 @@ struct ExercisePickerView: View {
                     dismiss()
                 }
             }
-            .sheet(item: $detailExercise) { exercise in
+            .fullScreenCover(item: $detailExercise) { exercise in
                 NavigationStack {
                     ExerciseDetailView(exerciseID: exercise.id, workouts: history, exercises: exercises)
                 }
             }
             .onAppear {
-                if let presetModality, modalityFilter == nil {
+                guard !appliedInitialFilters else { return }
+                if let presetModality {
                     modalityFilter = presetModality
                 }
+                replacementEquipmentFilter = presetReplacementEquipmentFilter
+                appliedInitialFilters = true
             }
         }
     }
@@ -299,17 +339,42 @@ struct ExercisePickerView: View {
                     } label: {
                         FilterChip(title: muscle.map(MuscleTaxonomy.displayName) ?? "Muscle", active: muscle != nil, systemImage: "figure.arms.open")
                     }
-                    Menu {
-                        Button("All equipment") { equipment = nil }
-                        ForEach(ExerciseCatalog.equipmentTypes, id: \.self) { e in
-                            Button(e.capitalized) { equipment = e }
+                    if replacementTarget != nil {
+                        Menu {
+                            Button("All equipment") { replacementEquipmentFilter = nil }
+                            ForEach(ExerciseSwapSuggester.EquipmentFilter.allCases, id: \.self) { filter in
+                                Button(replacementEquipmentFilterTitle(filter)) {
+                                    replacementEquipmentFilter = filter
+                                }
+                            }
+                        } label: {
+                            FilterChip(
+                                title: replacementEquipmentFilter.map(replacementEquipmentFilterTitle) ?? "Equipment",
+                                active: replacementEquipmentFilter != nil,
+                                systemImage: "dumbbell"
+                            )
                         }
-                    } label: {
-                        FilterChip(title: equipment?.capitalized ?? "Equipment", active: equipment != nil, systemImage: "dumbbell")
+                        .accessibilityIdentifier("replacement-search-equipment-filter")
+                    } else {
+                        Menu {
+                            Button("All equipment") { equipment = nil }
+                            ForEach(ExerciseCatalog.equipmentTypes, id: \.self) { e in
+                                Button(e.capitalized) { equipment = e }
+                            }
+                        } label: {
+                            FilterChip(
+                                title: equipment?.capitalized ?? "Equipment",
+                                active: equipment != nil,
+                                systemImage: "dumbbell"
+                            )
+                        }
                     }
-                    if muscle != nil || equipment != nil || modalityFilter != nil {
+                    if muscle != nil || equipment != nil || replacementEquipmentFilter != nil || modalityFilter != nil {
                         Button {
-                            muscle = nil; equipment = nil; modalityFilter = nil
+                            muscle = nil
+                            equipment = nil
+                            replacementEquipmentFilter = nil
+                            modalityFilter = nil
                         } label: {
                             FilterChip(title: "Clear", active: false, systemImage: "xmark")
                         }
@@ -318,6 +383,16 @@ struct ExercisePickerView: View {
             }
             .padding(.horizontal, Space.lg)
             .padding(.vertical, Space.sm)
+        }
+    }
+
+    private func replacementEquipmentFilterTitle(
+        _ filter: ExerciseSwapSuggester.EquipmentFilter
+    ) -> String {
+        switch filter {
+        case .freeWeights: "Free weights"
+        case .machineOrCable: "Machine or cable"
+        case .bodyweight: "Bodyweight"
         }
     }
 
@@ -335,12 +410,22 @@ struct ExercisePickerView: View {
                     .padding(.horizontal, Space.lg)
 
                     ForEach(picks) { exercise in
-                        ExerciseRowLabel(
-                            exercise: exercise,
-                            selected: selected.contains(exercise.id),
-                            onSelect: { toggle(exercise) },
-                            onInfo: { detailExercise = exercise }
-                        )
+                        Group {
+                            if replacementTarget != nil {
+                                ReplacementExerciseRow(
+                                    exercise: exercise,
+                                    onShowDetails: { detailExercise = exercise },
+                                    onSwap: { commit([exercise]) }
+                                )
+                            } else {
+                                ExerciseRowLabel(
+                                    exercise: exercise,
+                                    selected: selected.contains(exercise.id),
+                                    onSelect: { toggle(exercise) },
+                                    onInfo: { detailExercise = exercise }
+                                )
+                            }
+                        }
                         .padding(.horizontal, Space.lg)
                     }
                 }
@@ -354,12 +439,22 @@ struct ExercisePickerView: View {
                 .padding(.top, picks.isEmpty ? 0 : Space.sm)
 
                 ForEach(filtered) { exercise in
-                    ExerciseRowLabel(
-                        exercise: exercise,
-                        selected: selected.contains(exercise.id),
-                        onSelect: { toggle(exercise) },
-                        onInfo: { detailExercise = exercise }
-                    )
+                    Group {
+                        if replacementTarget != nil {
+                            ReplacementExerciseRow(
+                                exercise: exercise,
+                                onShowDetails: { detailExercise = exercise },
+                                onSwap: { commit([exercise]) }
+                            )
+                        } else {
+                            ExerciseRowLabel(
+                                exercise: exercise,
+                                selected: selected.contains(exercise.id),
+                                onSelect: { toggle(exercise) },
+                                onInfo: { detailExercise = exercise }
+                            )
+                        }
+                    }
                     .padding(.horizontal, Space.lg)
                 }
 
@@ -426,6 +521,22 @@ struct ExercisePickerView: View {
         if singleSelection { commit([exercise]); return }
         if selected.contains(exercise.id) { selected.remove(exercise.id) }
         else { selected.insert(exercise.id) }
+    }
+
+    private func swapCandidate(
+        for exercise: ExerciseLibraryModel
+    ) -> ExerciseSwapSuggester.Candidate {
+        .init(
+            id: exercise.id,
+            name: exercise.name,
+            movementPattern: exercise.movementPattern,
+            primaryMuscles: exercise.primaryMuscles,
+            secondaryMuscles: exercise.secondaryMuscles,
+            equipment: exercise.equipment,
+            weightMode: exercise.defaultWeightMode,
+            mechanic: exercise.mechanic,
+            force: exercise.force
+        )
     }
 
     private func commit(_ list: [ExerciseLibraryModel]) {

@@ -67,6 +67,28 @@ final class QuickActionsBubbleUITests: XCTestCase {
                       "Expected the live logger after starting an empty workout from the bubble.")
     }
 
+    /// The empty-state plus is an add control, not decorative artwork.
+    @MainActor
+    func testEmptyWorkoutPlusOpensExercisePicker() throws {
+        let app = launchApp(initialTab: "insights")
+
+        let trigger = button(app, "quick-actions-trigger")
+        XCTAssertTrue(trigger.waitForExistence(timeout: 5))
+        trigger.tap()
+
+        let emptyAction = button(app, "quick-action-empty")
+        XCTAssertTrue(emptyAction.waitForExistence(timeout: 3))
+        tapWhenHittable(emptyAction)
+
+        let addExercise = button(app, "empty-workout-add-exercise")
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 5),
+                      "Expected the plus icon to be exposed as a button.")
+        tapWhenHittable(addExercise)
+
+        XCTAssertTrue(app.searchFields["Search exercises"].waitForExistence(timeout: 5),
+                      "Expected the plus icon to open the exercise picker.")
+    }
+
     @MainActor
     func testScrimTapCollapsesFan() throws {
         let app = launchApp()

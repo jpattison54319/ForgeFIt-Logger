@@ -109,10 +109,9 @@ final class MyoActivationUITests: XCTestCase {
                       "Empty tile never became tappable — Home is still covered.")
         emptyAction.tap()
 
-        // The logger's empty state offers "Add to Workout" (id `add-to-workout`)
-        // alongside quick picks. It was matched by the literal label
-        // "Add Exercise", which no longer exists — match the identifier so a
-        // future copy change can't silently break this again.
+        // The full-width Add to Workout control remains the stable path used
+        // by this myo-rep flow; the empty-state plus has focused coverage in
+        // QuickActionsBubbleUITests.
         let addExercise = element(app, "add-to-workout")
         XCTAssertTrue(addExercise.waitForExistence(timeout: 8),
                       "Expected the logger's Add to Workout button.")

@@ -85,6 +85,9 @@ struct ReorderHandle: View {
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: () -> Void
     var onAccessibilityMoveBy: (Int) -> Void = { _ in }
+    var accessibilityLabelText = "Reorder exercises"
+    var accessibilityHintText = "Drag to move this exercise in the workout order"
+    var accessibilityIdentifierText = "hold-to-reorder-exercises"
 
     @State private var pressed = false
 
@@ -111,14 +114,14 @@ struct ReorderHandle: View {
                     }
                 )
             )
-            .accessibilityLabel("Reorder exercises")
-            .accessibilityHint("Drag to move this exercise in the workout order")
+            .accessibilityLabel(accessibilityLabelText)
+            .accessibilityHint(accessibilityHintText)
             .accessibilityAddTraits(.isButton)
             .accessibilityActions {
                 Button("Move up") { onAccessibilityMoveBy(-1) }
                 Button("Move down") { onAccessibilityMoveBy(1) }
             }
-            .accessibilityIdentifier("hold-to-reorder-exercises")
+            .accessibilityIdentifier(accessibilityIdentifierText)
     }
 }
 

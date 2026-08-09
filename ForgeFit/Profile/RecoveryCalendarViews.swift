@@ -65,82 +65,118 @@ struct RecoveryDayRings: View {
 
 // MARK: - Selected-day recovery card
 
-/// The card above a selected day's workouts: recovery and trend side by side,
-/// with the day's strain spanning the row beneath them.
+/// The selected day's complete Home-metric overview. The shared tile language
+/// keeps historical readings visually aligned with today without implying
+/// that these static calendar values are navigation controls.
 struct RecoveryDaySummaryCard: View {
     let snapshot: RecoverySnapshot?
+    let selectedDay: Date
+    let healthMetrics: [RecoveryEngine.DailyHealthMetric]
+    let isLoadingHealth: Bool
     @Environment(\.theme) private var theme
 
-    var body: some View {
-        Card {
-            if let snapshot {
-                VStack(spacing: Space.md) {
-                    HStack(spacing: 0) {
-                        scoreColumn(label: "Recovery", value: snapshot.daily,
-                                    caption: "That day", id: "recovery")
-                        Rectangle()
-                            .fill(theme.separator)
-                            .frame(width: 1, height: 52)
-                            .padding(.horizontal, Space.md)
-                        scoreColumn(label: "Trend", value: snapshot.trend,
-                                    caption: "7-day", id: "trend")
-                    }
-                    .frame(maxWidth: .infinity)
+    private let calendar = Calendar.current
 
-                    if let strain = snapshot.strain {
-                        Rectangle()
-                            .fill(theme.separator)
-                            .frame(height: 1)
-                        RecoveryDayStrainRow(score: strain, target: snapshot.strainTargetRange)
-                    }
-                }
-            } else {
-                HStack(spacing: Space.md) {
-                    Image(systemName: "heart.text.square")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(theme.textTertiary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("No recovery recorded")
-                            .font(.bodyStrong)
-                            .foregroundStyle(theme.textPrimary)
-                        Text("Recovery is captured each day going forward.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    Spacer()
-                }
+    private var selectedMetric: RecoveryEngine.DailyHealthMetric? {
+        CalendarDayHealthSupport.metric(for: selectedDay, in: healthMetrics, calendar: calendar)
+    }
+
+    private var healthAssessment: HealthRangeAssessment {
+        CalendarDayHealthSupport.assessment(for: selectedDay, in: healthMetrics, calendar: calendar)
+    }
+
+    var body: some View {
+        VStack(spacing: Space.md) {
+            HStack(alignment: .top, spacing: Space.md) {
+                recoveryTile
+                trendRecoveryTile
             }
+            HStack(alignment: .top, spacing: Space.md) {
+                sleepTile
+                StrainSummaryTile(
+                    score: snapshot?.strain,
+                    usualRange: snapshot?.strainTargetRange,
+                    isLoading: false,
+                    isRefreshing: false,
+                    showsDisclosure: false,
+                    missingLabel: snapshot?.strain == nil ? "No data" : nil
+                )
+                .accessibilityIdentifier("recovery-summary-strain")
+            }
+            healthTile
         }
     }
 
-    private func scoreColumn(label: String, value: Double?, caption: String, id: String) -> some View {
-        HStack(spacing: Space.md) {
-            ZStack {
-                ProgressRing(
-                    progress: value ?? 0,
-                    lineWidth: 5,
-                    color: value.map(theme.readinessColor) ?? theme.surfaceHighlight
-                )
-                .frame(width: 52, height: 52)
-                Text(value.map { "\(Int(($0 * 100).rounded()))" } ?? "—")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.textPrimary)
-                    .monospacedDigit()
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(theme.textPrimary)
-                Text(caption)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.textSecondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label) \(caption)")
-        .accessibilityValue(value.map { "\(Int(($0 * 100).rounded())) out of 100" } ?? "no data")
-        .accessibilityIdentifier("recovery-summary-\(id)")
+    private var recoveryTile: some View {
+        scoreTile(
+            title: "Recovery",
+            systemImage: "heart.text.square.fill",
+            value: snapshot?.daily,
+            caption: "That day",
+            identifier: "recovery-summary-recovery"
+        )
+    }
+
+    private var trendRecoveryTile: some View {
+        scoreTile(
+            title: "Trend recovery",
+            systemImage: "chart.line.uptrend.xyaxis",
+            value: snapshot?.trend,
+            caption: "7-day trend",
+            identifier: "recovery-summary-trend-recovery"
+        )
+    }
+
+    private func scoreTile(
+        title: String,
+        systemImage: String,
+        value: Double?,
+        caption: String,
+        identifier: String
+    ) -> some View {
+        MetricSummaryTile(
+            title: title,
+            systemImage: systemImage,
+            value: value.map { "\(Int(($0 * 100).rounded()))" } ?? "No data",
+            caption: caption,
+            tint: value.map(theme.readinessColor) ?? theme.textTertiary,
+            progress: value,
+            showsDisclosure: false
+        )
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var sleepTile: some View {
+        let metric = selectedMetric
+        let progress = SleepMetricPresentation.progress(for: metric)
+        let looksPartial = metric?.sleepLikelyPartial == true && metric?.sleepUserCorrected == false
+        return MetricSummaryTile(
+            title: "Sleep",
+            systemImage: "moon.zzz.fill",
+            value: isLoadingHealth && metric == nil ? "Loading" : SleepMetricPresentation.value(for: metric),
+            caption: isLoadingHealth && metric == nil ? "Checking Apple Health" : SleepMetricPresentation.caption(for: metric),
+            tint: progress == nil ? theme.textTertiary : looksPartial ? theme.warmup : theme.zone2,
+            progress: progress,
+            isLoading: isLoadingHealth && metric == nil,
+            showsDisclosure: false
+        )
+        .accessibilityIdentifier("calendar-summary-sleep")
+    }
+
+    private var healthTile: some View {
+        let assessment = healthAssessment
+        let loading = isLoadingHealth && selectedMetric == nil
+        return MetricSummaryTile(
+            title: "Health",
+            systemImage: "waveform.path.ecg.rectangle.fill",
+            value: loading ? "Loading" : assessment.headline,
+            caption: loading ? "Checking Apple Health" : assessment.caption,
+            tint: assessment.evaluatedCount == 0
+                ? theme.textTertiary
+                : assessment.outsideRangeCount > 0 ? theme.recoveryLow : theme.success,
+            isLoading: loading,
+            showsDisclosure: false
+        )
+        .accessibilityIdentifier("calendar-summary-health")
     }
 }

@@ -295,6 +295,7 @@ nonisolated final class HealthService: @unchecked Sendable {
         let respiratorySamples = await respiratorySamplesAsync
         let oxygenSamples = await oxygenSamplesAsync
         let allSleepSegments = await sleepSamplesAsync
+        guard !Task.isCancelled else { return [] }
         let sleepSegments = allSleepSegments.filter(isAsleep)
 
         // Nocturnal window: restrict HRV to sleep and derive sleeping HR — the
@@ -305,6 +306,7 @@ nonisolated final class HealthService: @unchecked Sendable {
             calendar: calendar
         )
         let nocturnalHR = await heartRateSamplesDuringSleep(windows: windows)
+        guard !Task.isCancelled else { return [] }
         let nightly = NocturnalAggregator.nightly(
             windows: windows,
             hrv: hrvSamples.map { ($0.startDate, $0.quantity.doubleValue(for: msUnit)) },
@@ -427,6 +429,70 @@ nonisolated final class HealthService: @unchecked Sendable {
                 sleepingHRSampleSpanMinutes: nightly[day]?.sleepingHRSampleSpanMinutes,
                 sleepStart: windowBoundsByDay[day]?.start,
                 sleepEnd: windowBoundsByDay[day]?.end,
+                sleepDeepMinutes: deepByDay[day],
+                sleepREMMinutes: remByDay[day],
+                sleepAwakeMinutes: awakeByDay[day]
+            )
+        }
+        #else
+        return []
+        #endif
+    }
+
+    /// Every recorded sleep night through `end`, projected without the other
+    /// recovery channels. Full sleep history is loaded only when its screen is
+    /// opened, so Home's bounded daily refresh stays fast even for users with
+    /// years of Apple Health data.
+    func sleepHistory(
+        endingAt end: Date = .now,
+        calendar: Calendar = .current
+    ) async -> [RecoveryEngine.DailyHealthMetric] {
+        #if canImport(HealthKit)
+        guard isAvailable else { return [] }
+        let allSegments = await sleepSamples(from: nil, to: end)
+        guard !Task.isCancelled else { return [] }
+        let asleepSegments = allSegments.filter(isAsleep)
+        guard !asleepSegments.isEmpty else { return [] }
+
+        var totalByDay: [Date: Int] = [:]
+        var deepByDay: [Date: Int] = [:]
+        var remByDay: [Date: Int] = [:]
+        var awakeByDay: [Date: Int] = [:]
+        var sourcesByDay: [Date: [String]] = [:]
+        var boundsByDay: [Date: (start: Date, end: Date)] = [:]
+
+        for sample in asleepSegments {
+            guard !Task.isCancelled else { return [] }
+            let day = calendar.startOfDay(for: sample.endDate)
+            totalByDay[day, default: 0] += Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
+            sourcesByDay[day, default: []].append(sample.sourceRevision.source.bundleIdentifier)
+            if let existing = boundsByDay[day] {
+                boundsByDay[day] = (min(existing.start, sample.startDate), max(existing.end, sample.endDate))
+            } else {
+                boundsByDay[day] = (sample.startDate, sample.endDate)
+            }
+        }
+
+        for sample in allSegments {
+            guard !Task.isCancelled else { return [] }
+            let day = calendar.startOfDay(for: sample.endDate)
+            let minutes = Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
+            switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
+            case .asleepDeep: deepByDay[day, default: 0] += minutes
+            case .asleepREM: remByDay[day, default: 0] += minutes
+            case .awake: awakeByDay[day, default: 0] += minutes
+            default: break
+            }
+        }
+
+        return totalByDay.keys.sorted().map { day in
+            RecoveryEngine.DailyHealthMetric(
+                date: day,
+                sleepTotalMinutes: totalByDay[day],
+                source: "healthkit",
+                sleepSourceBundleID: dominantSource(sourcesByDay[day] ?? []),
+                sleepStart: boundsByDay[day]?.start,
+                sleepEnd: boundsByDay[day]?.end,
                 sleepDeepMinutes: deepByDay[day],
                 sleepREMMinutes: remByDay[day],
                 sleepAwakeMinutes: awakeByDay[day]
@@ -650,7 +716,7 @@ nonisolated final class HealthService: @unchecked Sendable {
 
     /// Every sleep-analysis sample in the window — asleep stages, awake, and
     /// in-bed. Callers that only want time asleep filter with `isAsleep`.
-    private func sleepSamples(from start: Date, to end: Date) async -> [HKCategorySample] {
+    private func sleepSamples(from start: Date?, to end: Date) async -> [HKCategorySample] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         return await withCheckedContinuation { cont in
