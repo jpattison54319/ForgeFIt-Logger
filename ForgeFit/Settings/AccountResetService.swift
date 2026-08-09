@@ -56,6 +56,7 @@ enum AccountResetService {
         try deleteAll(RoutineSetModel.self, in: context)
         try deleteAll(RoutineExerciseModel.self, in: context)
         try deleteAll(RoutineBlockModel.self, in: context)
+        try deleteAll(RoutineAlternationModel.self, in: context)
         try deleteAll(RoutineModel.self, in: context)
         try deleteAll(RoutineFolderModel.self, in: context)
         try deleteAll(UserExerciseNoteModel.self, in: context)

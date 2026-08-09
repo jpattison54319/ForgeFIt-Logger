@@ -68,6 +68,8 @@ struct WorkoutHomeView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @Query(sort: \RoutineFolderModel.position) private var allFolders: [RoutineFolderModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse)
     private var microcycleTrackings: [MicrocycleTrackingModel]
     @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse)
@@ -100,6 +102,7 @@ struct WorkoutHomeView: View {
     /// already used in the routine editor and the live logger.
     @State private var editingOrder = false
     @State private var trackingFolder: RoutineFolderModel?
+    @State private var alternationRoutine: RoutineModel?
 
     /// A mesocycle can contain several microcycles. Home uses the active
     /// microcycle first, then its broader mesocycle, then the full library.
@@ -107,6 +110,8 @@ struct WorkoutHomeView: View {
     private var activeMesocycleFolderRaw = ""
     @AppStorage(CyclePreferenceMigration.activeMicrocycleKey)
     private var activeMicrocycleFolderRaw = ""
+    @AppStorage(AppPreferenceKeys.workoutUngroupedCollapsedKey)
+    private var ungroupedCollapsed = false
 
     private var activeRoutines: [RoutineModel] {
         routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.position < $1.position }
@@ -139,6 +144,28 @@ struct WorkoutHomeView: View {
     }
     private func routines(in folder: RoutineFolderModel) -> [RoutineModel] {
         activeRoutines.filter { $0.folderID == folder.id }
+    }
+    private func alternationState(for routine: RoutineModel) -> RoutineAlternationService.State? {
+        RoutineAlternationService.state(
+            containing: routine.id,
+            alternations: alternations,
+            routines: activeRoutines,
+            workouts: workouts
+        )
+    }
+    private func displayRoutines(_ source: [RoutineModel]) -> [RoutineModel] {
+        let sourceIDs = Set(source.map(\.id))
+        let states = RoutineAlternationService.states(
+            alternations: alternations,
+            routines: activeRoutines,
+            workouts: workouts
+        )
+        let suppressedPartners: Set<UUID> = Set(states.compactMap { state -> UUID? in
+            guard state.owner.folderID == state.partner.folderID,
+               sourceIDs.contains(state.owner.id), sourceIDs.contains(state.partner.id) else { return nil }
+            return state.partner.id
+        })
+        return source.filter { !suppressedPartners.contains($0.id) }
     }
     private var activeTracking: MicrocycleTrackingModel? {
         MicrocycleTrackingService.activeTracking(microcycleTrackings)
@@ -227,14 +254,22 @@ struct WorkoutHomeView: View {
                     )
                 }
 
-                // Ungrouped routines (also the drop target to pull a routine OUT of a folder)
-                VStack(spacing: Space.md) {
-                    ForEach(ungrouped) { routine in routineCard(routine) }
-                }
-                .frame(maxWidth: .infinity, minHeight: ungrouped.isEmpty ? Space.lg : 0, alignment: .top)
-                .contentShape(Rectangle())
-                .onDrop(of: [.plainText], isTargeted: nil) { providers in
-                    handleDrop(providers, into: nil)
+                if ungrouped.isEmpty {
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: Space.lg)
+                        .contentShape(Rectangle())
+                        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                            handleDrop(providers, into: nil)
+                        }
+                } else {
+                    UngroupedRoutineSection(
+                        isCollapsed: $ungroupedCollapsed,
+                        onDrop: { providers in handleDrop(providers, into: nil) }
+                    ) {
+                        VStack(spacing: Space.md) {
+                            ForEach(displayRoutines(ungrouped)) { routine in routineCard(routine) }
+                        }
+                    }
                 }
 
                 ForEach(topLevelFolders) { folder in folderSection(folder) }
@@ -359,6 +394,17 @@ struct WorkoutHomeView: View {
                     setActiveMicrocycle(folder)
                 }
             }
+            .sheet(item: $alternationRoutine) { routine in
+                RoutineAlternationSheet(
+                    anchor: routine,
+                    routines: routines,
+                    folders: folders,
+                    alternations: alternations,
+                    workouts: workouts,
+                    exercises: exercises,
+                    setupNotes: setupNotes
+                )
+            }
         }
         .id(tabRootRequestID)
         .onChange(of: appState.pendingRoutineDetailID, initial: true) {
@@ -423,6 +469,7 @@ struct WorkoutHomeView: View {
     private func folderSection(_ folder: RoutineFolderModel) -> AnyView {
         let isCollapsed = collapsed.contains(folder.id)
         let items = routines(in: folder)
+        let displayedItems = displayRoutines(items)
         let children = childFolders(of: folder)
         // Parent folders are mesocycles; leaf folders holding routines are
         // microcycles. Routines themselves are workout sessions.
@@ -460,10 +507,7 @@ struct WorkoutHomeView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
-                            Text(children.isEmpty ? "MICROCYCLE" : "MESOCYCLE")
-                                .font(.system(size: 9, weight: .heavy))
-                                .foregroundStyle(theme.textTertiary)
-                            let count = children.isEmpty ? items.count : children.count
+                            let count = children.isEmpty ? displayedItems.count : children.count
                             if count > 0 {
                                 Text("\(count)")
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -563,7 +607,7 @@ struct WorkoutHomeView: View {
                     if items.isEmpty && children.isEmpty && !isTargeted {
                         dropHint("Drop routines or a folder here")
                     } else {
-                        ForEach(items) { routine in routineCard(routine) }
+                        ForEach(displayedItems) { routine in routineCard(routine) }
                         ForEach(children) { child in folderSection(child) }
                     }
                 }
@@ -764,11 +808,15 @@ struct WorkoutHomeView: View {
                     folder,
                     microcycles: microcycles,
                     routines: sharedRoutines,
+                    allRoutines: activeRoutines,
+                    alternations: alternations,
                     exercises: exercises
                 )
                 : PlanShareService.microcycleDocument(
                     folder,
                     routines: sharedRoutines,
+                    allRoutines: activeRoutines,
+                    alternations: alternations,
                     exercises: exercises
                 )
             let url = try PlanShareService.write(document)
@@ -897,11 +945,20 @@ struct WorkoutHomeView: View {
 
     private func routineCard(_ routine: RoutineModel) -> some View {
         let destinations = routineDestinationFolders.filter { $0.id != routine.folderID }
+        let state = alternationState(for: routine)
+        let hasConfiguredAlternation = RoutineAlternationService.alternation(
+            containing: routine.id,
+            in: alternations
+        ) != nil
         return RoutineCard(
             routine: routine,
             exercises: exercises,
-            onStart: { start(routine) },
+            alternationState: state,
+            isAlternationOwner: state?.owner.id == routine.id,
+            hasConfiguredAlternation: hasConfiguredAlternation,
+            onStart: start,
             onEdit: { edit(routine) },
+            onManageAlternation: { alternationRoutine = routine },
             onDelete: { routinePendingDelete = routine },
             onDuplicate: { duplicate(routine) },
             onArchive: { archive(routine) },
@@ -1046,6 +1103,7 @@ struct WorkoutHomeView: View {
 
     private func delete(_ routine: RoutineModel) {
         let now = Date()
+        try? RoutineAlternationService.removeAll(containing: routine.id, in: modelContext, now: now)
         routine.updatedAt = now
         routine.deletedAt = now
         save()
@@ -1217,8 +1275,12 @@ private struct RoutineCard: View {
     @Environment(\.theme) private var theme
     let routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
-    let onStart: () -> Void
+    let alternationState: RoutineAlternationService.State?
+    let isAlternationOwner: Bool
+    let hasConfiguredAlternation: Bool
+    let onStart: (RoutineModel) -> Void
     let onEdit: () -> Void
+    let onManageAlternation: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
     let onArchive: () -> Void
@@ -1228,18 +1290,27 @@ private struct RoutineCard: View {
     var showsMoveToRoot: Bool = false
     var onMove: (UUID?) -> Void = { _ in }
 
-    private var sortedRoutineExercises: [RoutineExerciseModel] {
-        routine.exercises.sorted { $0.position < $1.position }
+    private var displayRoutine: RoutineModel {
+        isAlternationOwner ? (alternationState?.due ?? routine) : routine
     }
-    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
+    private var pairedRoutine: RoutineModel? {
+        guard let alternationState else { return nil }
+        return alternationState.owner.id == routine.id
+            ? alternationState.partner
+            : alternationState.owner
+    }
+    private var otherStartRoutine: RoutineModel? {
+        isAlternationOwner ? alternationState?.other : nil
+    }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: displayRoutine) }
 
     private func exerciseName(for re: RoutineExerciseModel) -> String {
         exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise"
     }
 
     private var conditioningSummary: String? {
-        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
-            ?? routine.conditioningPlanJSON
+        let json = displayRoutine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
+            ?? displayRoutine.conditioningPlanJSON
         guard let plan = ConditioningPlan.decode(from: json),
               let first = plan.sections.first else { return nil }
         switch first.format {
@@ -1255,17 +1326,17 @@ private struct RoutineCard: View {
     }
 
     var body: some View {
-        NavigationLink(value: routine) {
+        NavigationLink(value: displayRoutine) {
             Card {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(routine.name)
+                        Text(displayRoutine.name)
                             .font(.cardTitle)
                             .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: Space.sm)
                         Button {
-                            onStart()
+                            onStart(displayRoutine)
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "play.fill")
@@ -1282,10 +1353,16 @@ private struct RoutineCard: View {
                         // An empty routine has nothing to start — starting it
                         // would just open a blank freestyle session.
                         .disabled(orderedItems.isEmpty)
-                        .accessibilityIdentifier("start-routine-\(routine.name)")
+                        .accessibilityLabel("Start \(displayRoutine.name)")
+                        .accessibilityIdentifier("start-routine-\(displayRoutine.name)")
                         Menu {
-                            Button("Edit Routine", systemImage: "pencil", action: onEdit)
-                            Button("Duplicate Routine", systemImage: "doc.on.doc", action: onDuplicate)
+                            Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
+                            Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
+                            Button(
+                                hasConfiguredAlternation ? "Manage Alternating Routine" : "Add Alternating Routine",
+                                systemImage: "arrow.triangle.2.circlepath",
+                                action: onManageAlternation
+                            )
                             // Accessible alternative to drag-and-drop nesting —
                             // VoiceOver / Switch Control users have no other
                             // way to move a routine between folders.
@@ -1315,12 +1392,24 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
+                    if let pairedRoutine {
+                        Label(
+                            isAlternationOwner
+                                ? "Next · alternates with \(otherStartRoutine?.name ?? pairedRoutine.name)"
+                                : ((alternationState?.due.id == routine.id ? "Next · " : "") + "Alternates with \(pairedRoutine.name)"),
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .accessibilityIdentifier("alternating-routine-\(routine.id.uuidString)")
+                    }
+
                     if orderedItems.isEmpty {
                         Text("Nothing added yet — add an exercise or block to start")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
-                        if routine.blocks.isEmpty, let conditioningSummary {
+                        if displayRoutine.blocks.isEmpty, let conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
                                 .foregroundStyle(theme.accent)
@@ -1339,6 +1428,18 @@ private struct RoutineCard: View {
                                 }
                             }
                         }
+                    }
+
+                    if let otherStartRoutine {
+                        Button("Start \(otherStartRoutine.name) instead") {
+                            onStart(otherStartRoutine)
+                        }
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .disabled(OrderedRoutineItem.ordered(in: otherStartRoutine).isEmpty)
+                        .accessibilityIdentifier("start-alternate-\(otherStartRoutine.name)")
                     }
                 }
             }

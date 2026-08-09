@@ -21,6 +21,8 @@ struct MicrocycleDetailView: View {
     private var workouts: [WorkoutModel]
     @Query(sort: \RoutineModel.position)
     private var routines: [RoutineModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     @Query private var exercises: [ExerciseLibraryModel]
     @Query private var setupNotes: [UserExerciseNoteModel]
 
@@ -163,29 +165,82 @@ struct MicrocycleDetailView: View {
     }
 
     private func routineRow(_ item: MicrocycleRoutineProgress) -> some View {
-        HStack(spacing: Space.sm) {
+        let alternatingState = RoutineAlternationService.state(
+            containing: item.routine.id,
+            alternations: alternations,
+            routines: routines,
+            workouts: workouts
+        )
+        let startRoutine = alternatingState?.due
+            ?? routines.first(where: { $0.id == item.routine.id })
+        let completedName = item.completedRoutineID.flatMap { id in
+            routines.first(where: { $0.id == id })?.name
+                ?? (id == item.routine.alternateRoutineID ? item.routine.alternateRoutineName : item.routine.name)
+        }
+        return VStack(alignment: .leading, spacing: Space.sm) {
             HStack(spacing: Space.sm) {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(item.isCompleted ? theme.accent : theme.textTertiary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.routine.name)
+                    Text(startRoutine?.name ?? item.routine.name)
                         .font(.body)
                         .foregroundStyle(item.isCompleted ? theme.textSecondary : theme.textPrimary)
+                    if let alternatingState {
+                        Label(
+                            "Alternates with \(alternatingState.other.name)",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(theme.accent)
+                    }
                     if let completedAt = item.completedAt {
-                        Text("Completed \(completedAt.formatted(.dateTime.month(.abbreviated).day()))")
+                        Text("Completed\(completedName.map { " \($0)" } ?? "") \(completedAt.formatted(.dateTime.month(.abbreviated).day()))")
                             .font(.caption)
                             .foregroundStyle(theme.textTertiary)
                     }
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(item.routine.name), \(item.isCompleted ? "completed" : "remaining")")
+            .accessibilityLabel("\(startRoutine?.name ?? item.routine.name), \(item.isCompleted ? "completed" : "remaining")")
 
-            Spacer(minLength: Space.sm)
+            if let startRoutine {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.sm) {
+                        routineStartButton(startRoutine, isAlternate: false)
+                        if let other = alternatingState?.other {
+                            routineStartButton(other, isAlternate: true)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: Space.sm) {
+                        routineStartButton(startRoutine, isAlternate: false)
+                        if let other = alternatingState?.other {
+                            routineStartButton(other, isAlternate: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-            Button("Start", systemImage: "play.fill") {
-                startRoutine(id: item.routine.id)
+    @ViewBuilder
+    private func routineStartButton(
+        _ routine: RoutineModel,
+        isAlternate: Bool
+    ) -> some View {
+        if isAlternate {
+            Button("Start \(routine.name) instead") {
+                startRoutine(id: routine.id)
+            }
+            .font(.subheadline.bold())
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .buttonBorderShape(.capsule)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("microcycle-start-alternate-\(routine.id.uuidString)")
+        } else {
+            Button("Start \(routine.name)", systemImage: "play.fill") {
+                startRoutine(id: routine.id)
             }
             .font(.subheadline.bold())
             .buttonStyle(.glassProminent)
@@ -193,8 +248,7 @@ struct MicrocycleDetailView: View {
             .controlSize(.small)
             .buttonBorderShape(.capsule)
             .frame(minHeight: 44)
-            .accessibilityLabel("Start \(item.routine.name)")
-            .accessibilityIdentifier("microcycle-start-routine-\(item.routine.id.uuidString)")
+            .accessibilityIdentifier("microcycle-start-routine-\(routine.id.uuidString)")
         }
     }
 

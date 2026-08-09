@@ -126,6 +126,147 @@ struct PlanSharingTests {
         }
     }
 
+    @Test func alternatingRoutineShareIncludesBothMembersAndImportRemapsThePair() throws {
+        UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey) }
+
+        let owner = RoutineModel(userID: userID, name: "AX400", position: 0)
+        let partner = RoutineModel(userID: userID, name: "Cindy", position: 1)
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id
+        )
+
+        let document = try PlanShareService.routineDocument(
+            owner,
+            allRoutines: [owner, partner],
+            alternations: [alternation],
+            exercises: []
+        )
+        #expect(document.formatVersion == 2)
+        #expect(document.routines.map(\.name) == ["AX400", "Cindy"])
+        #expect(document.alternations == [SharedPlanAlternation(
+            id: alternation.id,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id
+        )])
+
+        let decoded = try ForgeFitPlanCodec.decode(ForgeFitPlanCodec.encode(document))
+        try PlanImportService.validate(decoded)
+
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let result = try PlanImportService.commit(decoded, in: context)
+        let importedContext = ModelContext(container)
+        let routines = try importedContext.fetch(FetchDescriptor<RoutineModel>())
+            .filter { result.routineIDs.contains($0.id) }
+        let importedPair = try #require(
+            try importedContext.fetch(FetchDescriptor<RoutineAlternationModel>()).first
+        )
+        let importedByID = Dictionary(uniqueKeysWithValues: routines.map { ($0.id, $0.name) })
+
+        #expect(result.routineIDs.count == 2)
+        #expect(importedPair.ownerRoutineID != owner.id)
+        #expect(importedPair.partnerRoutineID != partner.id)
+        #expect(importedByID[importedPair.ownerRoutineID] == "AX400")
+        #expect(importedByID[importedPair.partnerRoutineID] == "Cindy")
+    }
+
+    @Test func microcycleShareCarriesAnAlternateFromOutsideTheFolder() throws {
+        let microcycle = RoutineFolderModel(userID: userID, name: "Conditioning")
+        let otherFolder = RoutineFolderModel(userID: userID, name: "Library")
+        let owner = RoutineModel(
+            userID: userID,
+            name: "AX400",
+            folderID: microcycle.id
+        )
+        let partner = RoutineModel(
+            userID: userID,
+            name: "Cindy",
+            folderID: otherFolder.id
+        )
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id
+        )
+
+        let document = try PlanShareService.microcycleDocument(
+            microcycle,
+            routines: [owner],
+            allRoutines: [owner, partner],
+            alternations: [alternation],
+            exercises: []
+        )
+
+        #expect(document.routines.count == 2)
+        #expect(document.routines.first { $0.id == owner.id }?.folderID == microcycle.id)
+        #expect(document.routines.first { $0.id == partner.id }?.folderID == nil)
+        #expect(document.alternations.count == 1)
+        try PlanImportService.validate(document)
+    }
+
+    @Test func versionOnePlanWithoutAlternationsStillDecodes() throws {
+        let legacy = ForgeFitPlanDocument(
+            formatVersion: 1,
+            createdAt: Date(timeIntervalSinceReferenceDate: 10),
+            kind: .routine,
+            name: "Legacy",
+            routines: [SharedPlanRoutine(id: UUID(), name: "Legacy", position: 0)],
+            exercises: []
+        )
+        var object = try #require(
+            JSONSerialization.jsonObject(with: ForgeFitPlanCodec.encode(legacy)) as? [String: Any]
+        )
+        object.removeValue(forKey: "alternations")
+        let decoded = try ForgeFitPlanCodec.decode(JSONSerialization.data(withJSONObject: object))
+
+        #expect(decoded.formatVersion == 1)
+        #expect(decoded.alternations.isEmpty)
+        try PlanImportService.validate(decoded)
+    }
+
+    @Test func validatorRejectsAlternationsWithMissingOrRepeatedMembers() throws {
+        let first = SharedPlanRoutine(id: UUID(), name: "A", position: 0)
+        let second = SharedPlanRoutine(id: UUID(), name: "B", position: 1)
+        let missingMember = ForgeFitPlanDocument(
+            createdAt: .now,
+            kind: .routine,
+            name: "Broken Pair",
+            routines: [first, second],
+            alternations: [SharedPlanAlternation(
+                id: UUID(),
+                ownerRoutineID: first.id,
+                partnerRoutineID: UUID()
+            )],
+            exercises: []
+        )
+        #expect(throws: PlanImportService.ImportError.self) {
+            try PlanImportService.validate(missingMember)
+        }
+
+        let folderID = UUID()
+        let scopedFirst = SharedPlanRoutine(id: first.id, name: first.name, folderID: folderID, position: 0)
+        let scopedSecond = SharedPlanRoutine(id: second.id, name: second.name, folderID: folderID, position: 1)
+        let third = SharedPlanRoutine(id: UUID(), name: "C", folderID: folderID, position: 2)
+        let repeatedMember = ForgeFitPlanDocument(
+            createdAt: .now,
+            kind: .microcycle,
+            name: "Broken Pair",
+            folders: [SharedPlanFolder(id: folderID, name: "Week", position: 0)],
+            routines: [scopedFirst, scopedSecond, third],
+            alternations: [
+                SharedPlanAlternation(id: UUID(), ownerRoutineID: first.id, partnerRoutineID: second.id),
+                SharedPlanAlternation(id: UUID(), ownerRoutineID: first.id, partnerRoutineID: third.id),
+            ],
+            exercises: []
+        )
+        #expect(throws: PlanImportService.ImportError.self) {
+            try PlanImportService.validate(repeatedMember)
+        }
+    }
+
     private func makeMesocycle(
         in context: ModelContext
     ) throws -> (

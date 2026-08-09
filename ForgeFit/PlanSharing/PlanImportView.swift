@@ -35,6 +35,9 @@ struct PlanImportView: View {
                                 LabeledContent("Microcycles", value: "\(pending.microcycleCount)")
                             }
                             LabeledContent("Routines", value: "\(pending.routineCount)")
+                            if pending.alternationCount > 0 {
+                                LabeledContent("Alternating pairs", value: "\(pending.alternationCount)")
+                            }
                             LabeledContent("Exercises", value: "\(pending.exerciseCount)")
                             if pending.customExerciseCount > 0 {
                                 LabeledContent("Custom exercises", value: "\(pending.customExerciseCount)")
@@ -44,7 +47,7 @@ struct PlanImportView: View {
                         .foregroundStyle(theme.textPrimary)
                     }
 
-                    Text("Routine notes and targets are copied. Workout history, cycle progress, and health data are not included.")
+                    Text("Routine notes, targets, and alternating pairs are copied. Workout history, cycle progress, and health data are not included.")
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -95,7 +98,9 @@ struct PlanImportView: View {
                     Text(pending.document.name)
                         .font(.cardTitle)
                         .foregroundStyle(theme.textPrimary)
-                    Text(pending.document.kind.title)
+                    Text(pending.alternationCount > 0 && pending.document.kind == .routine
+                        ? "Alternating pair"
+                        : pending.document.kind.title)
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
                 }
@@ -116,7 +121,7 @@ struct PlanImportView: View {
 
     private var saveTitle: String {
         switch pending.document.kind {
-        case .routine: "Save Routine"
+        case .routine: pending.alternationCount > 0 ? "Save Alternating Pair" : "Save Routine"
         case .microcycle: "Save Microcycle"
         case .mesocycle: "Save Mesocycle"
         }

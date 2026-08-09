@@ -15,6 +15,9 @@ struct AccountResetServiceTests {
         #expect(AppPreferenceKeys.localOnly.contains(
             ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
         ))
+        #expect(AppPreferenceKeys.localOnly.contains(
+            AppPreferenceKeys.workoutUngroupedCollapsedKey
+        ))
     }
 
     @Test func deleteAllLocalModelsRemovesUserDataAndProgress() throws {
@@ -157,6 +160,12 @@ struct AccountResetServiceTests {
             context.insert(RoutineFolderModel(userID: userID, name: "Sample"))
         case is RoutineModel.Type:
             context.insert(RoutineModel(userID: userID, name: "Sample"))
+        case is RoutineAlternationModel.Type:
+            context.insert(RoutineAlternationModel(
+                userID: userID,
+                ownerRoutineID: UUID(),
+                partnerRoutineID: UUID()
+            ))
         case is RoutineBlockModel.Type:
             context.insert(RoutineBlockModel(userID: userID, kind: .conditioning))
         case is RoutineExerciseModel.Type:

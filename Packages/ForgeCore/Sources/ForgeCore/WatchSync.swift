@@ -84,11 +84,22 @@ public struct WatchRoutineSummary: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var exerciseCount: Int
+    /// Additive optionals preserve phone/watch compatibility during rollout.
+    public var alternatingPartnerName: String?
+    public var isNextInAlternation: Bool?
 
-    public init(id: UUID, name: String, exerciseCount: Int) {
+    public init(
+        id: UUID,
+        name: String,
+        exerciseCount: Int,
+        alternatingPartnerName: String? = nil,
+        isNextInAlternation: Bool? = nil
+    ) {
         self.id = id
         self.name = name
         self.exerciseCount = exerciseCount
+        self.alternatingPartnerName = alternatingPartnerName
+        self.isNextInAlternation = isNextInAlternation
     }
 }
 

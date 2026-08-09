@@ -16,6 +16,9 @@ struct RoutineDetailView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
+    @Query(sort: \RoutineModel.position) private var allRoutines: [RoutineModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var chartRange: TimeChartRange = .all
     @State private var editing = false
@@ -169,7 +172,12 @@ struct RoutineDetailView: View {
             guard let image = RoutineShareRenderer.image(for: routine, exercises: exercises, theme: theme) else {
                 throw PlanShareService.ShareError.invalidStructuredPlan(routine.name)
             }
-            let document = try PlanShareService.routineDocument(routine, exercises: exercises)
+            let document = try PlanShareService.routineDocument(
+                routine,
+                allRoutines: allRoutines,
+                alternations: alternations,
+                exercises: exercises
+            )
             let url = try PlanShareService.write(document)
             sharePayload = ShareImagePayload(image: image, attachments: [url])
         } catch {

@@ -16,6 +16,7 @@ public enum ForgeDataSchema {
             UserExerciseNoteModel.self,
             RoutineFolderModel.self,
             RoutineModel.self,
+            RoutineAlternationModel.self,
             RoutineBlockModel.self,
             RoutineExerciseModel.self,
             RoutineSetModel.self,
@@ -404,6 +405,39 @@ public final class RoutineModel {
         self.conditioningPlanJSON = conditioningPlanJSON
         self.exercises = exercises
         self.blocks = blocks
+    }
+}
+
+/// A user-authored two-routine slot whose owner keeps its library and
+/// microcycle position while either member can be performed. Scalar IDs keep
+/// the CloudKit plan record independent from SwiftData relationship delivery
+/// order; `RoutineAlternationService` validates both endpoints before use.
+@Model
+public final class RoutineAlternationModel {
+    public var id: UUID = UUID()
+    public var userID: UUID = UUID()
+    public var ownerRoutineID: UUID = UUID()
+    public var partnerRoutineID: UUID = UUID()
+    public var createdAt: Date = Date()
+    public var updatedAt: Date = Date()
+    public var deletedAt: Date?
+
+    public init(
+        id: UUID = UUID(),
+        userID: UUID,
+        ownerRoutineID: UUID,
+        partnerRoutineID: UUID,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil
+    ) {
+        self.id = id
+        self.userID = userID
+        self.ownerRoutineID = ownerRoutineID
+        self.partnerRoutineID = partnerRoutineID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
     }
 }
 

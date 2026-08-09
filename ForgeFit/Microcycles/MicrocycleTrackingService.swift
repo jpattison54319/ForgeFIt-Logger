@@ -42,7 +42,12 @@ enum MicrocycleTrackingService {
         }) else {
             throw ServiceError.folderIsMesocycle
         }
-        let availableRoutines = snapshots(folderID: folder.id, routines: routines)
+        let alternations = try context.fetch(FetchDescriptor<RoutineAlternationModel>())
+        let availableRoutines = snapshots(
+            folderID: folder.id,
+            routines: routines,
+            alternations: alternations
+        )
         guard !availableRoutines.isEmpty else { throw ServiceError.emptyMicrocycle }
         guard (1...31).contains(durationDays) else { throw ServiceError.invalidDuration }
 
@@ -113,7 +118,12 @@ enum MicrocycleTrackingService {
             $0.parentID == tracking.folderID && $0.deletedAt == nil && $0.archivedAt == nil
         }
         let routines = try context.fetch(FetchDescriptor<RoutineModel>())
-        let availableRoutines = snapshots(folderID: tracking.folderID, routines: routines)
+        let alternations = try context.fetch(FetchDescriptor<RoutineAlternationModel>())
+        let availableRoutines = snapshots(
+            folderID: tracking.folderID,
+            routines: routines,
+            alternations: alternations
+        )
 
         guard let folder, isLeaf else {
             if tracking.stateRaw != "needsAttention" {
@@ -300,19 +310,47 @@ enum MicrocycleTrackingService {
 
     private static func snapshots(
         folderID: UUID,
-        routines: [RoutineModel]
+        routines: [RoutineModel],
+        alternations: [RoutineAlternationModel]
     ) -> [MicrocycleRoutineSnapshot] {
-        routines
+        let liveRoutines = routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }
+        let byID = Dictionary(liveRoutines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var pairByOwnerID: [UUID: RoutineModel] = [:]
+        var claimedRoutineIDs: Set<UUID> = []
+        for alternation in RoutineAlternationService.live(alternations) {
+            guard !claimedRoutineIDs.contains(alternation.ownerRoutineID),
+                  !claimedRoutineIDs.contains(alternation.partnerRoutineID),
+                  let owner = byID[alternation.ownerRoutineID],
+                  let partner = byID[alternation.partnerRoutineID],
+                  owner.id != partner.id else { continue }
+            pairByOwnerID[owner.id] = partner
+            claimedRoutineIDs.insert(owner.id)
+            claimedRoutineIDs.insert(partner.id)
+        }
+        let colocatedPartnerIDs: Set<UUID> = Set(pairByOwnerID.compactMap { ownerID, partner -> UUID? in
+            guard byID[ownerID]?.folderID == folderID, partner.folderID == folderID else { return nil }
+            return partner.id
+        })
+
+        return liveRoutines
             .filter {
                 $0.folderID == folderID
-                    && $0.deletedAt == nil
-                    && $0.archivedAt == nil
+                    && !colocatedPartnerIDs.contains($0.id)
             }
             .sorted {
                 if $0.position != $1.position { return $0.position < $1.position }
                 return $0.id.uuidString < $1.id.uuidString
             }
-            .map { MicrocycleRoutineSnapshot(id: $0.id, name: $0.name, position: $0.position) }
+            .map { routine in
+                let partner = pairByOwnerID[routine.id]
+                return MicrocycleRoutineSnapshot(
+                    id: routine.id,
+                    name: routine.name,
+                    position: routine.position,
+                    alternateRoutineID: partner?.id,
+                    alternateRoutineName: partner?.name
+                )
+            }
     }
 
     @discardableResult

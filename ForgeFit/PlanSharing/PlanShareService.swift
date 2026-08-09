@@ -2,6 +2,7 @@ import ForgeCore
 import ForgeData
 import Foundation
 
+@MainActor
 enum PlanShareService {
     enum ShareError: LocalizedError {
         case missingExercise(String)
@@ -19,6 +20,8 @@ enum PlanShareService {
 
     static func routineDocument(
         _ routine: RoutineModel,
+        allRoutines: [RoutineModel] = [],
+        alternations: [RoutineAlternationModel] = [],
         exercises: [ExerciseLibraryModel]
     ) throws -> ForgeFitPlanDocument {
         try document(
@@ -26,6 +29,8 @@ enum PlanShareService {
             name: routine.name,
             folders: [],
             routines: [routine],
+            allRoutines: allRoutines,
+            alternations: alternations,
             exerciseLibrary: exercises
         )
     }
@@ -33,6 +38,8 @@ enum PlanShareService {
     static func microcycleDocument(
         _ folder: RoutineFolderModel,
         routines: [RoutineModel],
+        allRoutines: [RoutineModel] = [],
+        alternations: [RoutineAlternationModel] = [],
         exercises: [ExerciseLibraryModel]
     ) throws -> ForgeFitPlanDocument {
         try document(
@@ -40,6 +47,8 @@ enum PlanShareService {
             name: folder.name,
             folders: [folder],
             routines: routines,
+            allRoutines: allRoutines,
+            alternations: alternations,
             exerciseLibrary: exercises
         )
     }
@@ -48,6 +57,8 @@ enum PlanShareService {
         _ folder: RoutineFolderModel,
         microcycles: [RoutineFolderModel],
         routines: [RoutineModel],
+        allRoutines: [RoutineModel] = [],
+        alternations: [RoutineAlternationModel] = [],
         exercises: [ExerciseLibraryModel]
     ) throws -> ForgeFitPlanDocument {
         try document(
@@ -55,6 +66,8 @@ enum PlanShareService {
             name: folder.name,
             folders: [folder] + microcycles,
             routines: routines,
+            allRoutines: allRoutines,
+            alternations: alternations,
             exerciseLibrary: exercises
         )
     }
@@ -72,11 +85,40 @@ enum PlanShareService {
         name: String,
         folders: [RoutineFolderModel],
         routines: [RoutineModel],
+        allRoutines: [RoutineModel],
+        alternations: [RoutineAlternationModel],
         exerciseLibrary: [ExerciseLibraryModel]
     ) throws -> ForgeFitPlanDocument {
-        let liveRoutines = routines
+        let availableRoutines = (allRoutines.isEmpty ? routines : allRoutines)
             .filter { $0.deletedAt == nil && $0.archivedAt == nil }
-            .sorted { $0.position < $1.position }
+        let availableByID = Dictionary(
+            availableRoutines.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var includedRoutineIDs = Set(routines.filter {
+            $0.deletedAt == nil && $0.archivedAt == nil
+        }.map(\.id))
+        var includedAlternations: [RoutineAlternationModel] = []
+        let validAlternations = RoutineAlternationService.states(
+            alternations: alternations,
+            routines: availableRoutines,
+            workouts: []
+        ).map(\.alternation)
+        for alternation in validAlternations {
+            guard includedRoutineIDs.contains(alternation.ownerRoutineID)
+                    || includedRoutineIDs.contains(alternation.partnerRoutineID),
+                  availableByID[alternation.ownerRoutineID] != nil,
+                  availableByID[alternation.partnerRoutineID] != nil else { continue }
+            includedRoutineIDs.insert(alternation.ownerRoutineID)
+            includedRoutineIDs.insert(alternation.partnerRoutineID)
+            includedAlternations.append(alternation)
+        }
+        let liveRoutines = availableRoutines
+            .filter { includedRoutineIDs.contains($0.id) }
+            .sorted {
+                if $0.position != $1.position { return $0.position < $1.position }
+                return $0.id.uuidString < $1.id.uuidString
+            }
         let referencedIDs = try referencedExerciseIDs(in: liveRoutines)
         let libraryByID = Dictionary(
             exerciseLibrary.filter { $0.deletedAt == nil }.map { ($0.id, $0) },
@@ -112,6 +154,13 @@ enum PlanShareService {
                 sharedRoutine(
                     routine,
                     folderID: routine.folderID.flatMap { includedFolderIDs.contains($0) ? $0 : nil }
+                )
+            },
+            alternations: includedAlternations.map {
+                SharedPlanAlternation(
+                    id: $0.id,
+                    ownerRoutineID: $0.ownerRoutineID,
+                    partnerRoutineID: $0.partnerRoutineID
                 )
             },
             exercises: definitions

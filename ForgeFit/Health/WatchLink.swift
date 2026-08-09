@@ -151,10 +151,42 @@ final class WatchLink: NSObject {
                 predicate: #Predicate { $0.deletedAt == nil && $0.archivedAt == nil },
                 sortBy: [SortDescriptor(\.position)]
             ))) ?? []
+            let alternations = (try? context.fetch(FetchDescriptor<RoutineAlternationModel>(
+                predicate: #Predicate { $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+            ))) ?? []
+            let completedWorkouts = (try? context.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+            ))) ?? []
+            var pairPresentationByRoutineID: [UUID: (partnerName: String, isNext: Bool)] = [:]
+            for state in RoutineAlternationService.states(
+                alternations: alternations,
+                routines: routines,
+                workouts: completedWorkouts
+            ) {
+                pairPresentationByRoutineID[state.owner.id] = (
+                    state.partner.name,
+                    state.due.id == state.owner.id
+                )
+                pairPresentationByRoutineID[state.partner.id] = (
+                    state.owner.name,
+                    state.due.id == state.partner.id
+                )
+            }
             let summaries = routines
                 .filter { $0.deletedAt == nil && (!$0.exercises.isEmpty || !$0.blocks.isEmpty) }
                 .sorted { $0.position < $1.position }
-                .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count + $0.blocks.count) }
+                .map { routine in
+                    let pair = pairPresentationByRoutineID[routine.id]
+                    return WatchRoutineSummary(
+                        id: routine.id,
+                        name: routine.name,
+                        exerciseCount: routine.exercises.count + routine.blocks.count,
+                        alternatingPartnerName: pair?.partnerName,
+                        isNextInAlternation: pair?.isNext
+                    )
+                }
             routineSummaryCache = summaries
             routineSummaries = summaries
         }

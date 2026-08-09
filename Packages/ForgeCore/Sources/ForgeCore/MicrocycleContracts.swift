@@ -8,12 +8,30 @@ public struct MicrocycleRoutineSnapshot: Codable, Equatable, Hashable, Identifia
     public let id: UUID
     public let name: String
     public let position: Int
+    /// Additive optional pair metadata keeps older window JSON decodable.
+    /// The owner remains `id`; either member can satisfy this one slot.
+    public let alternateRoutineID: UUID?
+    public let alternateRoutineName: String?
 
-    public init(id: UUID, name: String, position: Int) {
+    public init(
+        id: UUID,
+        name: String,
+        position: Int,
+        alternateRoutineID: UUID? = nil,
+        alternateRoutineName: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.position = position
+        self.alternateRoutineID = alternateRoutineID
+        self.alternateRoutineName = alternateRoutineName
     }
+
+    public var memberIDs: Set<UUID> {
+        Set([id, alternateRoutineID].compactMap { $0 })
+    }
+
+    public var isAlternating: Bool { alternateRoutineID != nil }
 }
 
 /// A reversible, microcycle-only placement of an existing completed workout.
@@ -82,6 +100,7 @@ public struct MicrocycleRoutineProgress: Equatable, Identifiable, Sendable {
     public let routine: MicrocycleRoutineSnapshot
     public let workoutID: UUID?
     public let completedAt: Date?
+    public let completedRoutineID: UUID?
 
     public var id: UUID { routine.id }
     public var isCompleted: Bool { workoutID != nil }
@@ -89,11 +108,13 @@ public struct MicrocycleRoutineProgress: Equatable, Identifiable, Sendable {
     public init(
         routine: MicrocycleRoutineSnapshot,
         workoutID: UUID?,
-        completedAt: Date?
+        completedAt: Date?,
+        completedRoutineID: UUID? = nil
     ) {
         self.routine = routine
         self.workoutID = workoutID
         self.completedAt = completedAt
+        self.completedRoutineID = completedRoutineID
     }
 }
 

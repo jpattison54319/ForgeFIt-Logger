@@ -14,6 +14,8 @@ import Foundation
 /// (`HRZoneConfigStore`, app-group suite) — it encodes max/resting heart
 /// rate, i.e. health data; reset clears it explicitly, backup excludes it.
 enum AppPreferenceKeys {
+    static let workoutUngroupedCollapsedKey = "workoutUngroupedCollapsed"
+
     static let backedUp: [String] = [
         "didOnboard",
         "profileDisplayName",
@@ -68,6 +70,7 @@ enum AppPreferenceKeys {
         ExperimentNotificationRoute.pendingURLDefaultsKey,
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
         PlanImportService.importedPackagesDefaultsKey,
+        workoutUngroupedCollapsedKey,
     ]
 
     /// Retired preferences kept only so Erase All Data also cleans installs

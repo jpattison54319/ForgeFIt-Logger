@@ -18,6 +18,7 @@ struct PendingPlanImport: Identifiable {
     }
     var exerciseCount: Int { document.exercises.count }
     var customExerciseCount: Int { document.exercises.count(where: \.isCustom) }
+    var alternationCount: Int { document.alternations.count }
 }
 
 @MainActor
@@ -123,17 +124,22 @@ enum PlanImportService {
             .filter { $0.deletedAt == nil && $0.archivedAt == nil }
         let standalonePosition = (existingRoutines.filter { $0.folderID == nil }.map(\.position).max() ?? -1) + 1
         var routineIDs: [UUID] = []
+        var routineMap: [UUID: UUID] = [:]
+        for source in document.routines { routineMap[source.id] = UUID() }
 
-        for source in document.routines.sorted(by: { $0.position < $1.position }) {
-            let routineID = UUID()
+        for (offset, source) in document.routines.sorted(by: { $0.position < $1.position }).enumerated() {
+            let routineID = routineMap[source.id] ?? UUID()
             routineIDs.append(routineID)
+            let importedFolderID = source.folderID.flatMap { folderMap[$0] }
             let routine = RoutineModel(
                 id: routineID,
                 userID: userID,
                 name: source.name,
                 notes: source.notes,
-                folderID: source.folderID.flatMap { folderMap[$0] },
-                position: document.kind == .routine ? standalonePosition : source.position,
+                folderID: importedFolderID,
+                position: document.kind == .routine || importedFolderID == nil
+                    ? standalonePosition + offset
+                    : source.position,
                 createdAt: .now,
                 updatedAt: .now,
                 conditioningPlanJSON: try remapConditioning(source.conditioningPlanJSON, exerciseMap: exerciseMap),
@@ -188,6 +194,21 @@ enum PlanImportService {
             context.insert(routine)
         }
 
+        for source in document.alternations {
+            guard let ownerID = routineMap[source.ownerRoutineID],
+                  let partnerID = routineMap[source.partnerRoutineID] else {
+                throw ImportError.invalid("An alternating routine is unavailable.")
+            }
+            context.insert(RoutineAlternationModel(
+                id: UUID(),
+                userID: userID,
+                ownerRoutineID: ownerID,
+                partnerRoutineID: partnerID,
+                createdAt: .now,
+                updatedAt: .now
+            ))
+        }
+
         do {
             try context.save()
         } catch {
@@ -205,6 +226,7 @@ enum PlanImportService {
         }
         guard document.folders.count <= 26,
               document.routines.count <= 250,
+              document.alternations.count <= 125,
               document.exercises.count <= 1_000,
               document.routines.flatMap(\.exercises).flatMap(\.sets).count <= 10_000 else {
             throw ImportError.invalid("The plan contains too many items.")
@@ -212,26 +234,53 @@ enum PlanImportService {
 
         let folderIDs = document.folders.map(\.id)
         let routineIDs = document.routines.map(\.id)
+        let alternationIDs = document.alternations.map(\.id)
         let exerciseIDs = document.exercises.map(\.id)
         guard Set(folderIDs).count == folderIDs.count,
               Set(routineIDs).count == routineIDs.count,
+              Set(alternationIDs).count == alternationIDs.count,
               Set(exerciseIDs).count == exerciseIDs.count else {
             throw ImportError.invalid("It contains duplicate identifiers.")
         }
         let folderIDSet = Set(folderIDs)
+        let routineIDSet = Set(routineIDs)
         let exerciseIDSet = Set(exerciseIDs)
+
+        if document.formatVersion < 2, !document.alternations.isEmpty {
+            throw ImportError.invalid("Its alternating routines require a newer format version.")
+        }
+        var claimedRoutineIDs: Set<UUID> = []
+        for alternation in document.alternations {
+            guard alternation.ownerRoutineID != alternation.partnerRoutineID,
+                  routineIDSet.contains(alternation.ownerRoutineID),
+                  routineIDSet.contains(alternation.partnerRoutineID),
+                  claimedRoutineIDs.insert(alternation.ownerRoutineID).inserted,
+                  claimedRoutineIDs.insert(alternation.partnerRoutineID).inserted else {
+                throw ImportError.invalid("An alternating routine pair is invalid.")
+            }
+        }
 
         switch document.kind {
         case .routine:
             guard document.folders.isEmpty,
-                  document.routines.count == 1,
-                  document.routines.first?.folderID == nil else {
+                  (1...2).contains(document.routines.count),
+                  document.routines.allSatisfy({ $0.folderID == nil }),
+                  (document.routines.count == 1
+                    ? document.alternations.isEmpty
+                    : document.alternations.count == 1) else {
                 throw ImportError.invalid("The routine structure is invalid.")
             }
         case .microcycle:
             guard document.folders.count == 1,
                   document.folders.first?.parentID == nil,
-                  document.routines.allSatisfy({ $0.folderID == document.folders.first?.id }) else {
+                  let folderID = document.folders.first?.id,
+                  document.routines.contains(where: { $0.folderID == folderID }),
+                  document.routines.allSatisfy({ $0.folderID == folderID || $0.folderID == nil }),
+                  companionsArePairedWithScope(
+                    document.routines,
+                    alternations: document.alternations,
+                    scopedFolderIDs: Set([folderID])
+                  ) else {
                 throw ImportError.invalid("The microcycle structure is invalid.")
             }
         case .mesocycle:
@@ -240,7 +289,12 @@ enum PlanImportService {
                   let rootID = roots.first?.id,
                   document.folders.count >= 2,
                   document.folders.filter({ $0.id != rootID }).allSatisfy({ $0.parentID == rootID }),
-                  document.routines.allSatisfy({ $0.folderID != nil && $0.folderID != rootID }) else {
+                  document.routines.allSatisfy({ $0.folderID == nil || $0.folderID != rootID }),
+                  companionsArePairedWithScope(
+                    document.routines,
+                    alternations: document.alternations,
+                    scopedFolderIDs: Set(document.folders.filter { $0.id != rootID }.map(\.id))
+                  ) else {
                 throw ImportError.invalid("The mesocycle hierarchy is invalid.")
             }
         }
@@ -320,6 +374,28 @@ enum PlanImportService {
               plan.sections.flatMap(\.movements).allSatisfy({ exerciseIDs.contains($0.exerciseID) }) else {
             throw ImportError.invalid("A conditioning plan isn't supported.")
         }
+    }
+
+    private static func companionsArePairedWithScope(
+        _ routines: [SharedPlanRoutine],
+        alternations: [SharedPlanAlternation],
+        scopedFolderIDs: Set<UUID>
+    ) -> Bool {
+        let scopedIDs = Set(routines.filter {
+            $0.folderID.map(scopedFolderIDs.contains) == true
+        }.map(\.id))
+        let companionIDs = Set(routines.filter { $0.folderID == nil }.map(\.id))
+        guard !scopedIDs.isEmpty else { return false }
+        let linkedCompanions = Set(alternations.flatMap { alternation -> [UUID] in
+            if scopedIDs.contains(alternation.ownerRoutineID), companionIDs.contains(alternation.partnerRoutineID) {
+                return [alternation.partnerRoutineID]
+            }
+            if scopedIDs.contains(alternation.partnerRoutineID), companionIDs.contains(alternation.ownerRoutineID) {
+                return [alternation.ownerRoutineID]
+            }
+            return []
+        })
+        return linkedCompanions == companionIDs
     }
 
     private static func resolveExercises(

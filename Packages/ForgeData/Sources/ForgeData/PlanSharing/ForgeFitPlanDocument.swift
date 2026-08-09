@@ -3,7 +3,7 @@ import Foundation
 /// A user-created training plan that can leave ForgeFit without carrying any
 /// workout history, Health data, account identity, or local progress state.
 public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public var formatVersion: Int
     public var packageID: UUID
@@ -13,6 +13,7 @@ public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
     public var name: String
     public var folders: [SharedPlanFolder]
     public var routines: [SharedPlanRoutine]
+    public var alternations: [SharedPlanAlternation]
     public var exercises: [SharedPlanExercise]
 
     public init(
@@ -24,6 +25,7 @@ public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
         name: String,
         folders: [SharedPlanFolder] = [],
         routines: [SharedPlanRoutine],
+        alternations: [SharedPlanAlternation] = [],
         exercises: [SharedPlanExercise]
     ) {
         self.formatVersion = formatVersion
@@ -34,7 +36,41 @@ public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
         self.name = name
         self.folders = folders
         self.routines = routines
+        self.alternations = alternations
         self.exercises = exercises
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case formatVersion, packageID, createdAt, appVersion, kind, name
+        case folders, routines, alternations, exercises
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try container.decode(Int.self, forKey: .formatVersion)
+        packageID = try container.decode(UUID.self, forKey: .packageID)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
+        kind = try container.decode(ForgeFitPlanKind.self, forKey: .kind)
+        name = try container.decode(String.self, forKey: .name)
+        folders = try container.decode([SharedPlanFolder].self, forKey: .folders)
+        routines = try container.decode([SharedPlanRoutine].self, forKey: .routines)
+        alternations = try container.decodeIfPresent([SharedPlanAlternation].self, forKey: .alternations) ?? []
+        exercises = try container.decode([SharedPlanExercise].self, forKey: .exercises)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(formatVersion, forKey: .formatVersion)
+        try container.encode(packageID, forKey: .packageID)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(appVersion, forKey: .appVersion)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(name, forKey: .name)
+        try container.encode(folders, forKey: .folders)
+        try container.encode(routines, forKey: .routines)
+        try container.encode(alternations, forKey: .alternations)
+        try container.encode(exercises, forKey: .exercises)
     }
 }
 
@@ -102,6 +138,18 @@ public struct SharedPlanRoutine: Codable, Equatable, Sendable {
         self.conditioningPlanJSON = conditioningPlanJSON
         self.exercises = exercises
         self.blocks = blocks
+    }
+}
+
+public struct SharedPlanAlternation: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var ownerRoutineID: UUID
+    public var partnerRoutineID: UUID
+
+    public init(id: UUID, ownerRoutineID: UUID, partnerRoutineID: UUID) {
+        self.id = id
+        self.ownerRoutineID = ownerRoutineID
+        self.partnerRoutineID = partnerRoutineID
     }
 }
 

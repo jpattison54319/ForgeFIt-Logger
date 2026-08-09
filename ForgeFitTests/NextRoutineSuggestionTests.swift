@@ -5,6 +5,7 @@ import Testing
 
 /// A mesocycle and one of its microcycles are independent active slots. The
 /// more specific microcycle wins; an empty one falls back to its mesocycle.
+@MainActor
 struct NextRoutineSuggestionTests {
     private let userID = ForgeFitDemo.userID
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -180,6 +181,43 @@ struct NextRoutineSuggestionTests {
         )
         #expect(result?.routineID == fixture.volumeRoutines[1].id)
         #expect(result?.reason.hasPrefix("Next in your microcycle") == true)
+    }
+
+    @Test func alternatingPairOccupiesOneSuggestionSlotAndSwitchesItsDueMember() throws {
+        let fixture = fixture()
+        let owner = try #require(fixture.volumeRoutines.first)
+        let partner = try #require(fixture.volumeRoutines.last)
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id,
+            createdAt: now.addingTimeInterval(-10 * 86_400)
+        )
+        let all = fixture.volumeRoutines + fixture.intensityRoutines + fixture.prehabRoutines
+
+        let initial = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.volumeMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(initial?.routineID == owner.id)
+        #expect(initial?.alternatingWith == partner.name)
+
+        let afterOwner = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [completedWorkout(routineID: owner.id, daysAgo: 1)],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.volumeMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(afterOwner?.routineID == partner.id)
+        #expect(afterOwner?.alternatingWith == owner.name)
     }
 
     @Test func noRoutinesReturnsNil() {

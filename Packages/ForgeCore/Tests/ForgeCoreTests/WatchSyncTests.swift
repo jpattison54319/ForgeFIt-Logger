@@ -61,7 +61,13 @@ struct WatchSyncTests {
                 intervalRound: "Round 1 of 6",
                 hrZoneTarget: 4
             ),
-            routines: [WatchRoutineSummary(id: routineID, name: "Push", exerciseCount: 4)],
+            routines: [WatchRoutineSummary(
+                id: routineID,
+                name: "Push",
+                exerciseCount: 4,
+                alternatingPartnerName: "Pull",
+                isNextInAlternation: true
+            )],
             readiness: 82,
             readinessAction: "Train as planned",
             readinessDetail: "Train as planned.",
@@ -76,12 +82,27 @@ struct WatchSyncTests {
         #expect(decoded.workout?.completedSets == 1)
         #expect(decoded.workout?.totalSets == 1)
         #expect(decoded.readinessAction == "Train as planned")
+        #expect(decoded.routines.first?.alternatingPartnerName == "Pull")
+        #expect(decoded.routines.first?.isNextInAlternation == true)
         let decodedSet = try #require(decoded.workout?.exercises.first?.sets.first)
         #expect(decodedSet.setType == .myoRep)
         #expect(decodedSet.weightMode == .bodyweightAdded)
         #expect(decodedSet.isStructured)
         #expect(decodedSet.structuredProgress.miniReps == [3, 3, 2])
         #expect(decoded.workout?.restOwnerID == setID)
+    }
+
+    @Test func legacyRoutineSummaryWithoutAlternationFieldsStillDecodes() throws {
+        let routineID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        let data = Data(
+            "{\"id\":\"\(routineID.uuidString)\",\"name\":\"Push\",\"exerciseCount\":4}".utf8
+        )
+
+        let decoded = try #require(WatchWire.decode(WatchRoutineSummary.self, from: data))
+
+        #expect(decoded.id == routineID)
+        #expect(decoded.alternatingPartnerName == nil)
+        #expect(decoded.isNextInAlternation == nil)
     }
 
     @Test func watchCommandsRoundTripAllPayloadShapes() throws {

@@ -99,11 +99,14 @@ public enum MicrocycleEngine {
                 return $0.id.uuidString < $1.id.uuidString
             }
             .map { routine in
-                let match = eligible.first { $0.routineID == routine.id }
+                let match = eligible.first { evidence in
+                    evidence.routineID.map(routine.memberIDs.contains) == true
+                }
                 return MicrocycleRoutineProgress(
                     routine: routine,
                     workoutID: match?.id,
-                    completedAt: match?.startedAt
+                    completedAt: match?.startedAt,
+                    completedRoutineID: match?.routineID
                 )
             }
         return MicrocycleProgress(window: window, routines: progress)

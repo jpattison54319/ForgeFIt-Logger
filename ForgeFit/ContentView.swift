@@ -80,6 +80,7 @@ struct ContentView: View {
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
     @Query(sort: \RoutineFolderModel.position) private var routineFolders: [RoutineFolderModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse) private var routineAlternations: [RoutineAlternationModel]
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
     @Query(filter: #Predicate<WorkoutModel> { $0.endedAt == nil && $0.deletedAt == nil }, sort: \WorkoutModel.startedAt, order: .reverse) private var activeWorkouts: [WorkoutModel]
     @Query(sort: \DailyCheckinModel.updatedAt, order: .reverse) private var checkins: [DailyCheckinModel]
@@ -164,11 +165,13 @@ struct ContentView: View {
         let latestFolder = liveFolders.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         let liveRoutines = routines.filter { $0.deletedAt == nil }
         let latestRoutine = liveRoutines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        let liveAlternations = routineAlternations.filter { $0.deletedAt == nil }
+        let latestAlternation = liveAlternations.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         let terminalWorkouts = workouts.filter { $0.endedAt != nil || $0.deletedAt != nil }
         let latestWorkout = terminalWorkouts.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         return "\(liveTrackings.count)|\(latestTracking)|\(microcycleWindows.count)|"
             + "\(liveFolders.count)|\(latestFolder)|\(liveRoutines.count)|\(latestRoutine)|"
-            + "\(terminalWorkouts.count)|\(latestWorkout)"
+            + "\(liveAlternations.count)|\(latestAlternation)|\(terminalWorkouts.count)|\(latestWorkout)"
     }
 
     /// The single source of truth for the app's appearance: combines the
@@ -189,7 +192,8 @@ struct ContentView: View {
 
     private var routineListVersion: String {
         let latest = routines.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
-        return "\(routines.count)|\(latest)"
+        let latestAlternation = routineAlternations.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
+        return "\(routines.count)|\(latest)|\(routineAlternations.count)|\(latestAlternation)"
     }
 
     /// CloudKit imports can land after launch seeding has already performed
@@ -198,8 +202,10 @@ struct ContentView: View {
     private var planRowsVersion: String {
         let latestRoutine = routines.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
         let latestFolder = routineFolders.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
+        let latestAlternation = routineAlternations.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
         return "\(routines.count)|\(Set(routines.map(\.id)).count)|\(latestRoutine)|"
-            + "\(routineFolders.count)|\(Set(routineFolders.map(\.id)).count)|\(latestFolder)"
+            + "\(routineFolders.count)|\(Set(routineFolders.map(\.id)).count)|\(latestFolder)|"
+            + "\(routineAlternations.count)|\(latestAlternation)"
     }
 
     private var todayCheckinTags: [String] {
@@ -680,6 +686,7 @@ struct ContentView: View {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             updateWidgetSnapshot()
+            WatchLink.shared.invalidateRoutineSummaryCache()
             WatchLink.shared.publishState()
 
             guard newCount > oldCount else { return }

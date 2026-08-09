@@ -196,6 +196,122 @@ struct MicrocycleTrackingServiceTests {
         #expect(current.routines.isEmpty)
     }
 
+    @Test func colocatedAlternatesFreezeAsOneRequirementAndEitherMemberCompletesIt() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Conditioning")
+        let owner = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "AX400",
+            folderID: folder.id,
+            position: 0
+        )
+        let partner = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Cindy",
+            folderID: folder.id,
+            position: 1
+        )
+        let strength = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Strength",
+            folderID: folder.id,
+            position: 2
+        )
+        let alternation = RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id
+        )
+        context.insert(folder)
+        context.insert(owner)
+        context.insert(partner)
+        context.insert(strength)
+        context.insert(alternation)
+        try context.save()
+
+        _ = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [owner, partner, strength],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 10,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let window = try #require(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first)
+
+        #expect(window.routines.map(\.name) == ["AX400", "Strength"])
+        #expect(window.routines.first?.alternateRoutineID == partner.id)
+        #expect(window.routines.first?.alternateRoutineName == "Cindy")
+
+        let completedPartner = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: partner.id,
+            startedAt: date(2026, 8, 3),
+            endedAt: date(2026, 8, 3, 13)
+        )
+        let repeatedOwner = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: owner.id,
+            startedAt: date(2026, 8, 4),
+            endedAt: date(2026, 8, 4, 13)
+        )
+        let progress = MicrocycleTrackingService.progress(
+            for: window,
+            workouts: [completedPartner, repeatedOwner]
+        )
+
+        #expect(progress.requiredCount == 2)
+        #expect(progress.completedCount == 1)
+        #expect(progress.routines.first?.completedRoutineID == partner.id)
+    }
+
+    @Test func aPartnerInAnotherMicrocycleRemainsItsOwnRequirementThere() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let ownerFolder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Owner Week")
+        let partnerFolder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Partner Week")
+        let owner = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "AX400",
+            folderID: ownerFolder.id
+        )
+        let partner = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Cindy",
+            folderID: partnerFolder.id
+        )
+        let alternation = RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id
+        )
+        context.insert(ownerFolder)
+        context.insert(partnerFolder)
+        context.insert(owner)
+        context.insert(partner)
+        context.insert(alternation)
+        try context.save()
+
+        _ = try MicrocycleTrackingService.start(
+            folder: partnerFolder,
+            routines: [owner, partner],
+            folders: [ownerFolder, partnerFolder],
+            startDate: date(2026, 8, 1),
+            durationDays: 10,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let window = try #require(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first)
+
+        #expect(window.routines.count == 1)
+        #expect(window.routines.first?.id == partner.id)
+        #expect(window.routines.first?.alternateRoutineID == nil)
+    }
+
     @Test func completedRoutineCountsOnceAndDoesNotRollTheWindowEarly() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }

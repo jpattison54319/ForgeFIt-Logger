@@ -49,6 +49,8 @@ struct HomeView: View {
     private var microcycleWindows: [MicrocycleWindowModel]
     @Query(sort: \RestDayModel.date, order: .reverse)
     private var restDays: [RestDayModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     /// This week's Coach's Corner weekly-review overrides — only used to
     /// check whether a deload week is currently active, so
     /// `CoachAdjustments.effectivePlan` can resolve it against today's
@@ -360,15 +362,16 @@ struct HomeView: View {
     /// What the app thinks you'll want to train next — see
     /// `NextRoutineSuggestion` for the drilldown logic (microcycle → mesocycle
     /// → best guess).
-    private var suggestion: (routine: RoutineModel, reason: String)? {
+    private var suggestion: (routine: RoutineModel, reason: String, alternatingWith: String?)? {
         guard let result = NextRoutineSuggestion.suggest(
             routines: routines,
             completedWorkouts: workouts,
+            alternations: alternations,
             activeMicrocycleFolderID: UUID(uuidString: activeMicrocycleFolderRaw),
             activeMesocycleFolderID: UUID(uuidString: activeMesocycleFolderRaw),
             mesocycleSubtree: mesocycleSubtree(rootID:)
         ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
-        return (routine, result.reason)
+        return (routine, result.reason, result.alternatingWith)
     }
 
     var body: some View {
@@ -568,7 +571,7 @@ struct HomeView: View {
                     exercises: exercises,
                     setupNotes: setupNotes,
                     recovery: recovery,
-                    suggestion: suggestion
+                    suggestion: suggestion.map { (routine: $0.routine, reason: $0.reason) }
                 )
             }
             .sheet(isPresented: $showCoachChat) { coachChatSheet }
@@ -756,7 +759,11 @@ struct HomeView: View {
         // into the program library instead of a dangling header.
         SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
         if let suggestion {
-            suggestionCard(suggestion.routine, reason: suggestion.reason)
+            suggestionCard(
+                suggestion.routine,
+                reason: suggestion.reason,
+                alternatingWith: suggestion.alternatingWith
+            )
                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                 .transition(.opacity)
         } else {
@@ -1074,7 +1081,8 @@ struct HomeView: View {
     @ViewBuilder private var coachChatSheet: some View {
         let context = AICoachContext.build(
             workouts: workouts, routines: routines, exercises: exercises,
-            recovery: recovery, suggestion: suggestion
+            recovery: recovery,
+            suggestion: suggestion.map { (routine: $0.routine, reason: $0.reason) }
         )
         let effective: (plan: CoachAdjustments.Plan, sourceLabel: String)? = {
             guard let suggestion else { return nil }
@@ -1140,7 +1148,11 @@ struct HomeView: View {
         )
     }
 
-    private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
+    private func suggestionCard(
+        _ routine: RoutineModel,
+        reason: String,
+        alternatingWith: String?
+    ) -> some View {
         let coach = coachReview(for: routine)
         // This is THE answer to "what should I do today" — the one card on
         // Home that should visually outrank everything else, so its Start
@@ -1159,6 +1171,15 @@ struct HomeView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                    if let alternatingWith {
+                        Label(
+                            "Alternates with \(alternatingWith)",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .accessibilityIdentifier("home-alternating-routine")
+                    }
                     // No readiness action line here: the RecoveryHeroCard above
                     // already makes today's call, and per-muscle state lives in
                     // Recovery → Per muscle. This card answers one question —

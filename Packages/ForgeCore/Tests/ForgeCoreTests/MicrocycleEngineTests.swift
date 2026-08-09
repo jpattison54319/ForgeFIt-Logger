@@ -100,6 +100,36 @@ struct MicrocycleEngineTests {
         #expect(result.completedCount == 0)
     }
 
+    @Test func eitherAlternatingMemberCompletesOneSlot() throws {
+        let ownerID = UUID()
+        let partnerID = UUID()
+        let window = try MicrocycleEngine.window(
+            anchor: date(2026, 8, 1),
+            durationDays: 10,
+            index: 0,
+            timeZoneIdentifier: timeZone
+        )
+        let slot = MicrocycleRoutineSnapshot(
+            id: ownerID,
+            name: "AX400",
+            position: 0,
+            alternateRoutineID: partnerID,
+            alternateRoutineName: "Cindy"
+        )
+        let workout = MicrocycleWorkoutEvidence(
+            id: UUID(),
+            routineID: partnerID,
+            startedAt: date(2026, 8, 3),
+            isCompleted: true
+        )
+
+        let result = MicrocycleEngine.progress(window: window, routines: [slot], workouts: [workout])
+
+        #expect(result.requiredCount == 1)
+        #expect(result.completedCount == 1)
+        #expect(result.routines.first?.completedRoutineID == partnerID)
+    }
+
     @Test func dateBeforeAnchorFailsClosed() {
         #expect(throws: MicrocycleEngine.Error.dateBeforeAnchor) {
             try MicrocycleEngine.window(
