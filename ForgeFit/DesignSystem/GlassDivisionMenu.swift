@@ -136,12 +136,11 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// see-through glass that matches the tab bar, letting the glyph alone
     /// carry the color.
     var bubbleGlassTintOpacity: CGFloat = 0.18
-    /// Uses ordinary material-backed circles and a deterministic relay instead
-    /// of native Liquid Glass compositing. This is for root-level controls whose
-    /// children cross cards, bars, and screen edges: the native compositor can
-    /// keep subpixel glass fragments alive after SwiftUI has hidden a child.
-    /// The sleep correction menu keeps the native cell-division effect.
-    var usesStableMaterialRelay: Bool = false
+    /// Chooses between the native cell-division morph and the deterministic
+    /// relay renderers. Root-level controls can keep glass surfaces mounted
+    /// through the relay, while `.stableMaterialRelay` remains a one-line
+    /// fallback if a system compositor regression appears.
+    var renderingMode: GlassDivisionRenderingMode = .nativeCellDivision
     /// Tint of the trigger's glass (nil = neutral/clear glass).
     var triggerTint: Color? = nil
     var dismissSystemImage: String = "xmark"
@@ -186,8 +185,8 @@ struct GlassDivisionMenu<Trigger: View>: View {
     @State private var expanded = false
     @State private var childrenShown = false
     @State private var clusterSpacing: CGFloat = 8
-    /// Stable-material children reveal by birth index: nearest first, then the
-    /// next child from that settled neighbor. -1 is fully retracted.
+    /// Relay children reveal by birth index: nearest first, then the next child
+    /// from that settled neighbor. -1 is fully retracted.
     @State private var relayStage = -1
     /// Invalidates delayed reveal/retract work when the user opens and closes
     /// the menu quickly. Without it, an older task can leave a new fan at its
@@ -222,11 +221,20 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// and content below keeps its distance (caption line + gap + margin).
     private var labelBand: CGFloat { showsLabels && direction.isHorizontal ? 22 : 0 }
 
+    private var usesRelay: Bool {
+        renderingMode != .nativeCellDivision
+    }
+
+    private var usesStableMaterialRelay: Bool {
+        renderingMode == .stableMaterialRelay
+    }
+
     var body: some View {
         Group {
-            if usesStableMaterialRelay {
+            switch renderingMode {
+            case .stableMaterialRelay:
                 menuContents
-            } else {
+            case .nativeCellDivision:
                 GlassEffectContainer(spacing: clusterSpacing) {
                     menuContents
                 }
@@ -234,6 +242,10 @@ struct GlassDivisionMenu<Trigger: View>: View {
                     reduceMotion ? .easeOut(duration: 0.18) : .bouncy(duration: 0.52, extraBounce: 0.18),
                     value: expanded
                 )
+            case .persistentLiquidGlassRelay:
+                GlassEffectContainer(spacing: clusterSpacingCrisp) {
+                    persistentRelayAnchor
+                }
             }
         }
         .onChange(of: collapseSignal) { _, _ in
@@ -248,6 +260,42 @@ struct GlassDivisionMenu<Trigger: View>: View {
         } else {
             triggerButton
         }
+    }
+
+    /// Keeps every root-level glass surface in one stable hierarchy while the
+    /// relay is collapsed. The transparent anchor preserves the trigger's
+    /// compact layout footprint; the fan extends from the same edge as the
+    /// conditional implementation without pushing the tab bar.
+    private var persistentRelayAnchor: some View {
+        Color.clear
+            .frame(width: triggerSize, height: triggerSize)
+            .overlay(alignment: persistentRelayAlignment) {
+                persistentRelayFan
+                    .fixedSize()
+            }
+    }
+
+    private var persistentRelayAlignment: Alignment {
+        switch direction {
+        case .leading: .trailing
+        case .trailing: .leading
+        case .up: .bottom
+        case .down: .top
+        }
+    }
+
+    private var persistentRelayFan: some View {
+        let layout = direction.isHorizontal
+            ? AnyLayout(HStackLayout(spacing: gap))
+            : AnyLayout(VStackLayout(spacing: gap))
+        return layout {
+            if !direction.triggerAtEnd { persistentDismissControls }
+            ForEach(orderedChildren, id: \.item.id) { entry in
+                childBubble(entry.item, birthIndex: entry.index)
+            }
+            if direction.triggerAtEnd { persistentDismissControls }
+        }
+        .padding(.bottom, labelBand)
     }
 
     // MARK: Fan
@@ -299,7 +347,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         let birth = Double(birthIndex) * beat
         let retract = Double(max(items.count - 1, 0)) * beat - birth
         let offset = hiddenOffset
-        let isShown = usesStableMaterialRelay ? relayStage >= birthIndex : childrenShown
+        let isShown = usesRelay ? relayStage >= birthIndex : childrenShown
         let button = Button(role: item.role) { handleTap(item) } label: {
             childFace(item, isShown: isShown, birth: birth, retract: retract)
         }
@@ -324,6 +372,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         }
         .accessibilityIdentifier(item.accessibilityID ?? "")
         .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityHidden(!isShown)
     }
 
     @ViewBuilder
@@ -340,7 +389,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
             .id(item.contentKey)
             .transition(.opacity)
             .animation(.easeInOut(duration: 0.22), value: item.contentKey)
-            .opacity(usesStableMaterialRelay ? 1 : (isShown ? 1 : 0))
+            .opacity(usesRelay ? 1 : (isShown ? 1 : 0))
             .animation(
                 .easeOut(duration: 0.10).delay(isShown ? birth + 0.10 : retract),
                 value: isShown
@@ -348,16 +397,25 @@ struct GlassDivisionMenu<Trigger: View>: View {
             .frame(width: bubbleSize, height: bubbleSize)
             .contentShape(Circle())
 
-        if usesStableMaterialRelay {
+        switch renderingMode {
+        case .stableMaterialRelay:
             glyph.background {
                 stableMaterialCircle(tint: item.tint, tintOpacity: bubbleGlassTintOpacity)
             }
-        } else {
+        case .nativeCellDivision:
             // Native glass stays on the label: putting it outside the Button
             // swallows taps on iOS 26.
             glyph
                 .glassEffect(bubbleGlass(for: item), in: Circle())
                 .glassEffectID(item.id, in: morph)
+        case .persistentLiquidGlassRelay:
+            // The effect becomes identity while the still-mounted bubble is
+            // collapsed. This avoids destroying a live compositor layer at a
+            // near-zero scale, which caused the old detached glass particles.
+            glyph
+                .glassEffect(isShown ? bubbleGlass(for: item) : .identity, in: Circle())
+                .glassEffectID(item.id, in: morph)
+                .glassEffectTransition(.matchedGeometry)
         }
     }
 
@@ -369,11 +427,11 @@ struct GlassDivisionMenu<Trigger: View>: View {
         retract: Double,
         offset: CGSize
     ) -> some View {
-        if usesStableMaterialRelay {
+        if usesRelay {
             content
                 // A flat squeeze travels from its actual parent. Ordinary
-                // material respects opacity, so no hidden compositor particle
-                // remains after the circle reaches that parent.
+                // material respects opacity, while the persistent glass mode
+                // switches its still-mounted surface to identity.
                 .scaleEffect(
                     x: reduceMotion ? 1 : (isShown ? 1 : 0.68),
                     y: reduceMotion ? 1 : (isShown ? 1 : 0.12)
@@ -403,7 +461,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
     /// Trails the bubble's birth by 0.12s — it emerges right as the bubble pops
     /// to full size, so it reads as "the button produced this."
     private func bubbleLabel(_ item: GlassDivisionItem, birth: Double, isShown: Bool) -> some View {
-        let delay = usesStableMaterialRelay ? 0.045 : birth + 0.12
+        let delay = usesRelay ? 0.045 : birth + 0.12
         // Fade fast, move soft. The type never bounces — the bubble owns the
         // jelly; bouncing text reads cheap. On exit, labels die first and
         // together (fast, no stagger) so they never ride the goo backward.
@@ -468,6 +526,38 @@ struct GlassDivisionMenu<Trigger: View>: View {
         }
     }
 
+    /// Persistent counterpart to `dismissControls`: the root button and its
+    /// optional visible edit action never leave the hierarchy, so their glass
+    /// layers retain stable identities across every relay cycle.
+    private var persistentDismissControls: some View {
+        persistentRootButton
+            // Keep the accessory mounted without letting its width redefine
+            // the fan or trigger axis. Its visual position matches the old
+            // HStack: one trigger diameter plus the standard gap to the left.
+            .overlay(alignment: .leading) {
+                if let dismissAccessoryLabel, let onDismissAccessory {
+                    Button {
+                        onDismissAccessory()
+                        collapse()
+                    } label: {
+                        persistentDismissAccessoryFace(
+                            label: dismissAccessoryLabel,
+                            systemImage: dismissAccessorySystemImage,
+                            isShown: childrenShown
+                        )
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                    .allowsHitTesting(childrenShown)
+                    .accessibilityIdentifier(dismissAccessoryAccessibilityID ?? "")
+                    .accessibilityLabel(dismissAccessoryLabel)
+                    .opacity(childrenShown ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: childrenShown)
+                    .accessibilityHidden(!childrenShown)
+                    .offset(x: -(triggerSize + Space.sm))
+                }
+            }
+    }
+
     @ViewBuilder
     private func dismissAccessoryFace(label: String, systemImage: String) -> some View {
         let content = Label(label, systemImage: systemImage)
@@ -489,6 +579,22 @@ struct GlassDivisionMenu<Trigger: View>: View {
         } else {
             content.glassEffect(.regular.interactive(), in: Circle())
         }
+    }
+
+    private func persistentDismissAccessoryFace(
+        label: String,
+        systemImage: String,
+        isShown: Bool
+    ) -> some View {
+        Label(label, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(theme.textPrimary)
+            .frame(width: triggerSize, height: triggerSize)
+            .contentShape(Circle())
+            .glassEffect(isShown ? .regular.interactive() : .identity, in: Circle())
+            .glassEffectID("glass-division-dismiss-accessory", in: morph)
+            .glassEffectTransition(.matchedGeometry)
     }
 
     private func bubbleGlass(for item: GlassDivisionItem) -> Glass {
@@ -566,6 +672,59 @@ struct GlassDivisionMenu<Trigger: View>: View {
             )
         } else {
             button
+        }
+    }
+
+    /// One root Button serves both the collapsed trigger and expanded dismiss
+    /// states. Only its visible glyph and accessibility contract change, so
+    /// SwiftUI never tears down the root glass layer during the relay.
+    @ViewBuilder
+    private var persistentRootButton: some View {
+        let button = Button(action: handlePersistentRootTap) {
+            rootFace(
+                ZStack {
+                    trigger()
+                        .opacity(expanded ? 0 : 1)
+                        .accessibilityHidden(true)
+                    Image(systemName: dismissSystemImage)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(theme.textSecondary)
+                        .opacity(expanded ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+                .frame(width: triggerSize, height: triggerSize)
+                .contentShape(Circle()),
+                tint: expanded ? nil : triggerTint
+            )
+        }
+        .buttonStyle(PressableButtonStyle())
+        .allowsHitTesting(!expanded || childrenShown)
+        .accessibilityIdentifier(
+            expanded ? (dismissAccessibilityID ?? "") : (triggerAccessibilityID ?? "")
+        )
+        .accessibilityLabel(expanded ? dismissAccessibilityLabel : triggerAccessibilityLabel)
+        .accessibilityHint(expanded ? dismissAccessibilityHint : triggerAccessibilityHint)
+
+        if onTriggerLongPress != nil {
+            button.simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    triggerLongPressRecognized()
+                }
+            )
+        } else {
+            button
+        }
+    }
+
+    private func handlePersistentRootTap() {
+        if suppressNextTriggerTap {
+            suppressNextTriggerTap = false
+        } else if expanded {
+            collapse()
+        } else if let collapsedAction {
+            collapsedAction()
+        } else {
+            expand()
         }
     }
 
@@ -650,7 +809,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         guard !childrenShown else { return }
         childrenShown = true
 
-        if usesStableMaterialRelay {
+        if usesRelay {
             guard !items.isEmpty else { return }
             guard !reduceMotion else {
                 relayStage = items.count - 1
@@ -701,8 +860,8 @@ struct GlassDivisionMenu<Trigger: View>: View {
             return
         }
 
-        if usesStableMaterialRelay {
-            retractStableRelay(generation: generation)
+        if usesRelay {
+            retractRelay(generation: generation)
             return
         }
 
@@ -725,7 +884,7 @@ struct GlassDivisionMenu<Trigger: View>: View {
         }
     }
 
-    private func retractStableRelay(generation: Int) {
+    private func retractRelay(generation: Int) {
         childrenShown = false
         let firstStage = min(relayStage, items.count - 1)
         guard firstStage >= 0 else {
@@ -736,8 +895,8 @@ struct GlassDivisionMenu<Trigger: View>: View {
 
         Task { @MainActor in
             // Outside-in: the farthest child squeezes back into its parent,
-            // then that parent follows. The final material spring is allowed
-            // to finish before the fan subtree is replaced by the trigger.
+            // then that parent follows. The final spring finishes before the
+            // state returns to the collapsed trigger contract.
             for stage in stride(from: firstStage, through: 0, by: -1) {
                 guard transitionGeneration == generation else { return }
                 withAnimation(retractionSpring) {

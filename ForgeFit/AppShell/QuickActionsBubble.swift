@@ -58,11 +58,10 @@ struct QuickActionsBubble: View {
             // Clear see-through glass on trigger and bubbles alike, matching
             // the tab bar — the glyphs alone carry the color.
             bubbleGlassTintOpacity: 0,
-            // Root-level native glass leaves compositor particles behind as
-            // the vertical fan crosses cards and the tab bar. The material
-            // relay keeps the same frosted look while every child follows a
-            // deterministic parent-to-child path.
-            usesStableMaterialRelay: true,
+            // Keep every glass surface mounted during the deterministic relay.
+            // If a future system compositor regresses, switching this one case
+            // to `.stableMaterialRelay` restores the previous implementation.
+            renderingMode: .persistentLiquidGlassRelay,
             triggerAccessibilityLabel: "Quick actions",
             triggerAccessibilityHint: "Opens workout shortcuts.",
             triggerAccessibilityID: "quick-actions-trigger",
