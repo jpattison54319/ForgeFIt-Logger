@@ -16,10 +16,14 @@ struct RoutineDetailView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
+    @Query(sort: \RoutineModel.position) private var allRoutines: [RoutineModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     @State private var metric: TrainingAnalytics.Metric = .volume
     @State private var chartRange: TimeChartRange = .all
     @State private var editing = false
     @State private var sharePayload: ShareImagePayload?
+    @State private var shareErrorMessage: String?
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
@@ -60,7 +64,7 @@ struct RoutineDetailView: View {
                                 setupNote: setupNotes.first { $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID }
                             )
                         case .block(let block):
-                            RoutineBlockSummary(block: block)
+                            RoutineBlockSummary(block: block, exercises: exercises)
                         }
                     }
                 }
@@ -72,7 +76,16 @@ struct RoutineDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
         .sheet(item: $sharePayload) { payload in
-            ShareSheet(items: [payload.image])
+            ShareSheet(items: payload.items)
+        }
+        .alert(
+            "Couldn't share routine",
+            isPresented: Binding(
+                get: { shareErrorMessage != nil },
+                set: { if !$0 { shareErrorMessage = nil } }
+            )
+        ) { } message: {
+            Text(shareErrorMessage ?? "")
         }
         .navigationDestination(isPresented: $editing) {
             RoutineEditorView(routine: routine, exercises: exercises, setupNotes: setupNotes)
@@ -152,39 +165,165 @@ struct RoutineDetailView: View {
         }
     }
 
-    /// Render the routine to a single tall image and present the share sheet
-    /// (Save to Photos, Messages, AirDrop, …).
+    /// The image stays immediately readable in Messages; the adjacent plan
+    /// document is the lossless copy another ForgeFit user can save.
     private func shareRoutine() {
-        if let image = RoutineShareRenderer.image(for: routine, exercises: exercises, theme: theme) {
-            sharePayload = ShareImagePayload(image: image)
+        do {
+            guard let image = RoutineShareRenderer.image(for: routine, exercises: exercises, theme: theme) else {
+                throw PlanShareService.ShareError.invalidStructuredPlan(routine.name)
+            }
+            let document = try PlanShareService.routineDocument(
+                routine,
+                allRoutines: allRoutines,
+                alternations: alternations,
+                exercises: exercises
+            )
+            let url = try PlanShareService.write(document)
+            sharePayload = ShareImagePayload(image: image, attachments: [url])
+        } catch {
+            shareErrorMessage = error.localizedDescription
         }
     }
 }
 
 private struct RoutineBlockSummary: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let block: RoutineBlockModel
+    let exercises: [ExerciseLibraryModel]
+
+    @State private var isExpanded = false
+
+    private var conditioningPlan: ConditioningPlan? {
+        guard block.kind == .conditioning else { return nil }
+        return ConditioningPlan.decode(from: block.planJSON)
+    }
 
     var body: some View {
         Card(padding: Space.md) {
-            HStack(spacing: Space.md) {
-                Image(systemName: block.kind == .conditioning ? "stopwatch" : "figure.yoga")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(block.kind == .conditioning ? theme.warmup : theme.accent)
-                    .frame(width: 40, height: 40)
-                    .background(theme.surfaceElevated)
-                    .clipShape(Circle())
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(block.kind.title)
-                        .font(.cardTitle)
-                        .foregroundStyle(theme.textPrimary)
-                    Text(summary)
-                        .font(.label)
-                        .foregroundStyle(theme.textSecondary)
+            VStack(alignment: .leading, spacing: Space.md) {
+                if conditioningPlan != nil {
+                    Button {
+                        withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        header(showsChevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityLabel("Conditioning details")
+                    .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                    .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
+                    .accessibilityIdentifier("routine-conditioning-details")
+                } else {
+                    header(showsChevron: false)
                 }
-                Spacer()
+
+                if let conditioningPlan, isExpanded {
+                    Rectangle()
+                        .fill(theme.separator)
+                        .frame(height: 1)
+
+                    conditioningDetails(conditioningPlan)
+                        .transition(.opacity.combined(with: reduceMotion ? .identity : .move(edge: .top)))
+                }
             }
         }
+    }
+
+    private func header(showsChevron: Bool) -> some View {
+        HStack(spacing: Space.md) {
+            Image(systemName: block.kind == .conditioning ? "stopwatch" : "figure.yoga")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(block.kind == .conditioning ? theme.warmup : theme.accent)
+                .frame(width: 40, height: 40)
+                .background(theme.surfaceElevated)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(block.kind.title)
+                    .font(.cardTitle)
+                    .foregroundStyle(theme.textPrimary)
+                Text(summary)
+                    .font(.label)
+                    .foregroundStyle(theme.textSecondary)
+            }
+            Spacer(minLength: Space.sm)
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            }
+        }
+        .contentShape(Rectangle())
+        .frame(minHeight: 44)
+    }
+
+    private func conditioningDetails(_ plan: ConditioningPlan) -> some View {
+        VStack(alignment: .leading, spacing: Space.lg) {
+            ForEach(Array(plan.sections.enumerated()), id: \.element.id) { sectionIndex, section in
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                        Text(section.name.isEmpty ? "Section \(sectionIndex + 1)" : section.name)
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        Spacer(minLength: Space.sm)
+                        Tag(text: section.format.title, color: theme.warmup, background: theme.warmup.opacity(0.14))
+                    }
+
+                    HStack(spacing: Space.sm) {
+                        Text(ConditioningSharePresentation.prescription(section))
+                        if section.ordering == .partitionable {
+                            Text(section.ordering.title)
+                        }
+                    }
+                    .font(.label)
+                    .foregroundStyle(theme.textSecondary)
+
+                    VStack(spacing: Space.sm) {
+                        ForEach(Array(section.movements.enumerated()), id: \.element.id) { movementIndex, movement in
+                            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                                Text("\(movementIndex + 1)")
+                                    .font(.tag)
+                                    .foregroundStyle(theme.textTertiary)
+                                    .frame(width: 18, alignment: .leading)
+                                Text(exerciseName(for: movement.exerciseID))
+                                    .font(.label)
+                                    .foregroundStyle(theme.textPrimary)
+                                Spacer(minLength: Space.sm)
+                                Text(
+                                    ConditioningSharePresentation.movement(
+                                        movement,
+                                        section: section,
+                                        exercise: exercise(for: movement.exerciseID)
+                                    )
+                                )
+                                .font(.label)
+                                .foregroundStyle(theme.textSecondary)
+                                .multilineTextAlignment(.trailing)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+
+                if sectionIndex < plan.sections.count - 1 {
+                    Rectangle()
+                        .fill(theme.separator)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .accessibilityIdentifier("routine-conditioning-plan")
+    }
+
+    private func exercise(for id: UUID) -> ExerciseLibraryModel? {
+        exercises.first { $0.id == id }
+    }
+
+    private func exerciseName(for id: UUID) -> String {
+        exercise(for: id)?.name ?? "Exercise"
     }
 
     private var summary: String {
@@ -351,15 +490,14 @@ private struct RoutineExerciseSummary: View {
         let target = sortedSets.first
         return VStack(alignment: .leading, spacing: Space.md) {
             HStack {
-                StatColumn(label: "Target", value: Fmt.durationShort(target?.targetDurationSeconds), valueColor: theme.secondaryAccent)
+                StatColumn(
+                    label: "Goal",
+                    value: cardioGoalValue(kind: kind, legacyTarget: target),
+                    valueColor: theme.secondaryAccent
+                )
                 StatColumn(label: "Metrics", value: kind.usesPace ? "Pace" : "Speed")
                 StatColumn(label: "HR", value: "Zones")
             }
-
-            Text(kind.metricLabels.joined(separator: " · "))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(theme.secondaryAccent)
-                .fixedSize(horizontal: false, vertical: true)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -373,6 +511,47 @@ private struct RoutineExerciseSummary: View {
                 }
             }
         }
+    }
+
+    /// The routine card needs the chosen goal, not a list of everything this
+    /// cardio modality can record. Legacy set targets remain readable while
+    /// newer goal plans get one compact, truthful value.
+    private func cardioGoalValue(
+        kind: CardioKind,
+        legacyTarget: RoutineSetModel?
+    ) -> String {
+        if let plan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON),
+           plan.isMeaningful {
+            if plan.hasSteps { return "Intervals" }
+            if let goal = plan.goal {
+                switch goal.kind {
+                case .distance:
+                    return Fmt.cardioDistance(goal.value, kind: kind)
+                case .duration:
+                    return Fmt.durationShort(Int(goal.value))
+                case .calories:
+                    return "\(Int(goal.value.rounded())) kcal"
+                case .elevation:
+                    return "\(Int(goal.value.rounded())) m"
+                }
+            }
+            if let zone = plan.hrZoneTarget { return "Zone \(zone)" }
+            if let target = plan.target, target.isMeaningful {
+                switch target.metric {
+                case .pace: return "Pace"
+                case .power: return "Power"
+                case .cadence: return "Cadence"
+                }
+            }
+        }
+
+        if let seconds = legacyTarget?.targetDurationSeconds, seconds > 0 {
+            return Fmt.durationShort(seconds)
+        }
+        if let meters = legacyTarget?.targetDistanceMeters, meters > 0 {
+            return Fmt.cardioDistance(meters, kind: kind)
+        }
+        return "Open"
     }
 
 }

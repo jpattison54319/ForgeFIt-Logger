@@ -809,5 +809,13 @@ struct ShareSheet: UIViewControllerRepresentable {
 struct ShareImagePayload: Identifiable {
     let id = UUID()
     let image: UIImage
+    let attachments: [URL]
+
+    init(image: UIImage, attachments: [URL] = []) {
+        self.image = image
+        self.attachments = attachments
+    }
+
+    var items: [Any] { [image] + attachments }
 }
 #endif

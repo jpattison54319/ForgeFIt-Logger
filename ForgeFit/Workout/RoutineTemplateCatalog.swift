@@ -26,8 +26,8 @@ struct RoutineTemplateExercise: Codable, Hashable {
     let supersetGroup: Int?
 }
 
-/// A multi-routine training program (mesocycle): a named folder of day
-/// routines imported together — e.g. Upper/Lower is one program holding four
+/// A multi-routine training program imported as one microcycle folder: a named
+/// set of day routines — e.g. Upper/Lower is one program holding four
 /// routines, not one routine called "Upper Lower Upper".
 struct RoutineProgramTemplate: Identifiable, Codable, Hashable {
     let id: String
@@ -163,7 +163,7 @@ enum RoutineTemplateCatalog {
         return routine
     }
 
-    /// Imports a full program: creates a mesocycle folder named after the
+    /// Imports a full program: creates a standalone microcycle folder named after the
     /// program and adds every day routine to it, in program order. Returns the
     /// created folder (with its routines saved) or nil when no day resolved.
     @discardableResult

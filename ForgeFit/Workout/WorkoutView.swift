@@ -68,8 +68,15 @@ struct WorkoutHomeView: View {
     let setupNotes: [UserExerciseNoteModel]
 
     @Query(sort: \RoutineFolderModel.position) private var allFolders: [RoutineFolderModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
+    @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse)
+    private var microcycleTrackings: [MicrocycleTrackingModel]
+    @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse)
+    private var microcycleWindows: [MicrocycleWindowModel]
 
     @State private var collapsed: Set<UUID> = []
+    @State private var navigationPath = NavigationPath()
     @State private var newRoutine: RoutineModel?
     /// Set only by `createRoutine` — tells the editor this routine is a
     /// just-inserted placeholder, so backing out deletes it instead of
@@ -83,6 +90,7 @@ struct WorkoutHomeView: View {
     @State private var routinePendingDelete: RoutineModel?
     @State private var folderPendingDelete: RoutineFolderModel?
     @State private var sharePayload: ShareImagePayload?
+    @State private var shareErrorMessage: String?
     /// The item currently being dragged. SwiftUI's drop target callback only
     /// tells us whether something is hovering, so we keep the payload here to
     /// make folder hover feedback specific instead of vague.
@@ -93,15 +101,17 @@ struct WorkoutHomeView: View {
     /// that VoiceOver / Switch Control can operate, matching the reorder mode
     /// already used in the routine editor and the live logger.
     @State private var editingOrder = false
+    @State private var trackingFolder: RoutineFolderModel?
+    @State private var alternationRoutine: RoutineModel?
 
-    /// The active macrocycle: when no mesocycle is more specifically active,
-    /// Home rotates through every mesocycle nested inside it.
-    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
-    /// The active mesocycle: the most specific "what am I actually running
-    /// right now" signal. A macrocycle can hold several mesocycles, so these
-    /// are independent — Home drills into the mesocycle first, then falls
-    /// back to the macrocycle, then to best-guessing from the full list.
-    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
+    /// A mesocycle can contain several microcycles. Home uses the active
+    /// microcycle first, then its broader mesocycle, then the full library.
+    @AppStorage(CyclePreferenceMigration.activeMesocycleKey)
+    private var activeMesocycleFolderRaw = ""
+    @AppStorage(CyclePreferenceMigration.activeMicrocycleKey)
+    private var activeMicrocycleFolderRaw = ""
+    @AppStorage(AppPreferenceKeys.workoutUngroupedCollapsedKey)
+    private var ungroupedCollapsed = false
 
     private var activeRoutines: [RoutineModel] {
         routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.position < $1.position }
@@ -135,32 +145,69 @@ struct WorkoutHomeView: View {
     private func routines(in folder: RoutineFolderModel) -> [RoutineModel] {
         activeRoutines.filter { $0.folderID == folder.id }
     }
-    private func isActiveMacro(_ folder: RoutineFolderModel) -> Bool {
-        activeMacroFolderRaw == folder.id.uuidString
+    private func alternationState(for routine: RoutineModel) -> RoutineAlternationService.State? {
+        RoutineAlternationService.state(
+            containing: routine.id,
+            alternations: alternations,
+            routines: activeRoutines,
+            workouts: workouts
+        )
     }
-    private func isActiveMeso(_ folder: RoutineFolderModel) -> Bool {
-        activeMesoFolderRaw == folder.id.uuidString
+    private func displayRoutines(_ source: [RoutineModel]) -> [RoutineModel] {
+        let sourceIDs = Set(source.map(\.id))
+        let states = RoutineAlternationService.states(
+            alternations: alternations,
+            routines: activeRoutines,
+            workouts: workouts
+        )
+        let suppressedPartners: Set<UUID> = Set(states.compactMap { state -> UUID? in
+            guard state.owner.folderID == state.partner.folderID,
+               sourceIDs.contains(state.owner.id), sourceIDs.contains(state.partner.id) else { return nil }
+            return state.partner.id
+        })
+        return source.filter { !suppressedPartners.contains($0.id) }
     }
-    /// Setting a mesocycle active also adopts its parent macrocycle (if any)
-    /// — drilling into a specific mesocycle means you're "in" that
-    /// macrocycle too, so the two stay consistent with each other.
-    private func setActiveMeso(_ folder: RoutineFolderModel) {
-        activeMesoFolderRaw = folder.id.uuidString
-        if let parentID = folder.parentID { activeMacroFolderRaw = parentID.uuidString }
+    private var activeTracking: MicrocycleTrackingModel? {
+        MicrocycleTrackingService.activeTracking(microcycleTrackings)
     }
-    /// Setting a macrocycle active keeps the current mesocycle active only if
-    /// it's actually nested inside this macrocycle — otherwise it no longer
-    /// makes sense as "the specific plan within the active macro".
-    private func setActiveMacro(_ folder: RoutineFolderModel) {
-        activeMacroFolderRaw = folder.id.uuidString
-        if let mesoID = UUID(uuidString: activeMesoFolderRaw),
-           mesoID != folder.id, !childFolders(of: folder).contains(where: { $0.id == mesoID }) {
-            activeMesoFolderRaw = ""
+
+    private func isActiveMesocycle(_ folder: RoutineFolderModel) -> Bool {
+        activeMesocycleFolderRaw == folder.id.uuidString
+    }
+    private func isActiveMicrocycle(_ folder: RoutineFolderModel) -> Bool {
+        activeMicrocycleFolderRaw == folder.id.uuidString
+    }
+
+    private func setActiveMicrocycle(_ folder: RoutineFolderModel) {
+        activeMicrocycleFolderRaw = folder.id.uuidString
+        if let parentID = folder.parentID {
+            activeMesocycleFolderRaw = parentID.uuidString
         }
     }
 
+    private func setActiveMesocycle(_ folder: RoutineFolderModel) {
+        activeMesocycleFolderRaw = folder.id.uuidString
+        if let microcycleID = UUID(uuidString: activeMicrocycleFolderRaw),
+           !childFolders(of: folder).contains(where: { $0.id == microcycleID }) {
+            activeMicrocycleFolderRaw = ""
+        }
+    }
+
+    private func updateMicrocyclePresentation(
+        _ tracking: MicrocycleTrackingModel,
+        showsOnHome: Bool? = nil,
+        showsFolderHeader: Bool? = nil
+    ) {
+        try? MicrocycleTrackingService.setPresentation(
+            tracking,
+            showsOnHome: showsOnHome,
+            showsFolderHeader: showsFolderHeader,
+            in: modelContext
+        )
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScreenScaffold("Workout") {
                 SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
                     appState.requestStart {
@@ -207,14 +254,22 @@ struct WorkoutHomeView: View {
                     )
                 }
 
-                // Ungrouped routines (also the drop target to pull a routine OUT of a folder)
-                VStack(spacing: Space.md) {
-                    ForEach(ungrouped) { routine in routineCard(routine) }
-                }
-                .frame(maxWidth: .infinity, minHeight: ungrouped.isEmpty ? Space.lg : 0, alignment: .top)
-                .contentShape(Rectangle())
-                .onDrop(of: [.plainText], isTargeted: nil) { providers in
-                    handleDrop(providers, into: nil)
+                if ungrouped.isEmpty {
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: Space.lg)
+                        .contentShape(Rectangle())
+                        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                            handleDrop(providers, into: nil)
+                        }
+                } else {
+                    UngroupedRoutineSection(
+                        isCollapsed: $ungroupedCollapsed,
+                        onDrop: { providers in handleDrop(providers, into: nil) }
+                    ) {
+                        VStack(spacing: Space.md) {
+                            ForEach(displayRoutines(ungrouped)) { routine in routineCard(routine) }
+                        }
+                    }
                 }
 
                 ForEach(topLevelFolders) { folder in folderSection(folder) }
@@ -232,6 +287,8 @@ struct WorkoutHomeView: View {
                 switch route {
                 case .archive:
                     ArchiveView(routines: routines, folders: allFolders)
+                case .microcycle(let trackingID):
+                    MicrocycleDetailView(trackingID: trackingID)
                 }
             }
             .navigationDestination(item: $newRoutine) { routine in
@@ -290,15 +347,24 @@ struct WorkoutHomeView: View {
                     templates: templates,
                     exercises: exercises,
                     onImport: { program in
-                        // A program is a whole mesocycle: it always lands as its
-                        // own new top-level folder with the day routines inside.
+                        // Imported day routines land together as one leaf
+                        // microcycle folder.
                         RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
                         showExploreLibrary = false
                     }
                 )
             }
             .sheet(item: $sharePayload) { payload in
-                ShareSheet(items: [payload.image])
+                ShareSheet(items: payload.items)
+            }
+            .alert(
+                "Couldn't share cycle",
+                isPresented: Binding(
+                    get: { shareErrorMessage != nil },
+                    set: { if !$0 { shareErrorMessage = nil } }
+                )
+            ) { } message: {
+                Text(shareErrorMessage ?? "")
             }
             .sheet(isPresented: $editingOrder) {
                 RoutineOrderEditorView(
@@ -312,9 +378,54 @@ struct WorkoutHomeView: View {
                     onMoveRoutines: { folder, from, to in moveRoutines(in: folder, from: from, to: to) }
                 )
             }
+            .sheet(item: $trackingFolder) { folder in
+                MicrocycleSetupView(
+                    folder: folder,
+                    routines: routines(in: folder)
+                ) { startDate, durationDays in
+                    _ = try MicrocycleTrackingService.start(
+                        folder: folder,
+                        routines: routines,
+                        folders: folders,
+                        startDate: startDate,
+                        durationDays: durationDays,
+                        in: modelContext
+                    )
+                    setActiveMicrocycle(folder)
+                }
+            }
+            .sheet(item: $alternationRoutine) { routine in
+                RoutineAlternationSheet(
+                    anchor: routine,
+                    routines: routines,
+                    folders: folders,
+                    alternations: alternations,
+                    workouts: workouts,
+                    exercises: exercises,
+                    setupNotes: setupNotes
+                )
+            }
         }
         .id(tabRootRequestID)
+        .onChange(of: appState.pendingRoutineDetailID, initial: true) {
+            openPendingImportedRoutineIfAvailable()
+        }
+        .onChange(of: activeRoutines.map(\.id)) {
+            openPendingImportedRoutineIfAvailable()
+        }
+        .task {
+            CyclePreferenceMigration.migrate()
+            _ = try? MicrocycleTrackingService.reconcile(in: modelContext)
+        }
         .interactiveBackSwipeEnabled()
+    }
+
+    private func openPendingImportedRoutineIfAvailable() {
+        guard let id = appState.pendingRoutineDetailID,
+              let routine = activeRoutines.first(where: { $0.id == id }) else { return }
+        navigationPath = NavigationPath()
+        navigationPath.append(routine)
+        appState.pendingRoutineDetailID = nil
     }
 
     // MARK: - Archive entry point
@@ -358,10 +469,20 @@ struct WorkoutHomeView: View {
     private func folderSection(_ folder: RoutineFolderModel) -> AnyView {
         let isCollapsed = collapsed.contains(folder.id)
         let items = routines(in: folder)
+        let displayedItems = displayRoutines(items)
         let children = childFolders(of: folder)
-        // A folder is either a macrocycle (has children) or a mesocycle
-        // (leaf) — check whichever active slot applies to its role.
-        let isActive = children.isEmpty ? isActiveMeso(folder) : isActiveMacro(folder)
+        // Parent folders are mesocycles; leaf folders holding routines are
+        // microcycles. Routines themselves are workout sessions.
+        let isActive = children.isEmpty
+            ? isActiveMicrocycle(folder)
+            : isActiveMesocycle(folder)
+        let trackedWindow: MicrocycleWindowModel? = {
+            guard let activeTracking, activeTracking.folderID == folder.id else { return nil }
+            return MicrocycleTrackingService.currentWindow(
+                for: activeTracking,
+                windows: microcycleWindows
+            )
+        }()
         let target = DropTarget.folder(folder.id)
         let feedback = feedback(for: target)
         let isTargeted = feedback != nil
@@ -386,7 +507,7 @@ struct WorkoutHomeView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
-                            let count = children.isEmpty ? items.count : children.count
+                            let count = children.isEmpty ? displayedItems.count : children.count
                             if count > 0 {
                                 Text("\(count)")
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -421,11 +542,72 @@ struct WorkoutHomeView: View {
                     folderMenu(folder, isActive: isActive, hasChildren: !children.isEmpty)
                 }
 
+                if let activeTracking,
+                   activeTracking.folderID == folder.id,
+                   activeTracking.showsFolderHeader,
+                   !isCollapsed,
+                   let trackedWindow {
+                    let progress = MicrocycleTrackingService.progress(
+                        for: trackedWindow,
+                        windows: microcycleWindows,
+                        workouts: workouts
+                    )
+                    HStack(spacing: Space.sm) {
+                        NavigationLink(value: WorkoutRoute.microcycle(activeTracking.id)) {
+                            HStack(spacing: Space.sm) {
+                                Image(systemName: activeTracking.needsAttention
+                                    ? "exclamationmark.triangle.fill"
+                                    : (progress.isComplete ? "checkmark.circle.fill" : "calendar"))
+                                    .foregroundStyle(activeTracking.needsAttention
+                                        ? theme.warmup
+                                        : (progress.isComplete ? theme.accent : theme.textSecondary))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(activeTracking.needsAttention
+                                        ? "MICROCYCLE NEEDS ATTENTION"
+                                        : "MICROCYCLE PROGRESS")
+                                        .font(.system(size: 9, weight: .heavy))
+                                        .foregroundStyle(theme.textTertiary)
+                                    Text(activeTracking.needsAttention
+                                        ? "Add a routine to continue tracking"
+                                        : "Day \(MicrocycleTrackingService.dayNumber(for: trackedWindow)) of \(activeTracking.durationDays) · \(progress.completedCount) of \(progress.requiredCount) workouts")
+                                        .font(.subheadline)
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(theme.textTertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            updateMicrocyclePresentation(
+                                activeTracking,
+                                showsFolderHeader: false
+                            )
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.bold())
+                                .foregroundStyle(theme.textTertiary)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove microcycle header")
+                        .accessibilityHint("Tracking continues and the header can be added back from this folder's menu.")
+                    }
+                    .padding(Space.sm)
+                    .background(theme.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .accessibilityIdentifier("microcycle-folder-progress")
+                }
+
                 if !isCollapsed {
                     if items.isEmpty && children.isEmpty && !isTargeted {
                         dropHint("Drop routines or a folder here")
                     } else {
-                        ForEach(items) { routine in routineCard(routine) }
+                        ForEach(displayedItems) { routine in routineCard(routine) }
                         ForEach(children) { child in folderSection(child) }
                     }
                 }
@@ -511,24 +693,58 @@ struct WorkoutHomeView: View {
 
     private func folderMenu(_ folder: RoutineFolderModel, isActive: Bool, hasChildren: Bool) -> some View {
         Menu {
-            // Independent slots: a macrocycle and one of its mesocycles can
-            // both be active at once (that's the whole point — a macro can
-            // hold several mesocycles, only one of which you're running now).
+            // A mesocycle and one of its microcycles can both be active: one
+            // names the broader block, the other the sessions currently due.
             if hasChildren {
                 if isActive {
-                    Button("Clear Active Macrocycle", systemImage: "star.slash") { activeMacroFolderRaw = "" }
+                    Button("Clear Active Mesocycle", systemImage: "star.slash") {
+                        activeMesocycleFolderRaw = ""
+                    }
                 } else {
-                    Button("Set as Active Macrocycle", systemImage: "star") { setActiveMacro(folder) }
+                    Button("Set as Active Mesocycle", systemImage: "star") {
+                        setActiveMesocycle(folder)
+                    }
                 }
             } else {
                 if isActive {
-                    Button("Clear Active Mesocycle", systemImage: "star.slash") { activeMesoFolderRaw = "" }
+                    Button("Clear Active Microcycle", systemImage: "star.slash") {
+                        activeMicrocycleFolderRaw = ""
+                    }
                 } else {
-                    Button("Set as Active Mesocycle", systemImage: "star") { setActiveMeso(folder) }
+                    Button("Set as Active Microcycle", systemImage: "star") {
+                        setActiveMicrocycle(folder)
+                    }
+                }
+                if let activeTracking, activeTracking.folderID == folder.id {
+                    NavigationLink(
+                        "View Microcycle",
+                        value: WorkoutRoute.microcycle(activeTracking.id)
+                    )
+                    if !activeTracking.showsOnHome {
+                        Button("Show on Home", systemImage: "house") {
+                            updateMicrocyclePresentation(
+                                activeTracking,
+                                showsOnHome: true
+                            )
+                        }
+                    }
+                    if !activeTracking.showsFolderHeader {
+                        Button("Show Microcycle Header", systemImage: "rectangle.topthird.inset.filled") {
+                            updateMicrocyclePresentation(
+                                activeTracking,
+                                showsFolderHeader: true
+                            )
+                        }
+                    }
+                } else {
+                    Button("Set Day Target", systemImage: "calendar.badge.plus") {
+                        trackingFolder = folder
+                    }
+                    .disabled(routines(in: folder).isEmpty)
                 }
             }
             Divider()
-            Button(hasChildren ? "Share Macrocycle" : "Share Mesocycle", systemImage: "square.and.arrow.up") {
+            Button(hasChildren ? "Share Mesocycle" : "Share Microcycle", systemImage: "square.and.arrow.up") {
                 shareFolder(folder, hasChildren: hasChildren)
             }
             Button("Rename", systemImage: "pencil") { startRename(folder) }
@@ -567,26 +783,46 @@ struct WorkoutHomeView: View {
         .accessibilityLabel("Folder options for \(folder.name)")
     }
 
-    /// Render a training-cycle folder to a single tall image and present the
-    /// share sheet. A folder with subfolders shares as a macrocycle (routines
-    /// grouped under each mesocycle); otherwise as a mesocycle (its routines).
+    /// Keep the readable image and lossless plan document together. A
+    /// mesocycle carries its full visible microcycle subtree.
     private func shareFolder(_ folder: RoutineFolderModel, hasChildren: Bool) {
-        let sections: [FolderShareCard.Section]
-        if hasChildren {
-            sections = childFolders(of: folder).map { sub in
-                FolderShareCard.Section(title: sub.name, routines: routines(in: sub))
+        do {
+            let microcycles = hasChildren ? childFolders(of: folder) : []
+            let sharedRoutines = hasChildren
+                ? microcycles.flatMap { routines(in: $0) }
+                : routines(in: folder)
+            let sections = hasChildren
+                ? microcycles.map { FolderShareCard.Section(title: $0.name, routines: routines(in: $0)) }
+                : [FolderShareCard.Section(title: nil, routines: sharedRoutines)]
+            guard let image = FolderShareRenderer.image(
+                name: folder.name,
+                isMesocycle: hasChildren,
+                sections: sections,
+                exercises: exercises,
+                theme: theme
+            ) else {
+                throw PlanShareService.ShareError.invalidStructuredPlan(folder.name)
             }
-        } else {
-            sections = [FolderShareCard.Section(title: nil, routines: routines(in: folder))]
-        }
-        if let image = FolderShareRenderer.image(
-            name: folder.name,
-            isMacro: hasChildren,
-            sections: sections,
-            exercises: exercises,
-            theme: theme
-        ) {
-            sharePayload = ShareImagePayload(image: image)
+            let document = try hasChildren
+                ? PlanShareService.mesocycleDocument(
+                    folder,
+                    microcycles: microcycles,
+                    routines: sharedRoutines,
+                    allRoutines: activeRoutines,
+                    alternations: alternations,
+                    exercises: exercises
+                )
+                : PlanShareService.microcycleDocument(
+                    folder,
+                    routines: sharedRoutines,
+                    allRoutines: activeRoutines,
+                    alternations: alternations,
+                    exercises: exercises
+                )
+            let url = try PlanShareService.write(document)
+            sharePayload = ShareImagePayload(image: image, attachments: [url])
+        } catch {
+            shareErrorMessage = error.localizedDescription
         }
     }
 
@@ -709,11 +945,20 @@ struct WorkoutHomeView: View {
 
     private func routineCard(_ routine: RoutineModel) -> some View {
         let destinations = routineDestinationFolders.filter { $0.id != routine.folderID }
+        let state = alternationState(for: routine)
+        let hasConfiguredAlternation = RoutineAlternationService.alternation(
+            containing: routine.id,
+            in: alternations
+        ) != nil
         return RoutineCard(
             routine: routine,
             exercises: exercises,
-            onStart: { start(routine) },
+            alternationState: state,
+            isAlternationOwner: state?.owner.id == routine.id,
+            hasConfiguredAlternation: hasConfiguredAlternation,
+            onStart: start,
             onEdit: { edit(routine) },
+            onManageAlternation: { alternationRoutine = routine },
             onDelete: { routinePendingDelete = routine },
             onDuplicate: { duplicate(routine) },
             onArchive: { archive(routine) },
@@ -832,8 +1077,8 @@ struct WorkoutHomeView: View {
             child.parentID = folder.parentID
             child.updatedAt = now
         }
-        if isActiveMacro(folder) { activeMacroFolderRaw = "" }
-        if isActiveMeso(folder) { activeMesoFolderRaw = "" }
+        if isActiveMesocycle(folder) { activeMesocycleFolderRaw = "" }
+        if isActiveMicrocycle(folder) { activeMicrocycleFolderRaw = "" }
         folder.updatedAt = now
         folder.deletedAt = now
         save()
@@ -858,6 +1103,7 @@ struct WorkoutHomeView: View {
 
     private func delete(_ routine: RoutineModel) {
         let now = Date()
+        try? RoutineAlternationService.removeAll(containing: routine.id, in: modelContext, now: now)
         routine.updatedAt = now
         routine.deletedAt = now
         save()
@@ -887,25 +1133,25 @@ struct WorkoutHomeView: View {
         save()
     }
 
-    /// Archiving a macro cascades to its mesocycles, so the active meso can be
-    /// swept into the archive even when it wasn't the tapped folder.
+    /// Archiving a mesocycle cascades to its microcycles, so either active
+    /// selection can be swept into the archive by one action.
     private func clearActivePrefsIfArchived() {
-        if let macro = allFolders.first(where: { $0.id.uuidString == activeMacroFolderRaw }),
-           macro.archivedAt != nil {
-            activeMacroFolderRaw = ""
+        if let mesocycle = allFolders.first(where: {
+            $0.id.uuidString == activeMesocycleFolderRaw
+        }), mesocycle.archivedAt != nil {
+            activeMesocycleFolderRaw = ""
         }
-        if let meso = allFolders.first(where: { $0.id.uuidString == activeMesoFolderRaw }),
-           meso.archivedAt != nil {
-            activeMesoFolderRaw = ""
+        if let microcycle = allFolders.first(where: {
+            $0.id.uuidString == activeMicrocycleFolderRaw
+        }), microcycle.archivedAt != nil {
+            activeMicrocycleFolderRaw = ""
         }
     }
 
     // MARK: - Move to folder (accessible alternative to drag & drop)
 
-    /// Folders that can directly hold a routine — leaf folders only, whether
-    /// standalone (a mesocycle) or nested under a macrocycle. A folder that
-    /// itself has subfolders holds only folders, matching the drag/drop rule
-    /// in `handleDrop`.
+    /// Microcycle folders can directly hold routines. A mesocycle containing
+    /// child folders holds only those microcycles, matching the drag/drop rule.
     private var routineDestinationFolders: [RoutineFolderModel] {
         folders.filter { childFolders(of: $0).isEmpty }
     }
@@ -1029,8 +1275,12 @@ private struct RoutineCard: View {
     @Environment(\.theme) private var theme
     let routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
-    let onStart: () -> Void
+    let alternationState: RoutineAlternationService.State?
+    let isAlternationOwner: Bool
+    let hasConfiguredAlternation: Bool
+    let onStart: (RoutineModel) -> Void
     let onEdit: () -> Void
+    let onManageAlternation: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
     let onArchive: () -> Void
@@ -1040,18 +1290,27 @@ private struct RoutineCard: View {
     var showsMoveToRoot: Bool = false
     var onMove: (UUID?) -> Void = { _ in }
 
-    private var sortedRoutineExercises: [RoutineExerciseModel] {
-        routine.exercises.sorted { $0.position < $1.position }
+    private var displayRoutine: RoutineModel {
+        isAlternationOwner ? (alternationState?.due ?? routine) : routine
     }
-    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
+    private var pairedRoutine: RoutineModel? {
+        guard let alternationState else { return nil }
+        return alternationState.owner.id == routine.id
+            ? alternationState.partner
+            : alternationState.owner
+    }
+    private var otherStartRoutine: RoutineModel? {
+        isAlternationOwner ? alternationState?.other : nil
+    }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: displayRoutine) }
 
     private func exerciseName(for re: RoutineExerciseModel) -> String {
         exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise"
     }
 
     private var conditioningSummary: String? {
-        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
-            ?? routine.conditioningPlanJSON
+        let json = displayRoutine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
+            ?? displayRoutine.conditioningPlanJSON
         guard let plan = ConditioningPlan.decode(from: json),
               let first = plan.sections.first else { return nil }
         switch first.format {
@@ -1067,17 +1326,17 @@ private struct RoutineCard: View {
     }
 
     var body: some View {
-        NavigationLink(value: routine) {
+        NavigationLink(value: displayRoutine) {
             Card {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(routine.name)
+                        Text(displayRoutine.name)
                             .font(.cardTitle)
                             .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: Space.sm)
                         Button {
-                            onStart()
+                            onStart(displayRoutine)
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "play.fill")
@@ -1094,10 +1353,16 @@ private struct RoutineCard: View {
                         // An empty routine has nothing to start — starting it
                         // would just open a blank freestyle session.
                         .disabled(orderedItems.isEmpty)
-                        .accessibilityIdentifier("start-routine-\(routine.name)")
+                        .accessibilityLabel("Start \(displayRoutine.name)")
+                        .accessibilityIdentifier("start-routine-\(displayRoutine.name)")
                         Menu {
-                            Button("Edit Routine", systemImage: "pencil", action: onEdit)
-                            Button("Duplicate Routine", systemImage: "doc.on.doc", action: onDuplicate)
+                            Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
+                            Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
+                            Button(
+                                hasConfiguredAlternation ? "Manage Alternating Routine" : "Add Alternating Routine",
+                                systemImage: "arrow.triangle.2.circlepath",
+                                action: onManageAlternation
+                            )
                             // Accessible alternative to drag-and-drop nesting —
                             // VoiceOver / Switch Control users have no other
                             // way to move a routine between folders.
@@ -1127,12 +1392,24 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
+                    if let pairedRoutine {
+                        Label(
+                            isAlternationOwner
+                                ? "Next · alternates with \(otherStartRoutine?.name ?? pairedRoutine.name)"
+                                : ((alternationState?.due.id == routine.id ? "Next · " : "") + "Alternates with \(pairedRoutine.name)"),
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .accessibilityIdentifier("alternating-routine-\(routine.id.uuidString)")
+                    }
+
                     if orderedItems.isEmpty {
                         Text("Nothing added yet — add an exercise or block to start")
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
-                        if routine.blocks.isEmpty, let conditioningSummary {
+                        if displayRoutine.blocks.isEmpty, let conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
                                 .foregroundStyle(theme.accent)
@@ -1152,6 +1429,18 @@ private struct RoutineCard: View {
                             }
                         }
                     }
+
+                    if let otherStartRoutine {
+                        Button("Start \(otherStartRoutine.name) instead") {
+                            onStart(otherStartRoutine)
+                        }
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .disabled(OrderedRoutineItem.ordered(in: otherStartRoutine).isEmpty)
+                        .accessibilityIdentifier("start-alternate-\(otherStartRoutine.name)")
+                    }
                 }
             }
         }
@@ -1169,4 +1458,5 @@ private struct RoutineCard: View {
 /// Typed pushes for Workout-tab screens that aren't model-backed.
 enum WorkoutRoute: Hashable {
     case archive
+    case microcycle(UUID)
 }

@@ -35,6 +35,18 @@ final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {
             unitLabel: unitLabel, index: index,
             splitSeconds: splitSeconds, totalSeconds: totalSeconds
         )
+        enqueue(phrase)
+    }
+
+    /// Goal completion is independent of the optional split-announcement
+    /// setting: explicitly choosing a session target arms its one-time voice
+    /// confirmation. Sharing this synthesizer keeps a finish-line goal from
+    /// talking over a split that was queued a moment earlier.
+    func announceGoal(_ phrase: String) {
+        enqueue(phrase)
+    }
+
+    private func enqueue(_ phrase: String) {
         // Activate off the main thread, then speak: the route recorder is
         // running and setActive can block on a Bluetooth handoff mid-run.
         Task {

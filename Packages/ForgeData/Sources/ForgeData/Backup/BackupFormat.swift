@@ -28,6 +28,11 @@ public struct ForgeFitBackupFile: Codable, Sendable {
     public var preferences: [String: BackupPreferenceValue]
     public var workouts: [BackupWorkout]
     public var importBatches: [BackupImportBatch]
+    /// Optional for backward compatibility with backups written before
+    /// folder-based microcycle tracking existed.
+    public var microcycleTrackings: [BackupMicrocycleTracking]?
+    public var microcycleWindows: [BackupMicrocycleWindow]?
+    public var restDays: [BackupRestDay]?
 
     public init(
         schemaVersion: Int = ForgeFitBackupFile.currentSchemaVersion,
@@ -36,7 +41,10 @@ public struct ForgeFitBackupFile: Codable, Sendable {
         appVersion: String? = nil,
         preferences: [String: BackupPreferenceValue] = [:],
         workouts: [BackupWorkout] = [],
-        importBatches: [BackupImportBatch] = []
+        importBatches: [BackupImportBatch] = [],
+        microcycleTrackings: [BackupMicrocycleTracking]? = nil,
+        microcycleWindows: [BackupMicrocycleWindow]? = nil,
+        restDays: [BackupRestDay]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.exportedAt = exportedAt
@@ -45,7 +53,53 @@ public struct ForgeFitBackupFile: Codable, Sendable {
         self.preferences = preferences
         self.workouts = workouts
         self.importBatches = importBatches
+        self.microcycleTrackings = microcycleTrackings
+        self.microcycleWindows = microcycleWindows
+        self.restDays = restDays
     }
+}
+
+public struct BackupMicrocycleTracking: Codable, Sendable {
+    public var id: UUID
+    public var folderID: UUID
+    public var folderName: String
+    public var anchorDate: Date
+    public var durationDays: Int
+    public var timeZoneIdentifier: String
+    public var stateRaw: String
+    /// Optional keeps backups created before these display controls restorable.
+    public var showsOnHome: Bool?
+    public var showsFolderHeader: Bool?
+    public var endedAt: Date?
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
+}
+
+public struct BackupMicrocycleWindow: Codable, Sendable {
+    public var id: UUID
+    public var trackingID: UUID
+    public var folderID: UUID
+    public var folderName: String
+    public var index: Int
+    public var startsAt: Date
+    public var endsAt: Date
+    public var timeZoneIdentifier: String
+    public var routineSnapshotJSON: String
+    /// Optional for backups written before workout-to-day backfilling existed.
+    public var dayAssignmentSnapshotJSON: String? = nil
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
+}
+
+public struct BackupRestDay: Codable, Sendable {
+    public var id: UUID
+    public var date: Date
+    public var timeZoneIdentifier: String
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var deletedAt: Date?
 }
 
 /// A UserDefaults preference value, restricted to the plist scalar types

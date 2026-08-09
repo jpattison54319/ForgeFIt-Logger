@@ -26,6 +26,9 @@ enum BackupRestoreService {
         var skippedDuplicates = 0
         var recreatedExercises = 0
         var restoredPreferences = 0
+        var restoredMicrocycleTrackings = 0
+        var restoredMicrocycleWindows = 0
+        var restoredRestDays = 0
         var restoredWorkoutIDs: [UUID] = []
     }
 
@@ -167,6 +170,31 @@ enum BackupRestoreService {
         for batch in file.importBatches where !existingBatchIDs.contains(batch.id) {
             context.insert(BackupMapper.batchModel(from: batch, userID: userID))
         }
+
+        let existingTrackingIDs = Set(
+            try context.fetch(FetchDescriptor<MicrocycleTrackingModel>()).map(\.id)
+        )
+        for tracking in file.microcycleTrackings ?? [] where !existingTrackingIDs.contains(tracking.id) {
+            context.insert(BackupMapper.trackingModel(from: tracking, userID: userID))
+            result.restoredMicrocycleTrackings += 1
+        }
+
+        let existingWindowIDs = Set(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).map(\.id)
+        )
+        for window in file.microcycleWindows ?? [] where !existingWindowIDs.contains(window.id) {
+            context.insert(BackupMapper.windowModel(from: window, userID: userID))
+            result.restoredMicrocycleWindows += 1
+        }
+
+        let existingRestDayIDs = Set(
+            try context.fetch(FetchDescriptor<RestDayModel>()).map(\.id)
+        )
+        for restDay in file.restDays ?? [] where !existingRestDayIDs.contains(restDay.id) {
+            context.insert(BackupMapper.restDayModel(from: restDay, userID: userID))
+            result.restoredRestDays += 1
+        }
+
         if result.restoredWorkouts > 0 {
             context.insert(WorkoutImportBatchModel(
                 userID: userID,

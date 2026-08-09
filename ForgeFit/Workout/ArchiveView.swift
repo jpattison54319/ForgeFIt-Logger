@@ -41,7 +41,7 @@ struct ArchiveInventory {
 
     var rootCount: Int { rootFolders.count + rootRoutines.count }
 
-    func isMacrocycle(_ folder: RoutineFolderModel) -> Bool {
+    func isMesocycle(_ folder: RoutineFolderModel) -> Bool {
         foldersByID.values.contains { $0.parentID == folder.id }
     }
 
@@ -78,8 +78,8 @@ struct ArchiveView: View {
 
     enum ArchiveFilter: String, CaseIterable, Hashable {
         case all = "All"
-        case macrocycles = "Macros"
         case mesocycles = "Mesos"
+        case microcycles = "Micros"
         case routines = "Routines"
     }
 
@@ -88,7 +88,7 @@ struct ArchiveView: View {
     }
 
     /// One list, filter-dependent. "All" shows the archived UNITS; the kind
-    /// filters flatten so a routine buried in an archived macrocycle is still
+    /// filters flatten so a routine buried in an archived mesocycle is still
     /// findable under Routines.
     private var items: [ArchiveItem] {
         let inventory = inventory
@@ -96,10 +96,10 @@ struct ArchiveView: View {
         case .all:
             return (inventory.rootFolders.map(ArchiveItem.folder) + inventory.rootRoutines.map(ArchiveItem.routine))
                 .sorted { $0.archivedAt > $1.archivedAt }
-        case .macrocycles:
-            return inventory.archivedFolders.filter { inventory.isMacrocycle($0) }.map(ArchiveItem.folder)
         case .mesocycles:
-            return inventory.archivedFolders.filter { !inventory.isMacrocycle($0) }.map(ArchiveItem.folder)
+            return inventory.archivedFolders.filter { inventory.isMesocycle($0) }.map(ArchiveItem.folder)
+        case .microcycles:
+            return inventory.archivedFolders.filter { !inventory.isMesocycle($0) }.map(ArchiveItem.folder)
         case .routines:
             return inventory.archivedRoutines.map(ArchiveItem.routine)
         }
@@ -185,8 +185,8 @@ struct ArchiveView: View {
         let noun: String
         switch filter {
         case .all: noun = count == 1 ? "archived item" : "archived items"
-        case .macrocycles: noun = count == 1 ? "macrocycle" : "macrocycles"
         case .mesocycles: noun = count == 1 ? "mesocycle" : "mesocycles"
+        case .microcycles: noun = count == 1 ? "microcycle" : "microcycles"
         case .routines: noun = count == 1 ? "routine" : "routines"
         }
         return "\(count) \(noun)"
@@ -283,14 +283,14 @@ struct ArchiveView: View {
 
     private func kindLabel(for item: ArchiveItem) -> String {
         switch item {
-        case .folder(let folder): inventory.isMacrocycle(folder) ? "MACROCYCLE" : "MESOCYCLE"
+        case .folder(let folder): inventory.isMesocycle(folder) ? "MESOCYCLE" : "MICROCYCLE"
         case .routine: "ROUTINE"
         }
     }
 
     private func icon(for item: ArchiveItem) -> String {
         switch item {
-        case .folder(let folder): inventory.isMacrocycle(folder) ? "star.circle" : "folder"
+        case .folder(let folder): inventory.isMesocycle(folder) ? "star.circle" : "folder"
         case .routine: "list.bullet.rectangle"
         }
     }
@@ -301,9 +301,9 @@ struct ArchiveView: View {
         case .folder(let folder):
             let routineCount = inventory.archivedRoutineCount(inSubtreeOf: folder)
             let routinePart = "\(routineCount) \(routineCount == 1 ? "routine" : "routines")"
-            if inventory.isMacrocycle(folder) {
-                let mesoCount = inventory.archivedChildFolders(of: folder).count
-                return "\(mesoCount) \(mesoCount == 1 ? "mesocycle" : "mesocycles") · \(routinePart)"
+            if inventory.isMesocycle(folder) {
+                let microcycleCount = inventory.archivedChildFolders(of: folder).count
+                return "\(microcycleCount) \(microcycleCount == 1 ? "microcycle" : "microcycles") · \(routinePart)"
             }
             if let parent = inventory.folderName(for: folder.parentID) {
                 return "\(routinePart) · in \(parent)"

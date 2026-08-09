@@ -363,6 +363,7 @@ enum WorkoutFinisher {
     /// can survive after the model stops being live.
     @MainActor
     static func cancelLiveRuntime() {
+        CardioGoalAnnouncer.shared.cancelAll()
         CardioRouteRecorder.shared.cancel()
         WorkoutActivityController.shared.end()
         RestTimerController.shared.skip()
@@ -370,6 +371,7 @@ enum WorkoutFinisher {
         IntervalRunnerHub.shared.stop()
         HRZoneGuard.shared.deactivate()
         PaceGuard.shared.deactivate()
+        PaceAnnouncer.shared.stop()
         YogaFlowRunnerHub.shared.stop()
         NotificationScheduler.shared.cancelWorkoutCues()
         LiveMetricsHub.shared.endSession()
@@ -384,6 +386,7 @@ enum WorkoutFinisher {
     /// leaving the surrounding mixed workout alive.
     @MainActor
     static func cancelLiveRuntime(for session: CardioSessionModel) {
+        CardioGoalAnnouncer.shared.cancel(sessionID: session.id)
         CardioRouteRecorder.shared.cancel(sessionID: session.id)
         IntervalRunnerHub.shared.stop(for: session.id)
         YogaFlowRunnerHub.shared.stop(for: session.id)

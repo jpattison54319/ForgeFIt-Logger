@@ -73,9 +73,20 @@ struct WatchHomeView: View {
                                     Text(routine.name)
                                         .font(.system(size: 15, weight: .semibold))
                                         .lineLimit(1)
-                                    Text("\(routine.exerciseCount) exercise\(routine.exerciseCount == 1 ? "" : "s")")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
+                                    if let partner = routine.alternatingPartnerName {
+                                        Label(
+                                            routine.isNextInAlternation == true
+                                                ? "Next · alternates with \(partner)"
+                                                : "Alternates with \(partner)",
+                                            systemImage: "arrow.triangle.2.circlepath"
+                                        )
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(routine.isNextInAlternation == true ? WTheme.accent : .secondary)
+                                    } else {
+                                        Text("\(routine.exerciseCount) exercise\(routine.exerciseCount == 1 ? "" : "s")")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }

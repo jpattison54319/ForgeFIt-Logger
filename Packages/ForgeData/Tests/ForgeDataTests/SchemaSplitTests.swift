@@ -58,6 +58,9 @@ extension PersistenceSplitTests {
         let experimentID = UUID()
         let trackerID = UUID()
         let entryID = UUID()
+        let trackingID = UUID()
+        let windowID = UUID()
+        let restDayID = UUID()
 
         // Scope so the container closes before the stores reopen below.
         do {
@@ -111,6 +114,36 @@ extension PersistenceSplitTests {
             context.insert(tracker)
             context.insert(entry)
 
+            let tracking = MicrocycleTrackingModel(
+                id: trackingID,
+                userID: routine.userID,
+                folderID: UUID(),
+                folderName: "Local microcycle",
+                anchorDate: Date(timeIntervalSince1970: 1_800_000_000),
+                durationDays: 10
+            )
+            let window = MicrocycleWindowModel(
+                id: windowID,
+                userID: routine.userID,
+                trackingID: trackingID,
+                folderID: tracking.folderID,
+                folderName: tracking.folderName,
+                index: 0,
+                startsAt: tracking.anchorDate,
+                endsAt: Date(timeIntervalSince1970: 1_800_864_000),
+                timeZoneIdentifier: "UTC",
+                routines: []
+            )
+            let restDay = RestDayModel(
+                id: restDayID,
+                userID: routine.userID,
+                date: Date(timeIntervalSince1970: 1_800_086_400),
+                timeZoneIdentifier: "UTC"
+            )
+            context.insert(tracking)
+            context.insert(window)
+            context.insert(restDay)
+
             try context.save()
 
             // Cross-layer UUID reference resolves via a second fetch.
@@ -134,6 +167,9 @@ extension PersistenceSplitTests {
             #expect(try logContext.fetch(FetchDescriptor<ExperimentModel>()).map(\.id) == [experimentID])
             #expect(try logContext.fetch(FetchDescriptor<ExperimentTrackerModel>()).map(\.id) == [trackerID])
             #expect(try logContext.fetch(FetchDescriptor<ExperimentEntryModel>()).map(\.id) == [entryID])
+            #expect(try logContext.fetch(FetchDescriptor<MicrocycleTrackingModel>()).map(\.id) == [trackingID])
+            #expect(try logContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).map(\.id) == [windowID])
+            #expect(try logContext.fetch(FetchDescriptor<RestDayModel>()).map(\.id) == [restDayID])
         }
         do {
             let planOnly = try ModelContainer(
@@ -157,6 +193,9 @@ extension PersistenceSplitTests {
             #expect(try context.fetchCount(FetchDescriptor<ExperimentModel>()) == 0)
             #expect(try context.fetchCount(FetchDescriptor<ExperimentTrackerModel>()) == 0)
             #expect(try context.fetchCount(FetchDescriptor<ExperimentEntryModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<MicrocycleTrackingModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<MicrocycleWindowModel>()) == 0)
+            #expect(try context.fetchCount(FetchDescriptor<RestDayModel>()) == 0)
         }
     }
 }

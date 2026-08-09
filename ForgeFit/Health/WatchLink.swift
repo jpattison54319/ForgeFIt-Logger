@@ -151,10 +151,42 @@ final class WatchLink: NSObject {
                 predicate: #Predicate { $0.deletedAt == nil && $0.archivedAt == nil },
                 sortBy: [SortDescriptor(\.position)]
             ))) ?? []
+            let alternations = (try? context.fetch(FetchDescriptor<RoutineAlternationModel>(
+                predicate: #Predicate { $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+            ))) ?? []
+            let completedWorkouts = (try? context.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.endedAt, order: .reverse)]
+            ))) ?? []
+            var pairPresentationByRoutineID: [UUID: (partnerName: String, isNext: Bool)] = [:]
+            for state in RoutineAlternationService.states(
+                alternations: alternations,
+                routines: routines,
+                workouts: completedWorkouts
+            ) {
+                pairPresentationByRoutineID[state.owner.id] = (
+                    state.partner.name,
+                    state.due.id == state.owner.id
+                )
+                pairPresentationByRoutineID[state.partner.id] = (
+                    state.owner.name,
+                    state.due.id == state.partner.id
+                )
+            }
             let summaries = routines
                 .filter { $0.deletedAt == nil && (!$0.exercises.isEmpty || !$0.blocks.isEmpty) }
                 .sorted { $0.position < $1.position }
-                .map { WatchRoutineSummary(id: $0.id, name: $0.name, exerciseCount: $0.exercises.count + $0.blocks.count) }
+                .map { routine in
+                    let pair = pairPresentationByRoutineID[routine.id]
+                    return WatchRoutineSummary(
+                        id: routine.id,
+                        name: routine.name,
+                        exerciseCount: routine.exercises.count + routine.blocks.count,
+                        alternatingPartnerName: pair?.partnerName,
+                        isNextInAlternation: pair?.isNext
+                    )
+                }
             routineSummaryCache = summaries
             routineSummaries = summaries
         }
@@ -485,12 +517,20 @@ final class WatchLink: NSObject {
             guard active?.cardioSessions.contains(where: {
                 $0.id != session.id && $0.liveStartedAt != nil && $0.endedAt == nil
             }) != true else { publishState(policy: .immediate); return }
-            session.liveStartedAt = Date()
-            session.updatedAt = Date()
+            let now = Date.now
+            session.liveStartedAt = now
+            session.updatedAt = now
+            let workoutExercise = active?.exercises.first { $0.id == workoutExerciseID }
             var library: ExerciseLibraryModel?
-            if let exerciseID = active?.exercises.first(where: { $0.id == workoutExerciseID })?.exerciseID {
+            if let exerciseID = workoutExercise?.exerciseID {
                 library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
             }
+            CardioGoalAnnouncer.shared.activate(
+                sessionID: session.id,
+                goal: IntervalPlan.decode(from: workoutExercise?.intervalPlanJSON)?.goal,
+                startedAt: now,
+                cardioKind: library?.resolvedCardioKind ?? CardioKind.from(modality: session.modality)
+            )
             if library.map({ CardioKind.providesGPSDistance(name: $0.name, equipment: $0.equipment) }) == true {
                 CardioRouteRecorder.shared.start(session: session)
             }
@@ -520,13 +560,28 @@ final class WatchLink: NSObject {
             NotificationScheduler.shared.cancelCardioCues()
             let start = session.liveStartedAt ?? session.startedAt
             let now = Date.now
-            session.endedAt = now
-            session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
             let workoutExercise = active?.exercises.first(where: { $0.id == workoutExerciseID })
             var library: ExerciseLibraryModel?
             if let exerciseID = workoutExercise?.exerciseID {
                 library = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>(predicate: #Predicate { $0.id == exerciseID })))?.first
             }
+            let kind = CardioKind.from(modality: session.modality)
+            CardioGoalAnnouncer.shared.activate(
+                sessionID: session.id,
+                goal: IntervalPlan.decode(from: workoutExercise?.intervalPlanJSON)?.goal,
+                startedAt: start,
+                cardioKind: library?.resolvedCardioKind ?? kind
+            )
+            let distanceAtEnd = CardioRouteRecorder.shared.authoritativeLiveDistance(
+                for: session.id,
+                storedMeters: session.distanceMeters,
+                at: now
+            )
+            let elevationAtEnd = CardioRouteRecorder.shared.recordingSessionID == session.id
+                ? CardioRouteRecorder.shared.liveElevationGainMeters
+                : session.elevationGainMeters
+            session.endedAt = now
+            session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
             if session.isYogaSession {
                 YogaFlowRunnerHub.shared.stop(for: session.id)
                 YogaSessionCompletion.complete(
@@ -538,13 +593,21 @@ final class WatchLink: NSObject {
                     useClockDuration: false
                 )
             }
-            let kind = CardioKind.from(modality: session.modality)
             // Look up the exercise to tell an outdoor run from a treadmill —
             // the stored modality alone can't (both resolve to `.run`).
             let providesGPSDistance = CardioKind.providesGPSDistance(name: library?.name ?? "", equipment: library?.equipment)
             if providesGPSDistance {
                 CardioRouteRecorder.shared.stop(session: session, in: context)
             }
+            CardioGoalAnnouncer.shared.evaluate(
+                sessionID: session.id,
+                distanceMeters: distanceAtEnd,
+                elapsedSeconds: session.durationSeconds,
+                liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
+                elevationGainMeters: elevationAtEnd,
+                at: now
+            )
+            CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
             let hadManualIntervalPlan = workoutExercise
                 .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
             try? context.save()
@@ -564,11 +627,38 @@ final class WatchLink: NSObject {
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
                 try? context.save()
                 await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: context)
+                CardioGoalAnnouncer.shared.finish(
+                    sessionID: session.id,
+                    distanceMeters: session.distanceMeters ?? distanceAtEnd,
+                    durationSeconds: session.durationSeconds,
+                    activeEnergyKcal: session.activeEnergyKcal,
+                    elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
+                )
             }
 
         case .liveMetrics(let metrics):
             LiveMetricsHub.shared.updateFromWatch(metrics)
             CardioRouteRecorder.shared.updateWatchDistance(metrics.distanceMeters)
+            if let session = active?.cardioSessions.first(where: {
+                $0.liveStartedAt != nil && $0.endedAt == nil && $0.deletedAt == nil
+            }) {
+                if !CardioGoalAnnouncer.shared.isTracking(sessionID: session.id) {
+                    let workoutExercise = session.workoutExerciseID.flatMap { id in
+                        active?.exercises.first { $0.id == id }
+                    }
+                    CardioGoalAnnouncer.shared.activate(
+                        sessionID: session.id,
+                        goal: IntervalPlan.decode(from: workoutExercise?.intervalPlanJSON)?.goal,
+                        startedAt: session.liveStartedAt ?? session.startedAt,
+                        cardioKind: CardioKind.from(modality: session.modality)
+                    )
+                }
+                CardioGoalAnnouncer.shared.evaluate(
+                    sessionID: session.id,
+                    liveActiveEnergyTotalKcal: metrics.activeEnergyKcal,
+                    at: .now
+                )
+            }
 
         case .conditioningEvent(let event):
             guard let active,

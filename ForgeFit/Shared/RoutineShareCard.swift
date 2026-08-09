@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 #endif
 
-/// A branded, full-length snapshot of a routine (the microcycle) — its exercises
+/// A branded, full-length snapshot of a workout routine — its exercises
 /// and target sets — designed to render to a single tall image and share.
 /// Mirrors what the user sees on `RoutineDetailView`.
 struct RoutineShareCard: View {

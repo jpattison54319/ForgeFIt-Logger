@@ -178,13 +178,13 @@ struct ShareCardRenderTests {
         let routine = RoutineModel(userID: userID, name: "Leg Day", exercises: [re])
 
         let meso = FolderShareRenderer.image(
-            name: "Hypertrophy Block", isMacro: false,
+            name: "Hypertrophy Block", isMesocycle: false,
             sections: [.init(title: nil, routines: [routine])], exercises: library, theme: .sage
         )
         #expect(meso != nil)
 
         let macro = FolderShareRenderer.image(
-            name: "Off-Season", isMacro: true,
+            name: "Off-Season", isMesocycle: true,
             sections: [.init(title: "Block 1", routines: [routine]), .init(title: "Block 2", routines: [routine])],
             exercises: library, theme: .sage
         )

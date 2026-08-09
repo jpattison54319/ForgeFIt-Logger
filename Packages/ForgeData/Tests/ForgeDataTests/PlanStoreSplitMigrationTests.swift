@@ -188,7 +188,7 @@ extension PersistenceSplitTests {
         #expect(workouts.first?.exercises.count == 1)
     }
 
-    /// The Coach's Corner models post-date this migration: they're
+    /// Models added after the split migration are
     /// registered in `planModels` (so they get their own store from day
     /// one) but deliberately carry no `copyXxx` function, since no legacy
     /// combined store can contain rows of these types.

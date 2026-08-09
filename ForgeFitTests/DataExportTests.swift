@@ -123,9 +123,11 @@ struct DataExportTests {
         _ = try seed(context: context)
 
         let urls = try await DataExportService.export(format: .csv, container: container)
-        #expect(urls.count == 2)
+        #expect(urls.count == 4)
         let workoutsCSV = try String(contentsOf: try #require(urls.first { $0.lastPathComponent.contains("Workouts") }), encoding: .utf8)
         let routinesCSV = try String(contentsOf: try #require(urls.first { $0.lastPathComponent.contains("Routines") }), encoding: .utf8)
+        let microcyclesCSV = try String(contentsOf: try #require(urls.first { $0.lastPathComponent.contains("Microcycles") }), encoding: .utf8)
+        let restDaysCSV = try String(contentsOf: try #require(urls.first { $0.lastPathComponent.contains("Rest-Days") }), encoding: .utf8)
 
         #expect(workoutsCSV.hasPrefix(WorkoutCSVExport.header.joined(separator: ",")))
         #expect(workoutsCSV.contains("Push Day"))
@@ -138,5 +140,8 @@ struct DataExportTests {
         #expect(routinesCSV.hasPrefix(RoutineCSVExport.header.joined(separator: ",")))
         #expect(routinesCSV.contains("Strength Block,Meso 1,Push A"))
         #expect(routinesCSV.contains("Bench Press"))
+
+        #expect(microcyclesCSV.hasPrefix(MicrocycleCSVExport.windowHeader.joined(separator: ",")))
+        #expect(restDaysCSV.hasPrefix(MicrocycleCSVExport.restDayHeader.joined(separator: ",")))
     }
 }

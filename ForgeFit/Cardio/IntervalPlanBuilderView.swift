@@ -335,8 +335,13 @@ struct IntervalPlanBuilderView: View {
                     } unit: { "m" }
                 }
 
+                Label("Voice alert when reached", systemImage: "speaker.wave.2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.secondaryAccent)
+                    .accessibilityIdentifier("cardio-goal-voice-alert")
+
                 if goalKind == .elevation {
-                    Text("Climb fills in from Apple Health when you complete — it doesn't tick live.")
+                    Text("Outdoor GPS climb updates live. Other climb data fills in when you complete.")
                         .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

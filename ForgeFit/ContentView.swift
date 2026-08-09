@@ -14,6 +14,9 @@ import WidgetKit
 final class AppState {
     var selectedTab: AppTab = .home
     var showingLogger = false
+    /// Import completion hands the Workout tab an ID instead of a model from
+    /// another ModelContext; the tab resolves it after its @Query refreshes.
+    var pendingRoutineDetailID: UUID?
 
     /// Guarded workout start: every "start a workout" action funnels through
     /// here so ContentView can warn before discarding an active session.
@@ -77,10 +80,13 @@ struct ContentView: View {
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
     @Query(sort: \RoutineFolderModel.position) private var routineFolders: [RoutineFolderModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse) private var routineAlternations: [RoutineAlternationModel]
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
     @Query(filter: #Predicate<WorkoutModel> { $0.endedAt == nil && $0.deletedAt == nil }, sort: \WorkoutModel.startedAt, order: .reverse) private var activeWorkouts: [WorkoutModel]
     @Query(sort: \DailyCheckinModel.updatedAt, order: .reverse) private var checkins: [DailyCheckinModel]
     @Query(sort: \ExperimentModel.startedAt, order: .reverse) private var experiments: [ExperimentModel]
+    @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse) private var microcycleTrackings: [MicrocycleTrackingModel]
+    @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse) private var microcycleWindows: [MicrocycleWindowModel]
 
     @State private var appState = AppState()
     @State private var social = SocialService.make()
@@ -110,7 +116,10 @@ struct ContentView: View {
     @State private var pendingPlanMaintenanceVersionStamp = false
     @State private var foregroundMaintenanceTask: Task<Void, Never>?
     @State private var experimentEndTask: Task<Void, Never>?
+    @State private var microcycleTransitionTask: Task<Void, Never>?
     @State private var experimentWorkoutPrompt: ExperimentWorkoutPrompt?
+    @State private var pendingPlanImport: PendingPlanImport?
+    @State private var planImportErrorMessage: String?
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
     @State private var didFinishLaunchTasks = false
@@ -149,6 +158,22 @@ struct ContentView: View {
         }
     }
 
+    private var microcycleEvaluationRevision: String {
+        let liveTrackings = microcycleTrackings.filter { $0.deletedAt == nil }
+        let latestTracking = liveTrackings.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        let liveFolders = routineFolders.filter { $0.deletedAt == nil }
+        let latestFolder = liveFolders.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        let liveRoutines = routines.filter { $0.deletedAt == nil }
+        let latestRoutine = liveRoutines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        let liveAlternations = routineAlternations.filter { $0.deletedAt == nil }
+        let latestAlternation = liveAlternations.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        let terminalWorkouts = workouts.filter { $0.endedAt != nil || $0.deletedAt != nil }
+        let latestWorkout = terminalWorkouts.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        return "\(liveTrackings.count)|\(latestTracking)|\(microcycleWindows.count)|"
+            + "\(liveFolders.count)|\(latestFolder)|\(liveRoutines.count)|\(latestRoutine)|"
+            + "\(liveAlternations.count)|\(latestAlternation)|\(terminalWorkouts.count)|\(latestWorkout)"
+    }
+
     /// The single source of truth for the app's appearance: combines the
     /// user's chosen mode with the device's live system scheme so `.system`
     /// mode tracks appearance changes without a restart.
@@ -167,7 +192,8 @@ struct ContentView: View {
 
     private var routineListVersion: String {
         let latest = routines.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
-        return "\(routines.count)|\(latest)"
+        let latestAlternation = routineAlternations.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
+        return "\(routines.count)|\(latest)|\(routineAlternations.count)|\(latestAlternation)"
     }
 
     /// CloudKit imports can land after launch seeding has already performed
@@ -176,8 +202,10 @@ struct ContentView: View {
     private var planRowsVersion: String {
         let latestRoutine = routines.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
         let latestFolder = routineFolders.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
+        let latestAlternation = routineAlternations.map(\.updatedAt).max()?.timeIntervalSince1970 ?? 0
         return "\(routines.count)|\(Set(routines.map(\.id)).count)|\(latestRoutine)|"
-            + "\(routineFolders.count)|\(Set(routineFolders.map(\.id)).count)|\(latestFolder)"
+            + "\(routineFolders.count)|\(Set(routineFolders.map(\.id)).count)|\(latestFolder)|"
+            + "\(routineAlternations.count)|\(latestAlternation)"
     }
 
     private var todayCheckinTags: [String] {
@@ -324,6 +352,9 @@ struct ContentView: View {
             .onChange(of: experimentScheduleRevision) {
                 reconcileExperimentLifecycle()
             }
+            .onChange(of: microcycleEvaluationRevision) {
+                reconcileMicrocycleLifecycle()
+            }
             .onChange(of: scenePhase) { _, phase in handleScenePhaseChange(phase) }
             .onOpenURL { url in handleDeepLink(url) }
     }
@@ -364,6 +395,20 @@ struct ContentView: View {
                 )
                 .environment(\.theme, activeTheme)
                 .preferredColorScheme(resolvedColorScheme)
+            }
+            .sheet(item: $pendingPlanImport) { pending in
+                PlanImportView(pending: pending, onSaved: handlePlanImportSaved)
+                    .environment(\.theme, activeTheme)
+                    .preferredColorScheme(resolvedColorScheme)
+            }
+            .alert(
+                "Couldn't open plan",
+                isPresented: Binding(
+                    get: { planImportErrorMessage != nil },
+                    set: { if !$0 { planImportErrorMessage = nil } }
+                )
+            ) { } message: {
+                Text(planImportErrorMessage ?? "")
             }
             .fullScreenCover(
                 isPresented: $showQuickActionsEditor,
@@ -641,6 +686,7 @@ struct ContentView: View {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             updateWidgetSnapshot()
+            WatchLink.shared.invalidateRoutineSummaryCache()
             WatchLink.shared.publishState()
 
             guard newCount > oldCount else { return }
@@ -806,6 +852,10 @@ struct ContentView: View {
     ///   forgefit://insights         → Insights tab
     ///   forgefit://start/<routine>  → start that routine, open the logger
     private func handleDeepLink(_ url: URL) {
+        if url.pathExtension.lowercased() == "forgefitplan" {
+            receivePlanFile(url)
+            return
+        }
         guard url.scheme?.lowercased() == "forgefit" else { return }
         switch url.host?.lowercased() {
         case "workout":
@@ -853,6 +903,21 @@ struct ContentView: View {
         }
     }
 
+    private func receivePlanFile(_ url: URL) {
+        guard url.pathExtension.lowercased() == "forgefitplan" else { return }
+        do {
+            pendingPlanImport = try PlanImportService.load(from: url)
+        } catch {
+            planImportErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func handlePlanImportSaved(_ result: PlanImportService.ImportResult) {
+        appState.pendingRoutineDetailID = result.routineIDs.first
+        appState.selectedTab = .workout
+        pendingPlanImport = nil
+    }
+
     private func consumePendingExperimentNotificationRoute() {
         guard let rawURL = UserDefaults.standard.string(
             forKey: ExperimentNotificationRoute.pendingURLDefaultsKey
@@ -878,6 +943,7 @@ struct ContentView: View {
             UserDefaults.standard.set(Date(), forKey: "lastActiveDate")
             reconcileLiveRuntimeOwnership()
             reconcileExperimentLifecycle()
+            reconcileMicrocycleLifecycle()
             BackupScheduler.shared.resumeAfterForeground()
             NotificationScheduler.shared.refreshStatus()
             updateWidgetSnapshot()
@@ -897,6 +963,8 @@ struct ContentView: View {
         } else if phase == .background {
             experimentEndTask?.cancel()
             experimentEndTask = nil
+            microcycleTransitionTask?.cancel()
+            microcycleTransitionTask = nil
             planDeduplicationTask?.cancel()
             planDeduplicationTask = nil
             foregroundMaintenanceTask?.cancel()
@@ -970,6 +1038,7 @@ struct ContentView: View {
             foregroundMaintenanceTask?.cancel()
             foregroundMaintenanceTask = nil
         } else if scenePhase == .active {
+            reconcileMicrocycleLifecycle()
             scheduleForegroundMaintenance()
             if pendingPlanMaintenance || hasDuplicatePlanRows {
                 schedulePlanDeduplication()
@@ -1183,7 +1252,9 @@ struct ContentView: View {
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
         consumePendingExperimentNotificationRoute()
+        CyclePreferenceMigration.migrate()
         reconcileExperimentLifecycle()
+        reconcileMicrocycleLifecycle()
         ReadinessDelivery.shared.configure(container: modelContext.container)
         BackupScheduler.shared.configure(container: modelContext.container)
         BackupScheduler.shared.setLiveWorkoutActive(activeWorkout != nil)
@@ -1239,6 +1310,34 @@ struct ContentView: View {
         } catch {
             // A lifecycle refresh must never block launch or foreground. The
             // active/results surfaces retry through their own model queries.
+        }
+    }
+
+    /// Fixed windows are calendar truth. Reconcile on launch, foreground, and
+    /// relevant plan/workout changes, then wake once at the next boundary.
+    private func reconcileMicrocycleLifecycle() {
+        microcycleTransitionTask?.cancel()
+        microcycleTransitionTask = nil
+        do {
+            _ = try MicrocycleTrackingService.reconcile(in: modelContext)
+            guard let transition = try MicrocycleTrackingService.nextTransitionDate(
+                in: modelContext
+            ) else { return }
+            let wait = transition.timeIntervalSinceNow
+            guard wait > 0 else { return }
+            microcycleTransitionTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .seconds(wait))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                microcycleTransitionTask = nil
+                reconcileMicrocycleLifecycle()
+            }
+        } catch {
+            // Tracking is derived from durable folders and workouts. Surfaces
+            // retry through their queries if a launch-time fetch is unavailable.
         }
     }
 
@@ -1559,8 +1658,13 @@ struct ContentView: View {
     }
 
     private func handleAccountReset() {
+        microcycleTransitionTask?.cancel()
+        microcycleTransitionTask = nil
         appState.selectedTab = .home
         appState.showingLogger = false
+        appState.pendingRoutineDetailID = nil
+        pendingPlanImport = nil
+        planImportErrorMessage = nil
         appState.pendingWorkoutStart = nil
         quickActionsReloadToken += 1
         InsightDataCoordinator.shared.invalidate()

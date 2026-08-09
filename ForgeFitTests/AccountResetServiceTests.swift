@@ -15,6 +15,9 @@ struct AccountResetServiceTests {
         #expect(AppPreferenceKeys.localOnly.contains(
             ExperimentNotificationRoute.pendingExperimentIDDefaultsKey
         ))
+        #expect(AppPreferenceKeys.localOnly.contains(
+            AppPreferenceKeys.workoutUngroupedCollapsedKey
+        ))
     }
 
     @Test func deleteAllLocalModelsRemovesUserDataAndProgress() throws {
@@ -58,6 +61,25 @@ struct AccountResetServiceTests {
         let coachingProfile = CoachingProfileModel(userID: userID, focusRaw: "strength", goalRaw: "build-muscle", experienceRaw: "beginner")
         let coachedProgram = CoachedProgramModel(userID: userID, folderID: folder.id, startDate: .now)
         let weekOverride = CoachingWeekOverrideModel(userID: userID, kindRaw: "progressionHold", weekStart: .now)
+        let tracking = MicrocycleTrackingModel(
+            userID: userID,
+            folderID: folder.id,
+            folderName: folder.name,
+            anchorDate: .now,
+            durationDays: 10
+        )
+        let window = MicrocycleWindowModel(
+            userID: userID,
+            trackingID: tracking.id,
+            folderID: folder.id,
+            folderName: folder.name,
+            index: 0,
+            startsAt: .now,
+            endsAt: Date().addingTimeInterval(10 * 86_400),
+            timeZoneIdentifier: "UTC",
+            routines: []
+        )
+        let restDay = RestDayModel(userID: userID, date: .now)
 
         context.insert(exercise)
         context.insert(alias)
@@ -71,6 +93,9 @@ struct AccountResetServiceTests {
         context.insert(coachingProfile)
         context.insert(coachedProgram)
         context.insert(weekOverride)
+        context.insert(tracking)
+        context.insert(window)
+        context.insert(restDay)
         try context.save()
 
         try AccountResetService.deleteAllLocalModels(in: context)
@@ -86,6 +111,9 @@ struct AccountResetServiceTests {
         #expect(try context.fetch(FetchDescriptor<CoachingProfileModel>()).isEmpty)
         #expect(try context.fetch(FetchDescriptor<CoachedProgramModel>()).isEmpty)
         #expect(try context.fetch(FetchDescriptor<CoachingWeekOverrideModel>()).isEmpty)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleTrackingModel>()).isEmpty)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).isEmpty)
+        #expect(try context.fetch(FetchDescriptor<RestDayModel>()).isEmpty)
     }
 
     /// Schema-derived completeness: one row of EVERY registered model type
@@ -132,6 +160,12 @@ struct AccountResetServiceTests {
             context.insert(RoutineFolderModel(userID: userID, name: "Sample"))
         case is RoutineModel.Type:
             context.insert(RoutineModel(userID: userID, name: "Sample"))
+        case is RoutineAlternationModel.Type:
+            context.insert(RoutineAlternationModel(
+                userID: userID,
+                ownerRoutineID: UUID(),
+                partnerRoutineID: UUID()
+            ))
         case is RoutineBlockModel.Type:
             context.insert(RoutineBlockModel(userID: userID, kind: .conditioning))
         case is RoutineExerciseModel.Type:
@@ -188,6 +222,28 @@ struct AccountResetServiceTests {
                 trackerID: UUID(),
                 value: .number(1)
             ))
+        case is MicrocycleTrackingModel.Type:
+            context.insert(MicrocycleTrackingModel(
+                userID: userID,
+                folderID: UUID(),
+                folderName: "Sample",
+                anchorDate: .now,
+                durationDays: 10
+            ))
+        case is MicrocycleWindowModel.Type:
+            context.insert(MicrocycleWindowModel(
+                userID: userID,
+                trackingID: UUID(),
+                folderID: UUID(),
+                folderName: "Sample",
+                index: 0,
+                startsAt: .now,
+                endsAt: Date().addingTimeInterval(10 * 86_400),
+                timeZoneIdentifier: "UTC",
+                routines: []
+            ))
+        case is RestDayModel.Type:
+            context.insert(RestDayModel(userID: userID, date: .now))
         case is SavedInsightModel.Type:
             context.insert(SavedInsightModel(userID: userID, name: "Sample", recipeJSON: "{}"))
         case is CoachingProfileModel.Type:

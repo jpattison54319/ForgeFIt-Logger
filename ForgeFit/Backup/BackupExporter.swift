@@ -24,6 +24,9 @@ nonisolated struct BackupSnapshotWorker: Sendable {
             let context = ModelContext(container)
             let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
             let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())
+            let microcycleTrackings = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+            let microcycleWindows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            let restDays = try context.fetch(FetchDescriptor<RestDayModel>())
             let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
             let names = Dictionary(
                 exercises.map { ($0.id, $0.name) },
@@ -35,7 +38,10 @@ nonisolated struct BackupSnapshotWorker: Sendable {
                 exerciseNames: names,
                 preferences: metadata.preferences,
                 userID: metadata.userID,
-                appVersion: metadata.appVersion
+                appVersion: metadata.appVersion,
+                microcycleTrackings: microcycleTrackings,
+                microcycleWindows: microcycleWindows,
+                restDays: restDays
             )
             try Task.checkCancellation()
             return file

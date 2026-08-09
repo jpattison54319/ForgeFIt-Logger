@@ -679,7 +679,8 @@ final class ForgeFitUITests: XCTestCase {
     }
 
     /// A routine cardio card has one visible goal affordance. Goal inputs and
-    /// modality capability copy belong behind that disclosure, not inline.
+    /// modality capability copy belong behind that disclosure, not inline;
+    /// the saved routine detail keeps the same concise contract.
     @MainActor
     func testRoutineCardioUsesSingleAddGoalDisclosure() throws {
         let app = XCUIApplication()
@@ -690,6 +691,15 @@ final class ForgeFitUITests: XCTestCase {
         let newRoutine = app.buttons["New Routine"].firstMatch
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         tapWhenReady(newRoutine)
+
+        let routineName = app.textFields["Routine name"].firstMatch
+        XCTAssertTrue(routineName.waitForExistence(timeout: 5))
+        tapWhenReady(routineName)
+        if let currentName = routineName.value as? String {
+            routineName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
+        }
+        routineName.typeText("Cardio Detail")
+        tapWhenReady(app.buttons["Done"].firstMatch)
 
         let addExercise = app.buttons["add-to-routine"].firstMatch
         XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
@@ -728,6 +738,37 @@ final class ForgeFitUITests: XCTestCase {
             "Existing routine targets should remain editable in the goal sheet."
         )
         XCTAssertEqual(existingMinutes.value as? String, "30")
+        let voiceAlert = app.descendants(matching: .any)["cardio-goal-voice-alert"].firstMatch
+        XCTAssertTrue(
+            voiceAlert.waitForExistence(timeout: 3),
+            "A configured cardio goal should visibly promise its voice alert."
+        )
+
+        tapWhenReady(app.buttons["Cancel"].firstMatch)
+        let saveRoutine = app.buttons["Save"].firstMatch
+        XCTAssertTrue(saveRoutine.waitForExistence(timeout: 3))
+        tapWhenReady(saveRoutine)
+
+        XCTAssertTrue(app.buttons["new-routine-button"].firstMatch.waitForExistence(timeout: 5))
+        app.terminate()
+        app.launchArguments = ["-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+
+        let savedRoutine = app.staticTexts["Cardio Detail"].firstMatch
+        XCTAssertTrue(savedRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(savedRoutine)
+
+        let detailCard = app.descendants(matching: .any)["routine-exercise-Outdoor Run"].firstMatch
+        XCTAssertTrue(detailCard.waitForExistence(timeout: 5))
+        scrollUntilHittable(detailCard, in: app)
+        XCTAssertFalse(
+            app.staticTexts["Time · Heart rate · Effort · Distance · Pace · Elevation · Incline · Power · Cadence"].exists,
+            "Routine detail must not restore the removed capability sentence."
+        )
+        XCTAssertTrue(app.staticTexts["Goal"].exists)
+        XCTAssertTrue(app.staticTexts["30min"].exists)
+        attachScreenshot(app, name: "routine-cardio-concise-detail")
     }
 
     /// New and existing routines use the same editor row as the live logger:
@@ -976,14 +1017,27 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(app.buttons["New Conditioning"].exists, "Conditioning belongs inside the routine editor.")
 
         tapWhenReady(newRoutine)
+        let routineName = app.textFields["Routine name"].firstMatch
+        XCTAssertTrue(routineName.waitForExistence(timeout: 5))
+        tapWhenReady(routineName)
+        if let currentName = routineName.value as? String {
+            routineName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
+        }
+        routineName.typeText("Conditioning Detail")
+        tapWhenReady(app.buttons["Done"].firstMatch)
+
         XCTAssertFalse(app.buttons["conditioning-presets"].exists, "Presets must belong to individual sections.")
-        let addFormat = app.buttons["add-conditioning-format"].firstMatch
-        let addYoga = app.buttons["add-yoga-format"].firstMatch
-        XCTAssertTrue(addFormat.waitForExistence(timeout: 5), "Expected conditioning to be available inside a routine.")
-        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga beside Conditioning inside a routine.")
-        XCTAssertGreaterThanOrEqual(addFormat.frame.height, 44)
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(addToRoutine)
+
+        let addConditioning = app.buttons["add-conditioning-block"].firstMatch
+        let addYoga = app.buttons["add-yoga-block"].firstMatch
+        XCTAssertTrue(addConditioning.waitForExistence(timeout: 5), "Expected conditioning in Add to Routine.")
+        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga beside Conditioning in Add to Routine.")
+        XCTAssertGreaterThanOrEqual(addConditioning.frame.height, 44)
         XCTAssertGreaterThanOrEqual(addYoga.frame.height, 44)
-        tapWhenReady(addFormat)
+        tapWhenReady(addConditioning)
 
         let presets = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH 'conditioning-section-preset-'")
@@ -1011,19 +1065,36 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Replace Pullups"].exists, "Expected a visible in-section replacement action.")
         attachScreenshot(app, name: "conditioning-cindy-plan")
 
-        let addSection = app.buttons["add-conditioning-section"].firstMatch
-        scrollUntilHittable(addSection, in: app)
-        tapWhenReady(addSection)
-        let secondPreset = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH 'conditioning-section-preset-'")
-        ).element(boundBy: 1)
-        XCTAssertTrue(secondPreset.waitForExistence(timeout: 2), "Expected each section to have its own preset menu.")
-        tapWhenReady(secondPreset)
-        tapWhenReady(app.buttons["Bodyweight Squats · Tabata"].firstMatch)
-        let sectionNames = app.textFields.matching(identifier: "Section name")
-        XCTAssertTrue(sectionNames.matching(NSPredicate(format: "value == 'Cindy'")).firstMatch.exists)
-        XCTAssertTrue(sectionNames.matching(NSPredicate(format: "value == 'Tabata Squats'")).firstMatch.exists)
-        attachScreenshot(app, name: "conditioning-cindy-editor")
+        tapWhenReady(app.buttons["Save"].firstMatch)
+        let routineBlock = app.descendants(matching: .any)["routine-conditioning-block"].firstMatch
+        XCTAssertTrue(routineBlock.waitForExistence(timeout: 5), "Expected the saved conditioning block in the routine editor.")
+        tapWhenReady(app.buttons["Save"].firstMatch)
+        XCTAssertTrue(app.buttons["new-routine-button"].firstMatch.waitForExistence(timeout: 5))
+
+        // Relaunch without resetting the store so the routine detail is
+        // exercised from a clean navigation stack, not the create-route pop.
+        app.terminate()
+        app.launchArguments = ["-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+
+        let savedRoutine = app.staticTexts["Conditioning Detail"].firstMatch
+        XCTAssertTrue(savedRoutine.waitForExistence(timeout: 5), "Expected the saved routine after relaunch.")
+        tapWhenReady(savedRoutine)
+
+        let details = app.buttons["routine-conditioning-details"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5), "Conditioning must have a visible details affordance.")
+        XCTAssertEqual(details.value as? String, "Collapsed")
+        tapWhenReady(details)
+
+        XCTAssertEqual(details.value as? String, "Expanded")
+        XCTAssertTrue(app.descendants(matching: .any)["routine-conditioning-plan"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Cindy"].exists)
+        let pullups = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS 'Pullups' AND label CONTAINS '5 reps'")
+        ).firstMatch
+        XCTAssertTrue(pullups.exists, "Expanded conditioning should reveal each movement and target.")
+        attachScreenshot(app, name: "routine-conditioning-expanded-detail")
     }
 
     /// Regression: the keyboard accessory's Complete button used to stop

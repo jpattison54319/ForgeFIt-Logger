@@ -94,10 +94,10 @@ enum CoachPlanService {
 
     // MARK: - Confirming a catalog-program plan
 
-    /// Imports `candidate`'s catalog program into a new mesocycle folder,
+    /// Imports `candidate`'s catalog program into a new microcycle folder,
     /// persists the coaching profile, deactivates any prior active program
     /// (never deletes it — its folder and routines are left exactly as they
-    /// were), and activates the new one. Syncs `activeMesoFolderID` so
+    /// were), and activates the new one. Syncs the active microcycle so
     /// `NextRoutineSuggestion` keeps pointing at the right folder.
     @discardableResult
     static func confirmPlan(
@@ -128,7 +128,7 @@ enum CoachPlanService {
         context.insert(coached)
         try? context.save()
 
-        syncActiveMesoFolder(folder.id)
+        syncActiveCycleFolders(folder)
         return coached
     }
 
@@ -155,7 +155,7 @@ enum CoachPlanService {
         context.insert(coached)
         try? context.save()
 
-        syncActiveMesoFolder(folder.id)
+        syncActiveCycleFolders(folder)
         return coached
     }
 
@@ -211,7 +211,7 @@ enum CoachPlanService {
 
     /// Stops coaching entirely: deactivates the active program without
     /// deleting anything — the plan's folder, routines, and history stay
-    /// exactly as they are, and the `activeMesoFolderID` default is left
+    /// exactly as they are, and the active-microcycle preference is left
     /// alone so Home's "Up next" suggestion keeps working off the folder.
     static func stopCoaching(in context: ModelContext) {
         deactivateActivePrograms(in: context)
@@ -276,7 +276,11 @@ enum CoachPlanService {
     /// Keeps the UI-only "active plan" AppStorage keys in sync with the
     /// coach's chosen folder so `NextRoutineSuggestion` (Home) resolves
     /// correctly without any changes on its side.
-    private static func syncActiveMesoFolder(_ folderID: UUID) {
-        UserDefaults.standard.set(folderID.uuidString, forKey: "activeMesoFolderID")
+    private static func syncActiveCycleFolders(_ folder: RoutineFolderModel) {
+        let defaults = UserDefaults.standard
+        defaults.set(folder.id.uuidString, forKey: CyclePreferenceMigration.activeMicrocycleKey)
+        if let parentID = folder.parentID {
+            defaults.set(parentID.uuidString, forKey: CyclePreferenceMigration.activeMesocycleKey)
+        }
     }
 }

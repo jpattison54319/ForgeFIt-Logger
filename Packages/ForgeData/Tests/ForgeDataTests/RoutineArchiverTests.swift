@@ -15,22 +15,22 @@ struct RoutineArchiverTests {
         return (container, container.mainContext)
     }
 
-    /// macro ┬ meso1 ─ routineA
-    ///       └ meso2 ─ routineB   + ungrouped routineC
+    /// meso ┬ micro1 ─ routineA
+    ///      └ micro2 ─ routineB   + ungrouped routineC
     private func seedCycle(in context: ModelContext) -> (
-        macro: RoutineFolderModel, meso1: RoutineFolderModel, meso2: RoutineFolderModel,
+        meso: RoutineFolderModel, micro1: RoutineFolderModel, micro2: RoutineFolderModel,
         routineA: RoutineModel, routineB: RoutineModel, routineC: RoutineModel
     ) {
         let uid = UUID()
-        let macro = RoutineFolderModel(userID: uid, name: "Strength Peak", position: 0)
-        let meso1 = RoutineFolderModel(userID: uid, name: "Volume Block", position: 0, parentID: macro.id)
-        let meso2 = RoutineFolderModel(userID: uid, name: "Intensity Block", position: 1, parentID: macro.id)
-        let routineA = RoutineModel(userID: uid, name: "Push", folderID: meso1.id, position: 0)
-        let routineB = RoutineModel(userID: uid, name: "Pull", folderID: meso2.id, position: 0)
+        let meso = RoutineFolderModel(userID: uid, name: "Strength Peak", position: 0)
+        let micro1 = RoutineFolderModel(userID: uid, name: "Volume Block", position: 0, parentID: meso.id)
+        let micro2 = RoutineFolderModel(userID: uid, name: "Intensity Block", position: 1, parentID: meso.id)
+        let routineA = RoutineModel(userID: uid, name: "Push", folderID: micro1.id, position: 0)
+        let routineB = RoutineModel(userID: uid, name: "Pull", folderID: micro2.id, position: 0)
         let routineC = RoutineModel(userID: uid, name: "Arms", folderID: nil, position: 0)
-        [macro, meso1, meso2].forEach(context.insert)
+        [meso, micro1, micro2].forEach(context.insert)
         [routineA, routineB, routineC].forEach(context.insert)
-        return (macro, meso1, meso2, routineA, routineB, routineC)
+        return (meso, micro1, micro2, routineA, routineB, routineC)
     }
 
     @Test func archivingAFolderStampsItsSubtreeWithOneTimestamp() throws {
@@ -38,9 +38,9 @@ struct RoutineArchiverTests {
         let cycle = seedCycle(in: context)
         let stamp = Date(timeIntervalSinceReferenceDate: 1000)
 
-        try RoutineArchiver.archive(cycle.macro, in: context, at: stamp)
+        try RoutineArchiver.archive(cycle.meso, in: context, at: stamp)
 
-        for row in [cycle.macro.archivedAt, cycle.meso1.archivedAt, cycle.meso2.archivedAt,
+        for row in [cycle.meso.archivedAt, cycle.micro1.archivedAt, cycle.micro2.archivedAt,
                     cycle.routineA.archivedAt, cycle.routineB.archivedAt] {
             #expect(row == stamp)
         }
@@ -54,7 +54,7 @@ struct RoutineArchiverTests {
         let earlier = Date(timeIntervalSinceReferenceDate: 500)
         RoutineArchiver.archive(cycle.routineA, at: earlier)
 
-        try RoutineArchiver.archive(cycle.macro, in: context, at: Date(timeIntervalSinceReferenceDate: 1000))
+        try RoutineArchiver.archive(cycle.meso, in: context, at: Date(timeIntervalSinceReferenceDate: 1000))
 
         #expect(cycle.routineA.archivedAt == earlier)
         _ = container
@@ -64,13 +64,13 @@ struct RoutineArchiverTests {
         let (container, context) = try makeContext()
         let cycle = seedCycle(in: context)
         RoutineArchiver.archive(cycle.routineA, at: Date(timeIntervalSinceReferenceDate: 500))
-        try RoutineArchiver.archive(cycle.macro, in: context, at: Date(timeIntervalSinceReferenceDate: 1000))
+        try RoutineArchiver.archive(cycle.meso, in: context, at: Date(timeIntervalSinceReferenceDate: 1000))
 
-        try RoutineArchiver.restore(cycle.macro, in: context)
+        try RoutineArchiver.restore(cycle.meso, in: context)
 
-        #expect(cycle.macro.archivedAt == nil)
-        #expect(cycle.meso1.archivedAt == nil)
-        #expect(cycle.meso2.archivedAt == nil)
+        #expect(cycle.meso.archivedAt == nil)
+        #expect(cycle.micro1.archivedAt == nil)
+        #expect(cycle.micro2.archivedAt == nil)
         #expect(cycle.routineB.archivedAt == nil)
         // Archived deliberately before the folder — stays archived.
         #expect(cycle.routineA.archivedAt != nil)
@@ -80,21 +80,21 @@ struct RoutineArchiverTests {
     @Test func restoringANestedRoutineReparentsToNearestLiveAncestor() throws {
         let (container, context) = try makeContext()
         let cycle = seedCycle(in: context)
-        // Archive just the meso: its routine rides along; the macro stays live.
-        try RoutineArchiver.archive(cycle.meso1, in: context)
+        // Archive just the micro: its routine rides along; the meso stays live.
+        try RoutineArchiver.archive(cycle.micro1, in: context)
 
         try RoutineArchiver.restore(cycle.routineA, in: context)
 
         #expect(cycle.routineA.archivedAt == nil)
-        #expect(cycle.routineA.folderID == cycle.macro.id)
-        #expect(cycle.meso1.archivedAt != nil)
+        #expect(cycle.routineA.folderID == cycle.meso.id)
+        #expect(cycle.micro1.archivedAt != nil)
         _ = container
     }
 
     @Test func restoringARoutineWithNoLiveAncestorGoesTopLevel() throws {
         let (container, context) = try makeContext()
         let cycle = seedCycle(in: context)
-        try RoutineArchiver.archive(cycle.macro, in: context)
+        try RoutineArchiver.archive(cycle.meso, in: context)
 
         try RoutineArchiver.restore(cycle.routineA, in: context)
 
@@ -102,20 +102,20 @@ struct RoutineArchiverTests {
         _ = container
     }
 
-    @Test func restoringAMesoInsideAnArchivedMacroBringsItsRoutinesToTopLevel() throws {
+    @Test func restoringAMicroInsideAnArchivedMesoBringsItsRoutinesToTopLevel() throws {
         let (container, context) = try makeContext()
         let cycle = seedCycle(in: context)
-        try RoutineArchiver.archive(cycle.macro, in: context)
+        try RoutineArchiver.archive(cycle.meso, in: context)
 
-        try RoutineArchiver.restore(cycle.meso1, in: context)
+        try RoutineArchiver.restore(cycle.micro1, in: context)
 
-        // The meso can't live under a still-archived macro — it surfaces at
+        // The micro can't live under a still-archived meso — it surfaces at
         // the top level, and the routines stamped with it come back inside it.
-        #expect(cycle.meso1.archivedAt == nil)
-        #expect(cycle.meso1.parentID == nil)
+        #expect(cycle.micro1.archivedAt == nil)
+        #expect(cycle.micro1.parentID == nil)
         #expect(cycle.routineA.archivedAt == nil)
-        #expect(cycle.routineA.folderID == cycle.meso1.id)
-        #expect(cycle.macro.archivedAt != nil)
+        #expect(cycle.routineA.folderID == cycle.micro1.id)
+        #expect(cycle.meso.archivedAt != nil)
         #expect(cycle.routineB.archivedAt != nil)
         _ = container
     }
@@ -139,10 +139,10 @@ struct RoutineArchiverTests {
         let (container, context) = try makeContext()
         let cycle = seedCycle(in: context)
 
-        try RoutineArchiver.restore(cycle.meso1, in: context)
+        try RoutineArchiver.restore(cycle.micro1, in: context)
 
-        #expect(cycle.meso1.archivedAt == nil)
-        #expect(cycle.meso1.parentID == cycle.macro.id)
+        #expect(cycle.micro1.archivedAt == nil)
+        #expect(cycle.micro1.parentID == cycle.meso.id)
         #expect(cycle.routineA.archivedAt == nil)
         _ = container
     }

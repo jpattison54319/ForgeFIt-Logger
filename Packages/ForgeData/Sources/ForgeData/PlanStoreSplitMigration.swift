@@ -29,10 +29,11 @@ public enum PlanStoreSplitMigration {
     /// have no `copyXxx` function and never appear in `Summary.copiedByType`:
     /// any legacy combined store old enough to still need this migration
     /// predates their existence, so there are no rows of these types to
-    /// find in it. Coaching data is always created fresh directly in
+    /// find in it. These newer planning records are created directly in
     /// plan.store.
     public static let postSplitModelNames: Set<String> = [
-        "CoachingProfileModel", "CoachedProgramModel", "CoachingWeekOverrideModel"
+        "CoachingProfileModel", "CoachedProgramModel", "CoachingWeekOverrideModel",
+        "RoutineAlternationModel"
     ]
 
     @MainActor

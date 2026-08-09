@@ -43,6 +43,14 @@ struct HomeView: View {
     private var experimentTrackers: [ExperimentTrackerModel]
     @Query(sort: \ExperimentEntryModel.observedAt, order: .reverse)
     private var experimentEntries: [ExperimentEntryModel]
+    @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse)
+    private var microcycleTrackings: [MicrocycleTrackingModel]
+    @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse)
+    private var microcycleWindows: [MicrocycleWindowModel]
+    @Query(sort: \RestDayModel.date, order: .reverse)
+    private var restDays: [RestDayModel]
+    @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
+    private var alternations: [RoutineAlternationModel]
     /// This week's Coach's Corner weekly-review overrides — only used to
     /// check whether a deload week is currently active, so
     /// `CoachAdjustments.effectivePlan` can resolve it against today's
@@ -65,6 +73,7 @@ struct HomeView: View {
 
     // Recovery reports are full-history passes — memoized so the always-alive
     // tab doesn't recompute them on every unrelated re-render.
+    @AppStorage("profileDisplayName") private var displayName = "Athlete"
     @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
     @State private var connectingHealth = false
     /// Mirrors `HealthService.isConnected`. Held in state rather than read in
@@ -143,11 +152,13 @@ struct HomeView: View {
     }
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
-        return switch hour {
+        let salutation = switch hour {
         case 5..<12: "Good morning"
         case 12..<17: "Good afternoon"
         default: "Good evening"
         }
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? salutation : "\(salutation), \(name)"
     }
 
     private var recentCompleted: [WorkoutModel] {
@@ -158,6 +169,18 @@ struct HomeView: View {
         experiments.first {
             $0.deletedAt == nil && $0.isActive && $0.plannedEndAt > .now
         }
+    }
+
+    private var activeMicrocycle: MicrocycleTrackingModel? {
+        MicrocycleTrackingService.activeTracking(microcycleTrackings)
+    }
+
+    private var activeMicrocycleWindow: MicrocycleWindowModel? {
+        guard let activeMicrocycle else { return nil }
+        return MicrocycleTrackingService.currentWindow(
+            for: activeMicrocycle,
+            windows: microcycleWindows
+        )
     }
 
     private func trackers(for experiment: ExperimentModel) -> [ExperimentTrackerModel] {
@@ -316,17 +339,14 @@ struct HomeView: View {
 
     // MARK: - Smart next-workout suggestion
 
-    /// A macrocycle can hold several mesocycles, only one of which you're
-    /// actually running — these are independent so both can be active at
-    /// once. `suggestion` drills into the mesocycle first, then falls back
-    /// to the macrocycle, then to best-guessing across every routine.
-    @AppStorage("activeMacroFolderID") private var activeMacroFolderRaw = ""
-    @AppStorage("activeMesoFolderID") private var activeMesoFolderRaw = ""
+    /// A mesocycle can contain several microcycles. The active microcycle is
+    /// most specific, then Home falls back to the broader active mesocycle.
+    @AppStorage(CyclePreferenceMigration.activeMesocycleKey) private var activeMesocycleFolderRaw = ""
+    @AppStorage(CyclePreferenceMigration.activeMicrocycleKey) private var activeMicrocycleFolderRaw = ""
     @Query private var allFolders: [RoutineFolderModel]
 
-    /// The active folder plus its whole subtree, so an active macrocycle picks
-    /// up routines inside its mesocycle subfolders too.
-    private func folderSubtree(rootID: UUID) -> Set<UUID> {
+    /// The active mesocycle plus its microcycle children.
+    private func mesocycleSubtree(rootID: UUID) -> Set<UUID> {
         let live = allFolders.filter { $0.deletedAt == nil && $0.archivedAt == nil }
         var result: Set<UUID> = [rootID]
         var queue = [rootID]
@@ -340,17 +360,18 @@ struct HomeView: View {
     }
 
     /// What the app thinks you'll want to train next — see
-    /// `NextRoutineSuggestion` for the drilldown logic (mesocycle → macrocycle
+    /// `NextRoutineSuggestion` for the drilldown logic (microcycle → mesocycle
     /// → best guess).
-    private var suggestion: (routine: RoutineModel, reason: String)? {
+    private var suggestion: (routine: RoutineModel, reason: String, alternatingWith: String?)? {
         guard let result = NextRoutineSuggestion.suggest(
             routines: routines,
             completedWorkouts: workouts,
-            activeMesoFolderID: UUID(uuidString: activeMesoFolderRaw),
-            activeMacroFolderID: UUID(uuidString: activeMacroFolderRaw),
-            macroSubtree: folderSubtree(rootID:)
+            alternations: alternations,
+            activeMicrocycleFolderID: UUID(uuidString: activeMicrocycleFolderRaw),
+            activeMesocycleFolderID: UUID(uuidString: activeMesocycleFolderRaw),
+            mesocycleSubtree: mesocycleSubtree(rootID:)
         ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
-        return (routine, result.reason)
+        return (routine, result.reason, result.alternatingWith)
     }
 
     var body: some View {
@@ -421,6 +442,43 @@ struct HomeView: View {
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
+                    if let activeMicrocycle,
+                       activeMicrocycle.showsOnHome,
+                       activeMicrocycle.needsAttention {
+                        microcycleNeedsAttentionCard(activeMicrocycle)
+                        .dismissesQuickStartEdit(
+                            isEditing: quickStartEditing,
+                            dismiss: dismissQuickStartEdit
+                        )
+                    } else if let activeMicrocycle,
+                              activeMicrocycle.showsOnHome,
+                              let activeMicrocycleWindow {
+                        ActiveMicrocycleHomeCard(
+                            tracking: activeMicrocycle,
+                            window: activeMicrocycleWindow,
+                            progress: MicrocycleTrackingService.progress(
+                                for: activeMicrocycleWindow,
+                                windows: microcycleWindows,
+                                workouts: workouts
+                            ),
+                            workouts: workouts,
+                            restDays: RestDayService.live(restDays),
+                            windows: microcycleWindows,
+                            exercises: exercises,
+                            detailsDestination: HomeRoute.microcycle(activeMicrocycle.id),
+                            onRemoveFromHome: {
+                                updateMicrocyclePresentation(
+                                    activeMicrocycle,
+                                    showsOnHome: false
+                                )
+                            }
+                        )
+                        .dismissesQuickStartEdit(
+                            isEditing: quickStartEditing,
+                            dismiss: dismissQuickStartEdit
+                        )
+                    }
+
                     if let activeExperiment {
                         ActiveExperimentHomeCard(
                             experiment: activeExperiment,
@@ -480,6 +538,8 @@ struct HomeView: View {
                 case .strain: StrainDetailView(report: dailyStrain)
                 case .health: HealthDetailView(report: recovery, metrics: healthMetrics.metrics)
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
+                case .microcycle(let trackingID):
+                    MicrocycleDetailView(trackingID: trackingID)
                 }
             }
             .navigationDestination(for: WorkoutModel.self) { workout in
@@ -511,7 +571,7 @@ struct HomeView: View {
                     exercises: exercises,
                     setupNotes: setupNotes,
                     recovery: recovery,
-                    suggestion: suggestion
+                    suggestion: suggestion.map { (routine: $0.routine, reason: $0.reason) }
                 )
             }
             .sheet(isPresented: $showCoachChat) { coachChatSheet }
@@ -588,8 +648,8 @@ struct HomeView: View {
                     templates: templates,
                     exercises: exercises,
                     onImport: { program in
-                        // A program is a whole mesocycle: it always lands as its
-                        // own new top-level folder with the day routines inside.
+                        // A catalog program lands as one standalone microcycle
+                        // folder containing its day routines.
                         RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
                         showExploreLibrary = false
                     }
@@ -602,6 +662,58 @@ struct HomeView: View {
 
     private var activeRoutines: [RoutineModel] {
         routines.filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
+    }
+
+    private func microcycleNeedsAttentionCard(
+        _ tracking: MicrocycleTrackingModel
+    ) -> some View {
+        Card {
+            HStack(spacing: Space.md) {
+                NavigationLink(value: HomeRoute.microcycle(tracking.id)) {
+                    HStack(spacing: Space.md) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title3)
+                        .foregroundStyle(theme.danger)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Microcycle needs attention")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.textPrimary)
+                        Text("Open \(tracking.folderName) to fix its folder or routines.")
+                            .font(.subheadline)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(theme.textTertiary)
+                        .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Button("Remove microcycle from Home", systemImage: "xmark") {
+                    updateMicrocyclePresentation(tracking, showsOnHome: false)
+                }
+                .labelStyle(.iconOnly)
+                .font(.caption.bold())
+                .foregroundStyle(theme.textTertiary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+            }
+        }
+        .accessibilityIdentifier("home-microcycle-needs-attention")
+    }
+
+    private func updateMicrocyclePresentation(
+        _ tracking: MicrocycleTrackingModel,
+        showsOnHome: Bool
+    ) {
+        try? MicrocycleTrackingService.setPresentation(
+            tracking,
+            showsOnHome: showsOnHome,
+            in: modelContext
+        )
     }
 
     /// Shown in place of "Up next" when no routine exists yet — the way into
@@ -647,7 +759,11 @@ struct HomeView: View {
         // into the program library instead of a dangling header.
         SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
         if let suggestion {
-            suggestionCard(suggestion.routine, reason: suggestion.reason)
+            suggestionCard(
+                suggestion.routine,
+                reason: suggestion.reason,
+                alternatingWith: suggestion.alternatingWith
+            )
                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                 .transition(.opacity)
         } else {
@@ -965,7 +1081,8 @@ struct HomeView: View {
     @ViewBuilder private var coachChatSheet: some View {
         let context = AICoachContext.build(
             workouts: workouts, routines: routines, exercises: exercises,
-            recovery: recovery, suggestion: suggestion
+            recovery: recovery,
+            suggestion: suggestion.map { (routine: $0.routine, reason: $0.reason) }
         )
         let effective: (plan: CoachAdjustments.Plan, sourceLabel: String)? = {
             guard let suggestion else { return nil }
@@ -1031,7 +1148,11 @@ struct HomeView: View {
         )
     }
 
-    private func suggestionCard(_ routine: RoutineModel, reason: String) -> some View {
+    private func suggestionCard(
+        _ routine: RoutineModel,
+        reason: String,
+        alternatingWith: String?
+    ) -> some View {
         let coach = coachReview(for: routine)
         // This is THE answer to "what should I do today" — the one card on
         // Home that should visually outrank everything else, so its Start
@@ -1050,6 +1171,15 @@ struct HomeView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                    if let alternatingWith {
+                        Label(
+                            "Alternates with \(alternatingWith)",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .accessibilityIdentifier("home-alternating-routine")
+                    }
                     // No readiness action line here: the RecoveryHeroCard above
                     // already makes today's call, and per-muscle state lives in
                     // Recovery → Per muscle. This card answers one question —
@@ -1299,6 +1429,7 @@ enum HomeRoute: Hashable {
     case strain
     case health
     case calendar
+    case microcycle(UUID)
 }
 
 private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
