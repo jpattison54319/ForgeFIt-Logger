@@ -130,7 +130,9 @@ enum PlanShareService {
             }
             return sharedExercise(exercise)
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        .sorted { (lhs: SharedPlanExercise, rhs: SharedPlanExercise) in
+            lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
 
         let includedFolderIDs = Set(folders.map(\.id))
         return ForgeFitPlanDocument(
