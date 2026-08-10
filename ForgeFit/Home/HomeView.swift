@@ -204,9 +204,10 @@ struct HomeView: View {
     }
 
     /// Today's cached Home render, if this day already produced one. Strictly
-    /// keyed to the current calendar day — right after midnight there is no
-    /// cache and the dashboard shows its loader, because a new day's scores
-    /// don't exist yet and yesterday's must never stand in for them.
+    /// keyed to the current calendar day. Right after midnight there is no
+    /// cache: a connected Health dashboard shows its loader, while a
+    /// disconnected Home keeps that empty dashboard collapsed. Yesterday's
+    /// values must never stand in for either state.
     private var todayDashboardCache: (RecoverySnapshot, HomeDashboardCache)? {
         guard let snapshot = RecoverySnapshotStore.shared.snapshot(for: Date()),
               let cache = snapshot.dashboard else { return nil }

@@ -559,69 +559,101 @@ private struct ExerciseRowLabel: View {
     let onInfo: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Button(action: onSelect) {
+        Group {
+            if exercise.isYoga {
                 HStack(spacing: Space.md) {
                     ExerciseThumbnail(exercise: exercise)
                     VStack(alignment: .leading, spacing: 2) {
-                        // Full name, wrapped — users are *finding* an exercise
-                        // here, so truncating to "…" hides the differentiator
-                        // (routine-card previews still truncate by design).
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
+                            Button(action: onInfo) {
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(exercise.name)
+                                        .font(.bodyStrong)
+                                        .foregroundStyle(theme.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(theme.accent)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Exercise details for \(exercise.name)")
+                            .accessibilityIdentifier("exercise-info-\(exercise.name)")
+
+                            if exercise.ownerID != nil {
+                                Tag(text: "Custom", color: theme.accent, background: theme.accentSoft)
+                            }
                         }
                         Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
                             .compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
-                        if exercise.isCardio {
-                            Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
-                                .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
-                        } else if exercise.isYoga {
-                            Text(yogaSubtitle)
-                                .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
-                        }
                     }
                     Spacer()
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 22))
-                        .foregroundStyle(selected ? theme.accent : theme.textTertiary)
-                        .contentTransition(.symbolEffect(.replace))
-                        .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+
+                    Button(action: onSelect) {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22))
+                            .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                            .contentTransition(.symbolEffect(.replace))
+                            .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selected ? "Deselect \(exercise.name)" : "Select \(exercise.name)")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("exercise-row-\(exercise.name)")
+                }
+            } else {
+                HStack(spacing: Space.md) {
+                    Button(action: onSelect) {
+                        HStack(spacing: Space.md) {
+                            ExerciseThumbnail(exercise: exercise)
+                            VStack(alignment: .leading, spacing: 2) {
+                                // Full name, wrapped — users are *finding* an exercise
+                                // here, so truncating to "…" hides the differentiator
+                                // (routine-card previews still truncate by design).
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
+                                }
+                                Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                    .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
+                                if exercise.isCardio {
+                                    Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
+                                        .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 22))
+                                .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                                .contentTransition(.symbolEffect(.replace))
+                                .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("exercise-row-\(exercise.name)")
+
+                    Button(action: onInfo) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Exercise details for \(exercise.name)")
+                    .accessibilityIdentifier("exercise-info-\(exercise.name)")
                 }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("exercise-row-\(exercise.name)")
-
-            Button(action: onInfo) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 44, height: 44)   // HIG minimum touch target
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Exercise details for \(exercise.name)")
-            .accessibilityIdentifier("exercise-info-\(exercise.name)")
         }
         .padding(Space.md)
         .background(selected ? theme.accentSoft : theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .animation(Motion.tap, value: selected)
-    }
-
-    /// "Sanskrit name · hold 30s" — Sanskrit from the bundled catalog, so
-    /// custom poses just show the hold.
-    private var yogaSubtitle: String {
-        var parts: [String] = []
-        if let sanskrit = YogaPoseCatalog.pose(forSlug: YogaPoseCatalog.slug(for: exercise))?.sanskrit {
-            parts.append(sanskrit)
-        }
-        if let hold = exercise.defaultHoldSeconds {
-            parts.append("Hold \(hold)s")
-        }
-        return parts.isEmpty ? "Yoga" : parts.joined(separator: " · ")
     }
 }
 

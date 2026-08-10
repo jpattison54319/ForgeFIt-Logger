@@ -64,6 +64,8 @@ struct SettingsView: View {
                     PlatesAndBarsDetailView()
                 case .reminders:
                     RemindersDetailView()
+                case .yogaGuidance:
+                    YogaGuidanceSettingsView()
                 case .privacyPolicy:
                     PrivacyPolicyView()
                 }

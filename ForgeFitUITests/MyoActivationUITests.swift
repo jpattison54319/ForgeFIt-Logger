@@ -35,18 +35,59 @@ final class MyoActivationUITests: XCTestCase {
         return element.label == label
     }
 
-    private func replaceNumericText(_ field: XCUIElement, with replacement: String) {
-        field.tap()
+    private func waitForValue(_ element: XCUIElement, _ value: String, timeout: TimeInterval = 3) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while element.value as? String != value && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return element.value as? String == value
+    }
+
+    /// The logger's accessory is a stable focus receipt. SwiftUI can rebuild
+    /// a block row after its first edit, leaving a tap's old snapshot visible
+    /// while the previous field still owns focus. Retry the visible field
+    /// until its field-specific accessory state is mounted before typing.
+    private func focusActivationField(
+        _ field: XCUIElement,
+        in app: XCUIApplication,
+        expectsNext: Bool,
+        timeout: TimeInterval = 4
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if app.buttons["Log Activation"].firstMatch.exists,
+               app.buttons["Next"].firstMatch.exists == expectsNext {
+                return true
+            }
+            if field.exists && field.isHittable {
+                field.tap()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+
+        return app.buttons["Log Activation"].firstMatch.exists
+            && app.buttons["Next"].firstMatch.exists == expectsNext
+    }
+
+    private func replaceNumericText(
+        _ field: XCUIElement,
+        in app: XCUIApplication,
+        expectsNext: Bool,
+        with replacement: String
+    ) {
         XCTAssertTrue(
-            XCUIApplication().keyboards.firstMatch.waitForExistence(timeout: 3),
-            "Expected the completed activation field to accept keyboard focus."
+            focusActivationField(field, in: app, expectsNext: expectsNext),
+            "Expected the activation field to own the logger keyboard accessory."
         )
         // Select the whole numeric token. Its insertion point is not stable
         // after SwiftUI refreshes a completed row, so backspacing from the
         // current caret can otherwise prepend instead of replace.
         field.doubleTap()
         field.typeText(replacement)
-        XCTAssertEqual(field.value as? String, replacement)
+        XCTAssertTrue(
+            waitForValue(field, replacement),
+            "Expected the activation field to contain only \(replacement)."
+        )
     }
 
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
@@ -147,13 +188,14 @@ final class MyoActivationUITests: XCTestCase {
         // PHASE 1 — log a real myo session so history exists.
         startMyoBlock(in: app)
         let repsField = element(app, "activation-reps-1")
-        repsField.tap()
-        repsField.typeText("12")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
         let activationButton = element(app, "log-activation-1")
-        activationButton.tap()
-        XCTAssertEqual(activationButton.label, "Activation completed, tap to un-complete",
-                       "Expected the activation control to visibly enter its completed state.")
-        XCTAssertEqual(activationButton.value as? String, "Completed")
+        tapWhenHittable(activationButton)
+        XCTAssertTrue(
+            waitForLabel(activationButton, "Activation completed, tap to un-complete", timeout: 5),
+            "Expected the activation control to visibly enter its completed state."
+        )
+        XCTAssertTrue(waitForValue(activationButton, "Completed"))
         // Complete the block and save the workout. The checkbox id carries
         // the block's working-set number — match by prefix, first row wins.
         tapWhenHittable(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")).firstMatch)
@@ -175,9 +217,9 @@ final class MyoActivationUITests: XCTestCase {
         // field's XCUI `value` echoes the placeholder, so the summary is the
         // honest signal).
         let ghostActivationButton = element(app, "log-activation-1")
-        ghostActivationButton.tap()
-        XCTAssertEqual(ghostActivationButton.label, "Activation completed, tap to un-complete")
-        XCTAssertEqual(ghostActivationButton.value as? String, "Completed")
+        tapWhenHittable(ghostActivationButton)
+        XCTAssertTrue(waitForLabel(ghostActivationButton, "Activation completed, tap to un-complete"))
+        XCTAssertTrue(waitForValue(ghostActivationButton, "Completed"))
         XCTAssertTrue(app.staticTexts["12 reps"].waitForExistence(timeout: 3),
                       "Expected the adopted ghost in the block's rep summary.")
 
@@ -200,15 +242,14 @@ final class MyoActivationUITests: XCTestCase {
 
         startMyoBlock(in: app)
         let repsField = element(app, "activation-reps-1")
-        repsField.tap()
-        repsField.typeText("12")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
 
         let logActivation = app.buttons["Log Activation"].firstMatch
         XCTAssertTrue(logActivation.waitForExistence(timeout: 3))
         logActivation.tap()
 
         let activationButton = element(app, "log-activation-1")
-        XCTAssertEqual(activationButton.value as? String, "Completed")
+        XCTAssertTrue(waitForValue(activationButton, "Completed"))
 
         let completeBlock = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")
@@ -244,8 +285,7 @@ final class MyoActivationUITests: XCTestCase {
 
         startMyoBlock(in: app)
         let repsField = element(app, "activation-reps-1")
-        repsField.tap()
-        repsField.typeText("12")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
         let logActivation = app.buttons["Log Activation"].firstMatch
         XCTAssertTrue(logActivation.waitForExistence(timeout: 3))
         logActivation.tap()
@@ -278,15 +318,13 @@ final class MyoActivationUITests: XCTestCase {
         let repsField = element(app, "activation-reps-1")
         let activationButton = element(app, "log-activation-1")
 
-        weightField.tap()
-        weightField.typeText("50")
-        repsField.tap()
-        repsField.typeText("12")
-        activationButton.tap()
-        XCTAssertEqual(activationButton.value as? String, "Completed")
+        replaceNumericText(weightField, in: app, expectsNext: true, with: "50")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
+        tapWhenHittable(activationButton)
+        XCTAssertTrue(waitForValue(activationButton, "Completed"))
 
         // Correct the typo while the activation receipt is still checked.
-        replaceNumericText(repsField, with: "9")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "9")
         XCTAssertTrue(app.staticTexts["9 reps"].waitForExistence(timeout: 3))
         XCTAssertEqual(
             activationButton.value as? String,
@@ -297,8 +335,8 @@ final class MyoActivationUITests: XCTestCase {
         if app.buttons["Dismiss keyboard"].firstMatch.exists {
             app.buttons["Dismiss keyboard"].firstMatch.tap()
         }
-        activationButton.tap()
-        XCTAssertEqual(activationButton.value as? String, "Not completed")
+        tapWhenHittable(activationButton)
+        XCTAssertTrue(waitForValue(activationButton, "Not completed"))
         XCTAssertTrue(
             waitForLabel(activationButton, "Complete activation and start micro-rest"),
             "The activation circle should toggle back to its incomplete state."
@@ -306,8 +344,8 @@ final class MyoActivationUITests: XCTestCase {
         XCTAssertEqual(repsField.value as? String, "9", "Unchecking must preserve the corrected reps.")
         XCTAssertEqual(weightField.value as? String, "50", "Unchecking must preserve the activation weight.")
 
-        activationButton.tap()
-        XCTAssertEqual(activationButton.value as? String, "Completed")
+        tapWhenHittable(activationButton)
+        XCTAssertTrue(waitForValue(activationButton, "Completed"))
         XCTAssertTrue(
             waitForLabel(activationButton, "Activation completed, tap to un-complete"),
             "The same circle should re-complete the activation."
@@ -321,7 +359,7 @@ final class MyoActivationUITests: XCTestCase {
         let volume = element(app, "stat-volume")
         XCTAssertTrue(waitForLabel(volume, "Volume 450 kg", timeout: 5))
 
-        replaceNumericText(repsField, with: "10")
+        replaceNumericText(repsField, in: app, expectsNext: false, with: "10")
         XCTAssertTrue(
             waitForLabel(volume, "Volume 500 kg", timeout: 5),
             "Changing reps on a completed myo block must recompute its logged volume."

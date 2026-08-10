@@ -107,6 +107,54 @@ final class ForgeFitUITests: XCTestCase {
         return abs(actual - expectedValue) <= tolerance
     }
 
+    /// Keyboard queries can briefly retain the previous off-screen host view
+    /// while the newly focused field animates its keyboard onscreen. Wait for
+    /// a keyboard whose frame actually intersects the app window before using
+    /// its geometry in layout assertions.
+    private func waitForOnscreenKeyboard(
+        in app: XCUIApplication,
+        timeout: TimeInterval = 3
+    ) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        let appFrame = app.windows.firstMatch.frame
+
+        while Date() < deadline {
+            if let keyboard = app.keyboards.allElementsBoundByIndex.first(where: {
+                $0.exists && !$0.frame.isEmpty && $0.frame.intersects(appFrame)
+            }) {
+                return keyboard
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return app.keyboards.allElementsBoundByIndex.first(where: {
+            $0.exists && !$0.frame.isEmpty && $0.frame.intersects(appFrame)
+        })
+    }
+
+    /// Nested sheets can leave the presenting sheet's search field in the
+    /// accessibility tree. Resolve the frontmost field by interactivity rather
+    /// than index so typing cannot target covered UI.
+    private func waitForHittableSearchField(
+        in app: XCUIApplication,
+        timeout: TimeInterval = 5
+    ) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if let searchField = app.searchFields.allElementsBoundByIndex.first(where: {
+                $0.exists && $0.isHittable
+            }) {
+                return searchField
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        return app.searchFields.allElementsBoundByIndex.first(where: {
+            $0.exists && $0.isHittable
+        })
+    }
+
     @MainActor
     func testRoutineStartLogSetCompleteAndShowsSetupNotes() throws {
         throw XCTSkip("Routine auto-start presentation is still being stabilized; setup-note propagation is covered by ForgeFitTests.")
@@ -420,9 +468,11 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Log Activation"].firstMatch.exists)
 
         let repsBeforeTyping = activationReps.value as? String ?? ""
-        let nineKey = app.keys["9"].firstMatch
-        XCTAssertTrue(nineKey.waitForExistence(timeout: 3))
-        nineKey.tap()
+        // Type through the focused field. CoreSimulator can retain an
+        // off-screen keyboard host whose key elements still `exist`; tapping
+        // one asks AX to scroll the keyboard itself and flakes under a broad
+        // run. `typeText` also proves Next actually transferred focus.
+        activationReps.typeText("9")
         XCTAssertEqual(
             activationReps.value as? String,
             "\(repsBeforeTyping)9",
@@ -540,9 +590,9 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected New Routine button.")
         newRoutine.tap()
 
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected Add Exercise in the routine editor.")
-        addExercise.tap()
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5), "Expected Add to Routine in the routine editor.")
+        addToRoutine.tap()
 
         let searchField = app.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the exercise search field.")
@@ -600,9 +650,9 @@ final class ForgeFitUITests: XCTestCase {
         let newRoutine = app.buttons["New Routine"].firstMatch
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         newRoutine.tap()
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
-        addExercise.tap()
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5))
+        addToRoutine.tap()
 
         // Open the create form from the picker toolbar.
         let createButton = app.descendants(matching: .any)["create-exercise-button"].firstMatch
@@ -621,7 +671,7 @@ final class ForgeFitUITests: XCTestCase {
         suggestion.tap()
 
         // Creation abandoned, existing exercise landed in the routine editor.
-        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor.")
+        XCTAssertTrue(app.buttons["add-to-routine"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor.")
         let inRoutine = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'bench press'")).firstMatch
         XCTAssertTrue(inRoutine.waitForExistence(timeout: 3), "Expected the existing exercise in the routine.")
     }
@@ -639,16 +689,25 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         newRoutine.tap()
 
-        let addYoga = app.buttons["add-yoga-format"].firstMatch
-        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga beside Conditioning in the routine editor.")
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5), "Expected Add to Routine in the routine editor.")
+        tapWhenReady(addToRoutine)
+
+        let addYoga = app.buttons["add-yoga-block"].firstMatch
+        XCTAssertTrue(addYoga.waitForExistence(timeout: 5), "Expected Yoga in Add to Routine.")
         tapWhenReady(addYoga)
 
         let addPose = app.descendants(matching: .any)["add-pose-to-flow"].firstMatch
         XCTAssertTrue(addPose.waitForExistence(timeout: 5), "Expected Add Pose in the yoga flow builder.")
         tapWhenReady(addPose)
 
-        let poseSearch = app.searchFields.firstMatch
-        XCTAssertTrue(poseSearch.waitForExistence(timeout: 5), "Expected pose picker search.")
+        // The Add-to-Routine sheet remains underneath the nested pose picker,
+        // so two search fields exist. Type into the visible picker's focused
+        // field rather than the covered outer sheet's stale first match.
+        guard let poseSearch = waitForHittableSearchField(in: app) else {
+            XCTFail("Expected the visible pose picker search.")
+            return
+        }
         poseSearch.tap()
         poseSearch.typeText("Pigeon Pose")
 
@@ -658,6 +717,11 @@ final class ForgeFitUITests: XCTestCase {
 
         let detailTitle = app.descendants(matching: .any)["exercise-detail-title-Pigeon Pose"].firstMatch
         XCTAssertTrue(detailTitle.waitForExistence(timeout: 5), "Expected Pigeon Pose detail.")
+        let considerations = app.descendants(matching: .any)["pose-considerations"].firstMatch
+        XCTAssertTrue(considerations.waitForExistence(timeout: 5), "Expected pose considerations on the detail screen, not in the live player.")
+        tapWhenReady(considerations)
+        XCTAssertTrue(app.staticTexts["Pose considerations"].waitForExistence(timeout: 3))
+        tapWhenReady(app.buttons["OK"].firstMatch)
         let back = app.descendants(matching: .any)["exercise-detail-back"].firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 5), "Expected detail back button.")
         tapWhenReady(back)
@@ -672,10 +736,37 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Pigeon Pose"].waitForExistence(timeout: 5), "Expected selected pose in the flow builder.")
         app.buttons["Save"].firstMatch.tap()
 
-        let flowBuilder = app.descendants(matching: .any)["routine-yoga-flow-builder"].firstMatch
-        XCTAssertTrue(flowBuilder.waitForExistence(timeout: 5), "Expected to return to the routine editor after saving the flow.")
+        let configuredYoga = app.descendants(matching: .any)["routine-yoga-block"].firstMatch
+        XCTAssertTrue(configuredYoga.waitForExistence(timeout: 5), "Expected the saved Yoga block back in the routine editor.")
         let configured = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] '1 pose'")).firstMatch
         XCTAssertTrue(configured.waitForExistence(timeout: 3), "Expected the Yoga Session row to show the saved pose flow.")
+    }
+
+    /// Profile owns the complete exercise library. Individual yoga poses are
+    /// hidden only from routine/live-workout selection, never from browsing.
+    @MainActor
+    func testProfileExerciseLibraryIncludesYogaPoses() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "-didOnboard", "YES",
+            "-initialTab", "profile",
+        ]
+        app.launch()
+
+        let exercises = app.descendants(matching: .any)["profile-exercises"].firstMatch
+        XCTAssertTrue(exercises.waitForExistence(timeout: 8), "Expected Exercises in Profile.")
+        tapWhenReady(exercises)
+
+        let search = app.textFields["Search exercises"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Expected the Profile exercise search field.")
+        search.tap()
+        search.typeText("Pigeon Pose")
+
+        XCTAssertTrue(
+            app.staticTexts["Pigeon Pose"].firstMatch.waitForExistence(timeout: 5),
+            "Profile exercise browsing must include individual yoga poses."
+        )
     }
 
     /// Opening exercise details from active search isolates the detail from
@@ -835,9 +926,9 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
         tapWhenReady(newRoutine)
 
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
-        tapWhenReady(addExercise)
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(addToRoutine)
 
         let searchField = app.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5))
@@ -886,9 +977,9 @@ final class ForgeFitUITests: XCTestCase {
         newRoutine.tap()
 
         func addExercise(searching term: String) {
-            let addExercise = app.buttons["Add Exercise"].firstMatch
-            XCTAssertTrue(addExercise.waitForExistence(timeout: 5))
-            tapWhenReady(addExercise)
+            let addToRoutine = app.buttons["add-to-routine"].firstMatch
+            XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5))
+            tapWhenReady(addToRoutine)
             let searchField = app.searchFields.firstMatch
             XCTAssertTrue(searchField.waitForExistence(timeout: 5))
             searchField.tap()
@@ -938,13 +1029,13 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Replace Exercise"].exists, "The fallback picker must remain a replace flow.")
         replaceSearch.tap()
         replaceSearch.typeText("press")
-        let replacementRow = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        let replacementRow = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'replacement-swap-' AND identifier CONTAINS[c] 'press'")
         ).firstMatch
-        XCTAssertTrue(replacementRow.waitForExistence(timeout: 4))
-        replacementRow.tap()
+        XCTAssertTrue(replacementRow.waitForExistence(timeout: 4), "Expected a replacement action for the current search results.")
+        tapWhenReady(replacementRow)
 
-        XCTAssertTrue(app.buttons["Add Exercise"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor after replacing.")
+        XCTAssertTrue(app.buttons["add-to-routine"].firstMatch.waitForExistence(timeout: 5), "Expected to be back in the routine editor after replacing.")
         let menusAfterReplace = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'routine-exercise-menu-'")
         )
@@ -1063,9 +1154,9 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(newRoutine.waitForExistence(timeout: 5), "Expected New Routine button.")
         tapWhenReady(newRoutine)
 
-        let addExercise = app.buttons["Add Exercise"].firstMatch
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 5), "Expected Add Exercise in the routine editor.")
-        tapWhenReady(addExercise)
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5), "Expected Add to Routine in the routine editor.")
+        tapWhenReady(addToRoutine)
 
         let searchField = app.searchFields.firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Expected the exercise picker search field.")
@@ -1088,26 +1179,36 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(weightField.waitForExistence(timeout: 5), "Expected a routine target-weight field.")
         tapWhenReady(weightField)
 
-        let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 3), "Expected the number pad.")
-
         let editorScroll = app.scrollViews["routine-editor-scroll"].firstMatch
         XCTAssertTrue(editorScroll.exists, "Expected the routine editor scroll view.")
-        let uncoveredGap = keyboard.frame.minY - editorScroll.frame.maxY
-        XCTAssertLessThan(
-            uncoveredGap,
-            80,
-            "The editor ended \(Int(uncoveredGap)) pt above the keyboard; keyboard clearance must not shrink the ScrollView."
-        )
-
-        for chrome in [
+        let bottomChrome = [
             app.buttons["tab-workout"].firstMatch,
             app.buttons["quick-actions-trigger"].firstMatch,
-        ] where chrome.exists {
-            XCTAssertTrue(
-                !chrome.isHittable || chrome.frame.minY >= keyboard.frame.minY,
-                "Bottom chrome must remain hidden by the keyboard instead of being lifted above it."
+        ]
+
+        if let keyboard = waitForOnscreenKeyboard(in: app) {
+            let uncoveredGap = keyboard.frame.minY - editorScroll.frame.maxY
+            XCTAssertLessThan(
+                uncoveredGap,
+                80,
+                "The editor ended \(Int(uncoveredGap)) pt above the keyboard; keyboard clearance must not shrink the ScrollView."
             )
+
+            for chrome in bottomChrome where chrome.exists {
+                XCTAssertTrue(
+                    !chrome.isHittable || chrome.frame.minY >= keyboard.frame.minY,
+                    "Bottom chrome must remain hidden by the keyboard instead of being lifted above it."
+                )
+            }
+        } else {
+            // Headless CoreSimulator can connect a hardware keyboard and keep
+            // only its off-screen keyboard host in the hierarchy. With no
+            // software keyboard covering content, neither an accessory nor
+            // hidden app chrome is appropriate.
+            XCTAssertFalse(app.buttons["Done"].firstMatch.exists)
+            for chrome in bottomChrome where chrome.exists {
+                XCTAssertTrue(chrome.isHittable, "Bottom chrome should remain interactive when no software keyboard is onscreen.")
+            }
         }
 
         attachScreenshot(app, name: "routine-editor-keyboard")

@@ -96,6 +96,8 @@ struct ExerciseInfoCard: View {
     @Environment(\.theme) private var theme
     let exercise: ExerciseLibraryModel
 
+    @State private var showingPoseConsiderations = false
+
     private var chips: [(String, Color)] {
         [
             exercise.difficulty.map { ($0.capitalized, theme.accent) },
@@ -109,6 +111,13 @@ struct ExerciseInfoCard: View {
     private var muscles: [String] {
         var seen = Set<String>()
         return (exercise.primaryMuscles + exercise.secondaryMuscles).filter { seen.insert($0).inserted }
+    }
+
+    private var poseConsiderations: [String] {
+        guard exercise.isYoga,
+              !YogaPoseCatalog.isSessionExercise(exercise),
+              let slug = YogaPoseCatalog.slug(for: exercise) else { return [] }
+        return YogaGuidanceCatalog.guidance(forSlug: slug)?.considerations ?? []
     }
 
     var body: some View {
@@ -129,9 +138,31 @@ struct ExerciseInfoCard: View {
 
             if !exercise.instructions.isEmpty {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Text("How to perform")
-                        .font(.sectionTitle)
-                        .foregroundStyle(theme.textPrimary)
+                    HStack {
+                        Text("How to perform")
+                            .font(.sectionTitle)
+                            .foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        if !poseConsiderations.isEmpty {
+                            Button {
+                                showingPoseConsiderations = true
+                            } label: {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.bodyStrong)
+                                    .foregroundStyle(theme.warmup)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                            .accessibilityLabel("Pose considerations")
+                            .accessibilityIdentifier("pose-considerations")
+                            .alert("Pose considerations", isPresented: $showingPoseConsiderations) {
+                                Button("OK", role: .cancel) {}
+                            } message: {
+                                Text(poseConsiderations.joined(separator: " "))
+                            }
+                        }
+                    }
                     Card(padding: Space.md) {
                         VStack(alignment: .leading, spacing: Space.md) {
                             ForEach(Array(exercise.instructions.enumerated()), id: \.offset) { index, instruction in

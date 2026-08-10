@@ -49,11 +49,11 @@ final class YogaFlowRunnerHub {
     }
 }
 
-/// Drives a guided yoga class: wall-clock-anchored pose holds, spoken cues
-/// (entry, mid-hold, transition warning), auto-advance with haptics, and one
+/// Drives a guided yoga class: wall-clock-anchored pose holds, modular spoken
+/// guidance, auto-advance with haptics, and one
 /// `CardioSplitModel` written per completed hold. The phone is the execution
 /// authority; the watch mirrors the current pose. Patterned on
-/// `IntervalRunner`, not shared with it — the cue mechanism (TTS vs tick) and
+/// `IntervalRunner`, not shared with it — the narration and
 /// side expansion are yoga-specific.
 @MainActor
 @Observable
@@ -93,6 +93,11 @@ final class YogaFlowRunner {
 
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     @ObservationIgnored private var stepStartedAt: Date
+    @ObservationIgnored private var guidancePlans: [Int: YogaGuidancePlan] = [:]
+    @ObservationIgnored private var plannedGuidanceIDs: Set<String> = []
+    @ObservationIgnored private var playedGuidanceIDs: Set<String> = []
+    @ObservationIgnored private var recordedGuidanceHistory = false
+    @ObservationIgnored private let guidanceSeed: UInt64
 
     init?(plan: YogaFlowPlan, session: CardioSessionModel, context: ModelContext) {
         guard plan.hasSteps else { return nil }
@@ -101,6 +106,7 @@ final class YogaFlowRunner {
         self.sessionID = session.id
         self.session = session
         self.context = context
+        self.guidanceSeed = Self.stableSeed(for: session.id)
         let now = Date()
         self.stepStartedAt = now
         self.stepEndsAt = now.addingTimeInterval(TimeInterval(steps[0].seconds))
@@ -147,7 +153,7 @@ final class YogaFlowRunner {
     func skip() {
         guard !isFinished else { return }
         let wasPaused = isPaused
-        YogaCueSpeaker.shared.stopSpeaking()
+        YogaGuidanceAudio.shared.stop()
         recordSplit(upTo: Date.now, durationSeconds: wasPaused ? currentElapsedSeconds() : nil)
         transitionHaptic(sideSwitch: false)
         if wasPaused {
@@ -162,7 +168,7 @@ final class YogaFlowRunner {
     func back() {
         guard !isFinished else { return }
         let wasPaused = isPaused
-        YogaCueSpeaker.shared.stopSpeaking()
+        YogaGuidanceAudio.shared.stop()
         let elapsed = currentElapsedSeconds()
         let target = elapsed < 4 ? max(0, currentIndex - 1) : currentIndex
         if wasPaused {
@@ -178,7 +184,7 @@ final class YogaFlowRunner {
         pausedRemaining = max(1, Int(stepEndsAt.timeIntervalSinceNow.rounded()))
         advanceTask?.cancel()
         advanceTask = nil
-        YogaCueSpeaker.shared.stopSpeaking()
+        YogaGuidanceAudio.shared.stop()
         WatchLink.shared.publishState()
     }
 
@@ -188,14 +194,14 @@ final class YogaFlowRunner {
         // Re-anchor the wall clock to the captured remainder.
         stepStartedAt = Date().addingTimeInterval(TimeInterval(pausedRemaining - currentSeconds))
         stepEndsAt = Date().addingTimeInterval(TimeInterval(pausedRemaining))
-        scheduleAdvance(announced: true)
+        scheduleAdvance()
         WatchLink.shared.publishState()
     }
 
     func stop() {
         advanceTask?.cancel()
         advanceTask = nil
-        YogaCueSpeaker.shared.stopSpeaking()
+        YogaGuidanceAudio.shared.stop(clearCaption: true)
     }
 
     private var currentSeconds: Int {
@@ -222,13 +228,11 @@ final class YogaFlowRunner {
         stepStartedAt = Date()
         stepEndsAt = stepStartedAt.addingTimeInterval(TimeInterval(step.seconds))
 
-        if announceEntry {
-            YogaCueSpeaker.shared.speakEntry(for: step, next: nextStep)
-        }
+        let guidancePlan = guidancePlan(for: step, index: index)
         // The watch mirrors pose state from the phone snapshot — push every
         // transition so its countdown and haptics stay anchored.
         WatchLink.shared.publishState()
-        scheduleAdvance(announced: announceEntry)
+        scheduleAdvance(plan: guidancePlan, playFromStart: announceEntry)
     }
 
     private func beginPausedStep(at index: Int) {
@@ -244,37 +248,38 @@ final class YogaFlowRunner {
         stepEndsAt = now.addingTimeInterval(TimeInterval(step.seconds))
         pausedRemaining = step.seconds
         isPaused = true
+        _ = guidancePlan(for: step, index: index)
         WatchLink.shared.publishState()
     }
 
-    /// One task per hold walks its cue checkpoints on the wall clock:
-    /// mid-hold breathing cue (holds ≥ 30s), a spoken transition warning 5s
-    /// out, then the advance itself. Each sleep re-derives its interval from
-    /// `stepEndsAt`, so a paused-and-resumed hold stays anchored.
-    private func scheduleAdvance(announced: Bool) {
+    /// One task per hold walks a precomputed modular guidance timeline and
+    /// then advances on the same wall-clock boundary. Measured MP3 durations
+    /// keep clips from colliding; a paused-and-resumed hold skips checkpoints
+    /// that have already passed instead of replaying a burst of old cues.
+    private func scheduleAdvance(
+        plan guidancePlan: YogaGuidancePlan? = nil,
+        playFromStart: Bool = false
+    ) {
         let step = steps[currentIndex]
         let index = currentIndex
+        let guidancePlan = guidancePlan ?? self.guidancePlan(for: step, index: index)
         advanceTask = Task { @MainActor [weak self] in
-            // Mid-hold cue for long holds. A checkpoint already in the past
-            // (resumed late in the hold) is skipped, not replayed.
-            if step.seconds >= 30 {
-                let midpoint = self?.stepEndsAt.addingTimeInterval(-Double(step.seconds) / 2) ?? .now
-                let wait = midpoint.timeIntervalSinceNow
+            for cue in guidancePlan.cues {
+                guard let self else { return }
+                let cueAt = self.stepStartedAt.addingTimeInterval(cue.offset)
+                let wait = cueAt.timeIntervalSinceNow
+                if wait <= 0, !playFromStart || cue.offset > 0 {
+                    continue
+                }
                 if wait > 0 {
                     try? await Task.sleep(for: .seconds(wait))
-                    guard !Task.isCancelled, let self, self.currentIndex == index, !self.isPaused else { return }
-                    YogaCueSpeaker.shared.speakHold(for: step)
                 }
-            }
-            // Transition warning at T-5s (skipped for very short holds).
-            if step.seconds >= 15 {
-                let warnAt = self?.stepEndsAt.addingTimeInterval(-5) ?? .now
-                let wait = warnAt.timeIntervalSinceNow
-                if wait > 0 {
-                    try? await Task.sleep(for: .seconds(wait))
-                    guard !Task.isCancelled, let self, self.currentIndex == index, !self.isPaused else { return }
-                    YogaCueSpeaker.shared.speakTransitionWarning(current: step, next: self.nextStep)
-                }
+                guard !Task.isCancelled, self.currentIndex == index, !self.isPaused else { return }
+                YogaGuidanceAudio.shared.play(
+                    cue.clip,
+                    voiceEnabled: self.plan.voiceGuidanceEnabled
+                )
+                self.playedGuidanceIDs.insert(cue.clip.id)
             }
             guard let endsAt = self?.stepEndsAt else { return }
             try? await Task.sleep(for: .seconds(max(0, endsAt.timeIntervalSinceNow)))
@@ -293,11 +298,53 @@ final class YogaFlowRunner {
         isFinished = true
         session.posesCompleted = steps.count
         try? context.save()
-        YogaCueSpeaker.shared.speakCompletion()
+        let completion = YogaGuidancePlanner.completionClip(
+            sessionSeed: guidanceSeed,
+            excludedClipIDs: YogaGuidanceHistory.recentClipIDs.union(plannedGuidanceIDs)
+        )
+        YogaGuidanceAudio.shared.play(
+            completion,
+            voiceEnabled: plan.voiceGuidanceEnabled
+        )
+        playedGuidanceIDs.insert(completion.id)
+        if !recordedGuidanceHistory {
+            YogaGuidanceHistory.record(Array(playedGuidanceIDs))
+            recordedGuidanceHistory = true
+        }
         #if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         #endif
         WatchLink.shared.publishState()
+    }
+
+    private func guidancePlan(for step: RuntimeStep, index: Int) -> YogaGuidancePlan {
+        if let existing = guidancePlans[index] { return existing }
+        let context = YogaGuidancePlanningContext(
+            poseSlug: step.poseStep.poseSlug,
+            poseName: step.poseStep.name,
+            side: step.side,
+            holdSeconds: step.seconds,
+            style: plan.style,
+            customTransitionCue: step.poseStep.transitionCue,
+            isFirstStep: index == 0
+        )
+        let excluded = YogaGuidanceHistory.recentClipIDs.union(plannedGuidanceIDs)
+        let created = YogaGuidancePlanner.plan(
+            context: context,
+            sessionSeed: guidanceSeed,
+            stepIndex: index,
+            excludedClipIDs: excluded,
+            measuredDurations: YogaAudioLibrary.measuredDurations
+        )
+        guidancePlans[index] = created
+        plannedGuidanceIDs.formUnion(created.clipIDs)
+        return created
+    }
+
+    nonisolated private static func stableSeed(for id: UUID) -> UInt64 {
+        id.uuidString.utf8.reduce(14_695_981_039_346_656_037) { hash, byte in
+            (hash ^ UInt64(byte)) &* 1_099_511_628_211
+        }
     }
 
     /// Persist the completed hold as a split on the session — the raw

@@ -1,8 +1,8 @@
 import Foundation
 
-/// The model shown in every bundled yoga pose image. This is a presentation
-/// preference only; it never changes the pose, flow, or logged workout data.
-enum YogaInstructor: String, CaseIterable, Identifiable {
+/// The instructor identity shared by every bundled pose image and narration
+/// clip. It never changes the pose, flow, or logged workout data.
+enum YogaInstructor: String, Codable, CaseIterable, Identifiable, Sendable {
     static let preferenceKey = "yogaInstructorRaw"
 
     case female

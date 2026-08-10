@@ -26,7 +26,16 @@ final class CardioHistoryEditUITests: XCTestCase {
 
         // Profile → History. "See all workouts" sits at the bottom of a lazy
         // list — off-screen rows aren't in the hierarchy until scrolled to.
-        _ = app.staticTexts["Profile"].firstMatch.waitForExistence(timeout: 15)
+        // `--reset-store --seed-history` deliberately rebuilds the complete
+        // exercise catalog plus 120 sessions before applying `initialTab`.
+        // When a preceding UI run leaves a live workout in the store, Home
+        // can render that stale pre-reset snapshot while the MainActor seed is
+        // still working. Profile is the post-seed receipt; never start blind
+        // swipes against the temporary Home tree.
+        XCTAssertTrue(
+            app.staticTexts["Profile"].firstMatch.waitForExistence(timeout: 45),
+            "Expected the seeded profile after launch reset completed."
+        )
         let seeAll = app.staticTexts["See all workouts"].firstMatch
         var swipes = 0
         while !(seeAll.exists && seeAll.isHittable), swipes < 14 {

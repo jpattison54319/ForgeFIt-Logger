@@ -34,6 +34,7 @@ struct YogaExerciseCard: View {
     @State private var importing = false
     @State private var showFlowBuilder = false
     @State private var showPlayer = false
+    @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var activeSegmentMessage: String?
 
     private var plan: YogaFlowPlan? {
@@ -77,6 +78,14 @@ struct YogaExerciseCard: View {
                 }
                 try? modelContext.save()
                 WatchLink.shared.publishState()
+            }
+        }
+        .sheet(item: $yogaSafetyPresentation) { presentation in
+            switch presentation {
+            case .startClass:
+                YogaSafetyView(startAction: { beginAfterSafety() })
+            case .information:
+                YogaSafetyView()
             }
         }
         .fullScreenCover(isPresented: $showPlayer) {
@@ -135,7 +144,7 @@ struct YogaExerciseCard: View {
 
             Button {
                 if plan?.hasSteps == true {
-                    start(session)
+                    requestStart(session)
                 } else {
                     showFlowBuilder = true
                 }
@@ -152,10 +161,10 @@ struct YogaExerciseCard: View {
             .buttonStyle(PressableButtonStyle())
             .accessibilityIdentifier("start-yoga-class")
 
-            Text("Spoken cues guide each pose. Time, heart rate & calories auto-fill from Apple Watch.")
-                .font(.system(size: 12)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
-
-            contraindicationNote
+            VStack(spacing: 4) {
+                Text("Spoken cues guide each pose. Time, heart rate & calories auto-fill from Apple Watch.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
+            }
 
             Button { withAnimation { showManual.toggle() } } label: {
                 Text(showManual ? "Hide manual entry" : "Log without guide")
@@ -269,26 +278,6 @@ struct YogaExerciseCard: View {
     private var flowSummary: String {
         guard let plan, plan.hasSteps else { return "Choose poses or a class" }
         return "\(plan.structureSummary) · \(style.title)"
-    }
-
-    /// Safety surface: any contraindication note on any pose in the flow.
-    @ViewBuilder
-    private var contraindicationNote: some View {
-        let notes = (plan?.steps ?? [])
-            .compactMap { YogaPoseCatalog.pose(forSlug: $0.poseSlug) }
-            .flatMap(\.contraindications)
-        let unique = Array(Set(notes)).sorted()
-        if !unique.isEmpty {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(theme.warmup)
-                Text("Take care with: \(unique.joined(separator: ", ")). Skip any pose that hurts.")
-                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-        }
     }
 
     private func summaryStats(_ session: CardioSessionModel) -> some View {
@@ -444,6 +433,22 @@ struct YogaExerciseCard: View {
         YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
         showPlayer = true
         WatchLink.shared.publishState()
+    }
+
+    private func requestStart(_ session: CardioSessionModel) {
+        guard YogaSafetyAcknowledgement.isAccepted else {
+            yogaSafetyPresentation = .startClass
+            return
+        }
+        start(session)
+    }
+
+    private func beginAfterSafety() {
+        guard let session else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            start(session)
+        }
     }
 
     private func complete(_ session: CardioSessionModel) {
@@ -660,6 +665,7 @@ struct YogaPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var breathingIn = false
+    @State private var guidanceAudio = YogaGuidanceAudio.shared
     let session: CardioSessionModel
     let workoutExercise: WorkoutExerciseModel
     let onComplete: () -> Void
@@ -781,24 +787,26 @@ struct YogaPlayerView: View {
                 }
             }
 
-            // Visual transcript of the full entry script — how to actually
-            // get into the pose — so the class works with cues muted or
-            // VoiceOver running, and the art has words to back it up.
-            if let pose = runner.currentPose, !pose.cues.entry.isEmpty {
-                VStack(spacing: 3) {
-                    ForEach(pose.cues.entry, id: \.self) { line in
-                        Text(line)
-                            .font(.system(size: 14))
-                            .foregroundStyle(theme.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            // Transcript-identical caption for the cue currently playing (or
+            // most recently delivered). Muting narration never removes the
+            // words, so the guide remains usable without audio.
+            if let caption = guidanceAudio.currentCaption {
+                VStack(spacing: 4) {
+                    Text(guidanceAudio.isSpeaking ? "Now guiding" : "Last guidance")
+                        .font(.tag)
+                        .foregroundStyle(theme.textTertiary)
+                    Text(caption)
+                        .font(.system(size: 16))
+                        .foregroundStyle(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, Space.lg)
+                .accessibilityElement(children: .combine)
             } else if let cue = runner.currentStep?.poseStep.transitionCue {
                 // Custom poses have no catalog script; show the author's cue.
                 Text(cue)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -813,12 +821,6 @@ struct YogaPlayerView: View {
                     Text(next.displayName)
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
                 }
-            }
-
-            if let contraindications = runner.currentPose?.contraindications, !contraindications.isEmpty {
-                Label(contraindications.joined(separator: " · "), systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.warmup)
             }
         }
     }

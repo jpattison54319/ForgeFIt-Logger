@@ -11,7 +11,7 @@ import OSLog
 ///   Spotify/podcasts instead of stopping them, follows the active route
 ///   (speaker or earbuds), and stays audible with the ringer switch off —
 ///   gym phones live on silent. The session is only active around the chime
-///   (same discipline as YogaCueSpeaker), then released so other audio
+///   (same discipline as YogaGuidanceAudio), then released so other audio
 ///   returns to full volume.
 /// - Locked/background: the rest-end notification carries the same .caf
 ///   (NotificationScheduler), so the identity is identical on the lock

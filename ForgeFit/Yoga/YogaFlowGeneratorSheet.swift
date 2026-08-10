@@ -10,6 +10,14 @@ extension YogaPoseCatalog {
             guard let raw = seed.category,
                   let category = YogaFlowGenerator.Category(rawValue: raw),
                   let difficulty = YogaFlowGenerator.Difficulty(rawValue: seed.difficulty) else { return nil }
+            let sides: [YogaFlowPlan.Side?] = seed.unilateral ? [.left, .right] : [nil]
+            let minimumGuidedHold = sides.compactMap { side in
+                YogaGuidancePlanner.minimumCriticalHoldSeconds(
+                    poseSlug: seed.slug,
+                    poseName: seed.name,
+                    side: side
+                )
+            }.max() ?? 1
             return YogaFlowGenerator.PoseInput(
                 slug: seed.slug,
                 poseID: id(forSlug: seed.slug),
@@ -17,7 +25,8 @@ extension YogaPoseCatalog {
                 category: category,
                 difficulty: difficulty,
                 unilateral: seed.unilateral,
-                defaultHoldSeconds: seed.defaultHoldSeconds
+                defaultHoldSeconds: seed.defaultHoldSeconds,
+                minimumHoldSeconds: minimumGuidedHold
             )
         }
     }

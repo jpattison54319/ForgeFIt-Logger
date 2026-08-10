@@ -28,6 +28,7 @@ struct RoutineEditorView: View {
     /// Reference-backed so per-frame finger updates invalidate only the small
     /// reorder overlay, not every editor row and target field.
     @State private var reorderSession: ExerciseReorderSession?
+    @State private var keyboardVisible = false
     /// Debounced structural-save plumbing — see `save()`.
     @State private var deferredSaveTask: Task<Void, Never>?
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
@@ -60,14 +61,18 @@ struct RoutineEditorView: View {
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { hideKeyboard() }
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.accent)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if keyboardVisible {
+                KeyboardAccessoryBar {
+                    Spacer()
+                    Button("Done") { hideKeyboard() }
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.accent)
+                        .frame(minHeight: 44)
+                }
             }
         }
+        .onKeyboardVisibilityChange($keyboardVisible)
         .interactiveBackSwipeEnabled()
         .onAppear {
             if entrySnapshot == nil {

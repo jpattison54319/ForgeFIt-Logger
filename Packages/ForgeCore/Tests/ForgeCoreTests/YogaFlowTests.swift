@@ -42,11 +42,18 @@ struct YogaFlowTests {
                 transitionCue: "Step your right foot forward"
             ),
             step("Downward-Facing Dog", hold: 30)
-        ])
+        ], voiceGuidanceEnabled: false)
         let json = try #require(original.encodedJSON())
         let decoded = try #require(YogaFlowPlan.decode(from: json))
         #expect(decoded == original)
         #expect(decoded.style == .vinyasa)
+        #expect(!decoded.voiceGuidanceEnabled)
+    }
+
+    @Test func legacyJSONDefaultsVoiceGuidanceOn() throws {
+        let json = #"{"styleRaw":"hatha","steps":[]}"#
+        let decoded = try #require(YogaFlowPlan.decode(from: json))
+        #expect(decoded.voiceGuidanceEnabled)
     }
 
     @Test func decodeToleratesUnknownStyleRaw() throws {

@@ -163,28 +163,30 @@ struct ActiveWorkoutLoggerView: View {
         .coordinateSpace(name: QuickIncrementController.spaceName)
         .onAppear(perform: reconcileEffortVisibility)
         .onChange(of: showRPEInLogger) { _, _ in reconcileEffortVisibility() }
-        // One keyboard toolbar for every set input in the logger, driven by
-        // whichever field registered itself with the router on focus. A
-        // single root-level toolbar can't hit the per-field UIKit
-        // toolbar-reuse bug that used to blank the accessory buttons.
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                if let actions = inputRouter.active {
-                    Button {
+        // One app-owned accessory for every set input, driven by whichever
+        // field registered itself with the router on focus. SwiftUI's iOS 26
+        // `.keyboard` toolbar emits an invalid-frame runtime warning as it is
+        // installed; a safe-area accessory keeps the same visible actions
+        // without entering that broken layout path.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let actions = inputRouter.active {
+                KeyboardAccessoryBar {
+                    Button("Dismiss keyboard", systemImage: "keyboard.chevron.compact.down") {
                         actions.onDismiss()
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
                     }
-                    .accessibilityLabel("Dismiss keyboard")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44, height: 44)
                     Spacer()
                     if let onNext = actions.onNext {
                         Button("Next", action: onNext)
                             .font(.bodyStrong)
                             .tint(theme.accent)
+                            .frame(minHeight: 44)
                     }
                     Button(actions.completeTitle, action: actions.onComplete)
                         .font(.bodyStrong)
                         .tint(theme.accent)
+                        .frame(minHeight: 44)
                 }
             }
         }

@@ -22,6 +22,7 @@ struct YogaBlockCard: View {
     @State private var workoutExercise: WorkoutExerciseModel?
     @State private var session: CardioSessionModel?
     @State private var showPlayer = false
+    @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var importing = false
     @State private var activeSegmentMessage: String?
 
@@ -58,6 +59,14 @@ struct YogaBlockCard: View {
                     workoutExercise: workoutExercise,
                     onComplete: { complete(session) }
                 )
+            }
+        }
+        .sheet(item: $yogaSafetyPresentation) { presentation in
+            switch presentation {
+            case .startClass:
+                YogaSafetyView(startAction: { beginAfterSafety() })
+            case .information:
+                YogaSafetyView()
             }
         }
         .alert("Another Segment Is Active", isPresented: Binding(
@@ -143,7 +152,7 @@ struct YogaBlockCard: View {
             flowSummary
             YogaInstructorPicker()
             Button {
-                startOrResume(session)
+                requestStartOrResume(session)
             } label: {
                 Label(plan?.hasSteps == true ? "Start Guided Class" : "Configure Flow", systemImage: plan?.hasSteps == true ? "play.fill" : "slider.horizontal.3")
                     .font(.bodyStrong)
@@ -326,6 +335,24 @@ struct YogaBlockCard: View {
         YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
         showPlayer = true
         WatchLink.shared.publishState()
+    }
+
+    private func requestStartOrResume(_ session: CardioSessionModel) {
+        // An already-running class was gated when it first started; resume it
+        // directly instead of interrupting recovery from an app relaunch.
+        if session.liveStartedAt != nil || YogaSafetyAcknowledgement.isAccepted {
+            startOrResume(session)
+            return
+        }
+        yogaSafetyPresentation = .startClass
+    }
+
+    private func beginAfterSafety() {
+        guard let session else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            startOrResume(session)
+        }
     }
 
     private func complete(_ session: CardioSessionModel) {

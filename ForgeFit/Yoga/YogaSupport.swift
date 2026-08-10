@@ -52,11 +52,19 @@ extension YogaFlowPlan {
         let poses = exercises.filter { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) }
         guard !poses.isEmpty else { return nil }
         return YogaFlowPlan(style: style, steps: poses.map { exercise in
-            PoseStep(
+            let slug = YogaPoseCatalog.slug(for: exercise)
+            let side: YogaFlowPlan.Side? = exercise.isUnilateral ? .left : nil
+            let defaultHold = exercise.defaultHoldSeconds ?? 30
+            let minimumHold = YogaGuidancePlanner.minimumCriticalHoldSeconds(
+                poseSlug: slug,
+                poseName: exercise.name,
+                side: side
+            ) ?? 1
+            return PoseStep(
                 poseID: exercise.id,
-                poseSlug: YogaPoseCatalog.slug(for: exercise),
+                poseSlug: slug,
                 name: exercise.name,
-                holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                holdSeconds: max(defaultHold, minimumHold),
                 side: exercise.isUnilateral ? .bothSides : nil
             )
         })
@@ -66,12 +74,20 @@ extension YogaFlowPlan {
     /// user adds one pose to a routine/workout without building a sequence.
     /// One-sided poses default to both sides so the practice stays balanced.
     static func singlePose(from exercise: ExerciseLibraryModel, style: YogaStyle = .hatha) -> YogaFlowPlan {
-        YogaFlowPlan(style: style, steps: [
+        let slug = YogaPoseCatalog.slug(for: exercise)
+        let side: YogaFlowPlan.Side? = exercise.isUnilateral ? .left : nil
+        let defaultHold = exercise.defaultHoldSeconds ?? 30
+        let minimumHold = YogaGuidancePlanner.minimumCriticalHoldSeconds(
+            poseSlug: slug,
+            poseName: exercise.name,
+            side: side
+        ) ?? 1
+        return YogaFlowPlan(style: style, steps: [
             PoseStep(
                 poseID: exercise.id,
-                poseSlug: YogaPoseCatalog.slug(for: exercise),
+                poseSlug: slug,
                 name: exercise.name,
-                holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                holdSeconds: max(defaultHold, minimumHold),
                 side: exercise.isUnilateral ? .bothSides : nil
             )
         ])

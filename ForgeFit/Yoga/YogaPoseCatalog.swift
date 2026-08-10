@@ -7,8 +7,10 @@ import SwiftData
 /// library (names and sequences aren't copyrightable; the cue scripts and
 /// illustrations are ours). The pose's *dynamic* identity (name, target
 /// regions, hold default) is seeded into `ExerciseLibraryModel` rows; the
-/// *static* class content (Sanskrit name, spoken cues, contraindications)
-/// stays in this catalog, looked up by slug, so it never bloats CloudKit.
+/// *static* class content stays in the app bundle, looked up by slug, so it
+/// never bloats CloudKit. `cues` and `contraindications` remain here only for
+/// decoding the original catalog schema; guided classes use the separately
+/// reviewed `yoga_guidance.json` content.
 struct YogaPoseSeed: Decodable {
     struct Cues: Decodable {
         let entry: [String]
@@ -205,7 +207,10 @@ enum YogaPoseCatalog {
             // "yoga/<slug>" links the row back to this catalog and its
             // instructor-specific bundled image resources.
             set(\.mediaSlug, idNamespace + seed.slug)
-            set(\.instructions, seed.cues.entry + seed.cues.hold + [seed.cues.exit])
+            let reviewedInstructions = YogaGuidanceCatalog.guidance(forSlug: seed.slug)?
+                .cues.technique
+                .map(YogaGuidanceCatalog.resolvedForLibrary)
+            set(\.instructions, reviewedInstructions ?? (seed.cues.entry + seed.cues.hold + [seed.cues.exit]))
             if model.defaultWeightMode != .bodyweight {
                 model.defaultWeightMode = .bodyweight
                 modelChanged = true

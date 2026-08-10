@@ -1,0 +1,1949 @@
+Command line invocation:
+    /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5" "-only-testing:ForgeFitTests" -resultBundlePath artifacts/release-audit-2026-08-09/AppTests.xcresult
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  ForgeHealth: /Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeHealth @ local
+  ForgeUI: /Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeUI @ local
+  ForgeCore: /Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeCore @ local
+  ForgeWorkoutSession: /Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeWorkoutSession @ local
+  ForgeData: /Users/jamespattison/Developer/ForgeFit/ForgeFit/Packages/ForgeData @ local
+
+Writing result bundle at path:
+	/Users/jamespattison/Developer/ForgeFit/ForgeFit/artifacts/release-audit-2026-08-09/AppTests.xcresult
+
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (12 targets)
+    Target 'ForgeFitUITests' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeFit' in project 'ForgeFit'
+    Target 'ForgeFitTests' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeFit' in project 'ForgeFit'
+    Target 'ForgeFit' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeFitWatch Watch App' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeFitWidgets' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+        ➜ Explicit dependency on target 'ForgeData-product' in project 'ForgeData'
+    Target 'ForgeData-product' in project 'ForgeData'
+        ➜ Explicit dependency on target 'ForgeData' in project 'ForgeData'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+    Target 'ForgeData' in project 'ForgeData'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+    Target 'ForgeFitWidgets' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+    Target 'ForgeCore-product' in project 'ForgeCore'
+        ➜ Explicit dependency on target 'ForgeCore' in project 'ForgeCore'
+    Target 'ForgeCore' in project 'ForgeCore' (no dependencies)
+    Target 'ForgeFitWatch Watch App' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeFitWatchComplication' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+    Target 'ForgeFitWatchComplication' in project 'ForgeFit'
+        ➜ Explicit dependency on target 'ForgeCore-product' in project 'ForgeCore'
+    Target 'ForgeCore-product' in project 'ForgeCore'
+        ➜ Explicit dependency on target 'ForgeCore' in project 'ForgeCore'
+    Target 'ForgeCore' in project 'ForgeCore' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/jamespattison/Developer/ForgeFit/ForgeFit/ForgeFitWatch Watch App/Assets.xcassets
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode-beta.app/Contents/Developer/Platforms/WatchSimulator.platform/Developer/SDKs/WatchSimulator27.0.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/jamespattison/Developer/ForgeFit/ForgeFit/ForgeFit/Assets.xcassets
+
+ExecuteExternalTool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+
+Build description signature: 982a9c0a73f91aa7c9c0b137b7fb0965
+Build description path: /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/XCBuildData/982a9c0a73f91aa7c9c0b137b7fb0965.xcbuilddata
+ClangStatCache /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk /Users/jamespattison/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator27.0-24A5390e-3243818bda632a4370e1cc7a9fd181c5.sdkstatcache
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.0.sdk -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator27.0-24A5390e-3243818bda632a4370e1cc7a9fd181c5.sdkstatcache
+
+ClangStatCache /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/WatchSimulator.platform/Developer/SDKs/WatchSimulator27.0.sdk /Users/jamespattison/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/watchsimulator27.0-24R5325e-a5f7e4e8a6e1eec1c6b0e4b32e6ea9b3.sdkstatcache
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-beta.app/Contents/Developer/Platforms/WatchSimulator.platform/Developer/SDKs/WatchSimulator27.0.sdk -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/watchsimulator27.0-24R5325e-a5f7e4e8a6e1eec1c6b0e4b32e6ea9b3.sdkstatcache
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatchComplication.appex/Info.plist /Users/jamespattison/Developer/ForgeFit/ForgeFit/ComplicationInfo.plist (in target 'ForgeFitWatchComplication' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Developer/ForgeFit/ForgeFit/ComplicationInfo.plist -producttype com.apple.product-type.app-extension -expandbuildsettings -format binary -platform watchsimulator -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatchComplication.appex/Info.plist
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitWidgets.appex/Info.plist /Users/jamespattison/Developer/ForgeFit/ForgeFit/WidgetsInfo.plist (in target 'ForgeFitWidgets' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Developer/ForgeFit/ForgeFit/WidgetsInfo.plist -producttype com.apple.product-type.app-extension -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitWidgets.build/assetcatalog_generated_info.plist -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitWidgets.appex/Info.plist
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/Info.plist /Users/jamespattison/Developer/ForgeFit/ForgeFit/WatchInfo.plist (in target 'ForgeFitWatch Watch App' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Developer/ForgeFit/ForgeFit/WatchInfo.plist -producttype com.apple.product-type.application -genpkginfo /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/PkgInfo -expandbuildsettings -format binary -platform watchsimulator -additionalcontentfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.build/assetcatalog_generated_info.plist -scanforprivacyfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/PlugIns/ForgeFitWatchComplication.appex -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/Info.plist
+
+CopySwiftLibs /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app (in target 'ForgeFitWatch Watch App' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/ForgeFitWatch\ Watch\ App.debug.dylib --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/Frameworks --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/PlugIns --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/SystemExtensions --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/Extensions --platform watchsimulator --toolchain /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.app/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-watchsimulator/ForgeFitWatch\ Watch\ App.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/Info.plist /Users/jamespattison/Developer/ForgeFit/ForgeFit/AppInfo.plist (in target 'ForgeFit' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Developer/ForgeFit/ForgeFit/AppInfo.plist -producttype com.apple.product-type.application -genpkginfo /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFit.build/assetcatalog_generated_info.plist -scanforprivacyfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/PlugIns/ForgeFitWidgets.appex -scanforprivacyfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/Watch/ForgeFitWatch\ Watch\ App.app -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/Info.plist
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/PlugIns/ForgeFitTests.xctest/Info.plist /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitTests.build/empty-ForgeFitTests.plist (in target 'ForgeFitTests' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitTests.build/empty-ForgeFitTests.plist -producttype com.apple.product-type.bundle.unit-test -expandbuildsettings -format binary -platform iphonesimulator -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFit.app/PlugIns/ForgeFitTests.xctest/Info.plist
+
+ProcessInfoPlistFile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/Info.plist /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitUITests.build/empty-ForgeFitUITests.plist (in target 'ForgeFitUITests' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-infoPlistUtility /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitUITests.build/empty-ForgeFitUITests.plist -producttype com.apple.product-type.bundle.ui-testing -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitUITests.build/ProductTypeInfoPlistAdditions.plist -o /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/Info.plist
+
+CopySwiftLibs /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest (in target 'ForgeFitUITests' from project 'ForgeFit')
+    cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/ForgeFitUITests --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/Frameworks --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/PlugIns --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/SystemExtensions --scan-folder /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/Extensions --platform iphonesimulator --toolchain /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Products/Debug-iphonesimulator/ForgeFitUITests-Runner.app/PlugIns/ForgeFitUITests.xctest/Frameworks --strip-bitcode --scan-executable /Applications/Xcode-beta.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib --strip-bitcode-tool /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ForgeFit.build/Debug-iphonesimulator/ForgeFitUITests.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+PruneExplicitPrecompiledModules /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/jamespattison/Library/Developer/Xcode/DerivedData/ForgeFit-cvigiqqllcvbjjceaholahaurrgt/Build/Intermediates.noindex/ExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/jamespattison/Library/Developer/Xcode/DerivedData/SDKExplicitPrecompiledModules
+
+2026-08-09 16:24:06.798013-0400 ForgeFit[15775:3420581] [CK] Could not validate account info cache. (This is a potential performance issue.)
+2026-08-09 16:24:06.827960-0400 ForgeFit[15775:3420577] [CloudKit] CoreData+CloudKit: -[NSCloudKitMirroringDelegate _performSetupRequest:]_block_invoke(1230): <NSCloudKitMirroringDelegate: 0x103328c40>: Failed to set up CloudKit integration for store: <NSSQLCore: 0x1032f43c0> (URL: file:///Users/jamespattison/Library/Developer/CoreSimulator/Devices/DF4052E9-9894-45AE-84A8-C1F1EEA41A9D/data/Containers/Shared/AppGroup/71B2965B-9239-4101-84A1-0634EF7E43AC/Library/Application%20Support/plan.store)
+Error Domain=NSCocoaErrorDomain Code=134400 "Unable to initialize without an iCloud account (CKAccountStatusNoAccount)." UserInfo={NSLocalizedFailureReason=Unable to initialize without an iCloud account (CKAccountStatusNoAccount).}
+2026-08-09 16:24:06.828136-0400 ForgeFit[15775:3420577] [CloudKit] CoreData+CloudKit: -[NSCloudKitMirroringDelegate recoverFromError:](2304): <NSCloudKitMirroringDelegate: 0x103328c40> - Attempting recovery from error: Error Domain=NSCocoaErrorDomain Code=134400 "Unable to initialize without an iCloud account (CKAccountStatusNoAccount)." UserInfo={NSLocalizedFailureReason=Unable to initialize without an iCloud account (CKAccountStatusNoAccount).}
+2026-08-09 16:24:06.828383-0400 ForgeFit[15775:3420577] [CloudKit] CoreData+CloudKit: -[NSCloudKitMirroringDelegate _recoverFromError:withZoneIDs:forStore:inMonitor:](2617): <NSCloudKitMirroringDelegate: 0x103328c40> - Failed to recover from error: NSCocoaErrorDomain:134400
+Recovery encountered the following error: (null):0
+2026-08-09 16:24:07.490212-0400 ForgeFit[15775:3419821] [WC] WCSession has not been activated
+2026-08-09 16:24:07.490253-0400 ForgeFit[15775:3419821] [WC] WCSession has not been activated
+2026-08-09 16:24:07.490285-0400 ForgeFit[15775:3419821] [WC] WCSession has not been activated
+2026-08-09 16:24:07.674499-0400 ForgeFit[15775:3420588] [WC] -[WCSession onqueue_handleUpdateSessionState:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:07.680275-0400 ForgeFit[15775:3420588] [WC] WCSession is not paired
+2026-08-09 16:24:07.680384-0400 ForgeFit[15775:3420588] [WC] -[WCSession onqueue_handleUpdateSessionState:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:07.680476-0400 ForgeFit[15775:3420588] [WC] WCSession is not paired
+2026-08-09 16:24:07.680541-0400 ForgeFit[15775:3420588] [WC] -[WCSession onqueue_handleUpdateSessionState:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:07.680597-0400 ForgeFit[15775:3420588] [WC] WCSession is not paired
+2026-08-09 16:24:07.680654-0400 ForgeFit[15775:3420588] [WC] -[WCSession onqueue_handleUpdateSessionState:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:07.680716-0400 ForgeFit[15775:3420588] [WC] WCSession is not paired
+2026-08-09 16:24:07.981408-0400 ForgeFit[15775:3419821] [Invalid Configuration] Update NavigationRequestObserver tried to update multiple times per frame.
+2026-08-09 16:24:08.043627-0400 ForgeFit[15775:3420644] [plugin] AddInstanceForFactory: No factory registered for id <CFUUID 0x11a42e940> F8BB1C28-BAE8-11D6-9C31-00039315CD46
+Test Suite 'All tests' started at 2026-08-09 16:24:08.180.
+Test Suite 'All tests' passed at 2026-08-09 16:24:08.181.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+◇ Test run started.
+↳ Testing Library Version: 2074
+↳ Target Platform: arm64-apple-ios17.0-simulator
+◇ Suite LiveWorkoutLifecyclePolicyTests started.
+◇ Suite RoutineProgramImportTests started.
+◇ Suite QuickIncrementControllerTests started.
+◇ Suite RecoveryScoresTests started.
+◇ Suite DataExportTests started.
+◇ Suite PersonalRecordsTests started.
+◇ Suite HomeAnalyticsWorkerTests started.
+◇ Suite SwipeToDeleteDirectionTests started.
+◇ Suite RoutineDetailPresentationTests started.
+◇ Suite LiveSetCompletionTests started.
+◇ Suite SetSuggestionPolicyTests started.
+◇ Suite ExperimentUIStoreTests started.
+◇ Suite WrappedTests started.
+◇ Suite BlockSetPrefillPolicyTests started.
+◇ Suite WorkoutBlockPipelineTests started.
+◇ Suite TrainingWeekSupportTests started.
+◇ Suite ActivationSuggestionMaterializerTests started.
+◇ Suite RecoveryColorBandTests started.
+◇ Suite XPServiceTests started.
+◇ Suite ProgressionPlannerTests started.
+◇ Suite IncompleteSetHistoryPresentationTests started.
+◇ Suite IntervalRunnerDistanceTests started.
+◇ Suite WorkoutEffortPolicyTests started.
+◇ Suite SleepHistorySupportTests started.
+◇ Suite WorkoutActivityControllerTests started.
+◇ Suite FlexibilityAnalyticsTests started.
+◇ Suite WorkoutHistoryImportTests started.
+◇ Suite "Exercise reorder session" started.
+◇ Suite ExerciseModalityTests started.
+◇ Suite StatisticsAnalyticsTests started.
+◇ Suite WorkoutFinisherSubstanceTests started.
+◇ Suite ConditioningPresetTests started.
+◇ Suite WorkoutCalendarSupportTests started.
+◇ Suite PlanSharingTests started.
+◇ Suite ShareLogEntryTests started.
+◇ Suite InsightZeroGridTests started.
+◇ Suite IncompleteWorkSummaryTests started.
+◇ Suite SocialBackfillTests started.
+◇ Suite MicrocycleDayTimelineTests started.
+◇ Suite LaunchSeedPolicyTests started.
+◇ Suite SyncCoordinatorTests started.
+◇ Suite ConditioningCompletionContextTests started.
+◇ Suite LiveWorkoutMetricsTests started.
+◇ Suite ExperimentPrivacyTests started.
+◇ Suite RoutineDoseContextTests started.
+◇ Suite RoutineDuplicationTests started.
+◇ Suite AnalyticsFingerprintTests started.
+◇ Suite RestDayServiceTests started.
+◇ Suite SleepIntegrityTests started.
+◇ Suite CardioGoalAnnouncerTests started.
+◇ Suite HealthEnrichmentServiceTests started.
+◇ Suite WorkoutHistorySearchTests started.
+◇ Suite ExerciseSwapUsageBuilderTests started.
+◇ Suite HealthMetricSupportTests started.
+◇ Suite CardioExerciseStatsTests started.
+◇ Suite ExperimentHealthSnapshotTests started.
+◇ Suite SetHRRecoveryTests started.
+◇ Suite "Routine reorder session" started.
+◇ Suite MicrocycleRoutineMarkerTests started.
+◇ Suite CardioRouteOwnershipPolicyTests started.
+◇ Suite LiveExerciseLibraryCacheTests started.
+◇ Suite DailyStrainGaugePresentationTests started.
+◇ Suite MicrocycleDayAssignmentServiceTests started.
+◇ Suite CardioModalityContractTests started.
+◇ Suite StartupPerformanceTests started.
+◇ Suite ThemeTintInjectionTests started.
+◇ Suite DailyReadinessTests started.
+◇ Suite RecoverySnapshotStoreTests started.
+◇ Suite CalendarDayHealthSupportTests started.
+◇ Suite CalendarHealthStoreTests started.
+◇ Suite ExperimentDetailedMetricsTests started.
+◇ Suite InsightRecipeMatrixTests started.
+◇ Suite RestTimerWatchHookTests started.
+◇ Suite InsightMetricCatalogTests started.
+◇ Suite ExperimentComparisonPersistenceTests started.
+◇ Suite YogaPoseCatalogTests started.
+◇ Suite WatchStructuredSetSyncTests started.
+◇ Suite MicrocycleTrackingServiceTests started.
+◇ Suite LiveExerciseReplacementTests started.
+◇ Suite SocialFollowTests started.
+◇ Suite AccountResetServiceTests started.
+◇ Suite TodayVerdictTests started.
+◇ Suite CoachAdjustmentsTests started.
+◇ Suite TrophyCatalogTests started.
+◇ Suite SocialServiceDeleteTests started.
+◇ Suite ExperimentAnalysisAdapterIntegrityTests started.
+◇ Suite RestTimerControllerTests started.
+◇ Suite RoutineSnapshotTests started.
+◇ Suite ModeWeightTests started.
+◇ Suite ForgeFitTests started.
+◇ Suite ShareCardStyleTests started.
+◇ Suite CoachPlanServiceTests started.
+◇ Suite WeightModeTests started.
+◇ Suite ExperimentLifecycleServiceTests started.
+◇ Suite IntervalPresetTests started.
+◇ Suite HeartRateBandTests started.
+◇ Suite CardioBlockSupportTests started.
+◇ Suite CardioSeriesAssemblyTests started.
+◇ Suite DeferredInteractionWorkTests started.
+◇ Suite NocturnalAggregatorTests started.
+◇ Suite YogaWorkoutPipelineTests started.
+◇ Suite SleepHistoryStoreTests started.
+◇ Suite HeartsDemoPathTests started.
+◇ Suite DailyStrainEngineTests started.
+◇ Suite WorkoutHeartsRowTests started.
+◇ Suite SupersetUITests started.
+◇ Suite PlateMathTests started.
+◇ Suite AppQuickActionTests started.
+◇ Suite MorningReadinessDeliveryPolicyTests started.
+◇ Suite CatalogIntegrityTests started.
+◇ Suite HeartsEligibilityGateTests started.
+◇ Suite NextRoutineSuggestionTests started.
+◇ Suite TrainingLoadCalculatorTests started.
+◇ Suite ShareCardRenderTests started.
+◇ Suite CoachWeeklyReviewTests started.
+◇ Test validProgramsRequiresEveryDayToResolve() started.
+◇ Test importProgramWithNoResolvableDaysReturnsNil() started.
+◇ Test importProgramTwiceKeepsFolderAndRoutineNamesUnique() started.
+◇ Test onlyTheRecognizerThatOpenedTheFanCanUpdateOrFinishIt() started.
+◇ Test revealStagesPairEqualDistancesAndBudOutward() started.
+◇ Test weightOptionsUseNativeStepsForEachUnit() started.
+◇ Test neutralReleaseCancelsWithoutApplying() started.
+◇ Test fastReleaseUsesTerminalPointWhenNoChangedEventArrived() started.
+◇ Test layoutSlidesInsideBoundsNearTheTopEdge() started.
+◇ Test adjustmentUsesTheBaseCapturedWhenTheHoldBegins() started.
+◇ Test everyBandAppliesExactlyOnceInKilogramsAndPounds() started.
+◇ Test displayedBaseUsesTheVisibleGhostNotTheHiddenRoutineValue() started.
+◇ Test foregroundMaintenanceNeverRunsOverALiveWorkout() started.
+◇ Test importProgramCreatesFolderWithRoutinesInside() started.
+◇ Test highlightedBandAppliesAndTerminalJitterCannotReplaceIt() started.
+◇ Test invalidGeometryOrValueCannotOpenATransaction() started.
+◇ Test layoutStacksAroundTheFieldAndFreezesForTheTransaction() started.
+◇ Test eachRestAlertGetsAUniquePrefixMatchedIdentifier() started.
+◇ Test inAppFallbackCoversAShortForegroundDelay() started.
+◇ Test inAppFallbackDoesNotPlayInBackgroundOrLongAfterExpiry() started.
+◇ Test primaryRestAlertNeverFallsBackToForegroundNotificationAudio() started.
+◇ Test repsOptionsFanFromPlusThreeToMinusThree() started.
+◇ Test backupProjectionRequiresDirtyIdleForegroundState() started.
+◇ Test csvExportsWorkoutsAndRoutinesWithTombstonesDropped() started.
+◇ Test foregroundRestSoundCanBeClaimedByOnlyOneDeliveryPath() started.
+◇ Test firstEverSessionEarnsNoAwards() started.
+◇ Test warmupAndDeletedWorkoutsAreIgnored() started.
+◇ Test jsonKeepsHealthInAppendixOnlyAndDropsTombstones() started.
+◇ Test summaryPicksTheSingleBestSetPerKind() started.
+◇ Test beatingHistoryAwardsAllThreeRecords() started.
+◇ Test matchingHistoryIsNotARecord() started.
+◇ Test laterSetMustBeatEarlierSessionAward() started.
+◇ Test bodyweightRepairFetchesOnlyEligibleMissingSets() started.
+◇ Test untrainedMuscleReportsNoDataInsteadOfAScore() started.
+◇ Test systemicScoreIsBuildingWithNoDataAtAll() started.
+◇ Test confidenceIsHighWithCompleteData() started.
+◇ Test allTimeBestsSpanEveryWorkoutIncludingActive() started.
+◇ Test rpeTenSessionRecoversSlowerThanRpeSix() started.
+◇ Test hrvPartRequiresBaselineBeforeScoring() started.
+◇ Test backParentCountsEachSetOnceWhileChildrenKeepExactExposure() started.
+◇ Test cardioScoreNeedsACardioSessionFirst() started.
+◇ Test higherSessionRPELoadProducesLowerCardioFreshness() started.
+◇ Test trainingLoadIsNotPartOfTheSystemicRecoveryScore() started.
+◇ Test recentLoadAloneCannotTriggerADeload() started.
+◇ Test lowSevenDayHRVAverageLowersSystemicScore() started.
+◇ Test actionAgreesWithTheDisplayedScore() started.
+◇ Test scoreWorkerUsesANonMainSwiftDataExecutor() started.
+◇ Test muscleIsReadyAgainAfterThreeDays() started.
+◇ Test largerLatWorkoutTodayIsLessFreshThanResidualChestExposure() started.
+◇ Test everyParentUsesStrongestRoleInsteadOfSummingChildRoles() started.
+◇ Test strongLeftwardDragOpensDeleteIntent() started.
+◇ Test workoutLastNightCountsAsYesterdayNotToday() started.
+◇ Test ambiguousDiagonalWaitsForClearIntent() started.
+◇ Test confidenceIsLowWithNoData() started.
+◇ Test confidenceDropsWhenSleepIsMissing() started.
+◇ Test partialNightDoesNotScoreFragmentedOvernightBiometrics() started.
+◇ Test hardSessionYesterdayLeavesMusclePartiallyRecovered() started.
+◇ Test convertingBackToAFlatSetClearsTheOldStructuredShape() started.
+◇ Test trainingTodayScoresLowerThanTrainingYesterday() started.
+◇ Test verticalScrollIsPermanentlyRejected() started.
+◇ Test expectedCoverageUsesTheTrackerDefinitionLifetime() started.
+◇ Test everySetTypeHasItsSavedRoutineBadgeAndName() started.
+◇ Test numericEditDraftRoundTripsStoredPrecision() started.
+◇ Test closedRowRejectsRightwardDrag() started.
+◇ Test perWorkoutEntryRequiresAnIncludedCompletedWorkoutAndUsesItsStart() started.
+◇ Test openRowAcceptsRightwardDragToClose() started.
+◇ Test startRejectsAnActiveWorkoutEvenIfTheSetupScreenWasStale() started.
+◇ Test structuredShapesAndEffortAreReadable() started.
+◇ Test entryValueMustMatchTheTrackerDefinition() started.
+◇ Test explicitEntriesSurviveATypeChange() started.
+◇ Test priorMyoActivationWinsOverWorkingGhost() started.
+◇ Test otherStructuredConversionsPreserveTheirPlanShape() started.
+◇ Test firstClassRoutineBlockFreezesItsPlanAndOrigin() started.
+◇ Test startEnforcesOneActiveExperimentAtTheStoreBoundary() started.
+◇ Test legacyConditioningProjectsOnlyItsMovementRowsIntoBlock() started.
+◇ Test restoringTrackerCreatesTwoDisjointDefinitionLifetimes() started.
+◇ Test legacyConditioningStillProjectsBesideFirstClassYoga() started.
+◇ Test liveMyoConversionPreservesItsPerformedShapeInRoutine() started.
+◇ Test weekAlwaysRunsSundayThroughSaturday() started.
+◇ Test workingGhostCarriesIntoMyoWhenMyoHistoryIsAbsent() started.
+◇ Test completionStripMarksOnlyCompletedNonDeletedWorkouts() started.
+◇ Test headlineTotalsUseTheSameSundayBoundary() started.
+◇ Test strengthOnlyMonthSkipsCardioPages() started.
+◇ Test assistedActivationUsesTheModeSpecificField() started.
+◇ Test hotCardioTriggersZoneTwoPrescription() started.
+◇ Test pushPullImbalanceTriggersPullingPrescription() started.
+◇ Test perWorkoutEntryRejectsAWorkoutBeforeTheTrackerExisted() started.
+◇ Test emptyYearProducesNoReport() started.
+◇ Test volumeSpikeWithFallingReadinessPrescribesHoldingLoad() started.
+◇ Test rpeUpWithFlatStrengthPrescribesLighterWeek() started.
+◇ Test singleWorkoutMonthStillBuildsWithoutRankingPages() started.
+◇ Test typedWeightStillMaterializesSuggestedReps() started.
+◇ Test yearlyGeneratesInJanuaryAlongsideDecemberMonthly() started.
+◇ Test focusPrimaryIsAlwaysSpecific() started.
+◇ Test scheduleYearlyIsDueOnlyInJanuary() started.
+◇ Test missingWatchMetricsSkipHeartRatePage() started.
+◇ Test typedRepsStillMaterializeSuggestedWeight() started.
+◇ Test cardioOnlyMonthSkipsStrengthPages() started.
+◇ Test assistedActivationMaterializesAssistanceInsteadOfExternalWeight() started.
+◇ Test emptyMonthGeneratesNothing() started.
+◇ Test yearlyBuildsCelebrationPages() started.
+◇ Test previousMonthDataEnablesComparisonPage() started.
+◇ Test mixedMonthBuildsTheFullStory() started.
+◇ Test markViewedIsOneWayAndPreservedByRefresh() started.
+◇ Test recordsProduceThePositiveInsightAndMaintain() started.
+◇ Test scheduleDueMonthIsAlwaysThePreviousMonth() started.
+◇ Test emptyMonthProducesNoReport() started.
+◇ Test scheduleRefreshWindowCoversEarlyMonthOnly() started.
+◇ Test untouchedActivationMaterializesBothGhosts() started.
+◇ Test completionDoesNotReplaceTheSetsHistoricalBodyweightSnapshot() started.
+◇ Test assistedRecordIsAvailableOnTheCompletionRefresh() started.
+◇ Test strengthInsightUsesTheUnitCapturedBeforeBackgroundGeneration() started.
+◇ Test lateSyncedWorkoutRefreshesReportInsideWindowOnly() started.
+◇ Test strengthWorkoutXPUsesBaseDurationAndWorkingSets() started.
+◇ Test shortInvalidWorkoutGetsNoXP() started.
+◇ Test highVolumeWorkoutXPIsCapped() started.
+◇ Test importedHistoryDoesNotAwardXP() started.
+◇ Test displayedWeightUsesTheSetsWeightMode() started.
+◇ Test noPreviousSessionLeavesSeedValues() started.
+◇ Test displayedWeightAndRepsMaterializeIndependently() started.
+◇ Test awardingIsIdempotent() started.
+◇ Test levelCurveStartsSlowAndScales() started.
+◇ Test editedFieldWinsUntouchedFieldTakesPlaceholder() started.
+◇ Test clearedFieldReturnsToSuggestionState() started.
+◇ Test externalCompletionCanMaterializeDisplayedGhosts() started.
+◇ Test generationIsIdempotent() started.
+◇ Test cardioDurationFollowsTheSameRules() started.
+◇ Test cardioWorkoutXPUsesDurationAndDistance() started.
+◇ Test untouchedSuggestionCommitsAllPlaceholders() started.
+◇ Test adHocSetFillsOnlyEmptyFields() started.
+◇ Test failureTrainingDefaultsOnlyUnratedNonWarmupSets() started.
+◇ Test hiddenEffortClearsSeedAndDoesNotCopyPrevious() started.
+◇ Test pickedRPESurvivesMaterialization() started.
+◇ Test completedSetContributesVolume() started.
+◇ Test addedBodyweightSetRendersTheEnteredAddedWeight() started.
+◇ Test completedSetStillRendersLoggedValues() started.
+◇ Test incompleteSeededSetDoesNotRenderAsPerformed() started.
+◇ Test distanceStepAdvancesWhenTheFeedCrossesTheTarget() started.
+◇ Test initialEffortHonorsVisibilityAndFailurePreferences() started.
+◇ Test incompleteSeededSetDoesNotContributeVolume() started.
+◇ Test completedSetIsNeverRewritten() started.
+◇ Test distanceStepWithoutAFeedWaitsForManualSkip() started.
+◇ Test feedAppearingMidStepAnchorsToItsFirstReading() started.
+◇ Test stepTargetOutranksPlanTargetAndHollowBandsDoNotCount() started.
+◇ Test previewTargetsMatchApplyForExternalIncrease() started.
+◇ Test bodyweightExerciseIsRepsOnlyAndLeavesSetsUntouched() started.
+◇ Test noHistoryProducesNoSuggestionsInEitherPath() started.
+◇ Test bandsSplitAtFortyAndSeventy() started.
+◇ Test assistedSetRendersTheEnteredAssistance() started.
+◇ Test heldExerciseHoldsAtLastSessionNumbersWithOverrideReason() started.
+◇ Test hiddenEffortIsRemovedFromEverySet() started.
+◇ Test conditioningActivityShowsRoundTargetAndFreshHeartRate() started.
+◇ Test exactDateFilterDoesNotReturnAnAdjacentNight() started.
+◇ Test textSearchMatchesMonthDayYearAndWeekday() started.
+◇ Test regionSecondsAggregatesYogaAndStretchingSets() started.
+◇ Test parkedDefaultLeavesTargetsAloneAndRecordsNothing() started.
+◇ Test failureDefaultsCompletedWorkButPreservesWarmupsManualRatingsAndPendingSets() started.
+◇ Test historyGroupsNewestMonthsAndNightsFirst() started.
+◇ Test stampExposureFreezesSnapshotOnSession() started.
+◇ Test cardioMusclesLeadWithCardiovascular() started.
+◇ Test "A held row can cross multiple slots without mutating its source order" started.
+◇ Test storedKindWinsOverInference() started.
+◇ Test "Repeated and out-of-range slot updates remain stable" started.
+◇ Test guidedExposureCreditsActualHoldsByLabel() started.
+◇ Test hevyRoutineLikeCSVExplainsHowToExportWorkoutHistory() started.
+◇ Test nilKindInfersFromNameAndEquipment() started.
+◇ Test matcherReunitesHevyEquipmentSuffixWithCatalogOrdering() started.
+◇ Test matcherDoesNotLinkBareSquatToSquatJerk() started.
+◇ Test lowConfidenceCustomExerciseNeedsReview() started.
+◇ Test hevyCSVParsesLargeHistoryExport() started.
+◇ Test unknownStoredKindFallsBackToInference() started.
+◇ Test manualLogScalesPlanToLoggedDuration() started.
+◇ Test matcherKeepsEquipmentVariantsDistinct() started.
+◇ Test hevyCSVKeepsImportingWhenItAddsAnOptionalColumn() started.
+◇ Test matcherDoesNotSubstringMatch() started.
+◇ Test importCreatesClassifiedCustomStrengthExercise() started.
+◇ Test customCSVWithExerciseTitleIsNotMisidentifiedAsHevyRoutine() started.
+◇ Test hevyCSVParsesStrengthAndCardioRows() started.
+◇ Test CSVReportsMissingExerciseColumnBeforeReadingRows() started.
+◇ Test hevyCSVImportsValidRowsAndSummarizesInvalidRows() started.
+◇ Test genericStrongStyleCSVParsesSemicolonAndUnits() started.
+◇ Test hevyCSVReportsUnrecognizedDateWithRowAndValue() started.
+◇ Test commitCreatesCompletedWorkoutsAndSkipsDuplicateReimport() started.
+◇ Test matcherMatchesWhenOnlyImportSpecifiesEquipment() started.
+◇ Test hevyCSVCommitsCompleteWorkoutIntoCurrentDataModel() started.
+◇ Test finishingAnEmptyWorkoutDiscardsInsteadOfSaving() started.
+◇ Test finishRejectsStartedUntimedConditioningBelowItsTarget() started.
+◇ Test completedSetLiveCardioManualYogaAndNotesAllCount() started.
+◇ Test hevyCSVAllowsOptionalColumnsToBeAbsent() started.
+◇ Test pendingReviewIncludesConfidentBulkAddedExercises() started.
+◇ Test hevyCSVParsesDayFirst24HourDatesAndKilograms() started.
+◇ Test repRangesBucketByAdaptationZones() started.
+◇ Test matcherHandlesPluralAndOrder() started.
+◇ Test topExercisesRankByWorkingSets() started.
+◇ Test muscleDistributionCountsPrimaryFullAndSecondaryHalf() started.
+◇ Test emptyAndUntouchedWorkoutsHaveNoSubstance() started.
+◇ Test twentyOneFifteenNineIsAnExplicitDescendingLadderForTime() started.
+◇ Test cardioBreakdownAndBestsAggregateByModality() started.
+◇ Test trainingSplitBucketsPushPullLegs() started.
+◇ Test everyPresetBuildsAPlanWithEveryDeclaredExercise() started.
+◇ Test switchingPresetsReusesSharedMovementRows() started.
+◇ Test gridRespectsFirstWeekday() started.
+◇ Test monthStartIsMidnightOfTheFirst() started.
+◇ Test classifiesAuthoredConditioningYogaAndMixedWorkouts() started.
+◇ Test applyingPresetChangesOnlyItsSectionAndPreservesExistingRowIdentity() started.
+◇ Test gridAlignsFirstDayUnderItsWeekday() started.
+◇ Test classifiesStrengthCardioAndMixed() started.
+◇ Test hundredsChipperDefaultsToTenRoundsOfTen() started.
+◇ Test monthlyReportComparesAgainstPreviousMonth() started.
+◇ Test cindyHasItsCanonicalExercisesAndPrescription() started.
+◇ Test dayKeyGroupsByLocalDayNotRawTimestamp() started.
+◇ Test deletingProfileClearsQueuedIntents() started.
+◇ Test unpublishIsTerminalOverQueuedPublish() started.
+◇ Test reconcileUnpublishesLocallyDeletedShares() started.
+◇ Test gridHandlesLeapFebruaryWithNoLeadingBlanks() started.
+◇ Test reconcileWalksEveryRemotePage() started.
+◇ Test multipleWorkoutsOnOneDayShareAKey() started.
+◇ Test weekdaySymbolsRotateToFirstWeekday() started.
+◇ Test drainExecutesQueuedIntentsAndClears() started.
+◇ Test reconcilePublishesOnlyWorkoutsMissingRemotely() started.
+◇ Test itemsStampTrainingOrderAndTheLocalClock() started.
+◇ Test remoteSharesSurviveAFreshDeviceWithNoLocalHistory() started.
+◇ Test reconcileRepublishesEditedWorkoutsInPlace() started.
+◇ Test legacyTombstonesMigrateIntoTheOutbox() started.
+◇ Test remoteFetchFailureAbortsWithoutTouchingAnything() started.
+◇ Test untouchedYogaBlockIsNamed() started.
+◇ Test drainDropsPublishIntentsTheBuilderNoLongerYields() started.
+◇ Test countsUntickedSetsOnStartedExercises() started.
+◇ Test namesExercisesWhereNothingWasCompleted() started.
+◇ Test unresolvedExerciseNameFallsBackRatherThanDisappearing() started.
+◇ Test drainKeepsFailedIntentsForTheNextPass() started.
+◇ Test startedSessionBasedRowRaisesNothing() started.
+◇ Test onlyCompletedNonImportedForgeFitWorkoutsQualify() started.
+◇ Test fullyCompletedWorkoutRaisesNothing() started.
+◇ Test warmupSetsAreNotWarnedAbout() started.
+◇ Test untouchedSessionBasedRowIsNamed() started.
+◇ Test overlappingTagsReceiveTheSameEligibleDayWithoutLosingTheControlGrid() started.
+◇ Test everyEligibleDayCarriesAnExplicitZero() started.
+◇ Test optionalSensorSumsAreNeverZeroInjected() started.
+◇ Test longUntouchedListStaysReadable() started.
+◇ Test warmupOnlyExerciseIsNotReportedAsUntouched() started.
+◇ Test catalogBumpReseeds() started.
+◇ Test combinesSetsAndUntouchedExercises() started.
+◇ Test exerciseMetadataRevisionInvalidatesCachedSessionRows() started.
+◇ Test freshInstallSeeds() started.
+◇ Test newerStampThanBundledSkips() started.
+◇ Test upToDateLaunchSkips() started.
+◇ Test forcedResetAlwaysReseeds() started.
+◇ Test measurementDomainStartsAtThatMeasurementNotUnrelatedTraining() started.
+◇ Test emptyStoreReseedsDespiteCurrentStamp() started.
+◇ Test childSetEditRepublishesWithAdvancedWatermark() started.
+◇ Test finishedWorkoutSaveFlowsToTheCommunity() started.
+◇ Test softDeleteSaveWithdrawsTheShare() started.
+◇ Test importedAndInProgressWorkoutsNeverPublish() started.
+◇ Test emptyWorkoutProducesNoEntries() started.
+◇ Test tripleSupersetGroupsTogether() started.
+◇ Test consecutiveSameGroupExercisesBecomeOneSupersetEntry() started.
+◇ Test planFileIsRegisteredAsAnOpaqueOwnedDocument() started.
+◇ Test completedDayShowsTheLetterOfTheRoutinePerformed() started.
+◇ Test everyExerciseSurvivesGrouping() started.
+◇ Test adjacentDistinctGroupsDoNotMerge() started.
+◇ Test nonAdjacentMembersOfTheSameGroupDoNotReorderTheLog() started.
+◇ Test loneGroupMemberStaysStandalone() started.
+◇ Test automaticICloudBackupCannotEncodeExperimentData() started.
+◇ Test localStoreDirectoryIsExcludedFromOpaqueSystemBackup() started.
+◇ Test editingCompletedSetImmediatelyRefreshesSetAndWorkoutMetrics() started.
+◇ Test copyCarriesEveryPlannedField() started.
+◇ Test normalYesterdayTrainingIsContextNotAnAutomaticReduction() started.
+◇ Test nextDayIsReadyImmediatelyAfterTodaysWorkoutCompletes() started.
+◇ Test highLocalFatigueAndProjectedVolumeOfferAScopedLighterVersion() started.
+◇ Test copyUsesFreshIdentityAndLeavesSourceUntouched() started.
+◇ Test aNewWindowRestartsAtDayOneAndTheCompletedWindowStaysFinished() started.
+◇ Test editingACompletedWorkoutMovesTheFingerprint() started.
+◇ Test mixedWorkoutConditioningUsesBlockScopedActions() started.
+◇ Test startingAndDeletingWorkoutsMoveTheFingerprint() started.
+◇ Test deletingOneExperimentHardDeletesItsCustomGraph() started.
+◇ Test finishingAWorkoutMovesTheFingerprint() started.
+◇ Test standaloneConditioningKeepsWorkoutScopedActions() started.
+◇ Test sleepChoicesSurviveStoreRecreation() started.
+◇ Test removingThenLoggingAgainRevivesTheSameMarker() started.
+◇ Test activeWorkoutMutationsDoNotMoveTheFingerprint() started.
+◇ Test recoveryLabelsUntrackedSleepAsIntentionalExclusion() started.
+◇ Test demoSeedProducesHomeAlert() started.
+◇ Test logsTodayOrAPastDateAtStartOfDay() started.
+◇ Test normalNightNotFlagged() started.
+◇ Test noBaselineMeansNoFlag() started.
+◇ Test rejectsFutureDatesAndDaysWithCompletedTraining() started.
+◇ Test laterWorkoutCompletionAutomaticallyRemovesAConflict() started.
+◇ Test partialWearFlaggedBySparseCoverage() started.
+◇ Test partialNightExcludedFromSleepDebt() started.
+◇ Test circularMedianHandlesMidnightWrap() started.
+◇ Test recoveryLabelsConfirmedSleepInsteadOfCallingItPartial() started.
+◇ Test partialNightWithholdsAcuteScoreAndDoesNotChargeDebt() started.
+◇ Test genuineShortNightNotFlagged() started.
+◇ Test updatedSleepReplacesThePromptDurationWhenStillPartial() started.
+◇ Test trustworthyNightKeepsNocturnalCardiac() started.
+◇ Test percentileInterpolates() started.
+◇ Test manualOverrideSubstitutesDurationAndClearsFlag() started.
+◇ Test recoveryLabelsManuallyEditedSleep() started.
+◇ Test partialNightDropsNocturnalCardiacInFavorOfAllDay() started.
+◇ Test updatedSleepRetiresAStalePromptWhenNoLongerPartial() started.
+◇ Test finalWindowedMeasurementCanCompleteAWaitingGoal() started.
+◇ Test partialWearFlaggedByLateAnchor() started.
+◇ Test durationGoalUsesTheSegmentClockWithoutAVisibleCard() started.
+◇ Test unfinishedDeletedAndUncompletedStrengthWorkoutsDoNotCount() started.
+◇ Test repeatedCompletedWorkoutsIncrementLifetimeFavoriteCount() started.
+◇ Test completedCardioSessionCountsWithoutStrengthSets() started.
+◇ Test watchCaloriesAreScopedToTheCardioSegment() started.
+◇ Test fewerThanTwentyEightReadingsIsLabeledBuilding() started.
+◇ Test stableOvernightSignalsAreAllInPersonalRange() started.
+◇ Test HealthTileCountsSignalsOutsidePersonalRange() started.
+◇ Test respiratoryRateAndBloodOxygenUsePersonalRanges() started.
+◇ Test partialNightDoesNotSilentlySubstituteAllDayChannels() started.
+◇ Test noReadingsDoesNotInventAHealthScore() started.
+◇ Test refillsBodyweightAndRecomputesVolume() started.
+◇ Test fillsNilHealthFieldsAndRelinksUUID() started.
+◇ Test skipsSoftDeletedWorkouts() started.
+◇ Test completedSetsAndDuplicateRowsCountOncePerWorkout() started.
+◇ Test multipleLiveSourcesStillDeliverOnlyOnce() started.
+◇ Test dedicatedSleepingHeartRateIsNotRepeatedUnderOtherReadings() started.
+◇ Test filtersNarrowByKindMuscleExerciseSourceAndPRs() started.
+◇ Test sourceChangeStartsANewUsualBand() started.
+◇ Test enrichesOnlyRequestedWorkouts() started.
+◇ Test combinesActivityAndBodyweightWithoutRequiringRecoveryRows() started.
+◇ Test customDateRangeIsWholeDaysAndSwapsReversedBounds() started.
+◇ Test kindsDeriveFromContent() started.
+◇ Test sortsOrderByMetricWithNewestFirstTies() started.
+◇ Test neverOverwritesExistingValues() started.
+◇ Test indexSkipsInProgressAndDeletedAndOrdersNewestFirst() started.
+◇ Test prDetectionMarksFirstAndBeatenBestsOnly() started.
+◇ Test adapterUsesInjectedExactWindowHealthInsteadOfTheRollingHomeCache() started.
+◇ Test yogaHistorySearchesItsPoseNamesAndMuscles() started.
+◇ Test searchMatchesExerciseNotesMonthAndFoldsDiacritics() started.
+◇ Test emptyInputsProduceNoPoints() started.
+◇ Test suggestionsRankPrefixOverContainsAndRespectActiveFilters() started.
+◇ Test peakUsesPostCompletionSpikeAndRecoveryToNextSet() started.
+◇ Test includesOnlyCalendarDaysCompletelyInsideTheWindow() started.
+◇ Test recoveryClampsToZeroWhenHRKeepsRising() started.
+◇ Test setWithoutNearbyHRIsSkipped() started.
+◇ Test markersContinueAfterZ() started.
+◇ Test lastSetUsesFixedWindow() started.
+◇ Test lowerAndHigherScoresFillAwayFromTheCenter() started.
+◇ Test markersFollowRoutineOrderAndIncludeAlternatingPartner() started.
+◇ Test outerRangesDescribeLargerDeviations() started.
+◇ Test missingPersonalRangeDoesNotClaimDirection() started.
+◇ Test backfillLinksRealWorkoutRemovesRestConflictAndUpdatesProgress() started.
+◇ Test usualIsARangeCenteredOnTheGauge() started.
+◇ Test futureDaysCannotBeBackfilled() started.
+◇ Test swimCarriesThePoolContract() started.
+◇ Test runningContractAddsPowerAlongsidePaceCadenceElevation() started.
+◇ Test rowingSplitHeadlinePrefersDerivedOverStoredAndNeverGuesses() started.
+◇ Test pickerOffersOnlyUncreditedCompletedWorkoutsForDueRoutines() started.
+◇ Test labelsDistinguishEveryGaugeState() started.
+◇ Test rowingContractLeadsWithSplitStrokeAndWatts() started.
+◇ Test indoorBikeContractIsSpeedCadenceResistancePower() started.
+◇ Test jumpRopeSpeaksJumpsAndNothingElse() started.
+◇ Test authorizationStartsOnlyForTheStillPendingRecordingSession() started.
+◇ Test stairContractIsFloorsStepsRateAndLevel() started.
+◇ Test authorizationCannotStartLocationWhenBothSessionIDsAreNil() started.
+◇ Test everyModalityStillListsTheUniversalMetrics() started.
+◇ Test summarySpeaksTheModalityLanguage() started.
+◇ Test recordsFollowModalityContract() started.
+◇ Test rowingPaceFormatterSpeaksPer500() started.
+◇ Test yogaEntriesRecordsAndSummarySpeakMatVocabulary() started.
+◇ Test deletedSessionsAndWorkoutsAreExcluded() started.
+◇ Test legacySetBasedCardioFallsBackToSetDuration() started.
+◇ Test ellipticalSpeaksStrides() started.
+◇ Test entriesMatchThroughWorkoutExerciseID() started.
+◇ Test "Cross-folder order and membership persist together" started.
+◇ Test recorderIsCancelledWhenItsOwningSessionDisappears() started.
+◇ Test rowerTrendsSplitNotPace() started.
+◇ Test paceGuardRejectsGPSBlips() started.
+◇ Test "A folder header is an exact first-position target" started.
+◇ Test planAuditIsVersionGatedAndUsesANonMainContext() started.
+◇ Test "The flat stack crosses a folder boundary without moving headers" started.
+◇ Test stairRecordsCountFloorsNotDistance() started.
+◇ Test overlappingHealthRefreshesShareOneWorkerLoad() started.
+◇ Test runTrendsPaceAndFallsBackToDuration() started.
+◇ Test "Dropping on the dragged card is a no-op" started.
+◇ Test automaticHealthWorkoutImportThrottleSurvivesColdLaunches() started.
+◇ Test "A routine inserts between exact rows in another folder" started.
+◇ Test "Ungrouped supports exact insertion rather than append only" started.
+◇ Test "An alternating pair moves as one visible routine slot" started.
+◇ Test daytimeRestingHRDoesNotReplaceLockedSleepingChannel() started.
+◇ Test "A routine snaps through exact positions inside one folder" started.
+◇ Test lnSpaceBandsAreScaleFree() started.
+◇ Test reportUsesSharedVerdictInsteadOfASecondFlagDrivenCommand() started.
+◇ Test missingTonightSleepDoesNotReadAsBaselineBuilding() started.
+◇ Test noDataReadsAsBaselineBuilding() started.
+◇ Test guidanceNamesShortSleepWhenScoreStillTrainable() started.
+◇ Test reportActionAgreesWithDisplayScore() started.
+◇ Test stableNightScoresHigh() started.
+◇ Test awakeRestingHRIsNotJudgedAgainstSleepingBaseline() started.
+◇ Test guidanceCombinesMultipleFlagsInOneSentence() started.
+◇ Test badNightTanksDailyButNotTrend() started.
+◇ Test awakeHRVBeforeSleepSyncsDoesNotTankDailyScore() started.
+◇ Test guidanceNamesElevatedSleepingHRWhenScoreStillTrainable() started.
+◇ Test guidanceMentionsHRVWhenFlaggedButScoreStillTrainable() started.
+◇ Test aReadingWithNoScoresIsNotStored() started.
+◇ Test trendNeverIssuesATodayVerdictWhenAcuteScoreIsMissing() started.
+◇ Test recoveryOnlySnapshotFromPreviousVersionStillDecodes() started.
+◇ Test recoveryActionTintFollowsTheme() started.
+◇ Test refreshRetainsNewlyCreatedExerciseMissingFromCallerSnapshot() started.
+◇ Test nocturnalPreferredOverAllDay() started.
+◇ Test awakeOnlyUsersStillGetADailyScore() started.
+◇ Test reasonToneColorsFollowTheme() started.
+◇ Test dailyOrTrendMayBeAbsentIndividually() started.
+◇ Test aStrainOnlyReadingIsStored() started.
+◇ Test recordTodayOverwritesSoTodayTracksLive() started.
+◇ Test dashboardRidesAlongWithTodaysScores() started.
+◇ Test aScorelessDayStoresNoDashboard() started.
+◇ Test refreshedCallerEntryWinsWithoutDuplicatingTheExercise() started.
+◇ Test observedSleepDoesNotRewriteEditableTarget() started.
+◇ Test intervalStepTintFollowsTheme() started.
+◇ Test captureIfAbsentDoesNotOverwrite() started.
+◇ Test dashboardFromBeforeCrossSurfaceFieldsStillDecodes() started.
+◇ Test recordTodayCarriesStrainAndItsHistoricalTarget() started.
+◇ Test aNewRenderReplacesTheDashboardWholesale() started.
+◇ Test cachedDashboardBuildsWidgetAndWorkoutStartWithoutHistoryFetch() started.
+◇ Test backgroundBackfillMergesWithoutOverwritingCapturedScores() started.
+◇ Test selectedDayLoaderNeverRunsOnTheMainThread() started.
+◇ Test recordTodayIsSeparateDailyAndTrendNotDisplayScore() started.
+◇ Test dashboardSurvivesPersistenceRoundTrip() started.
+◇ Test aRecordWithoutALiveRenderKeepsTheMorningsDashboard() started.
+◇ Test snapshotsPersistedBeforeTheDashboardExistedStillDecode() started.
+◇ Test legacyCardioSpellingsShareOneCanonicalModality() started.
+◇ Test exerciseMetricsUseExactWindowsAndKeepMissingLoadsVisible() started.
+◇ Test plannedButUntouchedCardioAndYogaDoNotBecomeAchievements() started.
+◇ Test savedComparisonRoundTripsReferenceAndExplicitTrackerPairs() started.
+◇ Test legacyReferenceOnlyJSONStillLoads() started.
+◇ Test partialRefreshDoesNotEraseCapturedStrain() started.
+◇ Test everyRequiredScopeIsEnforcedAndEveryScopeConflictIsRejected() started.
+◇ Test additiveCardioMetricsAreZeroWhenTheCurrentPeriodHasNoSession() started.
+◇ Test trainingDaysUseTheExperimentFrozenTimeZone() started.
+◇ Test cardioMetricsStayModalityScopedAndReportPartialCoverage() started.
+◇ Test everyProjectedGroupRangeCanReachTheMinimumBucketCount() started.
+◇ Test meaningfulOneThroughFourOperandRecipesCoverEveryChartPayload() started.
+◇ Test everyProjectedBucketRangeDimensionLagAndChartClosesToAValidRecipe() started.
+◇ Test sanskritAliasResolvesInSearch() started.
+◇ Test optionalRecordedTotalsNeverOfferIncompletePeriodComparisons() started.
+◇ Test everyMetricAndShapeDeclarationMatchesAnExecutableRecipe() started.
+◇ Test everyPoseHasALineArtFigure() started.
+◇ Test catalogLoadsAndIsInternallyConsistent() started.
+◇ Test coverageAndRelationshipSampleCountsRespectStructuralMaximums() started.
+◇ Test poseIDsAreNamespacedAndCollisionFree() started.
+◇ Test pruneRemovesDeprecatedPosesOnly() started.
+◇ Test builtInFlowsReferenceOnlyCatalogPoses() started.
+◇ Test everyPoseHasBothInstructorImages() started.
+◇ Test everyTemplateResolvesRequiredPlaceholdersToAValidRecipe() started.
+◇ Test seedRespectsUserModifiedRows() started.
+◇ Test yogaPosesSurviveDeduplicationAlongsideStretches() started.
+◇ Test seedIsIdempotentAndTagsRowsAsYoga() started.
+◇ Test missingSelectedDayDoesNotBorrowThePreviousReading() started.
+◇ Test myoCommandsPersistActivationMiniSetsAndDerivedVolume() started.
+◇ Test importedSessionsCarryImportedProvenance() started.
+◇ Test futureMetricsAreExcludedFromHistoricalAssessment() started.
+◇ Test effortAndDensityMetricsProduce() started.
+◇ Test everyMetricValidatesAsASimpleTrend() started.
+◇ Test muscleBalanceTemplateValidates() started.
+◇ Test legacyRecipesDefaultPopulationAndV3RoundTrips() started.
+◇ Test amrapCommandsPersistTheSelectedAndElapsedWindow() started.
+◇ Test exerciseScopeReadsTheExercisesOwnNumbers() started.
+◇ Test cardioMetricsReadSegmentsNotTheWholeWorkout() started.
+◇ Test mixedPaceDenominatorsCannotShareOneDisplayAxis() started.
+◇ Test paceAndPowerRequireOneCardioType() started.
+◇ Test relationshipTemplatesUseTheCorrectTimeAndDomainAlignment() started.
+◇ Test hrvPrefersTheNocturnalWindow() started.
+◇ Test idsAreUniqueAndNamespaced() started.
+◇ Test eventCountsRequireCalendarBucketsAndExcludeConstantOneAnalyses() started.
+◇ Test catalogPopulationDefaultsToTrainingDaysAndHealthHasNoOverride() started.
+◇ Test relativeStrengthDividesByNearbyBodyweight() started.
+◇ Test everyCatalogIDHasAProducer() started.
+◇ Test restingHRPrefersSleepingHR() started.
+◇ Test operandScopesUnlockScopedTwins() started.
+◇ Test automaticRelationshipPopulationCopyNamesExcludedTrainingDays() started.
+◇ Test yogaMetricsUseTheSessionNotThePlan() started.
+◇ Test estimatedHealthDaysCarryEstimatedProvenance() started.
+◇ Test muscleOptionsCanonicalizePrioritizeAndSurfaceParents() started.
+◇ Test muscleMetricIDRoundTripsThroughTheTaxonomy() started.
+◇ Test optionalRecordedSumsNeverTreatMissingSensorsAsZero() started.
+◇ Test everyTemplateValidates() started.
+◇ Test insightPaceUsesTheSelectedActivityDenominator() started.
+◇ Test unknownIDProducesNothing() started.
+◇ Test paceCarriesItsDistanceWeight() started.
+◇ Test onlyPartitioningDimensionsCanRenderShares() started.
+◇ Test readinessComesFromSessionsNotHealthStore() started.
+◇ Test muscleObservationsReadTheSessionBreakdown() started.
+◇ Test noCompletedSetsLeavesTheExerciseForNormalInPlaceReplacement() started.
+◇ Test fullyCompletedExerciseStaysAndAddsAnEmptyReplacementBelow() started.
+◇ Test mixedRelationshipPopulationCopyNamesItsAsymmetricZeroPolicy() started.
+◇ Test zoneTimeSumsTheHardZonesOnly() started.
+◇ Test insufficientPairStateUsesOneConciseProgressLine() started.
+◇ Test muscleRecipesValidateThroughCoveringDescriptors() started.
+◇ Test successfulFollowRoundTrips() started.
+◇ Test currentWindowTracksRoutineAddsRemovalsMovesAndRenames() started.
+◇ Test shorteningCurrentCycleNeverRemovesAnElapsedDay() started.
+◇ Test zoneTimePreservesACompleteTrueZero() started.
+◇ Test rolloverKeepsOldSnapshotAndFreezesNewRoutineList() started.
+◇ Test aPartnerInAnotherMicrocycleRemainsItsOwnRequirementThere() started.
+◇ Test aNewTrackingRunEndsTheOldOneAndDisplayFlagsStayIndependent() started.
+◇ Test checkinDoesNotChangeRecoveryEngineDisplayScore() started.
+◇ Test ordinaryCheckinsAddContextWithoutChangingScoreDrivenAction() started.
+◇ Test rejectedFollowWriteReachesTheCaller() started.
+◇ Test sickCheckinOverridesActionButNotTheNumericScore() started.
+◇ Test editingDayTargetPreservesAssignmentsAndUsesNewLengthGoingForward() started.
+◇ Test deleteAllLocalModelsRemovesUserDataAndProgress() started.
+◇ Test completedSetsStayAndOnlyFreshUnfinishedSlotsMoveBelow() started.
+◇ Test completedRoutineCountsOnceAndDoesNotRollTheWindowEarly() started.
+◇ Test colocatedAlternatesFreezeAsOneRequirementAndEitherMemberCompletesIt() started.
+◇ Test resetOwnsPendingExperimentRoutes() started.
+◇ Test addingADayExtendsOnlyTheCurrentCycle() started.
+◇ Test startPersistsTenDayTargetAndFrozenRoutineOrder() started.
+◇ Test unavailableOrEmptyFolderNeedsAttentionAndCanRecover() started.
+◇ Test adjustWithoutRunningTimerDoesNotFire() started.
+◇ Test missingScoreProducesNoSyntheticFallback() started.
+◇ Test failedDeletionLeavesAccountOptedInForRetry() started.
+◇ Test onStateChangeFiresForStartAdjustAndSkip() started.
+◇ Test everyImportPathIsRecognizedAsImported() started.
+◇ Test liveForgeFitWorkoutsAreNative() started.
+◇ Test deleteProfileClearsLocalStateAndBackendData() started.
+◇ Test catalogContainsNoStreakTrophies() started.
+◇ Test trophyInputsMatchTotalsWhenNothingIsImported() started.
+◇ Test trophyInputsCountOnlyForgeFitLoggedTraining() started.
+◇ Test startIgnoresNonPositiveDurations() started.
+◇ Test adjustExtendsBothRemainingAndTotal() started.
+◇ Test adjustWithoutARunningTimerIsANoOp() started.
+◇ Test fixedBandsHaveOneAction(score:expected:) started.
+◇ Test adjustNeverDropsRemainingBelowOneSecond() started.
+◇ Test nonMicroStartClearsMicroOwner() started.
+◇ Test defaultDraftMatchesLegacyApplyBehavior() started.
+◇ Test resetDeletesEveryRegisteredModelType() started.
+◇ Test skipClearsEverything() started.
+◇ Test reduceVolumeDropsOneSetAndCapsRPE() started.
+◇ Test noAutomaticPlanFromNumericRecoveryBands() started.
+◇ Test smallExercisesKeepMinimumOneWorkingSet() started.
+◇ Test deloadHalvesSetsAndTrimsLoad() started.
+XCTestOutputBarrier◇ Test notesStampReflectsEditedVsDefault() started.
+◇ Test startArmsTheCountdownWithLabelAndMicroState() started.
+◇ Test editedSetsToDropFloorsAtOneWorkingSet() started.
+◇ Test editedWeightCutIsApplied() started.
+◇ Test futureCustomReferenceWindowIsRejected() started.
+◇ Test globalStrengthVolumeKeepsUnknownWorkingSetLoadVisible() started.
+◇ Test excludedExerciseStaysUntouched() started.
+◇ Test anotherExperimentUsesOnlyExplicitCompatibleTrackerPairs() started.
+◇ Test globalRepsKeepsMissingWorkingSetRepsVisible() started.
+◇ Test incompatibleNumberUnitsCannotBePaired() started.
+◇ Test restoreClearsFlowAddedSinceSnapshot() started.
+◇ Test restoreUndoesRenameRemovalAndAddition() started.
+◇ Test stopCoachingDeactivatesWithoutDeletingAnything() started.
+◇ Test restoreUndoesSetTargetEdits() started.
+◇ Test previousPeriodRetainsTheCurrentTrackerIdentity() started.
+◇ Test addedModeRoutesToAddedWeight() started.
+◇ Test incompleteBodyweightLoadCannotProduceAnEstimatedOneRepMax() started.
+◇ Test updatePlanEditsWeeksAndTargetAndSyncsProfileCadence() started.
+◇ Test confirmYogaPlanCreatesFolderlessActiveProgram() started.
+◇ Test currentWeekIsOneBasedAndUnclamped() started.
+◇ Test attachPlanActivatesWithoutModifyingTheFolder() started.
+◇ Test invalidStoredCustomValuesRemainVisibleAsMissingCoverage() started.
+◇ Test importedHealthStrengthWorkoutWithoutCR10HasNoSharedLoad() started.
+◇ Test fourDaysOffEasesBackInRatherThanPushingBlindly() started.
+◇ Test externalModeStillUsesWeight() started.
+◇ Test globalStrengthVolumeIsUnknownWhenEveryAttemptedLoadIsUnknown() started.
+◇ Test cardioRoutineStartsAsCardioSessionWithoutStrengthSets() started.
+◇ Test freshnessStaysDescriptiveAndOutOfHeadlineReasonChips() started.
+◇ Test updatePlanClampsNegativeWeeksToOpenEnded() started.
+◇ Test buildPlanReturnsHonestNoneForImpossibleEquipment() started.
+◇ Test recentLoadWaitsForBaselineAndDoesNotDriveReadiness() started.
+◇ Test elevatedRHRPlusPoorSleepReducesVolume() started.
+◇ Test confirmingSecondPlanDeactivatesFirstWithoutTouchingItsFolder() started.
+◇ Test rpeQuickPicksLeadWithWarmupThenSixToTenInHalfSteps() started.
+◇ Test assistedModeRoutesToAssistanceAndSubtractsFromBodyweight() started.
+◇ Test confirmPlanImportsFolderCreatesActiveProgramAndSyncsActiveMicrocycleDefault() started.
+◇ Test targetMuscleTrainedYesterdayIsContextNotAnAutomaticReduction() started.
+◇ Test shapesResolveForAllWorkoutKinds() started.
+◇ Test hybridPlanKeepsCardioInPosition() started.
+◇ Test warmupQuickPickStoresRPEFiveAndLabelsAsW() started.
+◇ Test conditioningShareBlocksHidePresetNamesByDefault() started.
+◇ Test buildPlanShortCircuitsToYogaWithoutMatching() started.
+◇ Test numericQuickPickLabelIsValueWithoutTrailingZero() started.
+◇ Test smallSessionShowsEverySet() started.
+◇ Test sustainedLowHRVIsAComponentNotAScoreBasedPrescription() started.
+◇ Test strengthSharedLoadUsesWholeSessionCR10NotSetCount() started.
+◇ Test mixedWorkoutSummaryUsesWholeWorkoutDurationNotCardioBlockDuration() started.
+◇ Test pureLegacyConditioningNeverBecomesStrengthHistory() started.
+◇ Test planlessConditioningSessionRemainsVisibleAndCompleted() started.
+◇ Test routineStartPreservesRoutineExerciseNoteOverSavedSetupNote() started.
+◇ Test elapsedConditioningFactsDoNotRepeatTheWorkoutTime() started.
+◇ Test yogaHistoryFoldsLeftAndRightIntoOnePose() started.
+◇ Test oneLowHRVSignalCannotAloneCreateAnAutomaticReduction() started.
+◇ Test allCardStylesRenderToCorrectlySizedImages() started.
+◇ Test metricsPageOnlyExistsWithHeartRateData() started.
+◇ Test backfillRepairsMisSeededAssistedHistory() started.
+◇ Test cardioSessionRPELoadUsesDurationTimesWholeSessionCR10() started.
+◇ Test exercisesBeyondCapBecomeMoreCount() started.
+◇ Test incompleteConditioningSharesActualWorkAndHonestStatus() started.
+◇ Test largeSessionCollapsesToTopSets() started.
+◇ Test externalSeedingIsUnchanged() started.
+◇ Test flowOnlyEditsAreDetectedAndRestored() started.
+◇ Test mixedConditioningAndYogaBlocksShareAsDistinctModalities() started.
+◇ Test legacyConditioningRowsCollapseIntoOneMixedTimelineBlock() started.
+◇ Test unchangedRoutineComparesEqual() started.
+◇ Test blockEditsAdditionsAndRemovalsAreRestored() started.
+◇ Test editsMakeSnapshotsUnequal() started.
+◇ Test assistedTonnageIsEffectiveLoadTimesReps() started.
+◇ Test resultsNotificationRouteContainsOnlyTheOpaqueExperimentID() started.
+◇ Test watchEditRoutesThroughTheModeField() started.
+◇ Test duplicateActivesAreReportedWithoutDestroyingData() started.
+◇ Test backfillLeavesExternalExercisesAlone() started.
+◇ Test routineStartLoadsSavedSetupNoteWhenRoutineExerciseHasNoNote() started.
+◇ Test reminderRequestsAreBoundedAndNeverOutliveTheExperiment() started.
+◇ Test notificationScheduleSnapshotSurvivesManagedModelDeletion() started.
+◇ Test openEndedSessionFallsBackToDuration() started.
+◇ Test routineSeededSetsCarryTheExerciseModeAndField() started.
+◇ Test sessionsOwnedByOneConditioningBlockCollapseToLongestWindow() started.
+◇ Test reconcileCompletesAtScheduledBoundary() started.
+◇ Test perWorkoutAndAnytimeTrackersDoNotCreateDailyNagReminders() started.
+◇ Test manualCardioWithoutLiveWindowIsSkipped() started.
+◇ Test repeatedInteractionChangesCoalesceToLatestWork() started.
+◇ Test pureCardioWorkoutProducesCardioBand() started.
+◇ Test conditioningAndYogaHaveDistinctBandKinds() started.
+◇ Test futureExperimentRemainsActive() started.
+◇ Test softDeleteHidesPresetFromActiveQuery() started.
+◇ Test scheduledWorkNeverRunsSynchronously() started.
+◇ Test sixDistributedHalfHourBinsYieldSleepingHR() started.
+◇ Test lifecycleFlushRunsPendingWorkImmediatelyAndOnlyOnce() started.
+◇ Test timeBalancedMediansIgnoreDaytimeSamples() started.
+◇ Test deleteAllLocalModelsRemovesPresets() started.
+◇ Test stitchesBriefAwakeningsIntoOneWindow() started.
+◇ Test presetRoundTripsPlanThroughStore() started.
+◇ Test belowMinimumSamplesYieldsNoSleepingHR() started.
+◇ Test titleJoinsDurationAndName() started.
+◇ Test strengthPlusLegacyUnlinkedCardioIsMixed() started.
+◇ Test subtitleIsNilWhenNothingIsAvailable() started.
+◇ Test noSleepWindowsYieldsNothing() started.
+◇ Test windowFallsBackToDurationWhenNoRecordedEnd() started.
+◇ Test sliceIsEmptyForDisjointWindow() started.
+◇ Test keepsSeparateNightsApart() started.
+◇ Test subtitleJoinsAvailablePartsInOrder() started.
+◇ Test titleFallsBackToNameWithoutDuration() started.
+◇ Test strengthOnlyIsNotMixed() started.
+◇ Test denseClusterCannotMasqueradeAsWholeNightHRV() started.
+◇ Test emptyWorkoutIsNotMixed() started.
+◇ Test sliceKeepsOnlyInWindowSamples() started.
+◇ Test windowPrefersLiveStartAndRecordedEnd() started.
+◇ Test idFormatsAreStable() started.
+◇ Test cardioOnlyIsNotMixed() started.
+◇ Test liveCardioInHybridWorkoutProducesBand() started.
+◇ Test preferenceKeyIsRegisteredForBackup() started.
+◇ Test malformedJSONYieldsEmpty() started.
+◇ Test windowIsNilWhenNoEndIsDerivable() started.
+◇ Test strengthPlusLinkedCardioIsMixed() started.
+◇ Test unknownIDsAreDroppedNotDefaulted() started.
+◇ Test encodeDecodeRoundTrips() started.
+◇ Test decodeDeduplicatesKeepingFirst() started.
+◇ Test ownHeartReadsAsYouNotYourDisplayName() started.
+◇ Test filterDanglingDropsDeadRoutinesAndFlows() started.
+◇ Test heartsResolveLeadNameAndCount() started.
+◇ Test menuShowsColorsForCreateAndAssignmentChoices() started.
+◇ Test storeKeepsTheCompleteHistoryRatherThanSevenNights() started.
+◇ Test loadFallsBackToDefaultsWhenAbsentOrEmpty() started.
+◇ Test decodeClampsToMaxCount() started.
+◇ Test noHeartsResolvesToAnEmptyListNotNil() started.
+◇ Test paletteStartsWithDistinctNamedGroups() started.
+◇ Test seededProfileOptsTheDemoUserIn() started.
+◇ Test saveThenLoadRoundTripsThroughScratchDefaults() started.
+◇ Test yogaSessionEarnsYogaXPNotCardioXP() started.
+◇ Test nextGroupAndCreateMenuReuseTheFirstAvailableIdentity() started.
+◇ Test runnerHubResumesAtFirstIncompletePoseSplit() started.
+◇ Test sleepOnlyHistoryAppliesCorrectionsWithoutInventingPartialWear() started.
+◇ Test multipleHeartsCollapseToOverflowCount() started.
+◇ Test accessibilitySummaryReadsAsASentence() started.
+◇ Test routineBlocksAndExercisesKeepOneSharedOrder() started.
+◇ Test finishWorkoutSkipsUntouchedYogaBlock() started.
+◇ Test deletedLeadProfileShowsNoNameButKeepsTheCount() started.
+◇ Test ratedWorkoutRaisesTrainingPercentile() started.
+◇ Test matchesBruteForceOnSeededRandomRun() started.
+◇ Test recoveryNeverMovesStrainOrUsualRange() started.
+◇ Test exactMixedLoad() started.
+◇ Test strengthRoutineStartIsUnchangedByYogaBranch() started.
+◇ Test fullHistoryLoaderNeverRunsOnTheMainThread() started.
+◇ Test shortYogaSessionIsNotEligible() started.
+◇ Test routineStartSynthesizesFlowForBarePose() started.
+◇ Test singleHeartShowsJustTheName() started.
+◇ Test edgeCases() started.
+◇ Test unratedWorkoutUsesEstimatedTrainingLoad() started.
+◇ Test fullDayStepTotalsDoNotChangeSameClockComparison() started.
+◇ Test finishWorkoutCompletesManualYogaAndStampsExposure() started.
+◇ Test shortHistoryDoesNotClaimAPersonalScore() started.
+◇ Test belowBarClampsToBar() started.
+◇ Test countRemainsVisibleAtZero() started.
+◇ Test startYogaQuickStartCreatesBlockWithoutSyntheticExercise() started.
+◇ Test barOnly() started.
+◇ Test pairLimitsAreHonored() started.
+◇ Test emptyInventoryIsJustTheBar() started.
+◇ Test routineStartKeepsYogaSessionUnconfiguredUntilBuilt() started.
+◇ Test exactLoadTwoPlates() started.
+◇ Test unloadableTargetReturnsClosest() started.
+◇ Test sameTimeMovementPercentileRaisesStrain() started.
+◇ Test legacyRoutineYogaRowProjectsToYogaBlock() started.
+◇ Test unloadableTargetPrefersNearerOver() started.
+◇ Test kilogramMicroPlates() started.
+◇ Test kilogramGymExactLoad() started.
+◇ Test everyProgramRoutineIDResolvesToATemplate() started.
+◇ Test restorativeYogaEarnsHalfRate() started.
+◇ Test statusIsFullyDeterminedByScoreAndUsualRange() started.
+◇ Test everyProgramScheduleEntryResolvesToARoutineID() started.
+◇ Test noDuplicateProgramIDs() started.
+◇ Test noDuplicateTemplateIDs() started.
+◇ Test inventoryRoundTripsThroughJSON() started.
+◇ Test cardioXPUnchangedByYogaComponent() started.
+◇ Test weightUnitFormatsAndParsesCanonicalKilograms() started.
+◇ Test everyProgramHasAValidFocus() started.
+◇ Test completeScoreAfterSevenSchedulesImmediately() started.
+◇ Test missingDailyScoreNeverSchedulesASevenDayFallback() started.
+◇ Test completeScoreBeforePreferredTimeSchedulesForSeven() started.
+◇ Test case passing 2 arguments score → 0.39, expected → .reduceVolume to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test case passing 2 arguments score → 0.5, expected → .reduceVolume to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test case passing 2 arguments score → 0.64, expected → .reduceVolume to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test case passing 2 arguments score → 0.65, expected → .trainAsPlanned to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test case passing 2 arguments score → 0.84, expected → .trainAsPlanned to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test completeScoreJustBeforeCutoffStillSchedulesImmediately() started.
+◇ Test case passing 2 arguments score → 0.85, expected → .trainAsPlanned to fixedBandsHaveOneAction(score:expected:) started.
+​◇ Test completeScoreAtOrAfterCutoffDoesNotNotify() started.
+◇ Test missingSleepNeverSchedulesAnIncompleteNotification() started.
+◇ Test emptyActiveMicrocycleFallsThroughToMesocycle() started.
+◇ Test mesocycleAndMicrocycleActiveTogetherMicrocycleWins() started.
+◇ Test rotatesAfterLastCompletionWithinActiveMicrocycle() started.
+◇ Test gateMatchesTheBulkFilterExactly() started.
+◇ Test unrelatedMicrocycleStillWinsOverActiveMesocycle() started.
+◇ Test onlyFinishedLiveWorkoutsCanShowHearts() started.
+◇ Test duplicateHealthUUIDCountsOnce() started.
+◇ Test cardioZonesBeatTheNeutralFallbackWhenSessionEffortIsMissing() started.
+◇ Test noActiveFoldersBestGuessesAcrossEverything() started.
+◇ Test alternatingPairOccupiesOneSuggestionSlotAndSwitchesItsDueMember() started.
+◇ Test unratedHistoryUsesAnExplicitlyEstimatedFallback() started.
+◇ Test onlyMicrocycleActiveScopesToThatMicrocycle() started.
+◇ Test onlyMesocycleActiveRotatesAcrossItsMicrocycles() started.
+◇ Test detailLessHealthStrengthImportUsesMeasuredHeartRate() started.
+◇ Test missingWholeSessionCR10FallsBackToStrengthAndCardioComponents() started.
+◇ Test wholeSessionCR10UsesOneDoseForCardio() started.
+◇ Test setRPEThenRIRThenNeutralDefaultResolveStrengthEffort() started.
+◇ Test comparisonWaitsForSixCompletePriorWeeks() started.
+◇ Test detailLessHealthStrengthImportRequiresAnEffortSignal() started.
+◇ Test noRoutinesReturnsNil() started.
+◇ Test comparisonUsesSixNonOverlappingCompleteWeeksAndMedian() started.
+◇ Test wholeSessionCR10UsesDurationTimesRatingForStrength() started.
+◇ Test folderCardRendersMesoAndMacro() started.
+◇ Test mixedWorkoutIsNeverDoubleCountedAcrossModalities() started.
+◇ Test workoutCardRendersTallImageWithAllSections() started.
+◇ Test conditioningOnlyAndMixedSavedImagesRenderMeaningfulScores() started.
+◇ Test routineCardRenders() started.
+◇ Test wrappedPagesRenderAsShareCards() started.
+◇ Test lastWeeksActiveOverrideIsNotReturnedForThisWeek() started.
+◇ Test onTrackWeekProducesNoProposalsAndStampsAnchor() started.
+◇ Test completedBlockProducesDeloadWeekProposal() started.
+◇ Test cancelTurnsAnActiveOverrideCancelled() started.
+◇ Test weekAnchorIsAlwaysMondayRegardlessOfSundayFirstCalendar() started.
+◇ Test liftHeldTwoConsecutiveSessionsProducesHoldProposalAndAcceptedOverrideHoldsInProgressionPlanner() started.
+◇ Test declinedProposalNeverRecreatedOnRereviewSameWeek() started.
+◇ Test weeklyDeloadBeatsDailyReduceVolumeAndNeverStacksTwoReductions() started.
+◇ Test incompleteWeekProducesCarryForwardProposal() started.
+✔ Test displayedBaseUsesTheVisibleGhostNotTheHiddenRoutineValue() passed after 0.334 seconds.
+✔ Test invalidGeometryOrValueCannotOpenATransaction() passed after 0.334 seconds.
+✔ Test weightOptionsUseNativeStepsForEachUnit() passed after 0.334 seconds.
+✔ Test revealStagesPairEqualDistancesAndBudOutward() passed after 0.334 seconds.
+✔ Test eachRestAlertGetsAUniquePrefixMatchedIdentifier() passed after 0.334 seconds.
+✔ Test onlyTheRecognizerThatOpenedTheFanCanUpdateOrFinishIt() passed after 0.334 seconds.
+✔ Test adjustmentUsesTheBaseCapturedWhenTheHoldBegins() passed after 0.334 seconds.
+✔ Test highlightedBandAppliesAndTerminalJitterCannotReplaceIt() passed after 0.334 seconds.
+✔ Test layoutSlidesInsideBoundsNearTheTopEdge() passed after 0.334 seconds.
+✔ Test fastReleaseUsesTerminalPointWhenNoChangedEventArrived() passed after 0.334 seconds.
+✔ Test neutralReleaseCancelsWithoutApplying() passed after 0.334 seconds.
+✔ Test inAppFallbackDoesNotPlayInBackgroundOrLongAfterExpiry() passed after 0.334 seconds.
+✔ Test layoutStacksAroundTheFieldAndFreezesForTheTransaction() passed after 0.334 seconds.
+✔ Test primaryRestAlertNeverFallsBackToForegroundNotificationAudio() passed after 0.334 seconds.
+✔ Test repsOptionsFanFromPlusThreeToMinusThree() passed after 0.334 seconds.
+✔ Test backupProjectionRequiresDirtyIdleForegroundState() passed after 0.333 seconds.
+✔ Test foregroundMaintenanceNeverRunsOverALiveWorkout() passed after 0.334 seconds.
+✔ Test everyBandAppliesExactlyOnceInKilogramsAndPounds() passed after 0.358 seconds.
+✔ Test closedRowRejectsRightwardDrag() passed after 0.354 seconds.
+✔ Test foregroundRestSoundCanBeClaimedByOnlyOneDeliveryPath() passed after 0.358 seconds.
+✔ Test strongLeftwardDragOpensDeleteIntent() passed after 0.355 seconds.
+✔ Test assistedActivationMaterializesAssistanceInsteadOfExternalWeight() passed after 0.349 seconds.
+✔ Test verticalScrollIsPermanentlyRejected() passed after 0.354 seconds.
+✔ Test openRowAcceptsRightwardDragToClose() passed after 0.354 seconds.
+✔ Test ambiguousDiagonalWaitsForClearIntent() passed after 0.355 seconds.
+✔ Test untouchedActivationMaterializesBothGhosts() passed after 0.351 seconds.
+✔ Test typedWeightStillMaterializesSuggestedReps() passed after 0.350 seconds.
+✔ Test inAppFallbackCoversAShortForegroundDelay() passed after 0.358 seconds.
+✔ Test typedRepsStillMaterializeSuggestedWeight() passed after 0.352 seconds.
+✔ Test clearedFieldReturnsToSuggestionState() passed after 0.349 seconds.
+✔ Test adHocSetFillsOnlyEmptyFields() passed after 0.348 seconds.
+✔ Test untouchedSuggestionCommitsAllPlaceholders() passed after 0.349 seconds.
+✔ Test externalCompletionCanMaterializeDisplayedGhosts() passed after 0.348 seconds.
+✔ Test hiddenEffortClearsSeedAndDoesNotCopyPrevious() passed after 0.348 seconds.
+✔ Test editedFieldWinsUntouchedFieldTakesPlaceholder() passed after 0.349 seconds.
+✔ Test displayedWeightUsesTheSetsWeightMode() passed after 0.349 seconds.
+✔ Test noPreviousSessionLeavesSeedValues() passed after 0.349 seconds.
+✔ Test pickedRPESurvivesMaterialization() passed after 0.349 seconds.
+✔ Test initialEffortHonorsVisibilityAndFailurePreferences() passed after 0.349 seconds.
+✔ Test displayedWeightAndRepsMaterializeIndependently() passed after 0.349 seconds.
+✔ Test cardioDurationFollowsTheSameRules() passed after 0.349 seconds.
+✔ Test completedSetIsNeverRewritten() passed after 0.349 seconds.
+✔ Test failureTrainingDefaultsOnlyUnratedNonWarmupSets() passed after 0.349 seconds.
+✔ Test incompleteSeededSetDoesNotRenderAsPerformed() passed after 0.349 seconds.
+✔ Test bandsSplitAtFortyAndSeventy() passed after 0.349 seconds.
+✔ Test addedBodyweightSetRendersTheEnteredAddedWeight() passed after 0.381 seconds.
+✔ Test completedSetContributesVolume() passed after 0.349 seconds.
+✔ Test exactDateFilterDoesNotReturnAnAdjacentNight() passed after 0.380 seconds.
+✔ Test cardioMusclesLeadWithCardiovascular() passed after 0.380 seconds.
+✔ Test assistedSetRendersTheEnteredAssistance() passed after 0.381 seconds.
+✔ Test storedKindWinsOverInference() passed after 0.380 seconds.
+✔ Test "A held row can cross multiple slots without mutating its source order" passed after 0.380 seconds.
+✔ Test completedSetStillRendersLoggedValues() passed after 0.349 seconds.
+✔ Test "Repeated and out-of-range slot updates remain stable" passed after 0.380 seconds.
+✔ Test unknownStoredKindFallsBackToInference() passed after 0.380 seconds.
+✔ Test dayKeyGroupsByLocalDayNotRawTimestamp() passed after 0.381 seconds.
+✔ Test monthStartIsMidnightOfTheFirst() passed after 0.381 seconds.
+✔ Test historyGroupsNewestMonthsAndNightsFirst() passed after 0.380 seconds.
+✔ Test nilKindInfersFromNameAndEquipment() passed after 0.380 seconds.
+✔ Test gridAlignsFirstDayUnderItsWeekday() passed after 0.381 seconds.
+✔ Test multipleWorkoutsOnOneDayShareAKey() passed after 0.381 seconds.
+✔ Test gridRespectsFirstWeekday() passed after 0.381 seconds.
+✔ Test classifiesStrengthCardioAndMixed() passed after 0.381 seconds.
+✔ Test catalogBumpReseeds() passed after 0.381 seconds.
+✔ Test freshInstallSeeds() passed after 0.381 seconds.
+✔ Test gridHandlesLeapFebruaryWithNoLeadingBlanks() passed after 0.381 seconds.
+✔ Test textSearchMatchesMonthDayYearAndWeekday() passed after 0.380 seconds.
+✔ Test weekdaySymbolsRotateToFirstWeekday() passed after 0.381 seconds.
+✔ Test newerStampThanBundledSkips() passed after 0.381 seconds.
+✔ Test upToDateLaunchSkips() passed after 0.381 seconds.
+✔ Test standaloneConditioningKeepsWorkoutScopedActions() passed after 0.380 seconds.
+✔ Test circularMedianHandlesMidnightWrap() passed after 0.380 seconds.
+✔ Test mixedWorkoutConditioningUsesBlockScopedActions() passed after 0.380 seconds.
+✔ Test noBaselineMeansNoFlag() passed after 0.380 seconds.
+✔ Test incompleteSeededSetDoesNotContributeVolume() passed after 0.383 seconds.
+✔ Test trustworthyNightKeepsNocturnalCardiac() passed after 0.380 seconds.
+✔ Test hiddenEffortIsRemovedFromEverySet() passed after 0.382 seconds.
+✔ Test partialNightDropsNocturnalCardiacInFavorOfAllDay() passed after 0.380 seconds.
+✔ Test percentileInterpolates() passed after 0.380 seconds.
+✔ Test failureDefaultsCompletedWorkButPreservesWarmupsManualRatingsAndPendingSets() passed after 0.383 seconds.
+✔ Test editingCompletedSetImmediatelyRefreshesSetAndWorkoutMetrics() passed after 0.381 seconds.
+✔ Test partialWearFlaggedBySparseCoverage() passed after 0.380 seconds.
+✔ Test partialWearFlaggedByLateAnchor() passed after 0.380 seconds.
+✔ Test emptyStoreReseedsDespiteCurrentStamp() passed after 0.381 seconds.
+✔ Test lastSetUsesFixedWindow() passed after 0.379 seconds.
+✔ Test emptyInputsProduceNoPoints() passed after 0.379 seconds.
+✔ Test recoveryClampsToZeroWhenHRKeepsRising() passed after 0.379 seconds.
+✔ Test peakUsesPostCompletionSpikeAndRecoveryToNextSet() passed after 0.379 seconds.
+✔ Test forcedResetAlwaysReseeds() passed after 0.381 seconds.
+✔ Test outerRangesDescribeLargerDeviations() passed after 0.380 seconds.
+✔ Test missingPersonalRangeDoesNotClaimDirection() passed after 0.380 seconds.
+✔ Test lowerAndHigherScoresFillAwayFromTheCenter() passed after 0.380 seconds.
+✔ Test runningContractAddsPowerAlongsidePaceCadenceElevation() passed after 0.380 seconds.
+✔ Test setWithoutNearbyHRIsSkipped() passed after 0.380 seconds.
+✔ Test labelsDistinguishEveryGaugeState() passed after 0.380 seconds.
+✔ Test rowingSplitHeadlinePrefersDerivedOverStoredAndNeverGuesses() passed after 0.380 seconds.
+✔ Test markersFollowRoutineOrderAndIncludeAlternatingPartner() passed after 0.380 seconds.
+✔ Test jumpRopeSpeaksJumpsAndNothingElse() passed after 0.379 seconds.
+✔ Test usualIsARangeCenteredOnTheGauge() passed after 0.380 seconds.
+✔ Test swimCarriesThePoolContract() passed after 0.380 seconds.
+✔ Test authorizationStartsOnlyForTheStillPendingRecordingSession() passed after 0.380 seconds.
+✔ Test markersContinueAfterZ() passed after 0.380 seconds.
+✔ Test stairContractIsFloorsStepsRateAndLevel() passed after 0.380 seconds.
+✔ Test authorizationCannotStartLocationWhenBothSessionIDsAreNil() passed after 0.380 seconds.
+✔ Test rowingContractLeadsWithSplitStrokeAndWatts() passed after 0.380 seconds.
+✔ Test indoorBikeContractIsSpeedCadenceResistancePower() passed after 0.380 seconds.
+✔ Test ellipticalSpeaksStrides() passed after 0.380 seconds.
+✔ Test partialNightExcludedFromSleepDebt() passed after 0.381 seconds.
+✔ Test recorderIsCancelledWhenItsOwningSessionDisappears() passed after 0.380 seconds.
+✔ Test everyModalityStillListsTheUniversalMetrics() passed after 0.380 seconds.
+✔ Test updatedSleepReplacesThePromptDurationWhenStillPartial() passed after 0.381 seconds.
+✔ Test rowingPaceFormatterSpeaksPer500() passed after 0.380 seconds.
+✔ Test noDataReadsAsBaselineBuilding() passed after 0.379 seconds.
+✔ Test normalNightNotFlagged() passed after 0.381 seconds.
+✔ Test genuineShortNightNotFlagged() passed after 0.381 seconds.
+✔ Test manualOverrideSubstitutesDurationAndClearsFlag() passed after 0.381 seconds.
+✔ Test updatedSleepRetiresAStalePromptWhenNoLongerPartial() passed after 0.381 seconds.
+✔ Test awakeRestingHRIsNotJudgedAgainstSleepingBaseline() passed after 0.380 seconds.
+✔ Test daytimeRestingHRDoesNotReplaceLockedSleepingChannel() passed after 0.380 seconds.
+✔ Test stableNightScoresHigh() passed after 0.380 seconds.
+✔ Test guidanceCombinesMultipleFlagsInOneSentence() passed after 0.380 seconds.
+✔ Test guidanceNamesShortSleepWhenScoreStillTrainable() passed after 0.380 seconds.
+✔ Test reportUsesSharedVerdictInsteadOfASecondFlagDrivenCommand() passed after 0.380 seconds.
+✔ Test missingTonightSleepDoesNotReadAsBaselineBuilding() passed after 0.380 seconds.
+✔ Test partialNightWithholdsAcuteScoreAndDoesNotChargeDebt() passed after 0.382 seconds.
+✔ Test observedSleepDoesNotRewriteEditableTarget() passed after 0.379 seconds.
+✔ Test legacyReferenceOnlyJSONStillLoads() passed after 0.379 seconds.
+✔ Test savedComparisonRoundTripsReferenceAndExplicitTrackerPairs() passed after 0.379 seconds.
+✔ Test missingSelectedDayDoesNotBorrowThePreviousReading() passed after 0.379 seconds.
+✔ Test futureMetricsAreExcludedFromHistoricalAssessment() passed after 0.379 seconds.
+✔ Test effortAndDensityMetricsProduce() passed after 0.379 seconds.
+✔ Test muscleBalanceTemplateValidates() passed after 0.379 seconds.
+✔ Test everyMetricValidatesAsASimpleTrend() passed after 0.379 seconds.
+✔ Test legacyRecipesDefaultPopulationAndV3RoundTrips() passed after 0.379 seconds.
+✔ Test importedSessionsCarryImportedProvenance() passed after 0.379 seconds.
+✔ Test paceAndPowerRequireOneCardioType() passed after 0.379 seconds.
+✔ Test relationshipTemplatesUseTheCorrectTimeAndDomainAlignment() passed after 0.379 seconds.
+✔ Test cardioMetricsReadSegmentsNotTheWholeWorkout() passed after 0.379 seconds.
+✔ Test exerciseScopeReadsTheExercisesOwnNumbers() passed after 0.379 seconds.
+✔ Test eventCountsRequireCalendarBucketsAndExcludeConstantOneAnalyses() passed after 0.379 seconds.
+✔ Test hrvPrefersTheNocturnalWindow() passed after 0.379 seconds.
+✔ Test idsAreUniqueAndNamespaced() passed after 0.380 seconds.
+✔ Test mixedPaceDenominatorsCannotShareOneDisplayAxis() passed after 0.380 seconds.
+✔ Test everyCatalogIDHasAProducer() passed after 0.380 seconds.
+✔ Test catalogPopulationDefaultsToTrainingDaysAndHealthHasNoOverride() passed after 0.380 seconds.
+✔ Test relativeStrengthDividesByNearbyBodyweight() passed after 0.380 seconds.
+✔ Test operandScopesUnlockScopedTwins() passed after 0.380 seconds.
+✔ Test automaticRelationshipPopulationCopyNamesExcludedTrainingDays() passed after 0.380 seconds.
+✔ Test yogaMetricsUseTheSessionNotThePlan() passed after 0.380 seconds.
+✔ Test muscleMetricIDRoundTripsThroughTheTaxonomy() passed after 0.380 seconds.
+✔ Test optionalRecordedSumsNeverTreatMissingSensorsAsZero() passed after 0.380 seconds.
+✔ Test restingHRPrefersSleepingHR() passed after 0.380 seconds.
+✔ Test estimatedHealthDaysCarryEstimatedProvenance() passed after 0.380 seconds.
+✔ Test muscleOptionsCanonicalizePrioritizeAndSurfaceParents() passed after 0.381 seconds.
+✔ Test muscleObservationsReadTheSessionBreakdown() passed after 0.380 seconds.
+✔ Test unknownIDProducesNothing() passed after 0.381 seconds.
+✔ Test everyTemplateValidates() passed after 0.380 seconds.
+✔ Test onlyPartitioningDimensionsCanRenderShares() passed after 0.381 seconds.
+✔ Test insightPaceUsesTheSelectedActivityDenominator() passed after 0.381 seconds.
+✔ Test mixedRelationshipPopulationCopyNamesItsAsymmetricZeroPolicy() passed after 0.380 seconds.
+✔ Test paceCarriesItsDistanceWeight() passed after 0.381 seconds.
+✔ Test readinessComesFromSessionsNotHealthStore() passed after 0.381 seconds.
+✔ Test zoneTimeSumsTheHardZonesOnly() passed after 0.381 seconds.
+✔ Test insufficientPairStateUsesOneConciseProgressLine() passed after 0.381 seconds.
+✔ Test muscleRecipesValidateThroughCoveringDescriptors() passed after 0.381 seconds.
+✔ Test zoneTimePreservesACompleteTrueZero() passed after 0.381 seconds.
+✔ Test sickCheckinOverridesActionButNotTheNumericScore() passed after 0.381 seconds.
+✔ Test badNightTanksDailyButNotTrend() passed after 0.383 seconds.
+✔ Test missingScoreProducesNoSyntheticFallback() passed after 0.381 seconds.
+✔ Test ordinaryCheckinsAddContextWithoutChangingScoreDrivenAction() passed after 0.381 seconds.
+✔ Test fixedBandsHaveOneAction(score:expected:) with 6 test cases passed after 0.387 seconds.
+✔ Test awakeHRVBeforeSleepSyncsDoesNotTankDailyScore() passed after 0.389 seconds.
+✔ Test guidanceMentionsHRVWhenFlaggedButScoreStillTrainable() passed after 0.389 seconds.
+✔ Test trendNeverIssuesATodayVerdictWhenAcuteScoreIsMissing() passed after 0.389 seconds.
+✔ Test reportActionAgreesWithDisplayScore() passed after 0.389 seconds.
+✔ Test awakeOnlyUsersStillGetADailyScore() passed after 0.389 seconds.
+✔ Test lnSpaceBandsAreScaleFree() passed after 0.389 seconds.
+✔ Test guidanceNamesElevatedSleepingHRWhenScoreStillTrainable() passed after 0.389 seconds.
+✔ Test checkinDoesNotChangeRecoveryEngineDisplayScore() passed after 0.387 seconds.
+✔ Test addedModeRoutesToAddedWeight() passed after 0.387 seconds.
+✔ Test nocturnalPreferredOverAllDay() passed after 0.391 seconds.
+✔ Test assistedModeRoutesToAssistanceAndSubtractsFromBodyweight() passed after 0.388 seconds.
+✔ Test externalModeStillUsesWeight() passed after 0.388 seconds.
+✔ Test sliceIsEmptyForDisjointWindow() passed after 0.386 seconds.
+✔ Test titleJoinsDurationAndName() passed after 0.386 seconds.
+✔ Test subtitleIsNilWhenNothingIsAvailable() passed after 0.386 seconds.
+✔ Test noSleepWindowsYieldsNothing() passed after 0.387 seconds.
+✔ Test strengthPlusLegacyUnlinkedCardioIsMixed() passed after 0.386 seconds.
+✔ Test strengthOnlyIsNotMixed() passed after 0.386 seconds.
+✔ Test emptyWorkoutIsNotMixed() passed after 0.386 seconds.
+✔ Test subtitleJoinsAvailablePartsInOrder() passed after 0.386 seconds.
+✔ Test windowFallsBackToDurationWhenNoRecordedEnd() passed after 0.387 seconds.
+✔ Test stitchesBriefAwakeningsIntoOneWindow() passed after 0.387 seconds.
+✔ Test cardioOnlyIsNotMixed() passed after 0.386 seconds.
+✔ Test windowPrefersLiveStartAndRecordedEnd() passed after 0.386 seconds.
+✔ Test keepsSeparateNightsApart() passed after 0.387 seconds.
+✔ Test titleFallsBackToNameWithoutDuration() passed after 0.399 seconds.
+✔ Test belowMinimumSamplesYieldsNoSleepingHR() passed after 0.399 seconds.
+✔ Test unknownIDsAreDroppedNotDefaulted() passed after 0.399 seconds.
+✔ Test windowIsNilWhenNoEndIsDerivable() passed after 0.399 seconds.
+✔ Test sliceKeepsOnlyInWindowSamples() passed after 0.399 seconds.
+✔ Test preferenceKeyIsRegisteredForBackup() passed after 0.399 seconds.
+✔ Test denseClusterCannotMasqueradeAsWholeNightHRV() passed after 0.399 seconds.
+✔ Test timeBalancedMediansIgnoreDaytimeSamples() passed after 0.399 seconds.
+✔ Test idFormatsAreStable() passed after 0.399 seconds.
+✔ Test decodeDeduplicatesKeepingFirst() passed after 0.399 seconds.
+✔ Test sixDistributedHalfHourBinsYieldSleepingHR() passed after 0.399 seconds.
+✔ Test strengthPlusLinkedCardioIsMixed() passed after 0.399 seconds.
+✔ Test encodeDecodeRoundTrips() passed after 0.399 seconds.
+✔ Test malformedJSONYieldsEmpty() passed after 0.400 seconds.
+✔ Test edgeCases() passed after 0.399 seconds.
+✔ Test decodeClampsToMaxCount() passed after 0.399 seconds.
+✔ Test barOnly() passed after 0.399 seconds.
+✔ Test exactLoadTwoPlates() passed after 0.399 seconds.
+✔ Test filterDanglingDropsDeadRoutinesAndFlows() passed after 0.399 seconds.
+✔ Test emptyInventoryIsJustTheBar() passed after 0.399 seconds.
+✔ Test exactMixedLoad() passed after 0.399 seconds.
+✔ Test kilogramMicroPlates() passed after 0.399 seconds.
+✔ Test kilogramGymExactLoad() passed after 0.400 seconds.
+✔ Test pairLimitsAreHonored() passed after 0.400 seconds.
+✔ Test unloadableTargetReturnsClosest() passed after 0.400 seconds.
+✔ Test unloadableTargetPrefersNearerOver() passed after 0.400 seconds.
+✔ Test belowBarClampsToBar() passed after 0.400 seconds.
+✔ Test loadFallsBackToDefaultsWhenAbsentOrEmpty() passed after 0.400 seconds.
+✔ Test saveThenLoadRoundTripsThroughScratchDefaults() passed after 0.400 seconds.
+✔ Test inventoryRoundTripsThroughJSON() passed after 0.399 seconds.
+✔ Test sleepChoicesSurviveStoreRecreation() passed after 0.408 seconds.
+✔ Test optionalSensorSumsAreNeverZeroInjected() passed after 0.408 seconds.
+✔ Test classifiesAuthoredConditioningYogaAndMixedWorkouts() passed after 0.409 seconds.
+✔ Test measurementDomainStartsAtThatMeasurementNotUnrelatedTraining() passed after 0.408 seconds.
+✔ Test demoSeedProducesHomeAlert() passed after 0.408 seconds.
+✔ Test overlappingTagsReceiveTheSameEligibleDayWithoutLosingTheControlGrid() passed after 0.408 seconds.
+✔ Test everyEligibleDayCarriesAnExplicitZero() passed after 0.408 seconds.
+✔ Test recoveryLabelsUntrackedSleepAsIntentionalExclusion() passed after 0.430 seconds.
+✔ Test completeScoreAfterSevenSchedulesImmediately() passed after 0.182 seconds.
+✔ Test missingSleepNeverSchedulesAnIncompleteNotification() passed after 0.147 seconds.
+✔ Test completeScoreJustBeforeCutoffStillSchedulesImmediately() passed after 0.147 seconds.
+✔ Test completeScoreBeforePreferredTimeSchedulesForSeven() passed after 0.182 seconds.
+✔ Test completeScoreAtOrAfterCutoffDoesNotNotify() passed after 0.147 seconds.
+✔ Test cardioZonesBeatTheNeutralFallbackWhenSessionEffortIsMissing() passed after 0.138 seconds.
+✔ Test detailLessHealthStrengthImportRequiresAnEffortSignal() passed after 0.123 seconds.
+✔ Test missingDailyScoreNeverSchedulesASevenDayFallback() passed after 0.182 seconds.
+✔ Test recoveryLabelsConfirmedSleepInsteadOfCallingItPartial() passed after 0.438 seconds.
+✔ Test detailLessHealthStrengthImportUsesMeasuredHeartRate() passed after 0.138 seconds.
+✔ Test comparisonWaitsForSixCompletePriorWeeks() passed after 0.140 seconds.
+✔ Test wholeSessionCR10UsesOneDoseForCardio() passed after 0.140 seconds.
+✔ Test duplicateHealthUUIDCountsOnce() passed after 0.146 seconds.
+✔ Test wholeSessionCR10UsesDurationTimesRatingForStrength() passed after 0.124 seconds.
+✔ Test comparisonUsesSixNonOverlappingCompleteWeeksAndMedian() passed after 0.124 seconds.
+✔ Test unratedHistoryUsesAnExplicitlyEstimatedFallback() passed after 0.141 seconds.
+✔ Test missingWholeSessionCR10FallsBackToStrengthAndCardioComponents() passed after 0.140 seconds.
+✔ Test setRPEThenRIRThenNeutralDefaultResolveStrengthEffort() passed after 0.140 seconds.
+✔ Test recoveryLabelsManuallyEditedSleep() passed after 0.440 seconds.
+✔ Suite SwipeToDeleteDirectionTests passed after 0.483 seconds.
+✔ Suite LiveWorkoutLifecyclePolicyTests passed after 0.484 seconds.
+✔ Suite ActivationSuggestionMaterializerTests passed after 0.463 seconds.
+✔ Test refillsBodyweightAndRecomputesVolume() passed after 0.440 seconds.
+✔ Test fillsNilHealthFieldsAndRelinksUUID() passed after 0.440 seconds.
+✔ Suite RecoveryColorBandTests passed after 0.472 seconds.
+✔ Suite WorkoutEffortPolicyTests passed after 0.463 seconds.
+✔ Test mixedWorkoutIsNeverDoubleCountedAcrossModalities() passed after 0.124 seconds.
+✔ Suite SetSuggestionPolicyTests passed after 0.483 seconds.
+✔ Suite IncompleteSetHistoryPresentationTests passed after 0.472 seconds.
+✔ Suite QuickIncrementControllerTests passed after 0.484 seconds.
+✔ Test skipsSoftDeletedWorkouts() passed after 0.449 seconds.
+✔ Suite SleepHistorySupportTests passed after 0.472 seconds.
+✔ Suite ExerciseModalityTests passed after 0.472 seconds.
+✔ Suite ConditioningCompletionContextTests passed after 0.472 seconds.
+✔ Suite "Exercise reorder session" passed after 0.472 seconds.
+✔ Suite SetHRRecoveryTests passed after 0.467 seconds.
+✔ Suite CardioModalityContractTests passed after 0.467 seconds.
+✔ Suite DailyStrainGaugePresentationTests passed after 0.467 seconds.
+✔ Suite CardioRouteOwnershipPolicyTests passed after 0.467 seconds.
+✔ Test enrichesOnlyRequestedWorkouts() passed after 0.449 seconds.
+✔ Suite LiveWorkoutMetricsTests passed after 0.472 seconds.
+✔ Suite MicrocycleRoutineMarkerTests passed after 0.468 seconds.
+✔ Suite ExperimentComparisonPersistenceTests passed after 0.467 seconds.
+✔ Suite DailyReadinessTests passed after 0.467 seconds.
+✔ Suite CalendarDayHealthSupportTests passed after 0.467 seconds.
+✔ Suite LaunchSeedPolicyTests passed after 0.472 seconds.
+✔ Suite InsightMetricCatalogTests passed after 0.467 seconds.
+✔ Suite TodayVerdictTests passed after 0.467 seconds.
+✔ Suite CardioBlockSupportTests passed after 0.466 seconds.
+✔ Suite AppQuickActionTests passed after 0.466 seconds.
+✔ Suite PlateMathTests passed after 0.466 seconds.
+✔ Suite NocturnalAggregatorTests passed after 0.467 seconds.
+✔ Suite ModeWeightTests passed after 0.467 seconds.
+✔ Suite WorkoutCalendarSupportTests passed after 0.473 seconds.
+✔ Suite MorningReadinessDeliveryPolicyTests passed after 0.466 seconds.
+✔ Suite SleepIntegrityTests passed after 0.468 seconds.
+✔ Suite TrainingLoadCalculatorTests passed after 0.466 seconds.
+✔ Test neverOverwritesExistingValues() passed after 0.450 seconds.
+✔ Suite HealthEnrichmentServiceTests passed after 0.472 seconds.
+✔ Test cardioRoutineStartsAsCardioSessionWithoutStrengthSets() passed after 0.530 seconds.
+✔ Test routineStartPreservesRoutineExerciseNoteOverSavedSetupNote() passed after 0.540 seconds.
+✔ Test routineStartLoadsSavedSetupNoteWhenRoutineExerciseHasNoNote() passed after 0.550 seconds.
+✔ Test hevyCSVCommitsCompleteWorkoutIntoCurrentDataModel() passed after 0.566 seconds.
+✔ Test importCreatesClassifiedCustomStrengthExercise() passed after 0.568 seconds.
+✔ Test matchesBruteForceOnSeededRandomRun() passed after 0.560 seconds.
+✔ Suite CardioSeriesAssemblyTests passed after 0.583 seconds.
+✔ Test filtersNarrowByKindMuscleExerciseSourceAndPRs() passed after 0.568 seconds.
+✔ Test yogaHistorySearchesItsPoseNamesAndMuscles() passed after 0.569 seconds.
+✔ Test suggestionsRankPrefixOverContainsAndRespectActiveFilters() passed after 0.569 seconds.
+✔ Test prDetectionMarksFirstAndBeatenBestsOnly() passed after 0.570 seconds.
+✔ Test sortsOrderByMetricWithNewestFirstTies() passed after 0.570 seconds.
+✔ Test searchMatchesExerciseNotesMonthAndFoldsDiacritics() passed after 0.570 seconds.
+✔ Test kindsDeriveFromContent() passed after 0.571 seconds.
+✔ Test customDateRangeIsWholeDaysAndSwapsReversedBounds() passed after 0.571 seconds.
+✔ Test indexSkipsInProgressAndDeletedAndOrdersNewestFirst() passed after 0.572 seconds.
+✔ Suite WorkoutHistorySearchTests passed after 0.590 seconds.
+✔ Test selectedDayLoaderNeverRunsOnTheMainThread() passed after 0.588 seconds.
+✔ Suite CalendarHealthStoreTests passed after 0.607 seconds.
+✔ Test bodyweightRepairFetchesOnlyEligibleMissingSets() passed after 0.604 seconds.
+✔ Test storeKeepsTheCompleteHistoryRatherThanSevenNights() passed after 0.586 seconds.
+✔ Test fullHistoryLoaderNeverRunsOnTheMainThread() passed after 0.615 seconds.
+2026-08-09 16:24:10.587012-0400 ForgeFit[15775:3420646] [WC] WCSession is not paired
+2026-08-09 16:24:10.587098-0400 ForgeFit[15775:3420646] [WC] -[WCSession onqueue_notifyOfUserInfoError:withUserInfoTransfer:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:10.587381-0400 ForgeFit[15775:3420577] [WC] no pairingID
+✔ Test automaticICloudBackupCannotEncodeExperimentData() passed after 2.535 seconds.
+✔ Test scoreWorkerUsesANonMainSwiftDataExecutor() passed after 2.548 seconds.
+✔ Suite HomeAnalyticsWorkerTests passed after 2.577 seconds.
+✔ Test commitCreatesCompletedWorkoutsAndSkipsDuplicateReimport() passed after 2.539 seconds.
+Routine template has unresolved exercise slug: beginner-full-body-a
+Routine template has unresolved exercise slug: beginner-full-body-b
+Routine template has unresolved exercise slug: upper-body-a
+Routine template has unresolved exercise slug: lower-body-a
+Routine template has unresolved exercise slug: upper-body-b
+Routine template has unresolved exercise slug: lower-body-b
+Routine template has unresolved exercise slug: push-day
+Routine template has unresolved exercise slug: pull-day
+Routine template has unresolved exercise slug: legs-day
+Routine template has unresolved exercise slug: dumbbell-only-full-body
+Routine template has unresolved exercise slug: dumbbell-only-full-body-b
+Routine template has unresolved exercise slug: bodyweight-travel
+Routine template has unresolved exercise slug: strength-zone-2-hybrid
+Routine template has unresolved exercise slug: run-walk-base
+Routine template has unresolved exercise slug: machine-upper
+Routine template has unresolved exercise slug: machine-lower
+IOSurfaceClientSetSurfaceNotify failed e00002c7
+2026-08-09 16:24:12.129513-0400 ForgeFit[15775:3420583] [WC] WCSession is not paired
+2026-08-09 16:24:12.129577-0400 ForgeFit[15775:3420583] [WC] -[WCSession onqueue_notifyOfUserInfoError:withUserInfoTransfer:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:12.130081-0400 ForgeFit[15775:3420646] [WC] no pairingID
+2026-08-09 16:24:12.168348-0400 ForgeFit[15775:3420646] [WC] WCSession is not paired
+2026-08-09 16:24:12.168422-0400 ForgeFit[15775:3420646] [WC] -[WCSession onqueue_notifyOfUserInfoError:withUserInfoTransfer:]_block_invoke dropping as pairingIDs no longer match. pairingID (null), client pairingID: (null)
+2026-08-09 16:24:12.168899-0400 ForgeFit[15775:3420583] [WC] no pairingID
+✔ Test validProgramsRequiresEveryDayToResolve() passed after 3.975 seconds.
+✔ Test importProgramWithNoResolvableDaysReturnsNil() passed after 3.975 seconds.
+✔ Test importProgramTwiceKeepsFolderAndRoutineNamesUnique() passed after 3.975 seconds.
+✔ Test importProgramCreatesFolderWithRoutinesInside() passed after 3.975 seconds.
+✔ Suite RoutineProgramImportTests passed after 4.003 seconds.
+✔ Test firstEverSessionEarnsNoAwards() passed after 3.975 seconds.
+✔ Test warmupAndDeletedWorkoutsAreIgnored() passed after 3.975 seconds.
+✔ Test summaryPicksTheSingleBestSetPerKind() passed after 3.975 seconds.
+✔ Test laterSetMustBeatEarlierSessionAward() passed after 3.975 seconds.
+✔ Test untrainedMuscleReportsNoDataInsteadOfAScore() passed after 3.975 seconds.
+✔ Test beatingHistoryAwardsAllThreeRecords() passed after 3.975 seconds.
+✔ Test rpeTenSessionRecoversSlowerThanRpeSix() passed after 3.975 seconds.
+✔ Test backParentCountsEachSetOnceWhileChildrenKeepExactExposure() passed after 3.975 seconds.
+✔ Test allTimeBestsSpanEveryWorkoutIncludingActive() passed after 3.975 seconds.
+✔ Test cardioScoreNeedsACardioSessionFirst() passed after 3.975 seconds.
+✔ Test trainingLoadIsNotPartOfTheSystemicRecoveryScore() passed after 3.975 seconds.
+✔ Test higherSessionRPELoadProducesLowerCardioFreshness() passed after 3.975 seconds.
+✔ Test matchingHistoryIsNotARecord() passed after 3.975 seconds.
+✔ Test hrvPartRequiresBaselineBeforeScoring() passed after 3.975 seconds.
+✔ Test actionAgreesWithTheDisplayedScore() passed after 3.975 seconds.
+✔ Test lowSevenDayHRVAverageLowersSystemicScore() passed after 3.975 seconds.
+✔ Test systemicScoreIsBuildingWithNoDataAtAll() passed after 3.975 seconds.
+✔ Test lifecycleFlushRunsPendingWorkImmediatelyAndOnlyOnce() passed after 3.955 seconds.
+✔ Test muscleIsReadyAgainAfterThreeDays() passed after 3.975 seconds.
+✔ Test workoutLastNightCountsAsYesterdayNotToday() passed after 3.973 seconds.
+✔ Test confidenceIsLowWithNoData() passed after 3.975 seconds.
+✔ Test everyParentUsesStrongestRoleInsteadOfSummingChildRoles() passed after 3.973 seconds.
+✔ Test largerLatWorkoutTodayIsLessFreshThanResidualChestExposure() passed after 3.975 seconds.
+✔ Test recentLoadAloneCannotTriggerADeload() passed after 3.975 seconds.
+✔ Test hardSessionYesterdayLeavesMusclePartiallyRecovered() passed after 3.973 seconds.
+✔ Test confidenceIsHighWithCompleteData() passed after 3.976 seconds.
+✔ Test confidenceDropsWhenSleepIsMissing() passed after 3.973 seconds.
+✔ Test everySetTypeHasItsSavedRoutineBadgeAndName() passed after 3.973 seconds.
+✔ Test numericEditDraftRoundTripsStoredPrecision() passed after 3.973 seconds.
+✔ Test expectedCoverageUsesTheTrackerDefinitionLifetime() passed after 3.973 seconds.
+✔ Test explicitEntriesSurviveATypeChange() passed after 3.973 seconds.
+✔ Test perWorkoutEntryRequiresAnIncludedCompletedWorkoutAndUsesItsStart() passed after 3.973 seconds.
+✔ Test trainingTodayScoresLowerThanTrainingYesterday() passed after 3.973 seconds.
+✔ Test startRejectsAnActiveWorkoutEvenIfTheSetupScreenWasStale() passed after 3.973 seconds.
+✔ Test convertingBackToAFlatSetClearsTheOldStructuredShape() passed after 3.974 seconds.
+✔ Test entryValueMustMatchTheTrackerDefinition() passed after 3.973 seconds.
+✔ Test legacyConditioningProjectsOnlyItsMovementRowsIntoBlock() passed after 3.969 seconds.
+✔ Test structuredShapesAndEffortAreReadable() passed after 3.973 seconds.
+✔ Test firstClassRoutineBlockFreezesItsPlanAndOrigin() passed after 3.969 seconds.
+✔ Test weekAlwaysRunsSundayThroughSaturday() passed after 3.969 seconds.
+✔ Test restoringTrackerCreatesTwoDisjointDefinitionLifetimes() passed after 3.973 seconds.
+✔ Test otherStructuredConversionsPreserveTheirPlanShape() passed after 3.973 seconds.
+✔ Test partialNightDoesNotScoreFragmentedOvernightBiometrics() passed after 3.974 seconds.
+✔ Test priorMyoActivationWinsOverWorkingGhost() passed after 3.976 seconds.
+✔ Test volumeSpikeWithFallingReadinessPrescribesHoldingLoad() passed after 3.974 seconds.
+✔ Test hotCardioTriggersZoneTwoPrescription() passed after 3.974 seconds.
+✔ Test liveMyoConversionPreservesItsPerformedShapeInRoutine() passed after 3.974 seconds.
+✔ Test strengthOnlyMonthSkipsCardioPages() passed after 3.974 seconds.
+✔ Test completionStripMarksOnlyCompletedNonDeletedWorkouts() passed after 3.974 seconds.
+✔ Suite PersonalRecordsTests passed after 4.010 seconds.
+✔ Test startEnforcesOneActiveExperimentAtTheStoreBoundary() passed after 3.979 seconds.
+✔ Test assistedActivationUsesTheModeSpecificField() passed after 3.975 seconds.
+✔ Test rpeUpWithFlatStrengthPrescribesLighterWeek() passed after 3.975 seconds.
+✔ Test legacyConditioningStillProjectsBesideFirstClassYoga() passed after 3.975 seconds.
+✔ Test perWorkoutEntryRejectsAWorkoutBeforeTheTrackerExisted() passed after 3.979 seconds.
+✔ Suite RecoveryScoresTests passed after 4.010 seconds.
+✔ Test workingGhostCarriesIntoMyoWhenMyoHistoryIsAbsent() passed after 3.975 seconds.
+✔ Test singleWorkoutMonthStillBuildsWithoutRankingPages() passed after 3.975 seconds.
+✔ Test yearlyGeneratesInJanuaryAlongsideDecemberMonthly() passed after 3.975 seconds.
+✔ Test recordsProduceThePositiveInsightAndMaintain() passed after 3.975 seconds.
+✔ Test yearlyBuildsCelebrationPages() passed after 3.975 seconds.
+✔ Test focusPrimaryIsAlwaysSpecific() passed after 3.975 seconds.
+✔ Test headlineTotalsUseTheSameSundayBoundary() passed after 3.975 seconds.
+✔ Test missingWatchMetricsSkipHeartRatePage() passed after 3.975 seconds.
+✔ Test cardioOnlyMonthSkipsStrengthPages() passed after 3.975 seconds.
+✔ Test emptyYearProducesNoReport() passed after 3.975 seconds.
+✔ Test scheduleYearlyIsDueOnlyInJanuary() passed after 3.975 seconds.
+✔ Test mixedMonthBuildsTheFullStory() passed after 3.975 seconds.
+✔ Test strengthWorkoutXPUsesBaseDurationAndWorkingSets() passed after 3.972 seconds.
+✔ Test markViewedIsOneWayAndPreservedByRefresh() passed after 3.975 seconds.
+✔ Test levelCurveStartsSlowAndScales() passed after 3.972 seconds.
+✔ Test emptyMonthProducesNoReport() passed after 3.975 seconds.
+✔ Test scheduleRefreshWindowCoversEarlyMonthOnly() passed after 3.975 seconds.
+✔ Test pushPullImbalanceTriggersPullingPrescription() passed after 3.975 seconds.
+✔ Test completionDoesNotReplaceTheSetsHistoricalBodyweightSnapshot() passed after 3.975 seconds.
+✔ Test emptyMonthGeneratesNothing() passed after 3.975 seconds.
+✔ Test awardingIsIdempotent() passed after 3.980 seconds.
+✔ Test importedHistoryDoesNotAwardXP() passed after 3.980 seconds.
+✔ Test lateSyncedWorkoutRefreshesReportInsideWindowOnly() passed after 3.975 seconds.
+✔ Test highVolumeWorkoutXPIsCapped() passed after 3.972 seconds.
+✔ Test assistedRecordIsAvailableOnTheCompletionRefresh() passed after 3.980 seconds.
+✔ Test generationIsIdempotent() passed after 3.980 seconds.
+✔ Test shortInvalidWorkoutGetsNoXP() passed after 3.980 seconds.
+✔ Test feedAppearingMidStepAnchorsToItsFirstReading() passed after 3.980 seconds.
+✔ Test stepTargetOutranksPlanTargetAndHollowBandsDoNotCount() passed after 3.979 seconds.
+✔ Test scheduleDueMonthIsAlwaysThePreviousMonth() passed after 3.983 seconds.
+✔ Test previewTargetsMatchApplyForExternalIncrease() passed after 3.980 seconds.
+✔ Test distanceStepAdvancesWhenTheFeedCrossesTheTarget() passed after 3.979 seconds.
+✔ Test noHistoryProducesNoSuggestionsInEitherPath() passed after 3.980 seconds.
+✔ Test distanceStepWithoutAFeedWaitsForManualSkip() passed after 3.979 seconds.
+✔ Test bodyweightExerciseIsRepsOnlyAndLeavesSetsUntouched() passed after 3.980 seconds.
+XCTestOutputB✔ Test conditioningActivityShowsRoundTargetAndFreshHeartRate() passed after 3.980 seconds.
+arrier✔ Test regionSecondsAggregatesYogaAndStretchingSets() passed after 3.980 seconds.
+✔ Test guidedExposureCreditsActualHoldsByLabel() passed after 3.980 seconds.
+✔ Test hevyCSVKeepsImportingWhenItAddsAnOptionalColumn() passed after 3.980 seconds.
+✔ Test lowConfidenceCustomExerciseNeedsReview() passed after 3.980 seconds.
+✔ Test heldExerciseHoldsAtLastSessionNumbersWithOverrideReason() passed after 3.980 seconds.
+✔ Test hevyCSVParsesLargeHistoryExport() passed after 3.980 seconds.
+✔ Test matcherDoesNotSubstringMatch() passed after 3.980 seconds.
+✔ Test manualLogScalesPlanToLoggedDuration() passed after 3.980 seconds.
+✔ Test hevyCSVParsesStrengthAndCardioRows() passed after 3.980 seconds.
+✔ Test parkedDefaultLeavesTargetsAloneAndRecordsNothing() passed after 3.981 seconds.
+✔ Test matcherKeepsEquipmentVariantsDistinct() passed after 3.980 seconds.
+✔ Test cardioWorkoutXPUsesDurationAndDistance() passed after 3.982 seconds.
+✔ Test hevyCSVImportsValidRowsAndSummarizesInvalidRows() passed after 3.980 seconds.
+✔ Test CSVReportsMissingExerciseColumnBeforeReadingRows() passed after 3.989 seconds.
+✔ Test customCSVWithExerciseTitleIsNotMisidentifiedAsHevyRoutine() passed after 3.980 seconds.
+✔ Test genericStrongStyleCSVParsesSemicolonAndUnits() passed after 3.989 seconds.
+✔ Test hevyRoutineLikeCSVExplainsHowToExportWorkoutHistory() passed after 3.989 seconds.
+✔ Test stampExposureFreezesSnapshotOnSession() passed after 3.989 seconds.
+✔ Test matcherDoesNotLinkBareSquatToSquatJerk() passed after 3.989 seconds.
+✔ Test matcherReunitesHevyEquipmentSuffixWithCatalogOrdering() passed after 3.989 seconds.
+✔ Test strengthInsightUsesTheUnitCapturedBeforeBackgroundGeneration() passed after 3.993 seconds.
+✔ Test matcherMatchesWhenOnlyImportSpecifiesEquipment() passed after 3.989 seconds.
+✔ Test hevyCSVAllowsOptionalColumnsToBeAbsent() passed after 3.989 seconds.
+✔ Test finishingAnEmptyWorkoutDiscardsInsteadOfSaving() passed after 3.989 seconds.
+✔ Test hevyCSVReportsUnrecognizedDateWithRowAndValue() passed after 3.989 seconds.
+✔ Test finishRejectsStartedUntimedConditioningBelowItsTarget() passed after 3.989 seconds.
+✔ Test matcherHandlesPluralAndOrder() passed after 3.989 seconds.
+✔ Test previousMonthDataEnablesComparisonPage() passed after 3.994 seconds.
+✔ Test muscleDistributionCountsPrimaryFullAndSecondaryHalf() passed after 3.989 seconds.
+✔ Test twentyOneFifteenNineIsAnExplicitDescendingLadderForTime() passed after 3.989 seconds.
+✔ Test hevyCSVParsesDayFirst24HourDatesAndKilograms() passed after 3.989 seconds.
+✔ Test hundredsChipperDefaultsToTenRoundsOfTen() passed after 3.989 seconds.
+✔ Test cardioBreakdownAndBestsAggregateByModality() passed after 3.989 seconds.
+✔ Test emptyAndUntouchedWorkoutsHaveNoSubstance() passed after 3.989 seconds.
+✔ Test repRangesBucketByAdaptationZones() passed after 3.989 seconds.
+✔ Suite RoutineDetailPresentationTests passed after 4.029 seconds.
+✔ Test pendingReviewIncludesConfidentBulkAddedExercises() passed after 3.989 seconds.
+✔ Test monthlyReportComparesAgainstPreviousMonth() passed after 3.989 seconds.
+✔ Test completedSetLiveCardioManualYogaAndNotesAllCount() passed after 3.989 seconds.
+✔ Test applyingPresetChangesOnlyItsSectionAndPreservesExistingRowIdentity() passed after 3.989 seconds.
+✔ Test itemsStampTrainingOrderAndTheLocalClock() passed after 3.989 seconds.
+✔ Test switchingPresetsReusesSharedMovementRows() passed after 3.992 seconds.
+✔ Test topExercisesRankByWorkingSets() passed after 3.992 seconds.
+✔ Test everyPresetBuildsAPlanWithEveryDeclaredExercise() passed after 3.989 seconds.
+✔ Test trainingSplitBucketsPushPullLegs() passed after 3.992 seconds.
+✔ Test cindyHasItsCanonicalExercisesAndPrescription() passed after 3.992 seconds.
+✔ Test countsUntickedSetsOnStartedExercises() passed after 3.992 seconds.
+✔ Test startedSessionBasedRowRaisesNothing() passed after 3.992 seconds.
+✔ Test namesExercisesWhereNothingWasCompleted() passed after 3.992 seconds.
+✔ Test onlyCompletedNonImportedForgeFitWorkoutsQualify() passed after 3.992 seconds.
+✔ Test unresolvedExerciseNameFallsBackRatherThanDisappearing() passed after 3.992 seconds.
+✔ Test warmupOnlyExerciseIsNotReportedAsUntouched() passed after 3.992 seconds.
+✔ Test warmupSetsAreNotWarnedAbout() passed after 3.992 seconds.
+✔ Test untouchedSessionBasedRowIsNamed() passed after 3.992 seconds.
+✔ Test fullyCompletedWorkoutRaisesNothing() passed after 3.992 seconds.
+✔ Suite WorkoutBlockPipelineTests passed after 4.033 seconds.
+✔ Suite TrainingWeekSupportTests passed after 4.033 seconds.
+✔ Test longUntouchedListStaysReadable() passed after 3.993 seconds.
+✔ Suite ExperimentUIStoreTests passed after 4.033 seconds.
+✔ Suite XPServiceTests passed after 4.014 seconds.
+✔ Suite WrappedTests passed after 4.033 seconds.
+✔ Test untouchedYogaBlockIsNamed() passed after 3.993 seconds.
+✔ Test consecutiveSameGroupExercisesBecomeOneSupersetEntry() passed after 3.993 seconds.
+✔ Test tripleSupersetGroupsTogether() passed after 3.992 seconds.
+✔ Test everyExerciseSurvivesGrouping() passed after 3.994 seconds.
+✔ Suite BlockSetPrefillPolicyTests passed after 4.033 seconds.
+✔ Test completedDayShowsTheLetterOfTheRoutinePerformed() passed after 3.993 seconds.
+✔ Test planFileIsRegisteredAsAnOpaqueOwnedDocument() passed after 3.992 seconds.
+✔ Suite IntervalRunnerDistanceTests passed after 4.015 seconds.
+✔ Test combinesSetsAndUntouchedExercises() passed after 3.994 seconds.
+✔ Suite WorkoutActivityControllerTests passed after 4.015 seconds.
+✔ Suite FlexibilityAnalyticsTests passed after 4.015 seconds.
+✔ Suite ProgressionPlannerTests passed after 4.015 seconds.
+✔ Suite LiveSetCompletionTests passed after 4.035 seconds.
+✔ Test emptyWorkoutProducesNoEntries() passed after 3.994 seconds.
+✔ Suite WorkoutHistoryImportTests passed after 4.015 seconds.
+✔ Test adjacentDistinctGroupsDoNotMerge() passed after 3.994 seconds.
+✔ Test loneGroupMemberStaysStandalone() passed after 3.998 seconds.
+✔ Test copyCarriesEveryPlannedField() passed after 3.995 seconds.
+✔ Test highLocalFatigueAndProjectedVolumeOfferAScopedLighterVersion() passed after 3.998 seconds.
+✔ Test copyUsesFreshIdentityAndLeavesSourceUntouched() passed after 3.998 seconds.
+✔ Test nextDayIsReadyImmediatelyAfterTodaysWorkoutCompletes() passed after 3.998 seconds.
+✔ Test localStoreDirectoryIsExcludedFromOpaqueSystemBackup() passed after 3.998 seconds.
+✔ Test nonAdjacentMembersOfTheSameGroupDoNotReorderTheLog() passed after 3.998 seconds.
+✔ Test startingAndDeletingWorkoutsMoveTheFingerprint() passed after 3.999 seconds.
+✔ Test normalYesterdayTrainingIsContextNotAnAutomaticReduction() passed after 3.998 seconds.
+✔ Test aNewWindowRestartsAtDayOneAndTheCompletedWindowStaysFinished() passed after 3.999 seconds.
+✔ Test removingThenLoggingAgainRevivesTheSameMarker() passed after 3.999 seconds.
+✔ Test editingACompletedWorkoutMovesTheFingerprint() passed after 3.998 seconds.
+✔ Test finishingAWorkoutMovesTheFingerprint() passed after 3.999 seconds.
+✔ Test activeWorkoutMutationsDoNotMoveTheFingerprint() passed after 3.999 seconds.
+✔ Test deletingOneExperimentHardDeletesItsCustomGraph() passed after 3.999 seconds.
+✔ Test durationGoalUsesTheSegmentClockWithoutAVisibleCard() passed after 3.998 seconds.
+✔ Test logsTodayOrAPastDateAtStartOfDay() passed after 3.999 seconds.
+✔ Test unfinishedDeletedAndUncompletedStrengthWorkoutsDoNotCount() passed after 3.998 seconds.
+✔ Suite WorkoutFinisherSubstanceTests passed after 4.028 seconds.
+✔ Test laterWorkoutCompletionAutomaticallyRemovesAConflict() passed after 3.998 seconds.
+✔ Suite StatisticsAnalyticsTests passed after 4.028 seconds.
+✔ Test repeatedCompletedWorkoutsIncrementLifetimeFavoriteCount() passed after 3.998 seconds.
+✔ Test completedCardioSessionCountsWithoutStrengthSets() passed after 4.005 seconds.
+✔ Suite ConditioningPresetTests passed after 4.028 seconds.
+✔ Suite IncompleteWorkSummaryTests passed after 4.028 seconds.
+✔ Test rejectsFutureDatesAndDaysWithCompletedTraining() passed after 4.005 seconds.
+✔ Suite ShareLogEntryTests passed after 4.028 seconds.
+✔ Suite ExperimentPrivacyTests passed after 4.028 seconds.
+✔ Suite MicrocycleDayTimelineTests passed after 4.028 seconds.
+✔ Suite RoutineDuplicationTests passed after 4.028 seconds.
+◇ Test sharedPlanAttachmentCarriesTheForgeFitType() started.
+✔ Suite RoutineDoseContextTests passed after 4.028 seconds.
+✔ Suite AnalyticsFingerprintTests passed after 4.028 seconds.
+✔ Suite RestDayServiceTests passed after 4.024 seconds.
+✔ Test fewerThanTwentyEightReadingsIsLabeledBuilding() passed after 4.163 seconds.
+✔ Test respiratoryRateAndBloodOxygenUsePersonalRanges() passed after 4.163 seconds.
+✔ Test finalWindowedMeasurementCanCompleteAWaitingGoal() passed after 4.163 seconds.
+✔ Test partialNightDoesNotSilentlySubstituteAllDayChannels() passed after 4.163 seconds.
+✔ Test noReadingsDoesNotInventAHealthScore() passed after 4.163 seconds.
+✔ Test stableOvernightSignalsAreAllInPersonalRange() passed after 4.163 seconds.
+✔ Test watchCaloriesAreScopedToTheCardioSegment() passed after 4.163 seconds.
+✔ Test multipleLiveSourcesStillDeliverOnlyOnce() passed after 4.186 seconds.
+✔ Test dedicatedSleepingHeartRateIsNotRepeatedUnderOtherReadings() passed after 4.186 seconds.
+✔ Test completedSetsAndDuplicateRowsCountOncePerWorkout() passed after 4.186 seconds.
+✔ Test sourceChangeStartsANewUsualBand() passed after 4.186 seconds.
+✔ Test HealthTileCountsSignalsOutsidePersonalRange() passed after 4.186 seconds.
+✔ Test combinesActivityAndBodyweightWithoutRequiringRecoveryRows() passed after 4.186 seconds.
+✔ Suite ExerciseSwapUsageBuilderTests passed after 4.204 seconds.
+✔ Suite CardioGoalAnnouncerTests passed after 4.209 seconds.
+✔ Suite HealthMetricSupportTests passed after 4.204 seconds.
+✔ Test adapterUsesInjectedExactWindowHealthInsteadOfTheRollingHomeCache() passed after 4.189 seconds.
+✔ Test csvExportsWorkoutsAndRoutinesWithTombstonesDropped() passed after 4.204 seconds.
+✔ Test includesOnlyCalendarDaysCompletelyInsideTheWindow() passed after 4.189 seconds.
+✔ Suite ExperimentHealthSnapshotTests passed after 4.207 seconds.
+✔ Test backfillLinksRealWorkoutRemovesRestConflictAndUpdatesProgress() passed after 4.190 seconds.
+✔ Test jsonKeepsHealthInAppendixOnlyAndDropsTombstones() passed after 4.204 seconds.
+✔ Test deletedSessionsAndWorkoutsAreExcluded() passed after 4.189 seconds.
+✔ Test summarySpeaksTheModalityLanguage() passed after 4.189 seconds.
+✔ Test "Cross-folder order and membership persist together" passed after 4.189 seconds.
+✔ Test recordsFollowModalityContract() passed after 4.189 seconds.
+✔ Test yogaEntriesRecordsAndSummarySpeakMatVocabulary() passed after 4.189 seconds.
+✔ Test pickerOffersOnlyUncreditedCompletedWorkoutsForDueRoutines() passed after 4.189 seconds.
+✔ Test runTrendsPaceAndFallsBackToDuration() passed after 4.189 seconds.
+✔ Test "Dropping on the dragged card is a no-op" passed after 4.189 seconds.
+✔ Test legacySetBasedCardioFallsBackToSetDuration() passed after 4.189 seconds.
+✔ Test rowerTrendsSplitNotPace() passed after 4.189 seconds.
+✔ Test "The flat stack crosses a folder boundary without moving headers" passed after 4.189 seconds.
+✔ Test automaticHealthWorkoutImportThrottleSurvivesColdLaunches() passed after 4.189 seconds.
+✔ Test entriesMatchThroughWorkoutExerciseID() passed after 4.189 seconds.
+✔ Test "A routine inserts between exact rows in another folder" passed after 4.189 seconds.
+✔ Test "A folder header is an exact first-position target" passed after 4.189 seconds.
+✔ Test paceGuardRejectsGPSBlips() passed after 4.190 seconds.
+✔ Test futureDaysCannotBeBackfilled() passed after 4.190 seconds.
+✔ Test stairRecordsCountFloorsNotDistance() passed after 4.190 seconds.
+✔ Test "Ungrouped supports exact insertion rather than append only" passed after 4.189 seconds.
+✔ Test "An alternating pair moves as one visible routine slot" passed after 4.189 seconds.
+✔ Test "A routine snaps through exact positions inside one folder" passed after 4.189 seconds.
+✔ Suite DataExportTests passed after 4.233 seconds.
+✔ Suite MicrocycleDayAssignmentServiceTests passed after 4.208 seconds.
+✔ Suite CardioExerciseStatsTests passed after 4.208 seconds.
+✔ Test planAuditIsVersionGatedAndUsesANonMainContext() passed after 4.190 seconds.
+✔ Suite "Routine reorder session" passed after 4.209 seconds.
+✔ Test refreshRetainsNewlyCreatedExerciseMissingFromCallerSnapshot() passed after 4.200 seconds.
+✔ Test recoveryOnlySnapshotFromPreviousVersionStillDecodes() passed after 4.200 seconds.
+✔ Test aStrainOnlyReadingIsStored() passed after 4.200 seconds.
+✔ Test recoveryActionTintFollowsTheme() passed after 4.200 seconds.
+✔ Test recordTodayOverwritesSoTodayTracksLive() passed after 4.200 seconds.
+✔ Test dashboardRidesAlongWithTodaysScores() passed after 4.200 seconds.
+✔ Test aScorelessDayStoresNoDashboard() passed after 4.200 seconds.
+✔ Test dailyOrTrendMayBeAbsentIndividually() passed after 4.200 seconds.
+✔ Test recordTodayCarriesStrainAndItsHistoricalTarget() passed after 4.200 seconds.
+✔ Test intervalStepTintFollowsTheme() passed after 4.200 seconds.
+✔ Test captureIfAbsentDoesNotOverwrite() passed after 4.200 seconds.
+✔ Test reasonToneColorsFollowTheme() passed after 4.200 seconds.
+✔ Test refreshedCallerEntryWinsWithoutDuplicatingTheExercise() passed after 4.200 seconds.
+✔ Test cachedDashboardBuildsWidgetAndWorkoutStartWithoutHistoryFetch() passed after 4.200 seconds.
+✔ Test aNewRenderReplacesTheDashboardWholesale() passed after 4.200 seconds.
+✔ Test dashboardSurvivesPersistenceRoundTrip() passed after 4.200 seconds.
+✔ Test partialRefreshDoesNotEraseCapturedStrain() passed after 4.200 seconds.
+✔ Test backgroundBackfillMergesWithoutOverwritingCapturedScores() passed after 4.200 seconds.
+✔ Test plannedButUntouchedCardioAndYogaDoNotBecomeAchievements() passed after 4.200 seconds.
+✔ Test aRecordWithoutALiveRenderKeepsTheMorningsDashboard() passed after 4.200 seconds.
+✔ Test aReadingWithNoScoresIsNotStored() passed after 4.200 seconds.
+✔ Test recordTodayIsSeparateDailyAndTrendNotDisplayScore() passed after 4.200 seconds.
+✔ Test legacyCardioSpellingsShareOneCanonicalModality() passed after 4.201 seconds.
+✔ Test everyRequiredScopeIsEnforcedAndEveryScopeConflictIsRejected() passed after 4.200 seconds.
+✔ Test trainingDaysUseTheExperimentFrozenTimeZone() passed after 4.200 seconds.
+✔ Test exerciseMetricsUseExactWindowsAndKeepMissingLoadsVisible() passed after 4.200 seconds.
+✔ Test additiveCardioMetricsAreZeroWhenTheCurrentPeriodHasNoSession() passed after 4.200 seconds.
+✔ Test snapshotsPersistedBeforeTheDashboardExistedStillDecode() passed after 4.201 seconds.
+✔ Test everyProjectedGroupRangeCanReachTheMinimumBucketCount() passed after 4.200 seconds.
+✔ Test dashboardFromBeforeCrossSurfaceFieldsStillDecodes() passed after 4.201 seconds.
+✔ Test cardioMetricsStayModalityScopedAndReportPartialCoverage() passed after 4.200 seconds.
+✔ Test everyPoseHasALineArtFigure() passed after 4.200 seconds.
+✔ Test meaningfulOneThroughFourOperandRecipesCoverEveryChartPayload() passed after 4.200 seconds.
+✔ Test sanskritAliasResolvesInSearch() passed after 4.204 seconds.
+✔ Test optionalRecordedTotalsNeverOfferIncompletePeriodComparisons() passed after 4.200 seconds.
+✔ Test catalogLoadsAndIsInternallyConsistent() passed after 4.200 seconds.
+✔ Test everyMetricAndShapeDeclarationMatchesAnExecutableRecipe() passed after 4.204 seconds.
+✔ Test everyProjectedBucketRangeDimensionLagAndChartClosesToAValidRecipe() passed after 4.204 seconds.
+✔ Test seedRespectsUserModifiedRows() passed after 4.203 seconds.
+✔ Test everyTemplateResolvesRequiredPlaceholdersToAValidRecipe() passed after 4.204 seconds.
+✔ Test builtInFlowsReferenceOnlyCatalogPoses() passed after 4.204 seconds.
+✔ Test poseIDsAreNamespacedAndCollisionFree() passed after 4.204 seconds.
+✔ Test everyPoseHasBothInstructorImages() passed after 4.204 seconds.
+✔ Test myoCommandsPersistActivationMiniSetsAndDerivedVolume() passed after 4.204 seconds.
+✔ Test pruneRemovesDeprecatedPosesOnly() passed after 4.205 seconds.
+✔ Test noCompletedSetsLeavesTheExerciseForNormalInPlaceReplacement() passed after 4.204 seconds.
+✔ Test coverageAndRelationshipSampleCountsRespectStructuralMaximums() passed after 4.205 seconds.
+✔ Test yogaPosesSurviveDeduplicationAlongsideStretches() passed after 4.205 seconds.
+✔ Test fullyCompletedExerciseStaysAndAddsAnEmptyReplacementBelow() passed after 4.204 seconds.
+✔ Test seedIsIdempotentAndTagsRowsAsYoga() passed after 4.205 seconds.
+✔ Test shorteningCurrentCycleNeverRemovesAnElapsedDay() passed after 4.204 seconds.
+✔ Test currentWindowTracksRoutineAddsRemovalsMovesAndRenames() passed after 4.204 seconds.
+✔ Test amrapCommandsPersistTheSelectedAndElapsedWindow() passed after 4.205 seconds.
+✔ Suite LiveExerciseLibraryCacheTests passed after 4.226 seconds.
+✔ Suite ThemeTintInjectionTests passed after 4.226 seconds.
+✔ Suite ExperimentDetailedMetricsTests passed after 4.226 seconds.
+✔ Suite RecoverySnapshotStoreTests passed after 4.226 seconds.
+✔ Test deleteAllLocalModelsRemovesUserDataAndProgress() passed after 4.205 seconds.
+✔ Test aPartnerInAnotherMicrocycleRemainsItsOwnRequirementThere() passed after 4.206 seconds.
+✔ Test colocatedAlternatesFreezeAsOneRequirementAndEitherMemberCompletesIt() passed after 4.205 seconds.
+✔ Test aNewTrackingRunEndsTheOldOneAndDisplayFlagsStayIndependent() passed after 4.206 seconds.
+✔ Test startPersistsTenDayTargetAndFrozenRoutineOrder() passed after 4.205 seconds.
+✔ Test onStateChangeFiresForStartAdjustAndSkip() passed after 4.206 seconds.
+✔ Test liveForgeFitWorkoutsAreNative() passed after 4.206 seconds.
+✔ Test rolloverKeepsOldSnapshotAndFreezesNewRoutineList() passed after 4.206 seconds.
+✔ Test unavailableOrEmptyFolderNeedsAttentionAndCanRecover() passed after 4.205 seconds.
+✔ Test resetOwnsPendingExperimentRoutes() passed after 4.206 seconds.
+✔ Test completedRoutineCountsOnceAndDoesNotRollTheWindowEarly() passed after 4.206 seconds.
+✔ Test addingADayExtendsOnlyTheCurrentCycle() passed after 4.206 seconds.
+✔ Test everyImportPathIsRecognizedAsImported() passed after 4.206 seconds.
+✔ Test startIgnoresNonPositiveDurations() passed after 4.206 seconds.
+✔ Test adjustWithoutRunningTimerDoesNotFire() passed after 4.205 seconds.
+✔ Test nonMicroStartClearsMicroOwner() passed after 4.206 seconds.
+✔ Test adjustWithoutARunningTimerIsANoOp() passed after 4.206 seconds.
+✔ Test adjustNeverDropsRemainingBelowOneSecond() passed after 4.211 seconds.
+✔ Test resetDeletesEveryRegisteredModelType() passed after 4.212 seconds.
+✔ Test trophyInputsMatchTotalsWhenNothingIsImported() passed after 4.212 seconds.
+✔ Test defaultDraftMatchesLegacyApplyBehavior() passed after 4.211 seconds.
+✔ Test catalogContainsNoStreakTrophies() passed after 4.212 seconds.
+✔ Test trophyInputsCountOnlyForgeFitLoggedTraining() passed after 4.206 seconds.
+✔ Test startArmsTheCountdownWithLabelAndMicroState() passed after 4.211 seconds.
+✔ Test editingDayTargetPreservesAssignmentsAndUsesNewLengthGoingForward() passed after 4.212 seconds.
+✔ Test reduceVolumeDropsOneSetAndCapsRPE() passed after 4.212 seconds.
+✔ Test editedSetsToDropFloorsAtOneWorkingSet() passed after 4.212 seconds.
+✔ Test skipClearsEverything() passed after 4.212 seconds.
+✔ Test deloadHalvesSetsAndTrimsLoad() passed after 4.212 seconds.
+✔ Test adjustExtendsBothRemainingAndTotal() passed after 4.212 seconds.
+✔ Test excludedExerciseStaysUntouched() passed after 4.212 seconds.
+✔ Test futureCustomReferenceWindowIsRejected() passed after 4.212 seconds.
+✔ Test noAutomaticPlanFromNumericRecoveryBands() passed after 4.212 seconds.
+✔ Test anotherExperimentUsesOnlyExplicitCompatibleTrackerPairs() passed after 4.212 seconds.
+✔ Test incompatibleNumberUnitsCannotBePaired() passed after 4.212 seconds.
+✔ Test globalStrengthVolumeKeepsUnknownWorkingSetLoadVisible() passed after 4.212 seconds.
+✔ Test restoreUndoesRenameRemovalAndAddition() passed after 4.212 seconds.
+✔ Test confirmYogaPlanCreatesFolderlessActiveProgram() passed after 4.212 seconds.
+✔ Test globalRepsKeepsMissingWorkingSetRepsVisible() passed after 4.212 seconds.
+✔ Test updatePlanEditsWeeksAndTargetAndSyncsProfileCadence() passed after 4.212 seconds.
+✔ Test stopCoachingDeactivatesWithoutDeletingAnything() passed after 4.212 seconds.
+✔ Test currentWeekIsOneBasedAndUnclamped() passed after 4.212 seconds.
+✔ Test incompleteBodyweightLoadCannotProduceAnEstimatedOneRepMax() passed after 4.212 seconds.
+✔ Test previousPeriodRetainsTheCurrentTrackerIdentity() passed after 4.212 seconds.
+✔ Test restoreClearsFlowAddedSinceSnapshot() passed after 4.212 seconds.
+✔ Test restoreUndoesSetTargetEdits() passed after 4.212 seconds.
+✔ Test globalStrengthVolumeIsUnknownWhenEveryAttemptedLoadIsUnknown() passed after 4.212 seconds.
+✔ Test invalidStoredCustomValuesRemainVisibleAsMissingCoverage() passed after 4.212 seconds.
+✔ Test smallExercisesKeepMinimumOneWorkingSet() passed after 4.213 seconds.
+✔ Test importedHealthStrengthWorkoutWithoutCR10HasNoSharedLoad() passed after 4.214 seconds.
+✔ Test freshnessStaysDescriptiveAndOutOfHeadlineReasonChips() passed after 4.216 seconds.
+✔ Test editedWeightCutIsApplied() passed after 4.212 seconds.
+✔ Test updatePlanClampsNegativeWeeksToOpenEnded() passed after 4.216 seconds.
+✔ Test hybridPlanKeepsCardioInPosition() passed after 4.216 seconds.
+✔ Test attachPlanActivatesWithoutModifyingTheFolder() passed after 4.216 seconds.
+✔ Test warmupQuickPickStoresRPEFiveAndLabelsAsW() passed after 4.216 seconds.
+✔ Test completedSetsStayAndOnlyFreshUnfinishedSlotsMoveBelow() passed after 4.218 seconds.
+✔ Test targetMuscleTrainedYesterdayIsContextNotAnAutomaticReduction() passed after 4.216 seconds.
+✔ Test confirmingSecondPlanDeactivatesFirstWithoutTouchingItsFolder() passed after 4.217 seconds.
+✔ Test buildPlanShortCircuitsToYogaWithoutMatching() passed after 4.217 seconds.
+✔ Test notesStampReflectsEditedVsDefault() passed after 4.218 seconds.
+✔ Test rpeQuickPicksLeadWithWarmupThenSixToTenInHalfSteps() passed after 4.217 seconds.
+✔ Test recentLoadWaitsForBaselineAndDoesNotDriveReadiness() passed after 4.217 seconds.
+✔ Test numericQuickPickLabelIsValueWithoutTrailingZero() passed after 4.217 seconds.
+✔ Test allCardStylesRenderToCorrectlySizedImages() passed after 4.217 seconds.
+✔ Test shapesResolveForAllWorkoutKinds() passed after 4.217 seconds.
+✔ Test pureLegacyConditioningNeverBecomesStrengthHistory() passed after 4.217 seconds.
+✔ Test conditioningShareBlocksHidePresetNamesByDefault() passed after 4.217 seconds.
+✔ Test elevatedRHRPlusPoorSleepReducesVolume() passed after 4.217 seconds.
+✔ Test fourDaysOffEasesBackInRatherThanPushingBlindly() passed after 4.217 seconds.
+✔ Test sustainedLowHRVIsAComponentNotAScoreBasedPrescription() passed after 4.217 seconds.
+✔ Test exercisesBeyondCapBecomeMoreCount() passed after 4.217 seconds.
+✔ Test planlessConditioningSessionRemainsVisibleAndCompleted() passed after 4.217 seconds.
+✔ Test cardioSessionRPELoadUsesDurationTimesWholeSessionCR10() passed after 4.217 seconds.
+✔ Test yogaHistoryFoldsLeftAndRightIntoOnePose() passed after 4.217 seconds.
+✔ Test oneLowHRVSignalCannotAloneCreateAnAutomaticReduction() passed after 4.221 seconds.
+✔ Test buildPlanReturnsHonestNoneForImpossibleEquipment() passed after 4.218 seconds.
+✔ Test mixedWorkoutSummaryUsesWholeWorkoutDurationNotCardioBlockDuration() passed after 4.221 seconds.
+✔ Test elapsedConditioningFactsDoNotRepeatTheWorkoutTime() passed after 4.221 seconds.
+✔ Test legacyConditioningRowsCollapseIntoOneMixedTimelineBlock() passed after 4.221 seconds.
+✔ Test confirmPlanImportsFolderCreatesActiveProgramAndSyncsActiveMicrocycleDefault() passed after 4.221 seconds.
+✔ Test watchEditRoutesThroughTheModeField() passed after 4.221 seconds.
+✔ Test externalSeedingIsUnchanged() passed after 4.221 seconds.
+✔ Test largeSessionCollapsesToTopSets() passed after 4.221 seconds.
+✔ Test assistedTonnageIsEffectiveLoadTimesReps() passed after 4.221 seconds.
+✔ Test backfillRepairsMisSeededAssistedHistory() passed after 4.217 seconds.
+✔ Test mixedConditioningAndYogaBlocksShareAsDistinctModalities() passed after 4.221 seconds.
+✔ Test strengthSharedLoadUsesWholeSessionCR10NotSetCount() passed after 4.222 seconds.
+✔ Test routineSeededSetsCarryTheExerciseModeAndField() passed after 4.221 seconds.
+✔ Test metricsPageOnlyExistsWithHeartRateData() passed after 4.221 seconds.
+✔ Test blockEditsAdditionsAndRemovalsAreRestored() passed after 4.221 seconds.
+✔ Suite YogaPoseCatalogTests passed after 4.244 seconds.
+✔ Test resultsNotificationRouteContainsOnlyTheOpaqueExperimentID() passed after 4.221 seconds.
+✔ Test repeatedInteractionChangesCoalesceToLatestWork() passed after 4.221 seconds.
+✔ Test flowOnlyEditsAreDetectedAndRestored() passed after 4.221 seconds.
+✔ Test unchangedRoutineComparesEqual() passed after 4.221 seconds.
+✔ Test reconcileCompletesAtScheduledBoundary() passed after 4.223 seconds.
+✔ Test openEndedSessionFallsBackToDuration() passed after 4.221 seconds.
+✔ Test perWorkoutAndAnytimeTrackersDoNotCreateDailyNagReminders() passed after 4.223 seconds.
+✔ Test backfillLeavesExternalExercisesAlone() passed after 4.223 seconds.
+✔ Test manualCardioWithoutLiveWindowIsSkipped() passed after 4.223 seconds.
+✔ Test conditioningAndYogaHaveDistinctBandKinds() passed after 4.223 seconds.
+✔ Test notificationScheduleSnapshotSurvivesManagedModelDeletion() passed after 4.223 seconds.
+✔ Test softDeleteHidesPresetFromActiveQuery() passed after 4.223 seconds.
+✔ Test deleteAllLocalModelsRemovesPresets() passed after 4.223 seconds.
+✔ Test editsMakeSnapshotsUnequal() passed after 4.223 seconds.
+✔ Test smallSessionShowsEverySet() passed after 4.224 seconds.
+✔ Test presetRoundTripsPlanThroughStore() passed after 4.223 seconds.
+✔ Test sessionsOwnedByOneConditioningBlockCollapseToLongestWindow() passed after 4.224 seconds.
+✔ Test futureExperimentRemainsActive() passed after 4.224 seconds.
+✔ Test liveCardioInHybridWorkoutProducesBand() passed after 4.223 seconds.
+✔ Test menuShowsColorsForCreateAndAssignmentChoices() passed after 4.223 seconds.
+✔ Test paletteStartsWithDistinctNamedGroups() passed after 4.223 seconds.
+✔ Test routineBlocksAndExercisesKeepOneSharedOrder() passed after 4.223 seconds.
+✔ Test sleepOnlyHistoryAppliesCorrectionsWithoutInventingPartialWear() passed after 4.223 seconds.
+✔ Test scheduledWorkNeverRunsSynchronously() passed after 4.224 seconds.
+✔ Test accessibilitySummaryReadsAsASentence() passed after 4.223 seconds.
+✔ Suite WatchStructuredSetSyncTests passed after 4.247 seconds.
+✔ Test pureCardioWorkoutProducesCardioBand() passed after 4.224 seconds.
+✔ Test duplicateActivesAreReportedWithoutDestroyingData() passed after 4.224 seconds.
+✔ Test reminderRequestsAreBoundedAndNeverOutliveTheExperiment() passed after 4.224 seconds.
+✔ Test finishWorkoutSkipsUntouchedYogaBlock() passed after 4.223 seconds.
+✔ Test strengthRoutineStartIsUnchangedByYogaBranch() passed after 4.223 seconds.
+✔ Test runnerHubResumesAtFirstIncompletePoseSplit() passed after 4.223 seconds.
+✔ Test routineStartSynthesizesFlowForBarePose() passed after 4.223 seconds.
+✔ Test nextGroupAndCreateMenuReuseTheFirstAvailableIdentity() passed after 4.223 seconds.
+✔ Test shortYogaSessionIsNotEligible() passed after 4.223 seconds.
+✔ Test singleHeartShowsJustTheName() passed after 4.223 seconds.
+✔ Test shortHistoryDoesNotClaimAPersonalScore() passed after 4.223 seconds.
+✔ Test multipleHeartsCollapseToOverflowCount() passed after 4.223 seconds.
+✔ Test yogaSessionEarnsYogaXPNotCardioXP() passed after 4.225 seconds.
+✔ Test incompleteConditioningSharesActualWorkAndHonestStatus() passed after 4.224 seconds.
+✔ Test fullDayStepTotalsDoNotChangeSameClockComparison() passed after 4.223 seconds.
+✔ Test deletedLeadProfileShowsNoNameButKeepsTheCount() passed after 4.225 seconds.
+✔ Test countRemainsVisibleAtZero() passed after 4.224 seconds.
+✔ Suite InsightRecipeMatrixTests passed after 4.249 seconds.
+✔ Test unratedWorkoutUsesEstimatedTrainingLoad() passed after 4.225 seconds.
+✔ Suite AccountResetServiceTests passed after 4.249 seconds.
+✔ Test startYogaQuickStartCreatesBlockWithoutSyntheticExercise() passed after 4.225 seconds.
+✔ Test recoveryNeverMovesStrainOrUsualRange() passed after 4.225 seconds.
+✔ Test everyProgramRoutineIDResolvesToATemplate() passed after 4.225 seconds.
+✔ Test legacyRoutineYogaRowProjectsToYogaBlock() passed after 4.225 seconds.
+✔ Test routineStartKeepsYogaSessionUnconfiguredUntilBuilt() passed after 4.225 seconds.
+✔ Test restorativeYogaEarnsHalfRate() passed after 4.225 seconds.
+✔ Test statusIsFullyDeterminedByScoreAndUsualRange() passed after 4.225 seconds.
+✔ Test finishWorkoutCompletesManualYogaAndStampsExposure() passed after 4.225 seconds.
+✔ Test sameTimeMovementPercentileRaisesStrain() passed after 4.225 seconds.
+✔ Test ratedWorkoutRaisesTrainingPercentile() passed after 4.225 seconds.
+✔ Test noDuplicateProgramIDs() passed after 4.225 seconds.
+✔ Test cardioXPUnchangedByYogaComponent() passed after 4.225 seconds.
+✔ Suite MicrocycleTrackingServiceTests passed after 4.249 seconds.
+✔ Test everyProgramHasAValidFocus() passed after 4.225 seconds.
+✔ Test noDuplicateTemplateIDs() passed after 4.225 seconds.
+✔ Test everyProgramScheduleEntryResolvesToARoutineID() passed after 4.225 seconds.
+✔ Test deletingProfileClearsQueuedIntents() passed after 4.234 seconds.
+✔ Test weightUnitFormatsAndParsesCanonicalKilograms() passed after 4.225 seconds.
+✔ Test mesocycleAndMicrocycleActiveTogetherMicrocycleWins() passed after 3.942 seconds.
+✔ Test emptyActiveMicrocycleFallsThroughToMesocycle() passed after 3.945 seconds.
+✔ Test onlyMesocycleActiveRotatesAcrossItsMicrocycles() passed after 3.933 seconds.
+✔ Test unrelatedMicrocycleStillWinsOverActiveMesocycle() passed after 3.942 seconds.
+✔ Test onlyFinishedLiveWorkoutsCanShowHearts() passed after 3.942 seconds.
+✔ Test onlyMicrocycleActiveScopesToThatMicrocycle() passed after 3.936 seconds.
+✔ Test rotatesAfterLastCompletionWithinActiveMicrocycle() passed after 3.942 seconds.
+✔ Test routineCardRenders() passed after 3.918 seconds.
+✔ Test wrappedPagesRenderAsShareCards() passed after 3.918 seconds.
+✔ Test noActiveFoldersBestGuessesAcrossEverything() passed after 3.933 seconds.
+✔ Test liftHeldTwoConsecutiveSessionsProducesHoldProposalAndAcceptedOverrideHoldsInProgressionPlanner() passed after 3.916 seconds.
+✔ Test noRoutinesReturnsNil() passed after 3.919 seconds.
+✔ Test lastWeeksActiveOverrideIsNotReturnedForThisWeek() passed after 3.917 seconds.
+✔ Test onTrackWeekProducesNoProposalsAndStampsAnchor() passed after 3.917 seconds.
+✔ Test folderCardRendersMesoAndMacro() passed after 3.919 seconds.
+✔ Test gateMatchesTheBulkFilterExactly() passed after 3.942 seconds.
+✔ Test completedBlockProducesDeloadWeekProposal() passed after 3.917 seconds.
+✔ Test incompleteWeekProducesCarryForwardProposal() passed after 3.917 seconds.
+✔ Test workoutCardRendersTallImageWithAllSections() passed after 3.919 seconds.
+✔ Test cancelTurnsAnActiveOverrideCancelled() passed after 3.917 seconds.
+✔ Test weeklyDeloadBeatsDailyReduceVolumeAndNeverStacksTwoReductions() passed after 3.917 seconds.
+✔ Test alternatingPairOccupiesOneSuggestionSlotAndSwitchesItsDueMember() passed after 3.936 seconds.
+✔ Test conditioningOnlyAndMixedSavedImagesRenderMeaningfulScores() passed after 3.919 seconds.
+✔ Test declinedProposalNeverRecreatedOnRereviewSameWeek() passed after 3.918 seconds.
+✔ Suite RestTimerWatchHookTests passed after 4.253 seconds.
+✔ Test weekAnchorIsAlwaysMondayRegardlessOfSundayFirstCalendar() passed after 3.917 seconds.
+✔ Test seededProfileOptsTheDemoUserIn() passed after 4.230 seconds.
+✔ Suite TrophyCatalogTests passed after 4.253 seconds.
+✔ Test drainDropsPublishIntentsTheBuilderNoLongerYields() passed after 4.238 seconds.
+✔ Suite LiveExerciseReplacementTests passed after 4.253 seconds.
+✔ Suite CoachAdjustmentsTests passed after 4.253 seconds.
+✔ Suite RestTimerControllerTests passed after 4.253 seconds.
+✔ Suite CoachPlanServiceTests passed after 4.253 seconds.
+✔ Suite ShareCardStyleTests passed after 4.253 seconds.
+✔ Suite WeightModeTests passed after 4.253 seconds.
+✔ Suite IntervalPresetTests passed after 4.255 seconds.
+✔ Suite ExperimentAnalysisAdapterIntegrityTests passed after 4.253 seconds.
+✔ Suite RoutineSnapshotTests passed after 4.253 seconds.
+✔ Suite DeferredInteractionWorkTests passed after 4.255 seconds.
+✔ Suite HeartRateBandTests passed after 4.255 seconds.
+✔ Suite ExperimentLifecycleServiceTests passed after 4.256 seconds.
+✔ Suite SleepHistoryStoreTests passed after 4.255 seconds.
+✔ Suite SupersetUITests passed after 4.255 seconds.
+✔ Suite WorkoutHeartsRowTests passed after 4.255 seconds.
+✔ Suite HeartsEligibilityGateTests passed after 4.255 seconds.
+✔ Suite DailyStrainEngineTests passed after 4.255 seconds.
+✔ Suite ForgeFitTests passed after 4.256 seconds.
+✔ Suite YogaWorkoutPipelineTests passed after 4.256 seconds.
+✔ Suite CoachWeeklyReviewTests passed after 4.256 seconds.
+✔ Suite CatalogIntegrityTests passed after 4.255 seconds.
+✔ Suite ShareCardRenderTests passed after 4.255 seconds.
+✔ Suite NextRoutineSuggestionTests passed after 4.255 seconds.
+2026-08-09 16:24:12.484915-0400 ForgeFit[15775:3420579] [VoiceDBClient] Error fetching locales: DecodingError.keyNotFound: Key 'codingKey: CodingKeys(stringValue: "primary", intValue: nil)' not found in keyed decoding container. Debug description: Missing key. Using fallback locales.
+2026-08-09 16:24:12.521459-0400 ForgeFit[15775:3419821] [AXCommon] Potential Structural Swift Concurrency Issue: unsafeForcedSync called from Swift Concurrent context.
+2026-08-09 16:24:12.530613-0400 ForgeFit[15775:3420641] [VoiceDBClient] Error fetching voices: DecodingError.dataCorrupted: Data was corrupted. Debug description: Invalid container metadata for _UnkeyedDecodingContainer, found keyedGraphEncodingNodeID. Using fallback voices.
+✔ Test unpublishIsTerminalOverQueuedPublish() passed after 4.300 seconds.
+✔ Test drainExecutesQueuedIntentsAndClears() passed after 4.301 seconds.
+✔ Test failedDeletionLeavesAccountOptedInForRetry() passed after 4.297 seconds.
+✔ Test noHeartsResolvesToAnEmptyListNotNil() passed after 4.294 seconds.
+✔ Test legacyTombstonesMigrateIntoTheOutbox() passed after 4.318 seconds.
+✔ Test overlappingHealthRefreshesShareOneWorkerLoad() passed after 4.315 seconds.
+✔ Test ownHeartReadsAsYouNotYourDisplayName() passed after 4.310 seconds.
+✔ Suite StartupPerformanceTests passed after 4.333 seconds.
+✔ Test sharedPlanAttachmentCarriesTheForgeFitType() passed after 0.317 seconds.
+✔ Test remoteFetchFailureAbortsWithoutTouchingAnything() passed after 4.325 seconds.
+✔ Test rejectedFollowWriteReachesTheCaller() passed after 4.320 seconds.
+✔ Test remoteSharesSurviveAFreshDeviceWithNoLocalHistory() passed after 4.325 seconds.
+✔ Test exerciseMetadataRevisionInvalidatesCachedSessionRows() passed after 4.325 seconds.
+✔ Test deleteProfileClearsLocalStateAndBackendData() passed after 4.319 seconds.
+◇ Test mesocycleRoundTripPreservesCompletePlanAndExcludesPrivateData() started.
+✔ Suite InsightZeroGridTests passed after 4.346 seconds.
+✔ Suite SocialServiceDeleteTests passed after 4.340 seconds.
+✔ Test finishedWorkoutSaveFlowsToTheCommunity() passed after 4.325 seconds.
+2026-08-09 16:24:12.564531-0400 ForgeFit[15775:3420646] [VoiceDBClient] Error fetching voices: DecodingError.dataCorrupted: Data was corrupted. Debug description: Invalid container metadata for _UnkeyedDecodingContainer, found keyedGraphEncodingNodeID. Using fallback voices.
+✔ Test reconcileUnpublishesLocallyDeletedShares() passed after 4.332 seconds.
+✔ Test reconcilePublishesOnlyWorkoutsMissingRemotely() passed after 4.332 seconds.
+✔ Test successfulFollowRoundTrips() passed after 4.327 seconds.
+✔ Suite SocialFollowTests passed after 4.347 seconds.
+✔ Test importedAndInProgressWorkoutsNeverPublish() passed after 4.332 seconds.
+✔ Test drainKeepsFailedIntentsForTheNextPass() passed after 4.333 seconds.
+✔ Test heartsResolveLeadNameAndCount() passed after 4.325 seconds.
+✔ Suite HeartsDemoPathTests passed after 4.348 seconds.
+✔ Test reconcileRepublishesEditedWorkoutsInPlace() passed after 4.336 seconds.
+✔ Test mesocycleRoundTripPreservesCompletePlanAndExcludesPrivateData() passed after 0.207 seconds.
+◇ Test validatorRejectsFutureAndBrokenDocumentsBeforeImport() started.
+✔ Test softDeleteSaveWithdrawsTheShare() passed after 4.532 seconds.
+✔ Test childSetEditRepublishesWithAdvancedWatermark() passed after 4.533 seconds.
+✔ Suite SyncCoordinatorTests passed after 4.554 seconds.
+✔ Test validatorRejectsFutureAndBrokenDocumentsBeforeImport() passed after 0.007 seconds.
+◇ Test alternatingRoutineShareIncludesBothMembersAndImportRemapsThePair() started.
+✔ Test alternatingRoutineShareIncludesBothMembersAndImportRemapsThePair() passed after 0.026 seconds.
+◇ Test microcycleShareCarriesAnAlternateFromOutsideTheFolder() started.
+✔ Test microcycleShareCarriesAnAlternateFromOutsideTheFolder() passed after 0.001 seconds.
+◇ Test versionOnePlanWithoutAlternationsStillDecodes() started.
+✔ Test versionOnePlanWithoutAlternationsStillDecodes() passed after 0.001 seconds.
+◇ Test validatorRejectsAlternationsWithMissingOrRepeatedMembers() started.
+✔ Test validatorRejectsAlternationsWithMissingOrRepeatedMembers() passed after 0.001 seconds.
+✔ Suite PlanSharingTests passed after 4.590 seconds.
+✔ Test reconcileWalksEveryRemotePage() passed after 4.579 seconds.
+✔ Suite SocialBackfillTests passed after 4.600 seconds.
+✔ Test run with 762 tests in 115 suites passed after 4.620 seconds.
+2026-08-09 16:24:13.258 xcodebuild[15748:3419152] [MT] IDETestOperationsObserverDebug: 10.974 elapsed -- Testing started completed.
+2026-08-09 16:24:13.258 xcodebuild[15748:3419152] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-09 16:24:13.258 xcodebuild[15748:3419152] [MT] IDETestOperationsObserverDebug: 10.974 sec, +10.974 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/jamespattison/Developer/ForgeFit/ForgeFit/artifacts/release-audit-2026-08-09/AppTests.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started

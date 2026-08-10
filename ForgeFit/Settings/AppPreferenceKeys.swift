@@ -43,8 +43,6 @@ enum AppPreferenceKeys {
         "zoneVoiceCues",
         "paceVoiceCues",
         "yogaVoiceCues",
-        "yogaVoiceID",
-        "yogaVoiceRate",
         YogaInstructor.preferenceKey,
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
@@ -71,6 +69,8 @@ enum AppPreferenceKeys {
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
         PlanImportService.importedPackagesDefaultsKey,
         workoutUngroupedCollapsedKey,
+        YogaGuidanceCatalog.recentGuidanceKey,
+        YogaGuidanceCatalog.safetyAcknowledgementKey,
     ]
 
     /// Retired preferences kept only so Erase All Data also cleans installs
@@ -80,6 +80,8 @@ enum AppPreferenceKeys {
         "streakNudgeEnabled",
         "activeMacroFolderID",
         "activeMesoFolderID",
+        "yogaVoiceID",
+        "yogaVoiceRate",
     ]
 
     static var allResettable: [String] { backedUp + localOnly + deprecated }

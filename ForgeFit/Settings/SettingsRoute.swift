@@ -7,5 +7,6 @@ enum SettingsRoute: Hashable {
     case warmupRamp
     case platesAndBars
     case reminders
+    case yogaGuidance
     case privacyPolicy
 }

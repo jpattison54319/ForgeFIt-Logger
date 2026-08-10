@@ -1265,6 +1265,16 @@ struct ContentView: View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
+            // The automatic foreground worker coalesces attempts per day in
+            // UserDefaults. `--reset-store` deliberately clears SwiftData but
+            // not that preference, so a later UI-test launch could seed the
+            // demo workouts yet skip recreating the report it just deleted.
+            // Materialize the due report as part of this explicit DEBUG
+            // fixture; production launches still use the coalesced worker.
+            _ = WrappedReportService.generateIfDue(
+                in: modelContext,
+                weightUnit: Fmt.unit
+            )
         }
         // Hearts demo: plant friends' hearts on existing share-eligible
         // workouts. Seeded at launch rather than on publish so the row is

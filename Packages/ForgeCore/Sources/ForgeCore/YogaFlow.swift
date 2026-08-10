@@ -107,15 +107,52 @@ public struct YogaFlowPlan: Codable, Equatable, Sendable {
 
     public var styleRaw: String
     public var steps: [PoseStep]
+    /// Per-block narration choice. Captions remain available in the player
+    /// even when this is false. Missing values from older saved plans decode
+    /// as true so an app update never silently mutes an existing class.
+    public var voiceGuidanceEnabled: Bool
 
-    public init(style: YogaStyle, steps: [PoseStep]) {
+    public init(
+        style: YogaStyle,
+        steps: [PoseStep],
+        voiceGuidanceEnabled: Bool = true
+    ) {
         self.styleRaw = style.rawValue
         self.steps = steps
+        self.voiceGuidanceEnabled = voiceGuidanceEnabled
     }
 
-    public init(styleRaw: String, steps: [PoseStep]) {
+    public init(
+        styleRaw: String,
+        steps: [PoseStep],
+        voiceGuidanceEnabled: Bool = true
+    ) {
         self.styleRaw = styleRaw
         self.steps = steps
+        self.voiceGuidanceEnabled = voiceGuidanceEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case styleRaw
+        case steps
+        case voiceGuidanceEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        styleRaw = try container.decode(String.self, forKey: .styleRaw)
+        steps = try container.decode([PoseStep].self, forKey: .steps)
+        voiceGuidanceEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .voiceGuidanceEnabled
+        ) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(styleRaw, forKey: .styleRaw)
+        try container.encode(steps, forKey: .steps)
+        try container.encode(voiceGuidanceEnabled, forKey: .voiceGuidanceEnabled)
     }
 
     public var style: YogaStyle { YogaStyle(rawValue: styleRaw) ?? .hatha }

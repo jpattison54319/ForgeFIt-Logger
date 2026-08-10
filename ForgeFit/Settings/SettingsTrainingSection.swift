@@ -36,6 +36,16 @@ struct SettingsTrainingSection: View {
                 )
             }
             .themedListRow()
+
+            NavigationLink(value: SettingsRoute.yogaGuidance) {
+                SettingsRowLabel(
+                    icon: "figure.mind.and.body",
+                    iconTint: theme.accent,
+                    title: "Yoga guidance",
+                    subtitle: "Instructor voice, adaptive cues, content review, and safety."
+                )
+            }
+            .themedListRow()
         } header: {
             SettingsSectionHeader(title: "Training")
         }

@@ -19,8 +19,8 @@ struct YogaFlowBuilderView: View {
 
     @State private var style: YogaStyle
     @State private var steps: [YogaFlowPlan.PoseStep]
+    @State private var voiceGuidanceEnabled: Bool
     @State private var showPosePicker = false
-    @State private var showGenerator = false
     @State private var showSaveAsFlow = false
     @State private var newFlowName = ""
     @State private var detailExercise: ExerciseLibraryModel?
@@ -30,10 +30,25 @@ struct YogaFlowBuilderView: View {
         let plan = YogaFlowPlan.decode(from: planJSON)
         _style = State(initialValue: plan?.style ?? .hatha)
         _steps = State(initialValue: plan?.steps ?? [])
+        _voiceGuidanceEnabled = State(
+            initialValue: plan?.voiceGuidanceEnabled
+                ?? YogaVoiceGuidancePreference.defaultEnabled
+        )
     }
 
     private var plan: YogaFlowPlan {
-        YogaFlowPlan(style: style, steps: steps)
+        YogaFlowPlan(
+            style: style,
+            steps: steps,
+            voiceGuidanceEnabled: voiceGuidanceEnabled
+        )
+    }
+
+    private var hasGuidanceTimingIssue: Bool {
+        steps.contains { step in
+            guard let minimum = YogaGuidancePlanner.minimumCriticalHoldSeconds(for: step) else { return false }
+            return step.holdSeconds < minimum
+        }
     }
 
     var body: some View {
@@ -54,16 +69,25 @@ struct YogaFlowBuilderView: View {
                         onSave(steps.isEmpty ? nil : plan.encodedJSON())
                         dismiss()
                     }
+                    .disabled(hasGuidanceTimingIssue)
                 }
             }
             .sheet(isPresented: $showPosePicker) {
                 ExercisePickerView(presetModality: .yoga, excludeYogaSession: true) { picked in
                     for exercise in picked where exercise.isYoga && !YogaPoseCatalog.isSessionExercise(exercise) {
+                        let slug = YogaPoseCatalog.slug(for: exercise)
+                        let side: YogaFlowPlan.Side? = exercise.isUnilateral ? .left : nil
+                        let defaultHold = exercise.defaultHoldSeconds ?? 30
+                        let minimumHold = YogaGuidancePlanner.minimumCriticalHoldSeconds(
+                            poseSlug: slug,
+                            poseName: exercise.name,
+                            side: side
+                        ) ?? 1
                         steps.append(YogaFlowPlan.PoseStep(
                             poseID: exercise.id,
-                            poseSlug: YogaPoseCatalog.slug(for: exercise),
+                            poseSlug: slug,
                             name: exercise.name,
-                            holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                            holdSeconds: max(defaultHold, minimumHold),
                             side: exercise.isUnilateral ? .bothSides : nil
                         ))
                     }
@@ -72,11 +96,6 @@ struct YogaFlowBuilderView: View {
             .sheet(item: $detailExercise) { exercise in
                 NavigationStack {
                     ExerciseDetailView(exerciseID: exercise.id, workouts: [], exercises: exercises)
-                }
-            }
-            .sheet(isPresented: $showGenerator) {
-                YogaFlowGeneratorSheet { generated in
-                    load(generated)
                 }
             }
             .alert("Save as My Flow", isPresented: $showSaveAsFlow) {
@@ -116,8 +135,25 @@ struct YogaFlowBuilderView: View {
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     .listRowBackground(theme.surface)
             }
+            Toggle(isOn: $voiceGuidanceEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Voice guidance", systemImage: "waveform")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    Text("Captions remain on screen when narration is off.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .tint(theme.accent)
+            .listRowBackground(theme.surface)
+            .accessibilityIdentifier("yoga-voice-guidance-toggle")
         } footer: {
-            Text(plan.hasSteps ? "Total: \(plan.structureSummary)" : "Add poses to build the sequence.")
+            if hasGuidanceTimingIssue {
+                Text("Increase the highlighted hold before saving so the pose name, complete setup, and exit can all play.")
+            } else {
+                Text(plan.hasSteps ? "Total: \(plan.structureSummary)" : "Add poses to build the sequence.")
+            }
         }
     }
 
@@ -148,19 +184,10 @@ struct YogaFlowBuilderView: View {
 
     private var loadSection: some View {
         Section("Start From") {
-            Button {
-                showGenerator = true
-            } label: {
-                Label("Generate a class", systemImage: "wand.and.stars")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
-            }
-            .listRowBackground(theme.surface)
-            .accessibilityIdentifier("generate-yoga-flow")
-
             Menu {
                 ForEach(YogaFlowCatalog.load(), id: \.slug) { seed in
                     Button {
-                        load(YogaFlowCatalog.plan(for: seed))
+                        load(YogaFlowCatalog.plan(for: seed), restoreVoiceGuidance: false)
                     } label: {
                         Label(seed.name, systemImage: seed.style.systemImage)
                     }
@@ -175,7 +202,9 @@ struct YogaFlowBuilderView: View {
                 Menu {
                     ForEach(savedFlows) { flow in
                         Button(flow.name) {
-                            if let saved = flow.plan { load(saved) }
+                            if let saved = flow.plan {
+                                load(saved, restoreVoiceGuidance: true)
+                            }
                         }
                     }
                 } label: {
@@ -200,8 +229,14 @@ struct YogaFlowBuilderView: View {
 
     /// Loading a template value-copies its steps with FRESH step IDs so two
     /// attachments of one flow never share identity.
-    private func load(_ template: YogaFlowPlan) {
+    private func load(
+        _ template: YogaFlowPlan,
+        restoreVoiceGuidance: Bool
+    ) {
         style = template.style
+        if restoreVoiceGuidance {
+            voiceGuidanceEnabled = template.voiceGuidanceEnabled
+        }
         steps = template.steps.map { step in
             YogaFlowPlan.PoseStep(
                 poseID: step.poseID,
@@ -232,6 +267,7 @@ struct YogaFlowBuilderView: View {
         if let pose = YogaPoseCatalog.pose(forSlug: step.poseSlug) { return pose.unilateral }
         return exercises.first { $0.id == step.poseID }?.isUnilateral ?? (step.side != nil)
     }
+
 }
 
 /// One editable hold: art, name, hold-length menu, and side handling for
@@ -244,48 +280,71 @@ private struct PoseStepRow: View {
 
     private static let holdOptions = [10, 15, 20, 30, 45, 60, 90, 120, 150, 180]
 
+    private var minimumGuidedHold: Int? {
+        YogaGuidancePlanner.minimumCriticalHoldSeconds(for: step)
+    }
+
+    private var availableHoldOptions: [Int] {
+        let minimum = minimumGuidedHold ?? 1
+        return Array(Set(Self.holdOptions + [minimum]))
+            .filter { $0 >= minimum }
+            .sorted()
+    }
+
+    private var needsMoreTime: Bool {
+        minimumGuidedHold.map { step.holdSeconds < $0 } ?? false
+    }
+
     var body: some View {
-        Button(action: onInfo) {
-            HStack(spacing: Space.md) {
-                YogaPoseArt(slug: step.poseSlug, size: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(step.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .lineLimit(1)
-                    if isUnilateral {
-                        Menu {
-                            Button("Both sides") { step.side = .bothSides }
-                            Button("Left only") { step.side = .left }
-                            Button("Right only") { step.side = .right }
-                        } label: {
-                            Text(sideLabel)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(theme.accent)
+        VStack(alignment: .leading, spacing: 5) {
+            Button(action: onInfo) {
+                HStack(spacing: Space.md) {
+                    YogaPoseArt(slug: step.poseSlug, size: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        if isUnilateral {
+                            Menu {
+                                Button("Both sides") { step.side = .bothSides }
+                                Button("Left only") { step.side = .left }
+                                Button("Right only") { step.side = .right }
+                            } label: {
+                                Text(sideLabel)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(theme.accent)
+                            }
                         }
                     }
-                }
-                Spacer()
-                Menu {
-                    ForEach(Self.holdOptions, id: \.self) { seconds in
-                        Button(Fmt.restTimer(seconds)) { step.holdSeconds = seconds }
+                    Spacer()
+                    Menu {
+                        ForEach(availableHoldOptions, id: \.self) { seconds in
+                            Button(Fmt.restTimer(seconds)) { step.holdSeconds = seconds }
+                        }
+                    } label: {
+                        Text(Fmt.restTimer(step.holdSeconds))
+                            .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(needsMoreTime ? theme.warmup : theme.accent)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(needsMoreTime ? theme.warmup.opacity(0.12) : theme.accentSoft)
+                            .clipShape(Capsule())
                     }
-                } label: {
-                    Text(Fmt.restTimer(step.holdSeconds))
-                        .font(.system(size: 15, weight: .bold)).monospacedDigit()
+                    // The row opens the pose's detail page — say so. Sage chevron
+                    // per the design rule: white names, accent disclosure only.
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(theme.accent)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(theme.accentSoft)
-                        .clipShape(Capsule())
                 }
-                // The row opens the pose's detail page — say so. Sage chevron
-                // per the design rule: white names, accent disclosure only.
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.accent)
+            }
+            .buttonStyle(.plain)
+
+            if needsMoreTime, let minimumGuidedHold {
+                Label("Guided setup needs at least \(Fmt.restTimer(minimumGuidedHold))", systemImage: "waveform.badge.exclamationmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.warmup)
             }
         }
-        .buttonStyle(.plain)
         .accessibilityIdentifier("yoga-pose-row-\(step.name)")
     }
 

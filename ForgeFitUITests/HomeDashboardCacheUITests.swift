@@ -52,13 +52,14 @@ final class HomeDashboardCacheUITests: XCTestCase {
                        "A day with a cached render must not show the recommendation loader.")
     }
 
-    /// Only YESTERDAY has a cached render → first open of the new day shows
-    /// the loader. A new day's scores don't exist yet, and an older day's must
-    /// never stand in for them.
+    /// Only YESTERDAY has a cached render. With no current Health connection,
+    /// Home now leads with training and one Connect Health row instead of four
+    /// empty loading tiles. Yesterday's values must still never stand in.
     @MainActor
-    func testFirstOpenOfANewDayShowsLoaderNeverYesterday() throws {
+    func testFirstOpenOfANewDaySuppressesRecoveryDashboardAndNeverShowsYesterday() throws {
         let app = XCUIApplication()
         app.launchArguments = [
+            "--reset-store",
             "--suppress-health-refresh",
             "--seed-yesterday-dashboard-cache",
             "-didOnboard", "YES",
@@ -66,11 +67,13 @@ final class HomeDashboardCacheUITests: XCTestCase {
         ]
         app.launch()
 
-        let grid = app.descendants(matching: .any)["home-metric-grid"].firstMatch
-        XCTAssertTrue(grid.waitForExistence(timeout: 10), "Expected the Home metric grid.")
-
-        XCTAssertTrue(app.staticTexts["Syncing today's data"].firstMatch.waitForExistence(timeout: 5),
-                      "First open of a new day must show the loading tiles.")
+        let connectHealth = app.descendants(matching: .any)["home-connect-health-prompt"].firstMatch
+        XCTAssertTrue(connectHealth.waitForExistence(timeout: 10),
+                      "Expected the concise Health connection row instead of empty recovery tiles.")
+        XCTAssertFalse(app.descendants(matching: .any)["home-metric-grid"].firstMatch.exists,
+                       "Disconnected Home must not restore the removed empty recovery dashboard.")
+        XCTAssertFalse(app.staticTexts["Syncing today's data"].exists,
+                       "Disconnected Home must not restore the removed loading-tile state.")
         XCTAssertFalse(app.staticTexts["7h 12m"].exists,
                        "Yesterday's sleep value must never leak into a new day.")
         XCTAssertFalse(app.staticTexts["No recovery-based restriction was detected. Use your warm-up to confirm."].exists,
@@ -82,11 +85,11 @@ final class HomeDashboardCacheUITests: XCTestCase {
         }
     }
 
-    /// The dashboard may legitimately stay in its loading state while
-    /// HealthKit and analytics finish. Neither cold launch nor reactivation
-    /// may couple scrolling/navigation to those five cards becoming ready.
+    /// A disconnected Home has no recovery dashboard to wait for. Neither cold
+    /// launch nor reactivation may couple scrolling or navigation to Health
+    /// becoming available.
     @MainActor
-    func testColdLaunchAndForegroundStayInteractiveWhileMetricsAreLoading() throws {
+    func testColdLaunchAndForegroundStayInteractiveWithoutRecoveryDashboard() throws {
         let app = XCUIApplication()
         app.launchArguments = [
             "--reset-store",
@@ -98,9 +101,10 @@ final class HomeDashboardCacheUITests: XCTestCase {
         ]
         app.launch()
 
-        let grid = app.descendants(matching: .any)["home-metric-grid"].firstMatch
-        XCTAssertTrue(grid.waitForExistence(timeout: 15), "Expected the Home metric grid.")
-        XCTAssertTrue(app.staticTexts["Syncing today's data"].firstMatch.waitForExistence(timeout: 5))
+        let connectHealth = app.descendants(matching: .any)["home-connect-health-prompt"].firstMatch
+        XCTAssertTrue(connectHealth.waitForExistence(timeout: 15), "Expected Home's Health connection row.")
+        XCTAssertFalse(app.descendants(matching: .any)["home-metric-grid"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Syncing today's data"].exists)
 
         let quickStart = app.buttons["start-empty-workout"].firstMatch
         reveal(quickStart, in: app)
@@ -109,7 +113,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(grid.waitForExistence(timeout: 5), "Home should resume immediately.")
+        XCTAssertTrue(connectHealth.waitForExistence(timeout: 5), "Home should resume immediately.")
         XCTAssertTrue(app.buttons["tab-workout"].firstMatch.waitForExistence(timeout: 2))
         app.buttons["tab-workout"].firstMatch.tap()
         XCTAssertTrue(app.buttons["new-routine-button"].firstMatch.waitForExistence(timeout: 3),

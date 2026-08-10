@@ -5,7 +5,7 @@ import Foundation
 /// Speaks split announcements during outdoor cardio ("Kilometer 3. Split
 /// 5 minutes 12 seconds.") — locked phone and earbuds included, since the
 /// route recorder keeps running in background. Same audio-session
-/// discipline as YogaCueSpeaker: `.duckOthers` dips music around the
+/// discipline as YogaGuidanceAudio: `.duckOthers` dips music around the
 /// utterance only, then releases so it recovers to full volume.
 @MainActor
 final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {

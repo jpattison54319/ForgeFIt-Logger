@@ -180,6 +180,18 @@ struct YogaFlowGeneratorTests {
         #expect(strengthCount >= 1)
     }
 
+    @Test func generatedBodyHoldsRespectPerPoseGuidanceMinimum() throws {
+        let guidedCatalog = Self.catalog.map { pose in
+            var guided = pose
+            guided.minimumHoldSeconds = 36
+            return guided
+        }
+        let plan = try #require(generate(style: .power, minutes: 20, poses: guidedCatalog))
+        for step in plan.steps.dropLast() {
+            #expect(step.holdSeconds >= 36, "\(step.name) was only \(step.holdSeconds)s")
+        }
+    }
+
     // MARK: - Determinism
 
     @Test func sameSeedProducesIdenticalPlan() throws {

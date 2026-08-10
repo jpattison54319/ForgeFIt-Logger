@@ -99,7 +99,8 @@ struct YogaWorkoutPipelineTests {
         context.insert(pose)
         try context.save()
 
-        let flow = YogaFlowPlan.singlePose(from: pose, style: .vinyasa)
+        var flow = YogaFlowPlan.singlePose(from: pose, style: .vinyasa)
+        flow.voiceGuidanceEnabled = false
         let workout = WorkoutFactory.startYoga(flow: flow, named: "Morning Flow", exercises: [pose], in: context)
 
         #expect(workout.title == "Morning Flow")
@@ -107,6 +108,7 @@ struct YogaWorkoutPipelineTests {
         let block = try #require(workout.blocks.first)
         #expect(block.kind == .yoga)
         #expect(YogaFlowPlan.decode(from: block.planSnapshotJSON) == flow)
+        #expect(YogaFlowPlan.decode(from: block.planSnapshotJSON)?.voiceGuidanceEnabled == false)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
         #expect(session.workoutBlockID == block.id)

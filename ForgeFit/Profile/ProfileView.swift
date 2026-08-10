@@ -306,7 +306,11 @@ struct ProfileView: View {
         let columns = [GridItem(.flexible(), spacing: Space.md), GridItem(.flexible(), spacing: Space.md)]
         return LazyVGrid(columns: columns, spacing: Space.md) {
             NavigationLink(value: ProfileRoute.statistics) { DashboardTileLabel("Statistics", "chart.line.uptrend.xyaxis") }.buttonStyle(.plain)
-            NavigationLink(value: ProfileRoute.exercises) { DashboardTileLabel("Exercises", "dumbbell") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.exercises) {
+                DashboardTileLabel("Exercises", "dumbbell")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("profile-exercises")
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
@@ -495,6 +499,8 @@ struct ExercisesListView: View {
         return filteredMemo(key) {
             // Dedupe by id: CloudKit duplicates would corrupt ForEach layout.
             var seen = Set<UUID>()
+            // Profile is the complete library browser. Do not apply the yoga
+            // exclusions used by routine and live-workout pickers here.
             return exercises
                 .filter { ex in
                     guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
