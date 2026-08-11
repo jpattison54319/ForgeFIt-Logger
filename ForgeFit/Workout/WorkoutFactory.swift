@@ -138,9 +138,14 @@ enum WorkoutFactory {
             .sorted { $0.position < $1.position }
             .map { routineExercise in
                 let exercise = exerciseByID[routineExercise.exerciseID]
-                let setupNote = resolvedSetupNotes.first {
-                    $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID
-                }
+                let setupNote = resolvedSetupNotes
+                    .filter {
+                        $0.exerciseID == routineExercise.exerciseID
+                            && $0.userID == ForgeFitDemo.userID
+                            && ExerciseNotePolicy.authoredText($0.note) != nil
+                    }
+                    .max { $0.updatedAt < $1.updatedAt }
+                let routineNote = ExerciseNotePolicy.authoredText(routineExercise.notes)
                 // Cardio exercises log as sessions, not set rows. Yoga now
                 // lives in first-class blocks and is filtered above.
                 let isSessionBased = exercise?.isCardio == true
@@ -186,8 +191,8 @@ enum WorkoutFactory {
                     exerciseID: routineExercise.exerciseID,
                     position: routineExercise.position,
                     supersetGroup: routineExercise.supersetGroup,
-                    notes: routineExercise.notes ?? setupNote?.note,
-                    notePinned: routineExercise.notes == nil && setupNote != nil,
+                    notes: routineNote ?? setupNote.flatMap { ExerciseNotePolicy.authoredText($0.note) },
+                    notePinned: routineNote == nil && setupNote != nil,
                     intervalPlanJSON: routineExercise.intervalPlanJSON,
                     yogaFlowJSON: routineExercise.yogaFlowJSON,
                     sourceRoutineExerciseID: routineExercise.id,

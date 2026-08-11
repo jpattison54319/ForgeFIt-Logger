@@ -16,6 +16,7 @@ struct YogaExerciseCard: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -36,6 +37,7 @@ struct YogaExerciseCard: View {
     @State private var showPlayer = false
     @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var activeSegmentMessage: String?
+    @State private var noteFocusRequested = false
 
     private var plan: YogaFlowPlan? {
         YogaFlowPlan.resolved(for: workoutExercise, exercise: exercise)
@@ -53,7 +55,10 @@ struct YogaExerciseCard: View {
                     StickyNoteView(
                         workoutExercise: workoutExercise,
                         exerciseID: workoutExercise.exerciseID,
-                        pinnedNote: pinnedNote
+                        pinnedNote: pinnedNote,
+                        focusRequested: noteFocusRequested,
+                        onFocusHandled: { noteFocusRequested = false },
+                        onPinnedNoteChanged: onPinnedNoteChanged
                     )
                 }
                 if let session {
@@ -370,6 +375,7 @@ struct YogaExerciseCard: View {
             actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
+                noteFocusRequested = true
                 try? modelContext.save()
             })
         }

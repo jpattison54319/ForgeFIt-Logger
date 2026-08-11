@@ -1,15 +1,9 @@
 import XCTest
 
-/// Myo-rep activation shortcuts in the live logger: the log button adopts the
-/// ghost when nothing is typed (the working-set checkbox contract, one tap
-/// for "as planned"), and the activation reps field opens the same hold-drag
-/// increment fan as every other numeric field.
-///
-/// A myo block's ghost comes from the previous SAME-TYPE session
-/// (blockTemplate ignores plain-set history), so phase 1 logs a real myo
-/// session and phase 2 verifies the shortcuts against it.
+/// The live logger keeps Myo-reps compact until the lifter explicitly starts
+/// the set. The focused runner owns activation, mini-sets, micro-rest, resume,
+/// finish, and completed-set editing.
 final class MyoActivationUITests: XCTestCase {
-
     override func setUpWithError() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
@@ -19,75 +13,13 @@ final class MyoActivationUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
-    private func tapWhenHittable(_ el: XCUIElement, timeout: TimeInterval = 3) {
+    private func tapWhenHittable(_ element: XCUIElement, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
-        while !el.isHittable && Date() < deadline {
+        while !element.isHittable && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        el.tap()
-    }
-
-    private func waitForLabel(_ element: XCUIElement, _ label: String, timeout: TimeInterval = 3) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while element.label != label && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        return element.label == label
-    }
-
-    private func waitForValue(_ element: XCUIElement, _ value: String, timeout: TimeInterval = 3) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while element.value as? String != value && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        return element.value as? String == value
-    }
-
-    /// The logger's accessory is a stable focus receipt. SwiftUI can rebuild
-    /// a block row after its first edit, leaving a tap's old snapshot visible
-    /// while the previous field still owns focus. Retry the visible field
-    /// until its field-specific accessory state is mounted before typing.
-    private func focusActivationField(
-        _ field: XCUIElement,
-        in app: XCUIApplication,
-        expectsNext: Bool,
-        timeout: TimeInterval = 4
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if app.buttons["Log Activation"].firstMatch.exists,
-               app.buttons["Next"].firstMatch.exists == expectsNext {
-                return true
-            }
-            if field.exists && field.isHittable {
-                field.tap()
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
-        } while Date() < deadline
-
-        return app.buttons["Log Activation"].firstMatch.exists
-            && app.buttons["Next"].firstMatch.exists == expectsNext
-    }
-
-    private func replaceNumericText(
-        _ field: XCUIElement,
-        in app: XCUIApplication,
-        expectsNext: Bool,
-        with replacement: String
-    ) {
-        XCTAssertTrue(
-            focusActivationField(field, in: app, expectsNext: expectsNext),
-            "Expected the activation field to own the logger keyboard accessory."
-        )
-        // Select the whole numeric token. Its insertion point is not stable
-        // after SwiftUI refreshes a completed row, so backspacing from the
-        // current caret can otherwise prepend instead of replace.
-        field.doubleTap()
-        field.typeText(replacement)
-        XCTAssertTrue(
-            waitForValue(field, replacement),
-            "Expected the activation field to contain only \(replacement)."
-        )
+        XCTAssertTrue(element.isHittable, "Expected \(element) to become hittable.")
+        element.tap()
     }
 
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
@@ -97,75 +29,51 @@ final class MyoActivationUITests: XCTestCase {
         add(attachment)
     }
 
-    /// Bubble → empty workout → add Machine Chest Press → convert set 1 to
-    /// Myo-reps. Ends with the activation row on screen.
+    /// Home → empty workout → Machine Chest Press → convert the first row to
+    /// Myo-reps. Ends on the compact ready card, before the focused runner.
     @MainActor
-    private func startMyoBlock(in app: XCUIApplication) {
-        // A previous onboarding test can leave the simulator's app defaults
-        // cleared even though this launch supplies `-didOnboard YES`. Recover
-        // through the real visible flow so the Myo assertion never depends on
-        // whichever defaults happened to survive on this simulator.
+    private func makeReadyMyoSet(in app: XCUIApplication) {
         let getStarted = app.buttons["Get started"].firstMatch
         if getStarted.waitForExistence(timeout: 1) {
             tapWhenHittable(getStarted)
-            let continueSetup = app.buttons["Continue"].firstMatch
-            XCTAssertTrue(continueSetup.waitForExistence(timeout: 3))
-            tapWhenHittable(continueSetup)
-            let continueWithoutHealth = app.buttons["Continue without Health"].firstMatch
-            XCTAssertTrue(continueWithoutHealth.waitForExistence(timeout: 3))
-            tapWhenHittable(continueWithoutHealth)
+            tapWhenHittable(app.buttons["Continue"].firstMatch)
+            tapWhenHittable(app.buttons["Continue without Health"].firstMatch)
         }
 
-        // Start from Home's inline "Empty" tile, never the floating bubble.
-        //
-        // This used to branch on whether the quick-actions trigger existed,
-        // with `-quickActionBubble.v1 ""` meant to suppress it. That launch
-        // argument cannot do that: `AppQuickActionStore.load` treats an empty
-        // stored list as "unconfigured" and returns `defaultActions`, so the
-        // bubble has been present regardless since it shipped. The branch
-        // therefore opened the fan, and when its tap missed, the fan's
-        // backdrop sat over Home swallowing everything that followed —
-        // failing here and in the sibling tests for reasons that had nothing
-        // to do with myo-reps.
-        //
-        // The inline tile is a fixed, always-rendered part of `quickStart`,
-        // so it needs no branch. The bubble has its own coverage in
-        // QuickActionsBubbleUITests.
         let emptyAction = element(app, "start-empty-workout")
-        XCTAssertTrue(emptyAction.waitForExistence(timeout: 10),
-                      "Expected Home's inline Empty quick-start tile.")
-        // Phase 2 arrives here straight off `save-workout-button`, so Home can
-        // still be behind a dismissing summary sheet — the tile exists but is
-        // not yet hittable. Waiting on existence alone raced that dismissal and
-        // made this test flaky; wait on hittability, and only scroll if the
-        // tile is genuinely off-screen rather than merely covered.
+        XCTAssertTrue(emptyAction.waitForExistence(timeout: 10))
         if !emptyAction.isHittable, !emptyAction.frame.intersects(app.frame) {
             for _ in 0..<3 where !emptyAction.isHittable { app.swipeUp() }
         }
-        let deadline = Date().addingTimeInterval(15)
-        while !emptyAction.isHittable && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        XCTAssertTrue(emptyAction.isHittable,
-                      "Empty tile never became tappable — Home is still covered.")
-        emptyAction.tap()
+        tapWhenHittable(emptyAction, timeout: 15)
 
-        // The full-width Add to Workout control remains the stable path used
-        // by this myo-rep flow; the empty-state plus has focused coverage in
-        // QuickActionsBubbleUITests.
+        // `--reset-store` and the app's active-workout restoration can settle
+        // in either order on a busy simulator. Resolve the supported prompt so
+        // this setup has an explicit post-seed readiness gate before it looks
+        // for logger controls.
+        let replaceActiveWorkout = app.buttons["Discard Current & Start New"].firstMatch
+        if replaceActiveWorkout.waitForExistence(timeout: 2) {
+            tapWhenHittable(replaceActiveWorkout)
+        }
+
         let addExercise = element(app, "add-to-workout")
-        XCTAssertTrue(addExercise.waitForExistence(timeout: 8),
-                      "Expected the logger's Add to Workout button.")
-        tapWhenHittable(addExercise, timeout: 5)
-        let row = element(app, "exercise-row-Machine Chest Press")
-        if !row.waitForExistence(timeout: 2) {
-            let search = app.searchFields.firstMatch.exists ? app.searchFields.firstMatch : app.textFields.firstMatch
+        XCTAssertTrue(addExercise.waitForExistence(timeout: 8))
+        tapWhenHittable(addExercise)
+
+        let exerciseRow = element(app, "exercise-row-Machine Chest Press")
+        if !exerciseRow.waitForExistence(timeout: 2) {
+            let search = app.searchFields.firstMatch.exists
+                ? app.searchFields.firstMatch
+                : app.textFields.firstMatch
             search.tap()
             search.typeText("Machine Chest")
-            XCTAssertTrue(row.waitForExistence(timeout: 3), "Expected the exercise in the picker.")
+            XCTAssertTrue(exerciseRow.waitForExistence(timeout: 3))
         }
-        row.tap()
-        let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Add 1 exercise'")).firstMatch
+        exerciseRow.tap()
+
+        let confirm = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Add 1 exercise'")
+        ).firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 3))
         confirm.tap()
 
@@ -176,194 +84,153 @@ final class MyoActivationUITests: XCTestCase {
         XCTAssertTrue(myo.waitForExistence(timeout: 3))
         myo.tap()
 
-        XCTAssertTrue(element(app, "activation-reps-1").waitForExistence(timeout: 3))
-    }
-
-    @MainActor
-    func testActivationGhostAdoptionAndIncrementFan() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg", "-quickActionBubble.v1", ""]
-        app.launch()
-
-        // PHASE 1 — log a real myo session so history exists.
-        startMyoBlock(in: app)
-        let repsField = element(app, "activation-reps-1")
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
-        let activationButton = element(app, "log-activation-1")
-        tapWhenHittable(activationButton)
+        let startMyoSet = element(app, "start-myo-rep-set")
         XCTAssertTrue(
-            waitForLabel(activationButton, "Activation completed, tap to un-complete", timeout: 5),
-            "Expected the activation control to visibly enter its completed state."
+            startMyoSet.waitForExistence(timeout: 5),
+            "Myo-reps should render as a compact launch card in the workout."
         )
-        XCTAssertTrue(waitForValue(activationButton, "Completed"))
-        // Complete the block and save the workout. The checkbox id carries
-        // the block's working-set number — match by prefix, first row wins.
-        tapWhenHittable(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")).firstMatch)
-        tapWhenHittable(element(app, "finish-workout-button"))
-        // The block leaves later working sets unticked, so finishing now
-        // raises the unfinished-sets warning. Acknowledging it is the point
-        // of this flow, not an obstacle to route around.
-        let finishAnyway = app.buttons["Finish Anyway"].firstMatch
-        if finishAnyway.waitForExistence(timeout: 3) { finishAnyway.tap() }
-        tapWhenHittable(element(app, "save-workout-button"))
-
-        // PHASE 2 — a fresh myo block on the same exercise sees the ghost.
-        startMyoBlock(in: app)
-        let repsField2 = element(app, "activation-reps-1")
-        XCTAssertEqual(repsField2.placeholderValue, "12", "Expected last session's activation reps as the ghost.")
-
-        // One tap on the log button adopts the ghost — no typing. The header
-        // summary materializing "12 reps" proves the value landed (an empty
-        // field's XCUI `value` echoes the placeholder, so the summary is the
-        // honest signal).
-        let ghostActivationButton = element(app, "log-activation-1")
-        tapWhenHittable(ghostActivationButton)
-        XCTAssertTrue(waitForLabel(ghostActivationButton, "Activation completed, tap to un-complete"))
-        XCTAssertTrue(waitForValue(ghostActivationButton, "Completed"))
-        XCTAssertTrue(app.staticTexts["12 reps"].waitForExistence(timeout: 3),
-                      "Expected the adopted ghost in the block's rep summary.")
-
-        // The activation reps field opens the same hold-drag increment fan as
-        // other fields: one +1 band applied to the adopted value.
-        let start = repsField2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -50)))
-        XCTAssertTrue(app.staticTexts["13 reps"].waitForExistence(timeout: 3),
-                      "Expected the +1 fan band applied to the activation reps.")
-    }
-
-    /// Regression: the keyboard's activation action previously completed the
-    /// enclosing block, which started a 2-minute exercise rest and disabled all
-    /// mini-rep controls. It must log only the activation and start micro-rest.
-    @MainActor
-    func testKeyboardActionLogsActivationWithoutCompletingMyoBlock() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg", "-quickActionBubble.v1", ""]
-        app.launch()
-
-        startMyoBlock(in: app)
-        let repsField = element(app, "activation-reps-1")
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
-
-        let logActivation = app.buttons["Log Activation"].firstMatch
-        XCTAssertTrue(logActivation.waitForExistence(timeout: 3))
-        logActivation.tap()
-
-        let activationButton = element(app, "log-activation-1")
-        XCTAssertTrue(waitForValue(activationButton, "Completed"))
-
-        let completeBlock = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")
-        ).firstMatch
-        XCTAssertEqual(
-            completeBlock.label,
-            "Complete set",
-            "Logging the activation must leave the enclosing Myo block open."
+        XCTAssertLessThan(
+            startMyoSet.frame.width,
+            app.frame.width * 0.75,
+            "The inline launcher should remain a compact action, not a full-width workout control."
         )
-
-        let mini = element(app, "add-mini-1")
-        XCTAssertTrue(mini.waitForExistence(timeout: 3))
-        XCTAssertTrue(mini.isEnabled, "Mini reps must be usable after activation.")
-        XCTAssertTrue(
-            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '0:'")).firstMatch
-                .waitForExistence(timeout: 3),
-            "Myo activation should start a seconds-scale micro-rest, not a 2-minute exercise rest."
+        XCTAssertFalse(
+            element(app, "myo-activation-reps-1").exists,
+            "Activation controls belong in the focused runner, not the workout list."
+        )
+        XCTAssertFalse(
+            app.staticTexts["ACTIVATION SUGGESTION"].exists,
+            "The inline launcher should not repeat its prefilled values as a suggestion."
         )
     }
 
-    /// Only the activation fields need the activation clarification. Manual
-    /// mini-set entry is already inside that context, so its keyboard action
-    /// stays the concise "Log" label.
     @MainActor
-    func testManualMiniSetKeyboardUsesPlainLogAction() throws {
+    func testFocusedMyoFlowLogsFinishesAndEdits() throws {
         let app = XCUIApplication()
         app.launchArguments = [
             "--reset-store", "--skip-onboarding",
             "-didOnboard", "YES", "-initialTab", "home",
-            "-weightUnitRaw", "kg", "-quickActionBubble.v1", ""
+            "-weightUnitRaw", "kg",
         ]
         app.launch()
 
-        startMyoBlock(in: app)
-        let repsField = element(app, "activation-reps-1")
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
-        let logActivation = app.buttons["Log Activation"].firstMatch
-        XCTAssertTrue(logActivation.waitForExistence(timeout: 3))
-        logActivation.tap()
+        makeReadyMyoSet(in: app)
+        tapWhenHittable(element(app, "start-myo-rep-set"))
 
-        let addMini = element(app, "add-mini-1")
-        XCTAssertTrue(addMini.waitForExistence(timeout: 3))
-        addMini.tap()
+        XCTAssertTrue(app.staticTexts["Myo-rep Set"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Set 1"].exists)
+        XCTAssertFalse(app.staticTexts["Set 0"].exists)
+        XCTAssertTrue(element(app, "myo-activation-weight").exists)
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Suggested ·'")).firstMatch.exists,
+            "The focused runner should present prefilled values only in its input controls."
+        )
+        let activationRepsField = element(app, "myo-activation-reps-1")
+        XCTAssertTrue(activationRepsField.exists)
 
-        XCTAssertTrue(
-            app.buttons["Log"].firstMatch.waitForExistence(timeout: 3),
-            "Manual mini-set entry should use the plain Log keyboard action."
+        activationRepsField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.7)
+        XCTAssertFalse(
+            app.keyboards.firstMatch.exists,
+            "A Myo-rep field hold should keep the quick-increment gesture instead of opening the keyboard."
         )
         XCTAssertFalse(
-            app.buttons["Log Activation"].firstMatch.exists,
-            "The activation clarification must not leak into mini-set entry."
+            element(app, "quick-increment-option-0").exists,
+            "Releasing without choosing an increment should close the fan."
+        )
+
+        tapWhenHittable(activationRepsField)
+        let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(
+            dismissKeyboard.waitForExistence(timeout: 3),
+            "The focused Myo runner should keep the app-owned keyboard accessory."
+        )
+        tapWhenHittable(dismissKeyboard)
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForNonExistence(timeout: 3),
+            "The custom keyboard action should return the full Myo controls."
+        )
+
+        tapWhenHittable(element(app, "myo-log-activation-1"))
+        XCTAssertTrue(element(app, "myo-mini-reps-1").waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            element(app, "myo-skip-rest").waitForExistence(timeout: 3),
+            "Logging activation should start the set-scoped micro-rest."
+        )
+        XCTAssertLessThan(
+            element(app, "myo-skip-rest").frame.width,
+            app.frame.width * 0.65,
+            "Skip Rest should be a compact timer action."
+        )
+        XCTAssertFalse(
+            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Suggested ·'")).firstMatch.exists,
+            "A logged activation should show only what was performed."
+        )
+
+        tapWhenHittable(element(app, "myo-log-mini-1"))
+        let loggedMini = element(app, "myo-edit-mini-1-1")
+        XCTAssertTrue(loggedMini.waitForExistence(timeout: 3))
+        attachScreenshot(app, name: "Polished active Myo-rep set")
+        tapWhenHittable(loggedMini)
+        XCTAssertTrue(app.staticTexts["Edit Mini-set 1"].waitForExistence(timeout: 3))
+        XCTAssertTrue(element(app, "save-myo-mini-edits").exists)
+        tapWhenHittable(app.buttons["Cancel mini-set edits"].firstMatch)
+        tapWhenHittable(element(app, "finish-myo-rep-set"))
+
+        let edit = element(app, "edit-myo-rep-set")
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        let completedCard = element(app, "myo-rep-set-card")
+        XCTAssertEqual(completedCard.label, "Completed Myo-rep set")
+        XCTAssertFalse(
+            app.staticTexts["Myo-rep set complete"].exists,
+            "Completion belongs to the parent set checkmark, not a nested completion card."
+        )
+        XCTAssertTrue(app.staticTexts["1 + 1"].exists)
+        attachScreenshot(app, name: "Completed dedicated Myo-rep set")
+
+        tapWhenHittable(edit)
+        XCTAssertTrue(app.staticTexts["Edit Myo-rep Set"].waitForExistence(timeout: 5))
+        let activationReps = element(app, "edit-myo-activation-reps-1")
+        XCTAssertTrue(activationReps.exists)
+        tapWhenHittable(app.buttons["Increase Activation reps"].firstMatch)
+        tapWhenHittable(element(app, "save-myo-rep-edits"))
+
+        XCTAssertTrue(element(app, "edit-myo-rep-set").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.staticTexts["2 + 1"].waitForExistence(timeout: 3),
+            "The completed card should immediately reflect edited activation and mini-set reps."
         )
     }
 
-    /// A checked activation remains editable, preserves its values when
-    /// unchecked, and can be checked again. Editing a fully logged block must
-    /// immediately revise the volume attributed to that completed set.
     @MainActor
-    func testCompletedActivationCanBeEditedUncheckedAndRecompleted() throws {
+    func testDismissedMyoProgressResumesWithoutCompleting() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg", "-quickActionBubble.v1", ""]
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding",
+            "-didOnboard", "YES", "-initialTab", "home",
+            "-weightUnitRaw", "kg",
+        ]
         app.launch()
 
-        startMyoBlock(in: app)
-        let weightField = element(app, "activation-weight")
-        let repsField = element(app, "activation-reps-1")
-        let activationButton = element(app, "log-activation-1")
+        makeReadyMyoSet(in: app)
+        tapWhenHittable(element(app, "start-myo-rep-set"))
+        tapWhenHittable(element(app, "myo-log-activation-1"))
 
-        replaceNumericText(weightField, in: app, expectsNext: true, with: "50")
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "12")
-        tapWhenHittable(activationButton)
-        XCTAssertTrue(waitForValue(activationButton, "Completed"))
+        let returnToWorkout = app.buttons[
+            "Save Myo-rep progress and return to workout"
+        ].firstMatch
+        XCTAssertTrue(returnToWorkout.waitForExistence(timeout: 3))
+        tapWhenHittable(returnToWorkout)
 
-        // Correct the typo while the activation receipt is still checked.
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "9")
-        XCTAssertTrue(app.staticTexts["9 reps"].waitForExistence(timeout: 3))
-        XCTAssertEqual(
-            activationButton.value as? String,
-            "Completed",
-            "Editing a checked activation should update it in place, not discard its receipt."
-        )
+        let resume = element(app, "resume-myo-rep-set")
+        XCTAssertTrue(resume.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Myo-rep set in progress"].exists)
+        XCTAssertFalse(element(app, "edit-myo-rep-set").exists)
 
-        if app.buttons["Dismiss keyboard"].firstMatch.exists {
-            app.buttons["Dismiss keyboard"].firstMatch.tap()
-        }
-        tapWhenHittable(activationButton)
-        XCTAssertTrue(waitForValue(activationButton, "Not completed"))
-        XCTAssertTrue(
-            waitForLabel(activationButton, "Complete activation and start micro-rest"),
-            "The activation circle should toggle back to its incomplete state."
-        )
-        XCTAssertEqual(repsField.value as? String, "9", "Unchecking must preserve the corrected reps.")
-        XCTAssertEqual(weightField.value as? String, "50", "Unchecking must preserve the activation weight.")
-
-        tapWhenHittable(activationButton)
-        XCTAssertTrue(waitForValue(activationButton, "Completed"))
-        XCTAssertTrue(
-            waitForLabel(activationButton, "Activation completed, tap to un-complete"),
-            "The same circle should re-complete the activation."
-        )
-        attachScreenshot(app, name: "Myo activation recompleted with circle control")
-
-        // Complete the whole myo block, then edit the logged activation again.
-        tapWhenHittable(
-            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'complete-set-'")).firstMatch
-        )
-        let volume = element(app, "stat-volume")
-        XCTAssertTrue(waitForLabel(volume, "Volume 450 kg", timeout: 5))
-
-        replaceNumericText(repsField, in: app, expectsNext: false, with: "10")
-        XCTAssertTrue(
-            waitForLabel(volume, "Volume 500 kg", timeout: 5),
-            "Changing reps on a completed myo block must recompute its logged volume."
-        )
-        attachScreenshot(app, name: "Completed Myo activation edited with updated volume")
+        tapWhenHittable(resume)
+        XCTAssertTrue(app.staticTexts["Activation logged"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "myo-mini-reps-1").exists)
+        XCTAssertTrue(element(app, "finish-myo-rep-set").isEnabled)
+        attachScreenshot(app, name: "Resumed dedicated Myo-rep set")
     }
 }

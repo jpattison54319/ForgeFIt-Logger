@@ -90,6 +90,12 @@ final class ForgeFitUITests: XCTestCase {
         return Double(value.replacingOccurrences(of: ",", with: ""))
     }
 
+    private func visibleNumericValue(in element: XCUIElement) -> Double? {
+        if let value = numericValue(in: element) { return value }
+        guard let placeholder = element.placeholderValue else { return nil }
+        return Double(placeholder.replacingOccurrences(of: ",", with: ""))
+    }
+
     private func waitForNumericValue(
         _ expectedValue: Double,
         in element: XCUIElement,
@@ -104,6 +110,23 @@ final class ForgeFitUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         guard let actual = numericValue(in: element) else { return false }
+        return abs(actual - expectedValue) <= tolerance
+    }
+
+    private func waitForVisibleNumericValue(
+        _ expectedValue: Double,
+        in element: XCUIElement,
+        tolerance: Double = 0.02,
+        timeout: TimeInterval = 4
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let actual = visibleNumericValue(in: element), abs(actual - expectedValue) <= tolerance {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard let actual = visibleNumericValue(in: element) else { return false }
         return abs(actual - expectedValue) <= tolerance
     }
 
@@ -397,23 +420,74 @@ final class ForgeFitUITests: XCTestCase {
         tapWhenReady(app.descendants(matching: .any)["set-type-menu"].firstMatch)
         tapWhenReady(app.buttons["Myo-reps"].firstMatch)
 
-        let activationWeight = app.textFields["activation-weight"].firstMatch
+        let launchMyo = app.descendants(matching: .any)["start-myo-rep-set"].firstMatch
+        XCTAssertTrue(
+            launchMyo.waitForExistence(timeout: 5),
+            "Expected the dedicated Myo-rep launcher."
+        )
+        tapWhenReady(launchMyo)
+
+        let activationWeight = app.textFields["myo-activation-weight"].firstMatch
         XCTAssertTrue(
             activationWeight.waitForExistence(timeout: 5),
             "Expected the Myo-rep activation weight field."
         )
         XCTAssertTrue(
-            waitForNumericValue(72.5, in: activationWeight),
+            waitForVisibleNumericValue(72.5, in: activationWeight),
             "The Myo-rep activation must keep the visible 72.5 kg value, not expose the hidden 22.68 kg routine target."
         )
         attachScreenshot(app, name: "myo-activation-prefill")
     }
 
-    /// Myo activation fields use the logger's one shared keyboard accessory:
-    /// weight offers Next into reps, and both fields retain Dismiss plus an
-    /// activation-scoped log action instead of completing the whole block.
+    /// A Myo block already present in a routine follows the same suggestion
+    /// contract as a regular row: matching Myo history is what the lifter sees,
+    /// while the stale routine target remains only a fallback when no history
+    /// exists.
     @MainActor
-    func testMyoActivationFieldsRenderKeyboardActions() throws {
+    func testRoutineSeededMyoUsesPreviousMyoActivationWeight() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-block-prefill-history",
+            "--seed-routine-myo-prefill-history",
+            "--skip-onboarding",
+            "--auto-start-routine",
+            "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let launchMyo = app.descendants(matching: .any)["start-myo-rep-set"].firstMatch
+        XCTAssertTrue(
+            launchMyo.waitForExistence(timeout: 8),
+            "Expected the routine-seeded Myo-rep launcher."
+        )
+        XCTAssertTrue(
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", "72.5 kg")
+            ).firstMatch.waitForExistence(timeout: 5),
+            "Expected the latest matching Myo weight on the launch card."
+        )
+        tapWhenReady(launchMyo)
+
+        let activationWeight = app.textFields["myo-activation-weight"].firstMatch
+        XCTAssertTrue(activationWeight.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForVisibleNumericValue(72.5, in: activationWeight),
+            "A routine-seeded Myo activation must show its 72.5 kg Myo history, not the hidden 22.68 kg routine target."
+        )
+        app.buttons["myo-log-activation-1"].firstMatch.tap()
+        XCTAssertTrue(
+            app.staticTexts["Logged, 72.5 kg × 8"].firstMatch.waitForExistence(timeout: 4),
+            "Logging the visible suggestion must commit 72.5 kg, not the hidden routine target."
+        )
+        attachScreenshot(app, name: "routine-myo-activation-prefill")
+    }
+
+    /// The focused Myo runner replaces the inline grid with large, explicit
+    /// weight and rep controls. Logging activation opens mini-set entry without
+    /// completing the logical set.
+    @MainActor
+    func testMyoActivationFieldsRenderDedicatedControls() throws {
         let app = XCUIApplication()
         app.launchArguments = [
             "--reset-store",
@@ -435,51 +509,43 @@ final class ForgeFitUITests: XCTestCase {
         tapWhenReady(app.descendants(matching: .any)["set-type-menu"].firstMatch)
         tapWhenReady(app.buttons["Myo-reps"].firstMatch)
 
-        let activationWeight = app.textFields["activation-weight"].firstMatch
+        let launchMyo = app.descendants(matching: .any)["start-myo-rep-set"].firstMatch
+        XCTAssertTrue(launchMyo.waitForExistence(timeout: 5))
+        tapWhenReady(launchMyo)
+
+        let activationWeight = app.textFields["myo-activation-weight"].firstMatch
         XCTAssertTrue(activationWeight.waitForExistence(timeout: 5))
-        tapWhenReady(activationWeight)
-
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        let increaseWeight = app.buttons["Increase activation weight"].firstMatch
         XCTAssertTrue(
-            app.buttons["Dismiss keyboard"].firstMatch.waitForExistence(timeout: 3),
-            "Activation weight should render the shared keyboard dismiss action."
-        )
-        let next = app.buttons["Next"].firstMatch
-        XCTAssertTrue(
-            next.waitForExistence(timeout: 3),
-            "Activation weight should offer Next into activation reps."
+            increaseWeight.waitForExistence(timeout: 3),
+            "The focused runner should expose a visible weight increment control."
         )
         XCTAssertTrue(
-            app.buttons["Log Activation"].firstMatch.waitForExistence(timeout: 3),
-            "Activation weight should expose the activation-scoped log action."
+            increaseWeight.frame.width >= 44 && increaseWeight.frame.height >= 44,
+            "The weight increment control should meet the minimum tap target."
         )
-        attachScreenshot(app, name: "myo-activation-weight-keyboard-actions")
+        tapWhenReady(increaseWeight)
+        XCTAssertTrue(
+            waitForNumericValue(75, in: activationWeight),
+            "The kilogram weight control should advance the visible 72.5 kg suggestion by 2.5 kg."
+        )
 
-        next.tap()
-
-        let activationReps = app.textFields["activation-reps-1"].firstMatch
+        let activationReps = app.textFields["myo-activation-reps-1"].firstMatch
         XCTAssertTrue(activationReps.waitForExistence(timeout: 3))
-        let nextDeadline = Date().addingTimeInterval(3)
-        while next.exists, Date() < nextDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        XCTAssertFalse(next.exists, "A bilateral activation reps field is the final keyboard field.")
-        XCTAssertTrue(app.buttons["Dismiss keyboard"].firstMatch.exists)
-        XCTAssertTrue(app.buttons["Log Activation"].firstMatch.exists)
-
-        let repsBeforeTyping = activationReps.value as? String ?? ""
-        // Type through the focused field. CoreSimulator can retain an
-        // off-screen keyboard host whose key elements still `exist`; tapping
-        // one asks AX to scroll the keyboard itself and flakes under a broad
-        // run. `typeText` also proves Next actually transferred focus.
-        activationReps.typeText("9")
-        XCTAssertEqual(
-            activationReps.value as? String,
-            "\(repsBeforeTyping)9",
-            "Next should move keyboard input from activation weight into activation reps."
+        let increaseReps = app.buttons["Increase Activation reps"].firstMatch
+        XCTAssertTrue(increaseReps.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            increaseReps.frame.width >= 44 && increaseReps.frame.height >= 44,
+            "The rep increment control should meet the minimum tap target."
         )
 
-        attachScreenshot(app, name: "myo-activation-reps-keyboard-actions")
+        tapWhenReady(app.buttons["myo-log-activation-1"].firstMatch)
+        XCTAssertTrue(
+            app.textFields["myo-mini-reps-1"].firstMatch.waitForExistence(timeout: 3),
+            "Logging activation should reveal mini-set entry while the Myo set remains open."
+        )
+        XCTAssertTrue(app.buttons["finish-myo-rep-set"].firstMatch.isEnabled)
+        attachScreenshot(app, name: "myo-dedicated-activation-controls")
     }
 
     /// End-to-end pass over Profile → See all workouts: seeded 120-session
@@ -1139,6 +1205,100 @@ final class ForgeFitUITests: XCTestCase {
         attachScreenshot(app, name: "live-replacement-sheet-without-explanation")
     }
 
+    /// Regression: replacing after logging one set used to split the card —
+    /// the original row kept the completed set while a new row received fresh
+    /// unfinished sets. A live swap is one in-place replacement: one exercise
+    /// card and the exact same number of set slots before and after.
+    @MainActor
+    func testLiveWorkoutReplacementKeepsOneExerciseAndAllSets() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--skip-onboarding", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let addSet = app.buttons["add-set-button"].firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: addSet, in: app, timeout: 10),
+            "Expected the starter exercise in the live logger."
+        )
+        let setMenus = app.descendants(matching: .any).matching(identifier: "set-type-menu")
+        for expectedCount in 2...3 {
+            tapWhenReady(app.buttons["add-set-button"].firstMatch)
+            let addDeadline = Date().addingTimeInterval(3)
+            while setMenus.count != expectedCount, Date() < addDeadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            XCTAssertEqual(setMenus.count, expectedCount, "Each Add Set tap must create one set before the next tap.")
+        }
+
+        var deadline = Date().addingTimeInterval(4)
+        while setMenus.count != 3, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertEqual(setMenus.count, 3, "Expected three set slots before replacing.")
+
+        let completeFirst = app.buttons["complete-set-1"].firstMatch
+        XCTAssertTrue(completeFirst.waitForExistence(timeout: 3))
+        tapWhenReady(completeFirst)
+        let skipRest = app.buttons["skip-rest-timer"].firstMatch
+        if skipRest.waitForExistence(timeout: 1) { tapWhenReady(skipRest) }
+
+        let menu = app.buttons["exercise-overflow-menu"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        tapWhenReady(menu)
+        tapWhenReady(app.buttons["Replace Exercise"].firstMatch)
+
+        let swap = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'replacement-swap-'")
+        ).firstMatch
+        XCTAssertTrue(swap.waitForExistence(timeout: 5), "Expected a ranked strength replacement.")
+        let replacementName = swap.identifier.replacingOccurrences(of: "replacement-swap-", with: "")
+        tapWhenReady(swap)
+
+        let exerciseMenus = app.descendants(matching: .any).matching(identifier: "exercise-overflow-menu")
+        deadline = Date().addingTimeInterval(5)
+        while (app.buttons["Search all exercises"].exists || exerciseMenus.count != 1 || setMenus.count != 3), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertFalse(app.buttons["Search all exercises"].exists, "The swap must complete and dismiss its sheet.")
+        XCTAssertTrue(app.staticTexts[replacementName].firstMatch.waitForExistence(timeout: 3), "Expected the selected replacement in the live card.")
+        XCTAssertEqual(exerciseMenus.count, 1, "Replacement must not leave the original exercise beside the new one.")
+        XCTAssertEqual(app.buttons.matching(identifier: "add-set-button").count, 1)
+        XCTAssertEqual(setMenus.count, 3, "Replacement must preserve every existing set slot.")
+    }
+
+    /// A pinned setup note deleted in the live logger must stay deleted when a
+    /// LazyVStack card is torn down and recreated. Scrolling/collapsing is not
+    /// permission to recreate a note or focus its text field.
+    @MainActor
+    func testRemovedPinnedWorkoutNoteDoesNotReturnWhenCardReopens() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--skip-onboarding", "--auto-start-routine", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        let note = app.textFields["workout-note-banner"].firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: note, in: app, timeout: 10),
+            "Expected the starter exercise's pinned setup note."
+        )
+        XCTAssertEqual(app.keyboards.count, 0, "Displaying a note must not focus it automatically.")
+
+        let removeNote = app.buttons["Remove note"].firstMatch
+        XCTAssertTrue(removeNote.waitForExistence(timeout: 3))
+        tapWhenReady(removeNote)
+        XCTAssertFalse(note.waitForExistence(timeout: 1), "The deleted note should leave the card immediately.")
+
+        let collapse = app.buttons["collapse-completed-exercise"].firstMatch
+        XCTAssertTrue(collapse.waitForExistence(timeout: 3))
+        tapWhenReady(collapse)
+        let summary = app.buttons["completed-exercise-summary"].firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 3))
+        tapWhenReady(summary)
+
+        XCTAssertTrue(app.buttons["add-set-button"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(note.exists, "Recreating the exercise card must not resurrect its deleted pinned note.")
+        XCTAssertEqual(app.keyboards.count, 0, "Revisiting an exercise must never open the note keyboard.")
+    }
+
     /// Regression: keyboard clearance belongs inside the routine editor's
     /// scrollable content. Applying it to the ScrollView itself shrinks the
     /// editor by the full keyboard height and exposes a large black band.
@@ -1330,6 +1490,7 @@ final class ForgeFitUITests: XCTestCase {
 
         let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
         XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3), "Expected the dismiss chevron in the accessory.")
+        attachScreenshot(app, name: "keyboard-accessory-liquid-glass")
         dismissKeyboard.tap()
 
         // The dismissed keyboard takes its accessory with it.

@@ -79,8 +79,14 @@ struct SetBlockView: View {
     /// and only the single complete checkbox finishes the set.
     var isUnilateral: Bool = false
     var completionDate: Date? = nil
+    var usesSuggestedValues = false
+    var suggestedWeight: Double? = nil
+    var suggestedReps: Int? = nil
+    var editedFields: Set<SetInputField> = []
     let onChange: () -> Void
     var onCompletionChange: (Bool) -> Void = { _ in }
+    var onSuggestionFieldEdited: (SetInputField, Bool) -> Void = { _, _ in }
+    var onMaterializeSuggestion: (Set<SetInputField>) -> Void = { _ in }
     let onSetType: (SetType) -> Void
     let onCompleted: () -> Void
     let onDelete: () -> Void
@@ -111,6 +117,7 @@ struct SetBlockView: View {
     /// loads impossible to enter in blocks.
     @State private var weightDraft = ""
     @State private var weightDraftActive = false
+    @State private var suggestionFieldOverrides: [SetInputField: Bool] = [:]
     @FocusState private var weightFocused: Bool
 
     /// Which side's activation reps field has the keyboard, so the log
@@ -320,6 +327,7 @@ struct SetBlockView: View {
             if wasDone {
                 set.completedAt = nil
             } else {
+                materializeVisibleSuggestions()
                 // Side 1's segment sum only — side 2 is added to volume by
                 // recomputeDerivedMetrics from its own fields.
                 if isCluster { set.reps = set.miniReps.reduce(0, +) }
@@ -344,6 +352,7 @@ struct SetBlockView: View {
     private func completeBlockFromKeyboard() {
         clearBlockFocus()
         if !isDone {
+            materializeVisibleSuggestions()
             // Match the block's visible completion checkbox without
             // introducing a second completion path or un-completing a block
             // whose field was focused after it had already been logged.
@@ -412,6 +421,7 @@ struct SetBlockView: View {
             return
         }
 
+        materializeVisibleSuggestions()
         if ActivationSuggestionMaterializer.materialize(
             set: set,
             previous: previous,
@@ -444,8 +454,8 @@ struct SetBlockView: View {
             }
             blockField(
                 text: Binding(
-                    get: { sideReps(side).map(String.init) ?? "" },
-                    set: { setSideReps(side, Int($0)); onChange() }
+                    get: { activationText(side: side) },
+                    set: { setActivationText($0, side: side) }
                 ),
                 placeholder: activationPlaceholder(side: side),
                 keyboardType: .numberPad
@@ -458,9 +468,9 @@ struct SetBlockView: View {
                 base: {
                     // Mirrors the ghost the placeholder shows: side 2 leans
                     // on side 1, side 1 on last session.
-                    Double(sideReps(side) ?? (side == 2 ? self.set.reps : previous?.reps) ?? 0)
+                    Double(sideReps(side) ?? activationGhostReps(side: side) ?? 0)
                 },
-                apply: { setSideReps(side, Int($0.rounded())); onChange() }
+                apply: { applyActivationIncrement($0, side: side) }
             )
             // Log the activation → the first micro-rest starts immediately.
             // With nothing typed it adopts the ghost the placeholder shows —
@@ -495,10 +505,34 @@ struct SetBlockView: View {
         activationGhostReps(side: side).map(String.init) ?? "reps"
     }
 
+    private func activationText(side: Int) -> String {
+        if side == 1, isShowingSuggestion(for: .primary) { return "" }
+        return sideReps(side).map(String.init) ?? ""
+    }
+
+    private func setActivationText(_ text: String, side: Int) {
+        let reps = Int(text)
+        setSideReps(side, reps)
+        if side == 1, usesSuggestedValues {
+            recordSuggestionField(.primary, isEdited: reps != nil)
+        }
+        onChange()
+    }
+
+    private func applyActivationIncrement(_ value: Double, side: Int) {
+        setSideReps(side, Int(value.rounded()))
+        if side == 1, usesSuggestedValues {
+            recordSuggestionField(.primary, isEdited: true)
+        }
+        onChange()
+    }
+
     /// The ghost the placeholder shows — what the log button adopts when
     /// nothing is typed. Side 2 mirrors side 1; side 1 leans on last session.
     private func activationGhostReps(side: Int) -> Int? {
-        side == 2 ? set.reps : previous?.reps
+        if side == 2 { return set.reps }
+        if isShowingSuggestion(for: .primary) { return suggestedReps }
+        return previous?.reps
     }
 
     private func activationAccessibilityLabel(side: Int) -> String {
@@ -525,6 +559,7 @@ struct SetBlockView: View {
             onChange()
             return
         }
+        materializeVisibleSuggestions()
         if ActivationSuggestionMaterializer.materialize(
             set: set,
             previous: previous,
@@ -841,6 +876,12 @@ struct SetBlockView: View {
             set.setModeWeight(previous.modeWeight)
             set.reps = previous.reps
             set.miniReps = previous.miniReps
+            if previous.modeWeight != nil {
+                recordSuggestionField(.weight, isEdited: true)
+            }
+            if previous.reps != nil {
+                recordSuggestionField(.primary, isEdited: true)
+            }
             onChange()
         } label: {
             HStack(spacing: 6) {
@@ -864,15 +905,19 @@ struct SetBlockView: View {
     private var weightField: some View {
         blockField(
             text: Binding(
-                get: { weightFocused && weightDraftActive ? weightDraft : storedWeightText },
+                get: { weightFocused && weightDraftActive ? weightDraft : displayedWeightText },
                 set: { text in
                     weightDraft = text
                     weightDraftActive = true
-                    set.setModeWeight(Fmt.loadKilograms(from: text, unit: displayUnit))
+                    let weight = Fmt.loadKilograms(from: text, unit: displayUnit)
+                    set.setModeWeight(weight)
+                    if usesSuggestedValues {
+                        recordSuggestionField(.weight, isEdited: weight != nil)
+                    }
                     onChange()
                 }
             ),
-            placeholder: previous?.modeWeight.map { Fmt.load($0, unit: displayUnit) } ?? displayUnit.suffix
+            placeholder: suggestedWeightPlaceholder
         )
         .focused($weightFocused)
         .accessibilityLabel("Activation weight")
@@ -893,21 +938,56 @@ struct SetBlockView: View {
                     return Fmt.loadKilograms(from: weightDraft, unit: displayUnit)
                         .map(displayUnit.displayValue(fromKilograms:))
                 }
-                let kilograms = self.set.modeWeight ?? previous?.modeWeight
+                let kilograms = isShowingSuggestion(for: .weight)
+                    ? suggestedWeight
+                    : (self.set.modeWeight ?? previous?.modeWeight)
                 return kilograms.map(displayUnit.displayValue(fromKilograms:)) ?? 0
             },
             apply: { newDisplay in
                 weightDraftActive = false
                 self.set.setModeWeight(displayUnit.kilograms(fromDisplayValue: newDisplay))
+                if usesSuggestedValues {
+                    recordSuggestionField(.weight, isEdited: true)
+                }
                 onChange()
             }
         )
+    }
+
+    private var displayedWeightText: String {
+        isShowingSuggestion(for: .weight) ? "" : storedWeightText
+    }
+
+    private var suggestedWeightPlaceholder: String {
+        let kilograms = isShowingSuggestion(for: .weight) ? suggestedWeight : previous?.modeWeight
+        return kilograms.map { Fmt.load($0, unit: displayUnit) } ?? displayUnit.suffix
     }
 
     private var storedWeightText: String {
         // `self.` required: a computed-var body statement starting with `set`
         // parses as a setter declaration (the property is named `set`).
         self.set.modeWeight.map { Fmt.load($0, unit: displayUnit) } ?? ""
+    }
+
+    private var effectiveEditedSuggestionFields: Set<SetInputField> {
+        var result = editedFields
+        for (field, isEdited) in suggestionFieldOverrides {
+            if isEdited { result.insert(field) } else { result.remove(field) }
+        }
+        return result
+    }
+
+    private func isShowingSuggestion(for field: SetInputField) -> Bool {
+        usesSuggestedValues && !effectiveEditedSuggestionFields.contains(field)
+    }
+
+    private func recordSuggestionField(_ field: SetInputField, isEdited: Bool) {
+        suggestionFieldOverrides[field] = isEdited
+        onSuggestionFieldEdited(field, isEdited)
+    }
+
+    private func materializeVisibleSuggestions() {
+        onMaterializeSuggestion(effectiveEditedSuggestionFields)
     }
 
     /// Weight fields keep the decimal pad; rep fields must use `.numberPad` —

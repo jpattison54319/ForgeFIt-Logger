@@ -68,7 +68,9 @@ struct RoutineEditorView: View {
                     Button("Done") { hideKeyboard() }
                         .font(.bodyStrong)
                         .foregroundStyle(theme.accent)
-                        .frame(minHeight: 44)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
                 }
             }
         }

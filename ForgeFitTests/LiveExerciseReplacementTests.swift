@@ -12,161 +12,172 @@ struct LiveExerciseReplacementTests {
     private let replacementExerciseID = UUID(uuidString: "00000000-0000-7000-8000-00000000E102")!
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    @Test func noCompletedSetsLeavesTheExerciseForNormalInPlaceReplacement() {
+    @Test func replacementKeepsOneRowAndEverySetIdentity() {
+        let sourceIDs = [UUID(), UUID(), UUID()]
+        let sets = sourceIDs.enumerated().map { index, sourceID in
+            SetModel(
+                userID: userID,
+                position: index,
+                setType: index == 1 ? .myoRep : .working,
+                weightMode: .external,
+                reps: 8 + index,
+                weight: 72.5,
+                rpe: 9,
+                sourceRoutineSetID: sourceID,
+                plannedMiniSetCount: index == 1 ? 3 : nil
+            )
+        }
         let target = WorkoutExerciseModel(
             userID: userID,
             exerciseID: originalExerciseID,
-            sets: [
-                SetModel(userID: userID, position: 0, reps: 8),
-                SetModel(userID: userID, position: 1, reps: 10),
-            ]
+            position: 2,
+            supersetGroup: 1,
+            restSeconds: 150,
+            microRestSeconds: 15,
+            sets: sets
         )
         let workout = WorkoutModel(userID: userID, exercises: [target])
+        let originalRowID = target.id
+        let originalSetIDs = sets.map(\.id)
 
-        let result = LiveExerciseReplacement.splitIfNeeded(
+        LiveExerciseReplacement.replaceInPlace(
             target: target,
             replacementExerciseID: replacementExerciseID,
-            replacementWeightMode: .external,
-            replacementIsUnilateral: false,
-            in: workout,
+            replacementWeightMode: .bodyweightAssisted,
+            replacementIsUnilateral: true,
             now: now
         )
 
-        #expect(result == nil)
         #expect(workout.exercises.count == 1)
-        #expect(target.exerciseID == originalExerciseID)
-        #expect(target.sets.count == 2)
+        #expect(target.id == originalRowID)
+        #expect(target.exerciseID == replacementExerciseID)
+        #expect(target.position == 2)
+        #expect(target.supersetGroup == 1)
+        #expect(target.restSeconds == 150)
+        #expect(target.microRestSeconds == 15)
+        #expect(target.sets.sorted { $0.position < $1.position }.map(\.id) == originalSetIDs)
+        #expect(target.sets.map(\.sourceRoutineSetID) == sourceIDs.map(Optional.some))
+        #expect(target.sets.allSatisfy { $0.weightMode == .bodyweightAssisted })
+        #expect(target.sets.allSatisfy { $0.isUnilateral })
+        #expect(target.sets.allSatisfy { $0.reps == nil && $0.modeWeight == nil && $0.rpe == nil })
+        #expect(target.sets[1].setType == .myoRep)
+        #expect(target.sets[1].plannedMiniSetCount == 3)
     }
 
-    @Test func completedSetsStayAndOnlyFreshUnfinishedSlotsMoveBelow() throws {
-        let before = WorkoutExerciseModel(userID: userID, exerciseID: UUID(), position: 0)
-        let firstCompleted = SetModel(
+    @Test func completedDataStaysLoggedWhileEveryUnfinishedValueIsCleared() {
+        let completed = SetModel(
             userID: userID,
             position: 0,
             setType: .working,
             weightMode: .external,
             reps: 8,
             weight: 72.5,
-            completedAt: now.addingTimeInterval(-120)
-        )
-        let unfinishedMyo = SetModel(
-            userID: userID,
-            position: 1,
-            setType: .myoRep,
-            weightMode: .external,
-            reps: 14,
-            weight: 60,
             rpe: 9,
-            sourceRoutineSetID: UUID(),
-            plannedMiniSetCount: 3
-        )
-        unfinishedMyo.miniReps = [4, 4]
-        let secondCompleted = SetModel(
-            userID: userID,
-            position: 2,
-            setType: .backoff,
-            weightMode: .external,
-            reps: 10,
-            weight: 65,
             completedAt: now.addingTimeInterval(-60)
         )
-        let unfinishedCluster = SetModel(
+        let unfinished = SetModel(
             userID: userID,
-            position: 3,
+            position: 1,
             setType: .cluster,
-            weightMode: .external,
+            weightMode: .bodyweightAdded,
             reps: 12,
             weight: 55,
+            rpe: 10,
+            rir: 0,
+            durationSeconds: 45,
+            holdSeconds: 5,
+            partialReps: 2,
+            addedWeight: 20,
+            assistanceWeight: 15,
+            bodyweightKg: 80,
+            isUnilateral: true,
+            implementWeight: 4,
+            limbCount: 2,
+            machineSettingsJSON: "{\"seat\":3}",
+            sourceRoutineSetID: UUID(),
             plannedMiniRepsJSON: "[4,4,4]"
         )
-        unfinishedCluster.miniReps = [4, 4, 4]
+        unfinished.miniReps = [4, 4, 4]
+        unfinished.side2Reps = 12
+        unfinished.side2MiniReps = [4, 4, 4]
         let target = WorkoutExerciseModel(
             userID: userID,
             exerciseID: originalExerciseID,
-            position: 1,
-            supersetGroup: 2,
-            restSeconds: 150,
-            microRestSeconds: 20,
-            sets: [firstCompleted, unfinishedMyo, secondCompleted, unfinishedCluster]
+            sets: [completed, unfinished]
         )
-        let after = WorkoutExerciseModel(userID: userID, exerciseID: UUID(), position: 2)
-        let workout = WorkoutModel(userID: userID, exercises: [before, target, after])
+
+        LiveExerciseReplacement.replaceInPlace(
+            target: target,
+            replacementExerciseID: replacementExerciseID,
+            replacementWeightMode: .external,
+            replacementIsUnilateral: false,
+            now: now
+        )
+
+        #expect(completed.reps == 8)
+        #expect(completed.weight == 72.5)
+        #expect(completed.rpe == 9)
+        #expect(completed.completedAt != nil)
+        #expect(completed.weightMode == .external)
+
+        #expect(unfinished.completedAt == nil)
+        #expect(unfinished.weightMode == .external)
+        #expect(!unfinished.isUnilateral)
+        #expect(unfinished.limbCount == 2)
+        #expect(unfinished.reps == nil)
+        #expect(unfinished.weight == nil)
+        #expect(unfinished.rpe == nil)
+        #expect(unfinished.rir == nil)
+        #expect(unfinished.durationSeconds == nil)
+        #expect(unfinished.holdSeconds == nil)
+        #expect(unfinished.partialReps == nil)
+        #expect(unfinished.addedWeight == nil)
+        #expect(unfinished.assistanceWeight == nil)
+        #expect(unfinished.bodyweightKg == nil)
+        #expect(unfinished.implementWeight == nil)
+        #expect(unfinished.machineSettingsJSON == nil)
+        #expect(unfinished.miniRepsJSON == nil)
+        #expect(unfinished.side2Reps == nil)
+        #expect(unfinished.side2MiniRepsJSON == nil)
+        #expect(unfinished.setType == .cluster)
+        #expect(unfinished.plannedMiniReps == [4, 4, 4])
+        #expect(unfinished.sourceRoutineSetID != nil)
+        #expect(unfinished.updatedAt == now)
+    }
+
+    @Test func oneRowAndAllSetsPersistAfterReplacement() throws {
+        let sets = (0..<3).map {
+            SetModel(userID: userID, position: $0, reps: 10, weight: 50)
+        }
+        sets[0].completedAt = now.addingTimeInterval(-30)
+        let target = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: originalExerciseID,
+            sets: sets
+        )
+        let workout = WorkoutModel(userID: userID, exercises: [target])
+        let rowID = target.id
+        let setIDs = sets.map(\.id)
         let (container, context) = try TestStore.make()
         _ = container
         context.insert(workout)
         try context.save()
 
-        let result = try #require(LiveExerciseReplacement.splitIfNeeded(
-            target: target,
-            replacementExerciseID: replacementExerciseID,
-            replacementWeightMode: .bodyweightAssisted,
-            replacementIsUnilateral: true,
-            in: workout,
-            now: now
-        ))
-        result.discardedSets.forEach(context.delete)
-        context.insert(result.replacement)
-        try context.save()
-
-        #expect(target.exerciseID == originalExerciseID)
-        let retained = target.sets.sorted { $0.position < $1.position }
-        #expect(retained.map(\.id) == [firstCompleted.id, secondCompleted.id])
-        #expect(retained.map(\.position) == [0, 1])
-        #expect(result.discardedSets.map(\.id) == [unfinishedMyo.id, unfinishedCluster.id])
-
-        let orderedRows = workout.exercises.sorted { $0.position < $1.position }
-        #expect(orderedRows.map(\.id) == [before.id, target.id, result.replacement.id, after.id])
-        #expect(orderedRows.map(\.position) == [0, 1, 2, 3])
-        #expect(result.replacement.exerciseID == replacementExerciseID)
-        #expect(result.replacement.supersetGroup == nil)
-        #expect(result.replacement.restSeconds == 150)
-        #expect(result.replacement.microRestSeconds == 20)
-        #expect(result.replacement.sets.count == 2)
-
-        let moved = result.replacement.sets.sorted { $0.position < $1.position }
-        #expect(moved.map(\.setType) == [.myoRep, .cluster])
-        #expect(moved.allSatisfy { $0.completedAt == nil })
-        #expect(moved.allSatisfy { $0.weightMode == .bodyweightAssisted })
-        #expect(moved.allSatisfy { $0.isUnilateral })
-        #expect(moved.allSatisfy { $0.reps == nil && $0.modeWeight == nil && $0.rpe == nil })
-        #expect(moved.allSatisfy { $0.miniReps.isEmpty })
-        #expect(moved.allSatisfy { $0.sourceRoutineSetID == nil })
-        #expect(moved[0].plannedMiniSetCount == 3)
-        #expect(moved[1].plannedMiniReps == [4, 4, 4])
-
-        let persisted = try #require(context.fetch(FetchDescriptor<WorkoutModel>()).first)
-        let persistedRows = persisted.exercises.sorted { $0.position < $1.position }
-        #expect(persistedRows.count == 4)
-        #expect(persistedRows[1].exerciseID == originalExerciseID)
-        #expect(persistedRows[1].sets.count == 2)
-        #expect(persistedRows[2].exerciseID == replacementExerciseID)
-        #expect(persistedRows[2].sets.count == 2)
-    }
-
-    @Test func fullyCompletedExerciseStaysAndAddsAnEmptyReplacementBelow() throws {
-        let completed = SetModel(userID: userID, reps: 8, completedAt: now)
-        let target = WorkoutExerciseModel(
-            userID: userID,
-            exerciseID: originalExerciseID,
-            sets: [completed]
-        )
-        let workout = WorkoutModel(userID: userID, exercises: [target])
-
-        let result = try #require(LiveExerciseReplacement.splitIfNeeded(
+        LiveExerciseReplacement.replaceInPlace(
             target: target,
             replacementExerciseID: replacementExerciseID,
             replacementWeightMode: .external,
             replacementIsUnilateral: false,
-            in: workout,
             now: now
-        ))
+        )
+        try context.save()
 
-        #expect(target.sets.map(\.id) == [completed.id])
-        #expect(result.discardedSets.isEmpty)
-        #expect(result.replacement.sets.isEmpty)
-        #expect(workout.exercises.sorted { $0.position < $1.position }.map(\.id) == [
-            target.id,
-            result.replacement.id,
-        ])
+        let persisted = try #require(context.fetch(FetchDescriptor<WorkoutModel>()).first)
+        #expect(persisted.exercises.count == 1)
+        let persistedTarget = try #require(persisted.exercises.first)
+        #expect(persistedTarget.id == rowID)
+        #expect(persistedTarget.exerciseID == replacementExerciseID)
+        #expect(persistedTarget.sets.sorted { $0.position < $1.position }.map(\.id) == setIDs)
+        #expect(persistedTarget.sets.count == 3)
     }
 }

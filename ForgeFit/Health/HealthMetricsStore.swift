@@ -244,6 +244,117 @@ final class HealthMetricsStore {
         lastRefreshed = Date()
         demoSeeded = true
     }
+
+    /// `--seed-appstore-demo`: a clean 70-night recovery series for App Store
+    /// capture. The partial-sleep fixture above deliberately seeds a *broken*
+    /// night; this one seeds a well-worn watch, so readiness, personal health
+    /// bands, and the sleep card all resolve to real computed values instead
+    /// of "Building". Deterministic (sinusoidal, no randomness) so a rerun
+    /// reproduces the same screenshots.
+    func seedAppStoreDemo() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        var raw: [RecoveryEngine.DailyHealthMetric] = []
+
+        for offset in stride(from: 69, through: 0, by: -1) {
+            guard let date = cal.date(byAdding: .day, value: -offset, to: today) else { continue }
+            let phase = Double(offset)
+            // Today reads slightly better than baseline on every channel —
+            // which is what makes "Proceed as planned" the honest call.
+            let isToday = offset == 0
+            let hrv = 64 + 7 * sin(phase / 5.3) + (isToday ? 1.5 : 0)
+            let sleepingHR = 49 + 3 * sin(phase / 4.1 + 1.2) - (isToday ? 0.5 : 0)
+            let sleepMinutes = 452 + 38 * sin(phase / 6.7) + (isToday ? 38 : 0)
+            let bedHour = 22
+            let bedMinute = 40 + Int(12 * sin(phase / 3.3))
+            let start = cal.date(
+                bySettingHour: bedHour,
+                minute: max(0, min(59, bedMinute)),
+                second: 0,
+                of: cal.date(byAdding: .day, value: -1, to: date) ?? date
+            )
+            let end = start.map { $0.addingTimeInterval(sleepMinutes * 60 + 1_800) }
+
+            raw.append(RecoveryEngine.DailyHealthMetric(
+                date: date,
+                hrvSDNN: (hrv - 4).rounded(),
+                restingHR: Int((sleepingHR + 5).rounded()),
+                respiratoryRate: (14.3 + 0.6 * sin(phase / 7.9) * 10).rounded() / 10,
+                oxygenSaturationPercent: (96.8 + 0.9 * sin(phase / 9.1) * 10).rounded() / 10,
+                sleepTotalMinutes: Int(sleepMinutes.rounded()),
+                source: "demo",
+                hrvSampleCount: 46,
+                nocturnalHRV: hrv.rounded(),
+                sleepingHR: Int(sleepingHR.rounded()),
+                sleepingHRSampleCount: 128,
+                sleepStart: start,
+                sleepEnd: end
+            ))
+        }
+
+        SleepOverrideStore.shared.clear(for: today)
+        rawMetrics = raw
+        metrics = SleepOverrideStore.shared.process(raw)
+        metricsRevision &+= 1
+
+        extraSignals = [
+            RecoveryEngine.Signal(
+                name: "VO₂ max",
+                systemImage: "lungs.fill",
+                value: "48.2 ml/kg·min",
+                detail: "Up 1.4 over 90 days",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Respiratory rate",
+                systemImage: "wind",
+                value: "14.3 br/min",
+                detail: "Within your usual band",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Blood oxygen",
+                systemImage: "drop.fill",
+                value: "97%",
+                detail: "Within your usual band",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Heart rate recovery",
+                systemImage: "arrow.down.heart.fill",
+                value: "38 bpm",
+                detail: "One minute after your last hard effort",
+                connected: true
+            ),
+        ]
+
+        activityMetrics = (0...56).compactMap { offset -> DailyActivityMetric? in
+            guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let phase = Double(offset)
+            let steps = (9_400 + 2_600 * sin(phase / 3.7)).rounded()
+            // Daily strain ranks today's steps against prior days *at the same
+            // time of day*, so the history needs the time-matched channel or
+            // the movement component drops out entirely and the card falls
+            // back to "More history needed".
+            return DailyActivityMetric(
+                date: day,
+                steps: offset == 0 ? 8_100 : steps,
+                exerciseMinutes: (46 + 22 * sin(phase / 2.9)).rounded(),
+                activeEnergyKcal: (620 + 180 * sin(phase / 4.3)).rounded(),
+                comparableTimeSteps: offset == 0 ? 8_100 : (steps * 0.86).rounded()
+            )
+        }
+
+        bodyweightSeries = (0...84).compactMap { offset -> (date: Date, value: Double)? in
+            guard let day = cal.date(byAdding: .day, value: -(84 - offset), to: today) else { return nil }
+            // 83.5 kg drifting to 82.1 kg — a recomposition, not a crash diet.
+            return (date: day, value: 83.5 - Double(offset) * 0.0167)
+        }
+
+        hrvGapDetected = false
+        lastRefreshed = Date()
+        demoSeeded = true
+    }
     #endif
 
     /// Bodyweight-mode sets get the user's latest body mass so their volume

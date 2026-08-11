@@ -1193,6 +1193,11 @@ struct ContentView: View {
             || ProcessInfo.processInfo.environment["FORGEFIT_RECOVERY_DEMO"] == "1" {
             RecoverySnapshotStore.shared.seedDemo()
         }
+        // App Store capture: a clean 70-night Health series so readiness,
+        // sleep, and the personal health bands compute for real.
+        if ProcessInfo.processInfo.arguments.contains("--seed-appstore-demo") {
+            HealthMetricsStore.shared.seedAppStoreDemo()
+        }
         // Cold-launch dashboard automation: freeze the pre-refresh state, then
         // stage the snapshot store so the same-day-cache and first-open-of-day
         // paths render deterministically.
@@ -1419,6 +1424,16 @@ struct ContentView: View {
 
     private func launchRoutineForAutoStart() -> RoutineModel? {
         let launchRoutines = (try? modelContext.fetch(FetchDescriptor<RoutineModel>())) ?? routines
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--seed-block-prefill-history"),
+           let starter = launchRoutines.first(where: {
+               $0.id == ForgeFitDemo.starterRoutineID
+                   && $0.deletedAt == nil
+                   && !$0.exercises.isEmpty
+           }) {
+            return starter
+        }
+        #endif
         return launchRoutines
             .sorted { $0.position < $1.position }
             .first { $0.deletedAt == nil && !$0.exercises.isEmpty }
@@ -1552,6 +1567,17 @@ struct ContentView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--seed-routine-reorder") {
                 try RoutineReorderUITestFixture.seed(in: modelContext)
+            }
+            // App Store screenshot/preview capture. Runs after the catalogs so
+            // it can resolve bundled routine templates by slug.
+            if ProcessInfo.processInfo.arguments.contains("--seed-appstore-demo") {
+                if ProcessInfo.processInfo.arguments.contains("--discard-active-workouts") {
+                    try AppStoreDemoSeed.discardActiveWorkouts(in: modelContext)
+                }
+                try AppStoreDemoSeed.seed(in: modelContext)
+                if ProcessInfo.processInfo.arguments.contains("--seed-active-workout") {
+                    try AppStoreDemoSeed.seedActiveWorkout(in: modelContext)
+                }
             }
             #endif
             if ProcessInfo.processInfo.arguments.contains("--seed-history") {

@@ -45,6 +45,7 @@ struct CardioExerciseCard: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -65,6 +66,7 @@ struct CardioExerciseCard: View {
     @State private var importing = false
     @State private var showIntervalEditor = false
     @State private var activeSegmentMessage: String?
+    @State private var noteFocusRequested = false
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
@@ -266,7 +268,10 @@ struct CardioExerciseCard: View {
                     StickyNoteView(
                         workoutExercise: workoutExercise,
                         exerciseID: workoutExercise.exerciseID,
-                        pinnedNote: pinnedNote
+                        pinnedNote: pinnedNote,
+                        focusRequested: noteFocusRequested,
+                        onFocusHandled: { noteFocusRequested = false },
+                        onPinnedNoteChanged: onPinnedNoteChanged
                     )
                 }
                 if let session {
@@ -741,6 +746,7 @@ struct CardioExerciseCard: View {
             actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
+                noteFocusRequested = true
                 try? modelContext.save()
             })
         }
