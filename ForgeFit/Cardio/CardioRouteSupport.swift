@@ -12,6 +12,14 @@ nonisolated enum CardioRouteMath {
         Locale.current.measurementSystem == .us ? 1609.344 : 1000
     }
 
+    /// The single source of truth for "athlete-authored interval structure":
+    /// a split with a step label that was not produced by after-the-fact
+    /// detection. Completion and auto-detection both defer to this predicate
+    /// so stored manual laps are never mistaken for derived ones.
+    static func isManualIntervalSplit(_ split: CardioSplitModel) -> Bool {
+        split.label != nil && !split.autoDetected
+    }
+
     static func distanceMeters(_ a: CardioRoutePointModel, _ b: CardioRoutePointModel) -> Double {
         let lhs = CLLocation(latitude: a.latitude, longitude: a.longitude)
         let rhs = CLLocation(latitude: b.latitude, longitude: b.longitude)
@@ -19,8 +27,20 @@ nonisolated enum CardioRouteMath {
     }
 
     static func replaceSplits(for session: CardioSessionModel, in context: ModelContext, splitDistanceMeters: Double = defaultSplitDistanceMeters) {
-        for split in session.splits {
+        // Manual interval splits (labeled, not auto-detected) are the athlete's
+        // own work — a recorded route must never substitute derived distance
+        // laps for them. Distance and auto-detected laps are disposable derived
+        // views and may be regenerated; manual interval structure is not.
+        let manualSplits = session.splits.filter { CardioRouteMath.isManualIntervalSplit($0) }
+        for split in session.splits where split.label == nil || split.autoDetected {
             context.delete(split)
+        }
+
+        guard manualSplits.isEmpty else {
+            // Keep the interval structure as the split view; the route points
+            // and session distance still carry the route/distance data.
+            session.splits = manualSplits
+            return
         }
         session.splits = []
 

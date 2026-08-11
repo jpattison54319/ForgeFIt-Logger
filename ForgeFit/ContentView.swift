@@ -107,6 +107,11 @@ struct ContentView: View {
     @State private var showQuickActionsEditor = false
     @State private var showLogWeightSheet = false
     @State private var cleanedOnboardingSlate = false
+    /// Non-plan deep links that arrived while onboarding was on screen. Held
+    /// FIFO and replayed once onboarding dismisses with launch tasks finished,
+    /// so a widget/Live Activity tap never routes behind the cover or into a
+    /// half-initialized shell (see `replayPendingDeepLinks`).
+    @State private var pendingDeepLinks = PendingDeepLinkQueue()
     @State private var workoutCountReactionTask: Task<Void, Never>?
     @State private var readinessStampTask: Task<Void, Never>?
     @State private var liveSurfaceUpdateTask: Task<Void, Never>?
@@ -645,12 +650,33 @@ struct ContentView: View {
     }
 
     private func handleOnboardingPresentationChange(_ isPresented: Bool) {
-        guard !isPresented,
-              !cleanedOnboardingSlate,
-              UserDefaults.standard.bool(forKey: "didOnboard"),
-              !isAutomationLaunch else { return }
-        cleanedOnboardingSlate = true
-        clearStarterSlate()
+        guard !isPresented else { return }
+        // The slate cleanup is still gated exactly as before; the replay runs
+        // on every real dismissal regardless, so an automation launch or a
+        // missed didOnboard stamp can never strand a held link.
+        if !cleanedOnboardingSlate,
+           UserDefaults.standard.bool(forKey: "didOnboard"),
+           !isAutomationLaunch {
+            cleanedOnboardingSlate = true
+            clearStarterSlate()
+        }
+        replayPendingDeepLinks()
+    }
+
+    /// Replays deep links held while onboarding was up, in arrival order, into
+    /// the now-initialized shell. Guarded twice so neither a dismissal racing
+    /// an unfinished launch nor a re-presented cover routes into a
+    /// half-initialized stack; `runLaunchTasksIfNeeded` re-invokes this when
+    /// launch finishes.
+    private func replayPendingDeepLinks() {
+        guard DeepLinkDeferralPolicy.canReplay(
+            launchTasksFinished: didFinishLaunchTasks,
+            onboardingPresented: isOnboardingCoverPresented
+        ) else { return }
+        let queued = pendingDeepLinks.drain()
+        for url in queued {
+            handleDeepLink(url)
+        }
     }
 
     private func handleStartRequestChange(_ _: Int) {
@@ -879,6 +905,14 @@ struct ContentView: View {
             return
         }
         guard url.scheme?.lowercased() == "forgefit" else { return }
+        // Onboarding is not ready to receive routes: hold the link and replay
+        // it after dismissal (see `replayPendingDeepLinks`). Plan files never
+        // reach here — they short-circuit above into their own deferred
+        // onboarding import sheet.
+        if DeepLinkDeferralPolicy.shouldDefer(url: url, onboardingPresented: isOnboardingCoverPresented) {
+            pendingDeepLinks.deferLink(url)
+            return
+        }
         switch url.host?.lowercased() {
         case "workout":
             if activeWorkoutForPresentation() != nil {
@@ -1170,6 +1204,9 @@ struct ContentView: View {
         await launchTasks()
         didFinishLaunchTasks = true
         scheduleLaunchPlanMaintenanceIfNeeded()
+        // Links queued while onboarding was up and dismissed before launch
+        // finished are only safe to route now.
+        replayPendingDeepLinks()
 
         if scenePhase == .active, activeWorkout == nil {
             scheduleForegroundMaintenance()
@@ -1707,30 +1744,18 @@ struct ContentView: View {
     }
 
     private func clearStarterSlate() {
-        do {
+        // Tear down live runtime (rest timers, GPS/cardio recording, watch
+        // state, HR, Live Activity) ONLY when the currently active workout is
+        // itself the seeded starter workout about to be deleted. A genuine
+        // user workout preserved by the cleanup must keep its runtime.
+        if StarterSlatePolicy.cancelsLiveRuntimeForDeletion(activeWorkout: activeWorkout) {
             WorkoutFinisher.cancelLiveRuntime()
-            for workout in try modelContext.fetch(FetchDescriptor<WorkoutModel>())
-            where workout.endedAt == nil || workout.id == ForgeFitDemo.starterRoutineID {
-                modelContext.delete(workout)
-            }
-
-            let starterRoutineID = ForgeFitDemo.starterRoutineID
-            let starterRoutines = try modelContext.fetch(
-                FetchDescriptor<RoutineModel>(predicate: #Predicate { $0.id == starterRoutineID })
-            )
-            for routine in starterRoutines {
-                modelContext.delete(routine)
-            }
-
-            let demoUserID = ForgeFitDemo.userID
-            let notes = try modelContext.fetch(
-                FetchDescriptor<UserExerciseNoteModel>(predicate: #Predicate { $0.userID == demoUserID })
-            )
-            for note in notes {
-                modelContext.delete(note)
-            }
-
-            try modelContext.save()
+        }
+        do {
+            // Deletes only seeded starter content (starter routine, its setup
+            // note, and unfinished starter-derived workouts); genuine user
+            // work-in-progress survives via `routineID` provenance.
+            try StarterSlateCleanup.run(in: modelContext)
         } catch {
             assertionFailure("Failed to clear onboarding starter slate: \(error)")
         }

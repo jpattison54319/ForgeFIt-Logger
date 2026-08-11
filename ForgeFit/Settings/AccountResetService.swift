@@ -73,7 +73,7 @@ enum AccountResetService {
 
     private static func clearLiveSurfaces() {
         WorkoutFinisher.cancelLiveRuntime()
-        WatchLink.shared.sendCommand(.discardWorkout)
+        WatchLink.shared.sendCommand(.discardWorkout(workoutID: nil))
         WatchLink.shared.publishState()
     }
 

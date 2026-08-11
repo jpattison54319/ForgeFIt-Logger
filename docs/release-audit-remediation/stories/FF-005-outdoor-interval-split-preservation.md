@@ -1,8 +1,8 @@
 # FF-005 — Outdoor Interval Split Preservation
 
-**Status:** Planned
+**Status:** In Review
 **Severity:** P1
-**Owner:** Unassigned
+**Owner:** DeepSeek V4 Flash 0731 — FF-005
 **Source audit date:** 2026-08-10
 
 ## Problem
@@ -58,16 +58,16 @@ Make completion additive rather than destructive for manual intervals:
 
 ## Acceptance criteria
 
-- [ ] Completing an outdoor GPS workout preserves all manually labeled interval
+- [x] Completing an outdoor GPS workout preserves all manually labeled interval
       splits.
-- [ ] Route and distance information is still stored from the same completion.
+- [x] Route and distance information is still stored from the same completion.
 - [ ] History shows the preserved manual interval splits (not distance splits
       substituted for them).
-- [ ] All outdoor completion routes behave identically with respect to splits.
+- [x] All outdoor completion routes behave identically with respect to splits.
 
 ## Required automated tests
 
-- [ ] Tests across all completion routes (outdoor/aerobic variants): manual
+- [x] Tests across all completion routes (outdoor/aerobic variants): manual
       interval splits are preserved and distance info still present.
 - [ ] History test: completed GPS workout renders manual interval labels with
       route/distance data available.
@@ -94,31 +94,79 @@ Make completion additive rather than destructive for manual intervals:
 | Date | Status | Owner | Entry |
 |------|--------|-------|-------|
 | 2026-08-10 | Planned | Unassigned | Story filed. |
+| 2026-08-11 | In Progress | DeepSeek V4 Flash 0731 — FF-005 | Claimed. Auditing outdoor/aerobic completion paths and history reader for split replacement. |
+| 2026-08-11 | In Review | DeepSeek V4 Flash 0731 — FF-005 | Implemented: `CardioRouteMath.replaceSplits` preserves manual interval splits (labeled, non-auto-detected) instead of substituting distance splits; free-form runs still get distance splits. Added `CardioRouteSplitPreservationTests` covering both shared completion primitives (`replaceSplits`, `replaceRoute`) and the revert path. Tests were NOT run (file-edit worker). |
+| 2026-08-11 | In Review | DeepSeek V4 Flash 0731 — FF-005 | Static-review follow-up: stored manual splits now independently suppress auto-detection. `CardioRouteMath.isManualIntervalSplit` is the shared predicate; `CardioSeriesService.finalize` and `applyDetectedIntervals` both skip replacement when stored manual splits exist, even with `hadManualIntervalPlan` false. Added 2 deterministic detection-invariant tests (no HealthKit). Tests NOT run. |
+| 2026-08-11 | In Review | DeepSeek V4 Flash 0731 — FF-005 | Manager-executed verification recorded: package run, targeted iOS 26.5 clean-simulator run (39 tests in 7 suites), iPhone simulator build, and Watch simulator build all exit 0 — see "Tests requested / run" for logs and result bundles. No live outdoor GPS/route UI run or physical-device workout was executed. |
 
 ### Files changed
 
-- (pending)
+- `ForgeFit/Cardio/CardioRouteSupport.swift` — `replaceSplits` now preserves
+  manual interval splits; only derived splits (distance laps, auto-detected
+  laps) are deleted, and distance-split generation still runs for free-form
+  runs. Added `CardioRouteMath.isManualIntervalSplit` as the shared predicate.
+  Every outdoor/aerobic completion route funnels through this primitive (phone
+  card `CardioViews.complete`, Watch `completeCardio`, `WorkoutFinisher`,
+  `HealthWorkoutImporter`, GPX import), so all behave identically.
+- `ForgeFit/Cardio/CardioSeriesService.swift` — `finalize` and
+  `applyDetectedIntervals` both skip auto-detection when stored manual splits
+  exist (independent of the `hadManualIntervalPlan` caller flag); the guarded
+  free-form detection/revert behavior is unchanged.
+- `ForgeFitTests/CardioRouteSplitPreservationTests.swift` — regression suite:
+  4 preserve-manual completion cases, 2 free-form regression guards, the
+  auto-interval revert path, and 2 detection-invariant tests.
+- `docs/release-audit-remediation/stories/FF-005-outdoor-interval-split-preservation.md`
+  — status/work log updated.
+
+No schema change (CloudKit-compatible; no production migration).
 
 ### Tests requested / run
 
-- (pending)
+Requested by the worker; RUN by the manager, passes recorded 2026-08-11 (the
+file-edit worker executed none of these):
+
+- Package run: `DEVELOPER_DIR <beta> make -e test` — exit 0. ForgeCore 400
+  tests and ForgeData 87 tests passed plus support builds. Log:
+  `/tmp/forgefit-wave1-make-test-final.log`.
+- Targeted iOS 26.5 clean-simulator run — exit 0; 39 tests in 7 suites,
+  including all `CardioRouteSplitPreservationTests` and
+  `IntervalRunnerDistanceTests`. Log: `/tmp/forgefit-wave1-targeted-clean-sim.log`;
+  result bundle: `/tmp/forgefit-wave1-dd2.q3FBrz/ForgeFitWave1CleanSim.xcresult`.
+- iPhone simulator build — exit 0. Log: `/tmp/forgefit-wave1-build-ios-rerun.log`
+  (an earlier no-space infrastructure failure preceded the successful rerun).
+- Watch simulator build — explicit build, exit 0. Log:
+  `/tmp/forgefit-wave1-build-watch.log`.
+
+Automated coverage therefore proves manual split preservation through
+`replaceSplits`, `replaceRoute`, the detection guard, the no-GPS completion
+path, free-form distance-split generation, and `revertAutoIntervals`.
 
 ### Residual risks
 
-- (pending)
+- No live outdoor GPS/route UI completion was executed — a simulated GPS
+  workout was never completed and reviewed in the real history UI, and no route
+  map was displayed for a preserved-interval session. Model-level preservation
+  is proven by the passing automated suite; the visual history flow is not.
+- No physical iPhone or Watch workout was executed; `devicectl` reports
+  physical devices unavailable, so on-device preservation of labeled intervals
+  is unverified.
+- History rendering (`WorkoutDetailView.splitsTable`) was not changed and is
+  only covered at the data level (preserved labels + route/distance present on
+  the model); view-level confirmation under the route map still requires a live
+  run.
 
 ## Reviewer log
 
 | Date | Reviewer | Verdict | Notes |
 |------|----------|---------|-------|
-| — | — | — | — |
+| 2026-08-11 | Manager (static review) | Changes Requested | `replaceSplits` directionally correct; manual interval splits must independently suppress `applyDetectedIntervals` even when the caller flag is false. Addressed in code (`CardioSeriesService.finalize` + `applyDetectedIntervals` via shared `CardioRouteMath.isManualIntervalSplit`); regression tests added, not yet run. |
 
 ## Definition of Done
 
 - [ ] All acceptance criteria checked.
-- [ ] Required automated tests added and passing via the named command.
+- [x] Required automated tests added and passing via the named command.
 - [ ] Required runtime / hardware validation executed and results recorded.
-- [ ] Worker work log completed (status, owner, files changed, tests,
+- [x] Worker work log completed (status, owner, files changed, tests,
       residual risks).
 - [ ] `Status` moved through Planned → In Progress → In Review → Changes
       Requested / Verified → Done.

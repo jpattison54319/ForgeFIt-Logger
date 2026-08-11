@@ -385,6 +385,122 @@ final class ForgeFitUITests: XCTestCase {
         )
     }
 
+    /// FF-001: a decimal-comma draft typed into the REAL production weight
+    /// field must commit and render as 72.5 kg (never 725), then the
+    /// quick-increment fan must step from that committed base. The app is
+    /// pinned to a decimal-comma region (de_DE) so the committed value
+    /// legitimately renders with a comma ("72,5"); this test reads the raw
+    /// field text with a decimal-comma-aware oracle instead of the global
+    /// `numericValue` helper, which strips commas as grouping and would
+    /// misread a valid 72,5 as 725.
+    @MainActor
+    func testTypedDecimalCommaCommitsAs72Point5AndQuickIncrements() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-block-prefill-history",
+            "--skip-onboarding",
+            "--auto-start-routine",
+            "-weightUnitRaw", "kg",
+            "-AppleLanguages", "(en)",  // keep the UI in English
+            "-AppleLocale", "de_DE",    // decimal-comma number formatting
+        ]
+        app.launch()
+
+        let weightField = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Weight")
+        ).firstMatch
+        XCTAssertTrue(
+            waitForLiveLogger(containing: weightField, in: app),
+            "Expected the live logger's working weight field."
+        )
+
+        // Focus the production field, clear any draft, and type the literal
+        // decimal-comma string a decimal-comma region's keyboard produces.
+        tapWhenReady(weightField)
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 3),
+            "Focusing the weight field should open the decimal keyboard."
+        )
+        if let current = weightField.value as? String, !current.isEmpty {
+            weightField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        weightField.typeText("72,5")
+
+        // Blur commits the draft (commitWeightDraft). Read the RAW field
+        // value: "72,5" (de_DE rendering) or "72.5" are both valid 72.5 kg;
+        // "725" would mean the comma was stripped and must fail.
+        let dismissKeyboard = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3))
+        dismissKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(
+            waitForDecimalCommaValue(72.5, in: weightField),
+            "Typed '72,5' must render as a valid 72.5 kg representation, never 725."
+        )
+        XCTAssertNotEqual(
+            weightField.value as? String ?? "",
+            "725",
+            "The raw field text must never read 725."
+        )
+        attachScreenshot(app, name: "ff-001-decimal-comma-committed")
+
+        // Refocus once: seedDraft re-sources the field from the committed
+        // model value, proving 72.5 — not a stale draft — is what was stored.
+        tapWhenReady(weightField)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        let reseedDismiss = app.buttons["Dismiss keyboard"].firstMatch
+        XCTAssertTrue(reseedDismiss.waitForExistence(timeout: 3))
+        reseedDismiss.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(
+            waitForDecimalCommaValue(72.5, in: weightField),
+            "Refocus must re-seed from the committed 72.5 kg model, not a stale draft."
+        )
+
+        // Quick increment off the committed base: the middle positive band is
+        // +2.5 kg in kilograms, so the fan must land on 75. The legacy
+        // comma-strip parser would have committed 725 and landed on 727.5 here.
+        let start = weightField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.55,
+            thenDragTo: start.withOffset(CGVector(dx: 0, dy: -94)),
+            withVelocity: .fast,
+            thenHoldForDuration: 0
+        )
+        XCTAssertTrue(
+            waitForDecimalCommaValue(75.0, in: weightField),
+            "The quick-increment fan must advance the committed 72.5 kg base by the +2.5 kg band to 75."
+        )
+    }
+
+    /// FF-001-only oracle. The app is pinned to a decimal-comma locale, so a
+    /// committed field legitimately renders "72,5". Unlike the global
+    /// `numericValue` (which strips commas as grouping), this reads the comma
+    /// as the decimal separator, so a valid 72,5 parses to 72.5 instead of
+    /// being misread as 725.
+    private func decimalCommaValue(in element: XCUIElement) -> Double? {
+        guard let raw = element.value as? String else { return nil }
+        return Double(raw.replacingOccurrences(of: ",", with: "."))
+    }
+
+    private func waitForDecimalCommaValue(
+        _ expectedValue: Double,
+        in element: XCUIElement,
+        tolerance: Double = 0.02,
+        timeout: TimeInterval = 4
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let actual = decimalCommaValue(in: element), abs(actual - expectedValue) <= tolerance {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard let actual = decimalCommaValue(in: element) else { return false }
+        return abs(actual - expectedValue) <= tolerance
+    }
+
     /// A regular row can show a previous-session ghost while retaining a
     /// different hidden routine target. Converting it to Myo-reps must carry
     /// the value the lifter actually saw into the activation field.

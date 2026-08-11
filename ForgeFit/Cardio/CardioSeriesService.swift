@@ -34,7 +34,11 @@ enum CardioSeriesService {
 
         // A yoga class's HR ebb and flow is not interval training — the series
         // is kept (zones, HR chart) but never chopped into work/recover laps.
-        if !hadManualIntervalPlan, !session.isYogaSession, !session.intervalsAutoApplied,
+        // Stored manual interval splits are the authoritative guard: even if a
+        // caller misreports `hadManualIntervalPlan`, athlete-authored laps on
+        // the session must never be replaced by after-the-fact detection.
+        let hasStoredManualIntervals = session.splits.contains { CardioRouteMath.isManualIntervalSplit($0) }
+        if !hasStoredManualIntervals, !hadManualIntervalPlan, !session.isYogaSession, !session.intervalsAutoApplied,
            let segments = CardioSampleSeries.detectIntervals(in: series),
            segments.contains(where: { $0.kind == .work }) {
             applyDetectedIntervals(segments, to: session, series: series, start: start, in: context)
@@ -136,6 +140,12 @@ enum CardioSeriesService {
         start: Date,
         in context: ModelContext
     ) {
+        // Detection must never replace athlete-authored interval splits — the
+        // same invariant `finalize` enforces via `hadManualIntervalPlan` is
+        // re-checked against the stored splits themselves here, so a wrong
+        // caller flag cannot delete manual structure at the deletion site.
+        guard !session.splits.contains(where: { CardioRouteMath.isManualIntervalSplit($0) }) else { return }
+
         // Replace any existing (distance) splits so the detected laps are the view.
         for split in session.splits { context.delete(split) }
         session.splits = []

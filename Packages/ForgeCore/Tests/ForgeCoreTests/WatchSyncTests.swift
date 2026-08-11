@@ -110,6 +110,7 @@ struct WatchSyncTests {
         let setID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
         let cardioID = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
         let blockID = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        let workoutID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         let metrics = WatchLiveMetrics(
             heartRate: 151,
             avgHR: 143,
@@ -185,13 +186,24 @@ struct WatchSyncTests {
             guard case .conditioningBlockEvent(let decodedID, let decodedEvent) = $0 else { return false }
             return decodedID == blockID && decodedEvent == conditioningEvent
         }
-        try expectCommand(.finishWorkout(metrics: metrics, savedToHealth: true)) {
-            guard case .finishWorkout(let decodedMetrics, let savedToHealth) = $0 else { return false }
-            return decodedMetrics == metrics && savedToHealth
+        try expectCommand(.finishWorkout(workoutID: workoutID, metrics: metrics, savedToHealth: true)) {
+            guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = $0 else { return false }
+            return decodedID == workoutID && decodedMetrics == metrics && savedToHealth
         }
-        try expectCommand(.discardWorkout) {
-            guard case .discardWorkout = $0 else { return false }
-            return true
+        try expectCommand(.discardWorkout(workoutID: workoutID)) {
+            guard case .discardWorkout(let decodedID) = $0 else { return false }
+            return decodedID == workoutID
+        }
+        // The optional identity round-trips as nil too — the form a legacy
+        // payload decodes into and the shape phone→watch sends without a
+        // target workout carry.
+        try expectCommand(.finishWorkout(workoutID: nil, metrics: nil, savedToHealth: false)) {
+            guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = $0 else { return false }
+            return decodedID == nil && decodedMetrics == nil && !savedToHealth
+        }
+        try expectCommand(.discardWorkout(workoutID: nil)) {
+            guard case .discardWorkout(let decodedID) = $0 else { return false }
+            return decodedID == nil
         }
         try expectCommand(.workoutFinished) {
             guard case .workoutFinished = $0 else { return false }
@@ -415,6 +427,80 @@ extension WatchSyncTests {
         #expect(decoded.readiness == 75)
         #expect(decoded.readinessAction == nil)
         #expect(decoded.readinessDetail == nil)
+    }
+}
+
+// MARK: - Terminal-command identity (FF-002)
+
+extension WatchSyncTests {
+    /// Wire-compatibility decision (FF-002): `workoutID` is additive-optional
+    /// on the terminal commands, matching the codebase's established
+    /// mixed-version decode pattern. A pre-binding build's `finishWorkout`
+    /// (no `workoutID` key) still decodes — carrying `nil` — so old Watch →
+    /// new Phone delivery is not dropped at the codec. The phone handler then
+    /// treats `nil` exactly like a mismatch: refuse, never apply to whatever
+    /// is active.
+    @Test func legacyFinishWorkoutWithoutWorkoutIDStillDecodesAsUnbound() throws {
+        let legacyJSON = """
+        {"finishWorkout":{"metrics":{"heartRate":151,"avgHR":143,"maxHR":168,"activeEnergyKcal":345.5,"hrZoneSeconds":[10,20,30,40,50],"asOf":1800000400},"savedToHealth":true}}
+        """
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8)))
+
+        guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = decoded else {
+            Issue.record("expected .finishWorkout case")
+            return
+        }
+        let expectedMetrics = WatchLiveMetrics(
+            heartRate: 151,
+            avgHR: 143,
+            maxHR: 168,
+            activeEnergyKcal: 345.5,
+            hrZoneSeconds: [10, 20, 30, 40, 50],
+            asOf: Date(timeIntervalSince1970: 1_800_000_400)
+        )
+        #expect(decodedID == nil)
+        #expect(decodedMetrics == expectedMetrics)
+        #expect(savedToHealth)
+    }
+
+    /// A pre-binding `discardWorkout` carried no associated values, and the
+    /// synthesized codec emits the case key with an EMPTY object payload
+    /// (`{"discardWorkout":{}}` — manager-verified against the pre-change
+    /// enum). The new codec must decode that exact legacy form as
+    /// `.discardWorkout(workoutID: nil)`, which the phone handler refuses —
+    /// so an old Watch's discard can never be honored for the wrong workout.
+    @Test func legacyDiscardWorkoutDecodesAsUnbound() throws {
+        let legacyJSON = #"{"discardWorkout":{}}"#
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8)))
+
+        guard case .discardWorkout(let decodedID) = decoded else {
+            Issue.record("expected .discardWorkout case")
+            return
+        }
+        #expect(decodedID == nil)
+    }
+
+    // MARK: Terminal-command identity policy — pure decision surface
+
+    /// The phone gate: an identity-less or mismatched terminal command is
+    /// never executed. Matching identity is the only path through.
+    @Test func terminalCommandPolicyExecutesOnlyForTheNamedWorkout() {
+        let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+        #expect(WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: a))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: b))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: nil))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: nil, activeWorkoutID: a))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: nil, activeWorkoutID: nil))
+    }
+
+    /// The watch gate (WatchStore calls this because the Watch target has no
+    /// unit-test target of its own): finish/discard are refused while the
+    /// visible workout is a phone-start placeholder awaiting identity.
+    @Test func terminalCommandPolicyRefusesWhileIdentityIsPending() {
+        #expect(WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: false))
+        #expect(!WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: true))
     }
 }
 

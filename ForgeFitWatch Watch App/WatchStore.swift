@@ -16,6 +16,13 @@ final class WatchStore: NSObject {
     private(set) var context: WatchAppContext?
     private(set) var isReachable = false
 
+    /// True while the visible workout is only a phone-start placeholder
+    /// awaiting the authoritative snapshot. The placeholder carries a
+    /// fabricated `workoutID`; running a terminal command against it would
+    /// write HealthKit and clear state the phone would refuse, so finish and
+    /// discard refuse until a real context resolves the identity (FF-002).
+    private(set) var isAwaitingWorkoutIdentity = false
+
     /// Set after a workout ends so the summary screen can show final numbers.
     struct Summary {
         var durationSeconds: Int
@@ -352,6 +359,13 @@ final class WatchStore: NSObject {
     /// the phone closes out the workout with the final metrics.
     func finishWorkout() {
         guard let workout = activeWorkout else { return }
+        // Refuse before touching the engine, HealthKit, the wire, or local
+        // state: while identity is pending the visible workoutID is a
+        // placeholder the phone would reject (FF-002).
+        guard WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: isAwaitingWorkoutIdentity) else {
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
         guard conditioningFinishBlocker == nil else {
             WKInterfaceDevice.current().play(.failure)
             return
@@ -360,7 +374,11 @@ final class WatchStore: NSObject {
         Task {
             let result = await engine.finish(workoutName: workout.title)
             summary?.metrics = result.metrics
-            send(.finishWorkout(metrics: result.metrics, savedToHealth: result.savedToHealth))
+            // Bind the finish to the exact snapshot the wrist was showing when
+            // the user tapped Finish. If that workout was superseded on the
+            // phone before this command lands, the phone handler drops it
+            // rather than terminating the newer session.
+            send(.finishWorkout(workoutID: workout.workoutID, metrics: result.metrics, savedToHealth: result.savedToHealth))
         }
         clearWorkoutLocally()
         WKInterfaceDevice.current().play(.success)
@@ -376,8 +394,16 @@ final class WatchStore: NSObject {
     }
 
     func discardWorkout() {
+        // Refuse while identity is pending, before any engine/wire/local
+        // mutation — see `finishWorkout` (FF-002).
+        guard WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: isAwaitingWorkoutIdentity) else {
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
         engine.cancel()
-        send(.discardWorkout)
+        // Stamped before `clearWorkoutLocally()` clears the mirror, so the
+        // phone can refuse the discard if a newer workout is now active there.
+        send(.discardWorkout(workoutID: activeWorkout?.workoutID))
         clearWorkoutLocally()
         summary = nil
         WKInterfaceDevice.current().play(.failure)
@@ -401,6 +427,7 @@ final class WatchStore: NSObject {
     }
 
     private func clearWorkoutLocally() {
+        isAwaitingWorkoutIdentity = false
         guard var ctx = context else { return }
         ctx.workout = nil
         context = ctx
@@ -408,6 +435,7 @@ final class WatchStore: NSObject {
 
     private func showPhoneStartedWorkoutPlaceholder() {
         guard activeWorkout == nil else { return }
+        isAwaitingWorkoutIdentity = true
         var ctx = context ?? WatchAppContext()
         ctx.workout = WatchWorkoutSnapshot(
             workoutID: UUID(),
@@ -426,6 +454,9 @@ final class WatchStore: NSObject {
     }
 
     private func apply(context newContext: WatchAppContext) {
+        // Any authoritative phone snapshot — with or without a workout —
+        // resolves a pending placeholder identity (FF-002).
+        isAwaitingWorkoutIdentity = false
         let previous = context
         context = newContext
 
@@ -523,7 +554,11 @@ final class WatchStore: NSObject {
                 engine.cancel()
             }
             clearWorkoutLocally()
-        case .discardWorkout:
+        case .discardWorkout(_):
+            // Phone-initiated discards are authoritative: the phone already
+            // deleted the workout, so the mirror clears unconditionally. The
+            // carried `workoutID` (which gates the watch → phone direction on
+            // the phone) is not a gate here.
             engine.cancel()
             clearWorkoutLocally()
             summary = nil

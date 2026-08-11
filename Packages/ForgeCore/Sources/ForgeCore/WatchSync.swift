@@ -563,12 +563,47 @@ public enum WatchCommand: Codable, Sendable {
     case conditioningBlockEvent(blockID: UUID, event: ConditioningProgressEvent)
     /// `savedToHealth` is true when the watch's HKLiveWorkoutBuilder already
     /// wrote the HKWorkout — the phone then skips its own write to avoid
-    /// double-counting in Apple Health.
-    case finishWorkout(metrics: WatchLiveMetrics?, savedToHealth: Bool)
+    /// double-counting in Apple Health. `workoutID` binds the command to the
+    /// exact workout the wrist was mirroring when the user tapped Finish, so a
+    /// slow-delivered command for a superseded workout is dropped by the phone
+    /// instead of terminating whatever is active there. Additive-optional:
+    /// pre-binding payloads decode as `nil`, which the phone handler refuses.
+    case finishWorkout(workoutID: UUID?, metrics: WatchLiveMetrics?, savedToHealth: Bool)
     /// Bidirectional terminal command: whichever device receives it cancels
-    /// and discards its local live workout resources.
-    case discardWorkout
+    /// and discards its local live workout resources. `workoutID` binds the
+    /// watch → phone direction — the phone drops a discard whose ID no longer
+    /// matches its active workout. Phone → watch sends stay authoritative: the
+    /// watch clears its mirror unconditionally and ignores the carried ID.
+    case discardWorkout(workoutID: UUID?)
 
     // phone → watch
     case workoutFinished
+}
+
+// MARK: - Terminal-command identity policy (FF-002)
+
+/// The shared gate for watch → phone terminal commands. Keeping the decision in
+/// ForgeCore lets the watch store and the phone handler both run the exact
+/// tested policy, and gives unit tests a pure surface independent of
+/// WatchConnectivity and the UI.
+public enum WatchTerminalCommandPolicy {
+    /// The phone may execute a terminal command only for the exact workout it
+    /// names. A nil carried ID is the legacy pre-binding wire form —
+    /// unverifiable — and any mismatch means the command is stale; both are
+    /// refused, and the phone re-publishes its authoritative snapshot so a
+    /// watch that cleared itself on the stale command converges.
+    public static func shouldExecute(carriedWorkoutID: UUID?, activeWorkoutID: UUID?) -> Bool {
+        guard let carriedWorkoutID, let activeWorkoutID else { return false }
+        return carriedWorkoutID == activeWorkoutID
+    }
+
+    /// The watch may run finish/discard only once the visible workout carries
+    /// authoritative identity. A phone-start placeholder awaits the real
+    /// snapshot and shows a fabricated `workoutID`: mutating the engine,
+    /// saving to HealthKit, or sending a terminal command against it would
+    /// have been refused by the phone anyway, so the command is refused up
+    /// front, before any local mutation.
+    public static func mayRunTerminalCommand(isAwaitingIdentity: Bool) -> Bool {
+        !isAwaitingIdentity
+    }
 }

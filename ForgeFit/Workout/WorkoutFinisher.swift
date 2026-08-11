@@ -334,7 +334,10 @@ enum WorkoutFinisher {
         if let failure = context.saveReportingFailure() {
             return failure
         }
-        WatchLink.shared.sendCommand(.discardWorkout)
+        // Tell the watch the workout is gone. Phone-initiated discards remain
+        // authoritative on the watch (it clears unconditionally); the carried
+        // ID keeps the wire shape uniform with the watch → phone direction.
+        WatchLink.shared.sendCommand(.discardWorkout(workoutID: workout.id))
         WatchLink.shared.publishState()
         cancelLiveRuntime()
         return nil

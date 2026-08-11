@@ -78,11 +78,13 @@ enum Fmt {
         return "\(load(value, unit: unit)) \(unit.suffix)"
     }
 
+    /// Parses typed load text (user's display unit) and converts it to the
+    /// internal kilogram store via the unit's own conversion. Every weight
+    /// entry path — runner/block weight fields, quick-increment fans, plate
+    /// calculator, routine editor — converges here; parse rules live in
+    /// `WeightInputParser` (ForgeCore) and never depend on `Locale.current`.
     static func loadKilograms(from text: String, unit: WeightUnit = Fmt.unit) -> Double? {
-        let normalized = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ",", with: "")
-        guard let displayValue = Double(normalized) else { return nil }
+        guard let displayValue = WeightInputParser.parse(text) else { return nil }
         return unit.kilograms(fromDisplayValue: displayValue)
     }
 

@@ -184,7 +184,7 @@ private struct WatchConditioningWorkoutView: View {
                 }
             }
                 .buttonStyle(.borderedProminent).tint(WTheme.teal)
-                .disabled(requiredRoundsRemaining > 0)
+                .disabled(requiredRoundsRemaining > 0 || store.isAwaitingWorkoutIdentity)
             if requiredRoundsRemaining > 0 {
                 Text("\(requiredRoundsRemaining) round\(requiredRoundsRemaining == 1 ? "" : "s") left")
                     .font(.system(size: 11, weight: .semibold))
@@ -746,10 +746,15 @@ struct WatchControlsPage: View {
             }
             .tint(WTheme.success)
             .buttonStyle(.borderedProminent)
-            .disabled(store.conditioningFinishBlocker != nil)
+            .disabled(store.conditioningFinishBlocker != nil || store.isAwaitingWorkoutIdentity)
 
             if let blocker = store.conditioningFinishBlocker {
                 Text(blocker)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else if store.isAwaitingWorkoutIdentity {
+                Text("Syncing workout…")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -762,6 +767,7 @@ struct WatchControlsPage: View {
                     .font(.system(size: 15, weight: .semibold))
             }
             .tint(WTheme.danger)
+            .disabled(store.isAwaitingWorkoutIdentity)
         }
         .padding(.horizontal, 4)
         .confirmationDialog("Finish workout?", isPresented: $confirmFinish) {

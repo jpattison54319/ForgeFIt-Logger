@@ -730,8 +730,18 @@ final class WatchLink: NSObject {
             try? context.save()
             publishState(policy: .immediate)
 
-        case .finishWorkout(let metrics, let savedToHealth):
-            guard let active else { return }
+        case .finishWorkout(let workoutID, let metrics, let savedToHealth):
+            // Terminal commands are only honored for the exact workout they
+            // name. A nil ID is the legacy pre-binding wire form; both nil and
+            // mismatched IDs are dropped. The authoritative snapshot is then
+            // re-published so a watch that cleared itself on a stale command
+            // converges instead of staying misleading.
+            guard let active,
+                  WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: workoutID, activeWorkoutID: active.id)
+            else {
+                publishState(policy: .immediate)
+                return
+            }
             let failure = WorkoutFinisher.finish(
                 active,
                 in: context,
@@ -744,8 +754,13 @@ final class WatchLink: NSObject {
                 publishState(policy: .immediate)
             }
 
-        case .discardWorkout:
-            guard let active else { return }
+        case .discardWorkout(let workoutID):
+            guard let active,
+                  WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: workoutID, activeWorkoutID: active.id)
+            else {
+                publishState(policy: .immediate)
+                return
+            }
             WorkoutFinisher.discard(active, in: context)
             onWorkoutFinishedFromWatch?()
 
