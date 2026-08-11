@@ -318,6 +318,25 @@ statistics, exercise library, profile) if you want to swap one out. Note that
 the exercise-detail and exercise-library shots contain third-party photos — see
 §10.
 
+### Apple Watch screenshots — `artifacts/appstore/screenshots-watch/`
+
+**Required, not optional.** The binary embeds a watchOS app, so App Store
+Connect refuses the submission without at least one Watch screenshot
+("Your binary indicates support for Apple Watch").
+
+Captured on an **Apple Watch Series 11 (46mm), watchOS 26.5** at native
+**416 × 496** — one of Apple's accepted Watch sizes, so no resampling.
+
+| # | File | What it sells |
+|---|---|---|
+| 1 | `01-watch-readiness.png` | Today's readiness on the wrist, then start a routine from it |
+| 2 | `02-watch-live-workout.png` | Mid-session: rest countdown, live heart rate with session average, set progress per exercise |
+
+A size warning worth knowing: the Apple Watch **Ultra 3 (49mm)** simulator
+renders at **422 × 514**, which is *not* on Apple's accepted list (the Ultra
+entry is 410 × 502). Capture Watch assets on a 46mm device unless you have
+confirmed App Store Connect accepts the newer Ultra size.
+
 ### App previews — `artifacts/appstore/previews-6.9/`
 
 H.264, 30 fps, 1320 × 2868, silent AAC track, all inside Apple's 15–30 s window.

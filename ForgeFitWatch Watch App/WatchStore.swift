@@ -30,6 +30,20 @@ final class WatchStore: NSObject {
     @ObservationIgnored private var lastIntervalStepEndsAt: Date?
 
     func activate() {
+        #if DEBUG
+        // App Store capture: an unpaired watch simulator never receives a
+        // context, so every screen would render empty. Inject the snapshot a
+        // paired phone would have sent, and skip session activation — the
+        // engine would otherwise try to open a HealthKit workout the
+        // simulator can't authorize.
+        if WatchAppStoreDemo.isRequested {
+            context = WatchAppStoreDemo.context()
+            if WatchAppStoreDemo.wantsActiveWorkout {
+                WatchAppStoreDemo.startHeartRateTicker(engine)
+            }
+            return
+        }
+        #endif
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         session.delegate = self

@@ -10,8 +10,9 @@ rerun the harness rather than editing a PNG.
 
 | Directory | Contents |
 |---|---|
-| `screenshots-6.9/` | The ten submitted screenshots, 1320 × 2868 |
+| `screenshots-6.9/` | The ten submitted iPhone screenshots, 1320 × 2868 |
 | `previews-6.9/` | Three app previews, H.264 30 fps 1320 × 2868 with a silent audio track |
+| `screenshots-watch/` | Two Apple Watch screenshots, 416 × 496 — **required**, because the binary embeds a watchOS app |
 | `extra-screenshots/` | Alternates not submitted (see the third-party-photo caveat below) |
 
 ## Why 6.9" only
@@ -115,6 +116,35 @@ recording to find:
   runs the full length, and the container reports a duration the picture never
   reaches. Encode once, read the video stream's duration, then re-encode at
   exactly that.
+
+## Regenerating the Apple Watch screenshots
+
+The watch app has no store of its own — every screen renders a `WatchAppContext`
+the phone pushes over WatchConnectivity, so an unpaired watch simulator shows
+empty screens. `ForgeFitWatch Watch App/WatchAppStoreDemo.swift`
+(`--seed-watch-demo`, DEBUG) injects the snapshot a paired phone would have
+sent, and `--seed-watch-demo-active` adds the live Push Day on top.
+
+```bash
+W=<46mm watch simulator udid>
+xcrun simctl boot $W
+xcodebuild build -workspace ForgeFit.xcworkspace -scheme 'ForgeFitWatch Watch App' \
+  -destination "platform=watchOS Simulator,id=$W" -derivedDataPath /tmp/ffw CODE_SIGNING_ALLOWED=NO
+xcrun simctl install $W "/tmp/ffw/Build/Products/Debug-watchsimulator/ForgeFitWatch Watch App.app"
+xcrun simctl launch $W org.xpetsllc.ForgeFit.watchkitapp --seed-watch-demo --seed-watch-demo-active
+sleep 12 && xcrun simctl io $W screenshot out.png
+```
+
+Two details that matter:
+
+- **Capture on a 46mm device (416 × 496).** The Ultra 3 (49mm) simulator
+  renders 422 × 514, which is not one of App Store Connect's accepted Watch
+  sizes.
+- **The demo path skips session activation** — the engine would otherwise try
+  to open a HealthKit workout the simulator can't authorize. That also means no
+  real heart rate arrives, so the fixture re-stamps a synthetic reading every
+  two seconds; without it the wrist sits on "Starting HR…", which is the real
+  first-second state but reads as a stuck screen on a product page.
 
 ## Caveats worth keeping
 

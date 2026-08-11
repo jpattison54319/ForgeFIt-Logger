@@ -60,6 +60,18 @@ final class WatchWorkoutEngine: NSObject {
 
     var hasReceivedHeartRate: Bool { heartRateSampleDate != nil }
 
+    #if DEBUG
+    /// App Store capture: the demo context never opens a HealthKit session, so
+    /// the wrist would sit on "Starting HR…" — a first-second loading state,
+    /// not what a wearer sees. Stamps a reading as if it had just arrived; the
+    /// caller re-stamps it inside the freshness window.
+    func seedAppStoreDemoHeartRate(_ bpm: Int, average: Int) {
+        heartRate = bpm
+        heartRateSampleDate = Date()
+        avgHR = average
+    }
+    #endif
+
     func liveHeartRate(at date: Date = Date()) -> Int? {
         guard let heartRate, let heartRateSampleDate else { return nil }
         let metrics = WatchLiveMetrics(heartRate: heartRate, asOf: heartRateSampleDate)
