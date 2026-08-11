@@ -386,7 +386,8 @@ private func calendarPreviewData(userID: UUID) -> ([WorkoutModel], [ExerciseLibr
         let we = WorkoutExerciseModel(userID: userID, exerciseID: run.id)
         let session = CardioSessionModel(
             userID: userID, workoutExerciseID: we.id, modality: "run",
-            startedAt: start, durationSeconds: 1800, distanceMeters: 5000, avgHR: 150)
+            startedAt: start, durationSeconds: 1800, distanceMeters: 5000,
+            distanceSource: .userEntered, avgHR: 150)
         return WorkoutModel(userID: userID, title: title, startedAt: start,
                             endedAt: start.addingTimeInterval(1900), avgHR: 150,
                             exercises: [we], cardioSessions: [session])
@@ -400,7 +401,8 @@ private func calendarPreviewData(userID: UUID) -> ([WorkoutModel], [ExerciseLibr
     let mixedRunWE = WorkoutExerciseModel(userID: userID, exerciseID: run.id, position: 1)
     let mixedSession = CardioSessionModel(
         userID: userID, workoutExerciseID: mixedRunWE.id, modality: "run",
-        startedAt: mixedStart.addingTimeInterval(900), durationSeconds: 1200, distanceMeters: 3000, avgHR: 148)
+        startedAt: mixedStart.addingTimeInterval(900), durationSeconds: 1200, distanceMeters: 3000,
+        distanceSource: .userEntered, avgHR: 148)
     let mixed = WorkoutModel(userID: userID, title: "Push + Run", startedAt: mixedStart,
                              endedAt: mixedStart.addingTimeInterval(2400), totalVolume: 600,
                              exercises: [mixedBench, mixedRunWE], cardioSessions: [mixedSession])

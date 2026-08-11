@@ -21,6 +21,15 @@ import Testing
         workout.xpAwardedAmount = 55
         workout.xpAwardedAt = Date(timeIntervalSince1970: 1_700_003_700)
         workout.deletedAt = nil
+        // Six documented optional training fields — previously unexercised by
+        // this fixture. Realistic non-health values so the key-guard, the
+        // round-trip test, and the health-absence test all visit them.
+        workout.conditioningPlanSnapshotJSON = #"{"sections":[{"name":"Amrap"}]}"#
+        workout.conditioningProgressJSON = #"{"phase":"active"}"#
+        workout.conditioningResultJSON = #"{"score":2340}"#
+        workout.wholeSessionRPE = 7.5
+        workout.wholeSessionRPERatedAt = Date(timeIntervalSince1970: 1_700_003_800)
+        workout.wholeSessionRPEProtocolVersion = "1"
         // HEALTH SENTINELS — must never appear in the emitted JSON.
         workout.hkWorkoutUUID = UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000001")
         workout.avgHR = 15599
@@ -76,6 +85,7 @@ import Testing
         session.sourceDevice = "iphone"
         session.durationSeconds = 3600
         session.distanceMeters = 10000
+        session.distanceSource = .userEntered
         session.effort = 7
         session.avgPaceSecondsPerKm = 360
         session.split500mSeconds = 110
@@ -85,7 +95,7 @@ import Testing
         session.resistanceLevel = 5
         session.inclinePercent = 1.5
         session.elevationGainMeters = 120
-        session.intervalsAutoApplied = true
+        session.intervalsAutoApplied = false
         session.yogaStyleRaw = nil
         session.posesCompleted = nil
         session.poolLengthMeters = 25
@@ -123,7 +133,7 @@ import Testing
             elevationGainMeters: 12, startedAt: workout.startedAt, endedAt: workout.endedAt ?? workout.startedAt
         )
         split.label = "Work 1"
-        split.autoDetected = true
+        split.autoDetected = false
         session.splits.append(split)
 
         let point = CardioRoutePointModel(
@@ -136,17 +146,38 @@ import Testing
         return workout
     }
 
-    /// Every health key/value that must never appear in an emitted backup.
+    /// Health/readiness keys that must never appear anywhere in an emitted
+    /// backup. Checked structurally (key presence at every parsed level), not
+    /// by raw-string search.
     private static let forbiddenKeys = [
         "avgHR", "maxHR", "activeEnergyKcal", "hrZoneSeconds", "readinessAtStart",
+        "readinessMethodID", "readinessCoverageAtStart",
         "hkWorkoutUUID", "bodyweightKg", "tss", "sampleSeriesJSON",
         "flexibilityExposureJSON", "floorsClimbed", "totalSteps",
         "heartRate", "readiness", "checkin", "Checkin", "wrapped", "Wrapped",
     ]
+    /// Health values planted in the fixture, written exactly as they render in
+    /// JSON if leaked. The absence test compares parsed scalar leaves exactly —
+    /// no substring matching — so every entry must be the exact scalar render
+    /// (e.g. "52344.5", not "52344").
     private static let sentinelValues = [
-        "15599", "18177", "52344", "11111", "22222", "4577", "82.5432",
-        "15588", "18166", "999991", "999992", "6177", "155991", "12345",
-        "54321", "999993", "DEADBEEF",
+        "15599", "18177", "52344.5", "11111", "22222", "33333", "44444", "55555",
+        "4577", "82.5432", "52399.9", "15588", "18166", "999991", "999992",
+        "6177.5", "155991", "12345", "54321", "999993", "DEADBEEF",
+    ]
+
+    /// The six optional workout training fields, enumerated once for the
+    /// guard tests (emission presence + not-a-Health-key). The `workout`
+    /// allow-list carries the same keys spelled directly; the key-walk test
+    /// keeps the two from drifting apart — an emitted key missing from the
+    /// allow-list fails the walk.
+    private static let workoutTrainingKeys: Set<String> = [
+        "conditioningPlanSnapshotJSON",
+        "conditioningProgressJSON",
+        "conditioningResultJSON",
+        "wholeSessionRPE",
+        "wholeSessionRPERatedAt",
+        "wholeSessionRPEProtocolVersion",
     ]
 
     /// The documented v1 key sets, per JSON object level. Any key outside
@@ -158,7 +189,9 @@ import Testing
         "workout": ["id", "routineID", "title", "startedAt", "endedAt", "sourceDevice", "notes",
                     "externalSource", "externalID", "importFingerprint", "importBatchID",
                     "xpAwardedAmount", "xpAwardedAt", "createdAt", "updatedAt", "deletedAt",
-                    "exercises", "cardioSessions", "blocks"],
+                    "exercises", "cardioSessions", "blocks",
+                    "conditioningPlanSnapshotJSON", "conditioningProgressJSON", "conditioningResultJSON",
+                    "wholeSessionRPE", "wholeSessionRPERatedAt", "wholeSessionRPEProtocolVersion"],
         "exercise": ["id", "exerciseID", "name", "position", "supersetGroup", "notes", "notePinned",
                      "restSeconds", "microRestSeconds", "intervalPlanJSON", "yogaFlowJSON",
                      "generatedByWorkoutBlockID", "sourceRoutineExerciseID", "createdAt", "updatedAt", "sets"],
@@ -191,6 +224,13 @@ import Testing
         "restDay": ["id", "date", "timeZoneIdentifier", "createdAt", "updatedAt", "deletedAt"],
     ]
 
+    /// Structural leak guard instead of raw-string grep: walks the parsed JSON
+    /// tree, asserts no forbidden key appears at any level, and compares every
+    /// scalar leaf exactly against the sentinel values. Exact (not substring)
+    /// comparison keeps the test deterministic — random fixture UUID hex or
+    /// timestamps can no longer collide with a digit-sentinel fragment — and
+    /// does not weaken the guard: any leaked health key or scalar is an exact
+    /// match by construction.
     @MainActor
     @Test func emittedJSONContainsNoHealthKeysOrSentinelValues() throws {
         let userID = UUID()
@@ -200,16 +240,162 @@ import Testing
             preferences: ["weightUnitRaw": .string("lb")],
             userID: userID, appVersion: "1.0"
         )
-        let json = String(decoding: try BackupMapper.encode(file), as: UTF8.self)
+        let root = try #require(try JSONSerialization.jsonObject(with: try BackupMapper.encode(file)) as? [String: Any])
 
-        for key in Self.forbiddenKeys {
-            #expect(!json.contains("\"\(key)\""), "forbidden key \(key) leaked into backup JSON")
+        func check(_ value: Any, path: String) {
+            if let dict = value as? [String: Any] {
+                for (key, child) in dict {
+                    #expect(!Self.forbiddenKeys.contains(key), "forbidden key \(key) leaked at path '\(path)/\(key)'")
+                    check(child, path: "\(path)/\(key)")
+                }
+            } else if let array = value as? [Any] {
+                for (index, child) in array.enumerated() {
+                    check(child, path: "\(path)[\(index)]")
+                }
+            } else if let string = value as? String {
+                // A forbidden key or sentinel rendered verbatim as a value.
+                #expect(!Self.forbiddenKeys.contains(string), "forbidden key text leaked as a value at path '\(path)'")
+                #expect(!Self.sentinelValues.contains(string), "health sentinel value leaked at path '\(path)'")
+            } else if let number = value as? NSNumber {
+                #expect(!Self.sentinelValues.contains(number.description), "health sentinel value \(number.description) leaked at path '\(path)'")
+            }
         }
-        for sentinel in Self.sentinelValues {
-            #expect(!json.contains(sentinel), "health sentinel value \(sentinel) leaked into backup JSON")
+        check(root, path: "$")
+
+        // The six training fields are explicitly not Health keys. If one ever
+        // becomes Health-derived, this guard (together with the emission-
+        // presence test) forces a deliberate review of workoutTrainingKeys and
+        // the allow-list before the absence claim can stay honest.
+        for key in Self.workoutTrainingKeys {
+            #expect(!Self.forbiddenKeys.contains(key), "training key \(key) must not be a Health key")
         }
     }
 
+    @MainActor
+    @Test func healthKitImportedWorkoutsAreNotBackedUp() {
+        let userID = UUID()
+        let imported = WorkoutModel(
+            userID: userID,
+            title: "Apple Watch Run",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        imported.endedAt = imported.startedAt.addingTimeInterval(1_800)
+        imported.sourceDevice = "healthkit-apple-watch"
+        imported.notes = "Imported from Apple Health"
+
+        let file = BackupMapper.file(
+            workouts: [imported], batches: [], exerciseNames: [:],
+            preferences: [:], userID: userID, appVersion: nil
+        )
+
+        #expect(file.workouts.isEmpty)
+    }
+
+    @MainActor
+    @Test func cardioDistanceRequiresNonHealthProvenance() throws {
+        let userID = UUID()
+        let health = CardioSessionModel(
+            userID: userID,
+            modality: "run",
+            distanceMeters: 5_000,
+            distanceSource: .healthKit
+        )
+        let manual = CardioSessionModel(
+            userID: userID,
+            modality: "row",
+            distanceMeters: 2_000,
+            distanceSource: .userEntered
+        )
+        let route = CardioSessionModel(
+            userID: userID,
+            modality: "run",
+            distanceMeters: 3_000,
+            distanceSource: .route
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            cardioSessions: [health, manual, route]
+        )
+
+        let file = BackupMapper.file(
+            workouts: [workout], batches: [], exerciseNames: [:],
+            preferences: [:], userID: userID, appVersion: nil
+        )
+        let sessions = try #require(file.workouts.first?.cardioSessions)
+        let byID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+
+        #expect(byID[health.id]?.distanceMeters == nil)
+        #expect(byID[manual.id]?.distanceMeters == 2_000)
+        #expect(byID[route.id]?.distanceMeters == 3_000)
+    }
+
+    @MainActor
+    @Test func healthDerivedDetectedIntervalsAreNotBackedUp() throws {
+        let userID = UUID()
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: "run",
+            startedAt: startedAt,
+            intervalsAutoApplied: true
+        )
+        session.splits = [
+            CardioSplitModel(
+                userID: userID, cardioSessionID: session.id, index: 0,
+                distanceMeters: 400, durationSeconds: 90, paceSecondsPerKm: 225,
+                label: "Manual work", autoDetected: false,
+                startedAt: startedAt, endedAt: startedAt.addingTimeInterval(90)
+            ),
+            CardioSplitModel(
+                userID: userID, cardioSessionID: session.id, index: 1,
+                distanceMeters: 400, durationSeconds: 85, paceSecondsPerKm: 212.5,
+                label: "Detected work", autoDetected: true,
+                startedAt: startedAt.addingTimeInterval(90),
+                endedAt: startedAt.addingTimeInterval(175)
+            ),
+        ]
+        let workout = WorkoutModel(userID: userID, startedAt: startedAt, cardioSessions: [session])
+
+        let file = BackupMapper.file(
+            workouts: [workout], batches: [], exerciseNames: [:],
+            preferences: [:], userID: userID, appVersion: nil
+        )
+        let backedUp = try #require(file.workouts.first?.cardioSessions.first)
+
+        #expect(!backedUp.intervalsAutoApplied)
+        #expect(backedUp.splits.map(\.label) == ["Manual work"])
+        #expect(backedUp.splits.allSatisfy { !$0.autoDetected })
+    }
+
+    /// Opposite-direction exhaustiveness at the workout level: the fixture's
+    /// emitted JSON must contain every documented optional training field. If
+    /// BackupMapper ever stops emitting one, this fails before the key-walk
+    /// could miss it.
+    @MainActor
+    @Test func emittedWorkoutJSONContainsEveryDocumentedTrainingField() throws {
+        let userID = UUID()
+        let workout = maximallyPopulatedWorkout(userID: userID)
+        let file = BackupMapper.file(
+            workouts: [workout], batches: [], exerciseNames: [:],
+            preferences: [:], userID: userID, appVersion: nil
+        )
+        let json = String(decoding: try BackupMapper.encode(file), as: UTF8.self)
+        for key in Self.workoutTrainingKeys {
+            #expect(json.contains("\"\(key)\""), "documented workout training key \(key) missing from emitted JSON")
+        }
+    }
+
+    /// Walks every documented structured object level (file, workout, exercise,
+    /// set, block, session, split, point, batch, microcycleTracking,
+    /// microcycleWindow, restDay) and asserts each parsed key is allowed. The
+    /// one deliberate exception: top-level `preferences` is a free-form
+    /// `[String: BackupPreferenceValue]` dictionary whose keys are enforced
+    /// app-side by `AppPreferenceKeys.backedUp` (BackupExporter,
+    /// BackupRestoreService), not by this ForgeData structural guard — the
+    /// walk only checks that the `preferences` key exists at the file level.
+    /// Exhaustiveness is therefore claimed for the structured levels and
+    /// specifically for the workout graph, not for preference keys.
     @MainActor
     @Test func everyObjectLevelStaysWithinDocumentedKeySets() throws {
         let userID = UUID()
@@ -238,8 +424,20 @@ import Testing
             date: Date(timeIntervalSince1970: 1_780_086_400),
             timeZoneIdentifier: "UTC"
         )
+        // Representative import batch so the `batch` allow-list branch of the
+        // walk below is actually exercised (previously batches: [] made it dead).
+        let batch = WorkoutImportBatchModel(
+            userID: userID,
+            source: "hevy",
+            fileName: "hevy-export-2026-01-05.csv",
+            importedCount: 42,
+            skippedDuplicateCount: 3,
+            warningCount: 2,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            endedAt: Date(timeIntervalSince1970: 1_700_000_045)
+        )
         let file = BackupMapper.file(
-            workouts: [workout], batches: [], exerciseNames: [workout.exercises[0].exerciseID: "Landmine Press"],
+            workouts: [workout], batches: [batch], exerciseNames: [workout.exercises[0].exerciseID: "Landmine Press"],
             preferences: [:], userID: userID, appVersion: nil,
             microcycleTrackings: [tracking],
             microcycleWindows: [window],
@@ -279,6 +477,9 @@ import Testing
         }
         for restDay in root["restDays"] as? [[String: Any]] ?? [] {
             check(restDay, level: "restDay")
+        }
+        for batch in root["importBatches"] as? [[String: Any]] ?? [] {
+            check(batch, level: "batch")
         }
     }
 
@@ -380,6 +581,13 @@ import Testing
         #expect(workout.hrZoneSeconds.isEmpty)
         #expect(workout.readinessAtStart == nil)
         #expect(workout.hkWorkoutUUID == nil)
+        // The six documented optional training fields survive the round trip.
+        #expect(workout.conditioningPlanSnapshotJSON == original.conditioningPlanSnapshotJSON)
+        #expect(workout.conditioningProgressJSON == original.conditioningProgressJSON)
+        #expect(workout.conditioningResultJSON == original.conditioningResultJSON)
+        #expect(workout.wholeSessionRPE == original.wholeSessionRPE)
+        #expect(workout.wholeSessionRPERatedAt?.timeIntervalSince1970 == original.wholeSessionRPERatedAt?.timeIntervalSince1970)
+        #expect(workout.wholeSessionRPEProtocolVersion == original.wholeSessionRPEProtocolVersion)
 
         let block = try #require(restored.blocks.first)
         #expect(block.id == original.blocks[0].id)
@@ -420,6 +628,7 @@ import Testing
         #expect(session.modality == originalSession.modality)
         #expect(session.workoutBlockID == originalSession.workoutBlockID)
         #expect(session.distanceMeters == originalSession.distanceMeters)
+        #expect(session.distanceSource == .restoredBackup)
         #expect(session.effort == originalSession.effort)
         #expect(session.avgPaceSecondsPerKm == originalSession.avgPaceSecondsPerKm)
         #expect(session.split500mSeconds == originalSession.split500mSeconds)

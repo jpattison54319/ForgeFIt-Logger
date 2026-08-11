@@ -426,6 +426,10 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
     /// a frozen value masquerade as live.
     public static let heartRateFreshnessInterval: TimeInterval = 15
 
+    /// Workout whose HKWorkoutSession produced this packet. Additive optional
+    /// for mixed-version decoding; the phone rejects nil/mismatched identity
+    /// rather than attributing an old Watch stream to a newer workout.
+    public var workoutID: UUID?
     public var heartRate: Int?
     public var avgHR: Int?
     public var maxHR: Int?
@@ -440,6 +444,7 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
     public var asOf: Date
 
     public init(
+        workoutID: UUID? = nil,
         heartRate: Int? = nil,
         avgHR: Int? = nil,
         maxHR: Int? = nil,
@@ -448,6 +453,7 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         hrZoneSeconds: [Int] = [],
         asOf: Date = Date()
     ) {
+        self.workoutID = workoutID
         self.heartRate = heartRate
         self.avgHR = avgHR
         self.maxHR = maxHR
@@ -605,5 +611,197 @@ public enum WatchTerminalCommandPolicy {
     /// front, before any local mutation.
     public static func mayRunTerminalCommand(isAwaitingIdentity: Bool) -> Bool {
         !isAwaitingIdentity
+    }
+}
+
+// MARK: - Engine workout identity policy (FF-003)
+
+/// The watch engine's live HKWorkoutSession is bound to the workout it was
+/// started for, and that identity is carried through interrupts. Recovery
+/// reattaches a session that may belong to an earlier workout; an unverified
+/// or mismatched session must never resume or stream under the current
+/// snapshot. This pure decision surface is shared by the watch store's two
+/// session-reconciliation points (authoritative snapshot apply and
+/// post-recovery bootstrap) and is exactly what the unit tests pin down —
+/// the Watch target has no unit-test target of its own, so the policy lives
+/// here in ForgeCore like FF-002's `WatchTerminalCommandPolicy`.
+public enum WatchEngineIdentityPolicy {
+
+    /// What the engine's active (or recovered) session is bound to.
+    public enum Resolution: Equatable, Sendable {
+        /// No session and nothing to start.
+        case idle
+        /// No live session and an authoritative context names a workout;
+        /// start one for it.
+        case startSession
+        /// A live session exists but no authoritative phone snapshot has been
+        /// received yet. The session is quarantined: it must NOT stream, and
+        /// it must NOT be cancelled merely because WCSession delivery is
+        /// slow. The first authoritative snapshot — matching, mismatched, or
+        /// with no workout — resolves it.
+        case awaitContext
+        /// The live session's identity matches the context workout; it is
+        /// left streaming untouched (normal recovery).
+        case keepStreaming
+        /// The live session is stale or unverifiable and the authoritative
+        /// context declares no workout: end it without saving.
+        case endSession
+        /// The live session is stale or unverifiable and the authoritative
+        /// context names a different workout: end the stale session, then
+        /// start a fresh one for the current workout. The stale session is
+        /// never resumed under the newer identity.
+        case endSessionAndStartCurrent
+    }
+
+    /// Reconcile the engine's live session against the phone's state.
+    ///
+    /// - Parameters:
+    ///   - engineHasSession: `WatchWorkoutEngine.hasActiveSession` — covers a
+    ///     live, starting, or recovering session.
+    ///   - sessionWorkoutID: the identity bound to that session. Nil means
+    ///     either the session predates identity recording (legacy/upgrade) or
+    ///     it was started from the phone-start handoff whose real identity is
+    ///     still pending — in both cases it can only be bound or ended, never
+    ///     assumed to belong to the current workout.
+    ///   - hasAuthoritativeContext: whether the phone has EVER published an
+    ///     authoritative snapshot to this watch process. Distinct from
+    ///     `contextWorkoutID == nil` — the mirror can be absent simply because
+    ///     WCSession is slow, which must not be mistaken for the phone saying
+    ///     the workout is over.
+    ///   - contextWorkoutID: the current snapshot's workout id (nil when the
+    ///     authoritative snapshot declares no active workout).
+    public static func resolve(
+        engineHasSession: Bool,
+        sessionWorkoutID: UUID?,
+        hasAuthoritativeContext: Bool,
+        contextWorkoutID: UUID?
+    ) -> Resolution {
+        guard engineHasSession else {
+            guard hasAuthoritativeContext, contextWorkoutID != nil else { return .idle }
+            return .startSession
+        }
+        // A live session with no authoritative snapshot yet is quarantined,
+        // not ended — WCSession being slow is not evidence the workout ended.
+        guard hasAuthoritativeContext else { return .awaitContext }
+        if let sessionWorkoutID, let contextWorkoutID, sessionWorkoutID == contextWorkoutID {
+            return .keepStreaming
+        }
+        return contextWorkoutID == nil ? .endSession : .endSessionAndStartCurrent
+    }
+
+    /// Live metrics may only be sent to the phone while the streaming session
+    /// is verifiably the current workout's and the phone has resolved a
+    /// pending handoff identity. A quarantined session (no authoritative
+    /// mirror, or `isAwaitingWorkoutIdentity` still set) and a session whose
+    /// identity differs from the mirror must not emit — the caller's
+    /// reconcile actions clean those sessions up at the next snapshot.
+    public static func mayStreamMetrics(
+        sessionWorkoutID: UUID?,
+        isAwaitingAuthoritativeIdentity: Bool,
+        contextWorkoutID: UUID?
+    ) -> Bool {
+        guard !isAwaitingAuthoritativeIdentity, let sessionWorkoutID, let contextWorkoutID else {
+            return false
+        }
+        return sessionWorkoutID == contextWorkoutID
+    }
+
+    /// A session may be re-bound only when the engine itself durably records
+    /// that it accepted a phone handoff and still has no workout identity.
+    /// A UI placeholder flag is intentionally insufficient: it can coexist
+    /// with a recovered A session while a new B handoff arrives.
+    public static func mayBindPendingHandoff(
+        sessionWorkoutID: UUID?,
+        isPendingHandoff: Bool,
+        contextWorkoutID: UUID?
+    ) -> Bool {
+        isPendingHandoff && sessionWorkoutID == nil && contextWorkoutID != nil
+    }
+}
+
+// MARK: - Recovered outdoor-route policy (FF-010)
+
+/// HealthKit-free policy for watch route startup/recovery. Recovery begins a
+/// new route segment only for an active outdoor workout, and rejects cached
+/// Core Location updates from before the new segment began so prior route
+/// points cannot be inserted twice.
+public enum WatchRouteCollectionPolicy {
+    public static func shouldStart(
+        isOutdoor: Bool,
+        isSessionActive: Bool,
+        isAlreadyCollecting: Bool
+    ) -> Bool {
+        isOutdoor && isSessionActive && !isAlreadyCollecting
+    }
+
+    public static func shouldInsertLocation(
+        timestamp: Date,
+        horizontalAccuracy: Double,
+        segmentStartedAt: Date
+    ) -> Bool {
+        horizontalAccuracy >= 0
+            && horizontalAccuracy <= 100
+            && timestamp >= segmentStartedAt
+    }
+}
+
+// MARK: - Engine session identity persistence (FF-003)
+
+/// Durable record of which workout the currently-live (possibly recovered)
+/// engine session was started for. Written when a session begins, cleared
+/// when it ends, and read when watchOS relaunches the watch app mid-workout,
+/// so recovery reattaches with the originating identity in hand instead of
+/// letting the session stream under whatever snapshot is current. A workout
+/// identity UUID only — never health data, never crosses the wire, and it
+/// lives in the watch's own defaults, not the shared app group.
+///
+/// Hosted in ForgeCore (like `ForgeFitWidgetSnapshotStore`) so the
+/// clear/persist lifecycle is deterministic in unit tests via the injectable
+/// `defaults`; the watch app and engine use the `UserDefaults.standard`
+/// default.
+public enum WatchSessionIdentityStore {
+    public static let key = "forgefit.watch.engine.sessionWorkoutID"
+    public static let pendingHandoffKey = "forgefit.watch.engine.sessionIdentityPendingHandoff"
+
+    public static func load(defaults: UserDefaults = UserDefaults.standard) -> UUID? {
+        defaults.string(forKey: key).flatMap(UUID.init(uuidString:))
+    }
+
+    public static func save(_ id: UUID?, defaults: UserDefaults = UserDefaults.standard) {
+        if let id {
+            defaults.set(id.uuidString, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    public static func isPendingHandoff(defaults: UserDefaults = UserDefaults.standard) -> Bool {
+        defaults.bool(forKey: pendingHandoffKey)
+    }
+
+    public static func savePendingHandoff(
+        _ pending: Bool,
+        defaults: UserDefaults = UserDefaults.standard
+    ) {
+        if pending {
+            defaults.set(true, forKey: pendingHandoffKey)
+        } else {
+            defaults.removeObject(forKey: pendingHandoffKey)
+        }
+    }
+
+    public static func clear(defaults: UserDefaults = UserDefaults.standard) {
+        save(nil, defaults: defaults)
+        savePendingHandoff(false, defaults: defaults)
+    }
+}
+
+/// Phone-side attribution guard for live Watch metrics. Older packets decode
+/// with a nil workoutID and are dropped: temporarily losing a live number is
+/// safer than persisting A's heart rate, distance, or energy onto workout B.
+public enum WatchLiveMetricsAttributionPolicy {
+    public static func mayApply(metricsWorkoutID: UUID?, activeWorkoutID: UUID?) -> Bool {
+        guard let metricsWorkoutID, let activeWorkoutID else { return false }
+        return metricsWorkoutID == activeWorkoutID
     }
 }

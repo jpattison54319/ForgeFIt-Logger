@@ -35,6 +35,10 @@ struct LiveWorkoutLifecyclePolicyTests {
         ))
     }
 
+    @Test func automaticWorkoutHistoryBackupIsEnabledForThisRelease() {
+        #expect(BackupAutomationPolicy.isEnabledInThisRelease)
+    }
+
     @Test func eachRestAlertGetsAUniquePrefixMatchedIdentifier() {
         let first = NotificationScheduler.NotificationID.restTimerAlert(UUID())
         let second = NotificationScheduler.NotificationID.restTimerAlert(UUID())

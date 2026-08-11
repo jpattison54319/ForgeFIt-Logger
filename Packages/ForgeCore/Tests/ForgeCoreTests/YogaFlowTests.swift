@@ -79,4 +79,19 @@ struct YogaFlowTests {
         #expect(!YogaStyle.power.isRestorative)
         #expect(!YogaStyle.hatha.isRestorative)
     }
+
+    @Test func logicalPoseCountFoldsOnlyAdjacentComplementarySides() {
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Left", "Pigeon — Right", "Mountain"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: ["Pigeon — Left"]) == 1)
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Left", "Warrior II — Right"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Right", "Pigeon — Left",
+            "Pigeon — Left", "Pigeon — Right"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: ["", "   "]) == 0)
+    }
 }

@@ -1,10 +1,10 @@
 # Release Audit Remediation — Master Board
 
-> Master board and operating rules for the 2026-08-10 release audit remediation.
-> This is a **documentation-only** space: no production code, tests, docs, or git
-> state is edited here beyond these Markdown files. One row per story, FF-001
-> through FF-020. Each story lives in `stories/FF-###-*.md` and is independently
-> trackable.
+> Master board and operating rules for the 2026-08-10 release audit remediation,
+> reconciled by final review on 2026-08-11. One row per story, FF-001 through
+> FF-020. Each story lives in `stories/FF-###-*.md` and is independently
+> trackable. Production, test, and evidence changes are consolidated on the
+> release branch for build 56.
 
 ---
 
@@ -112,38 +112,37 @@ The remediation release may ship only when:
 - [ ] Evidence boundaries for each Release block applicable to the changed platforms are recorded (tests, simulator, hardware, archive, upload, processing, App Review).
 - [ ] Master board rows below reflect the true final status — no row marked Done without a signed story file.
 
-> Nothing in this file claims any defect is fixed. "Done" is a future state set
-> by the manager after workers record verified evidence; as of 2026-08-10 all
-> stories are `Planned` and `Owner: Unassigned`.
+> Source implementations and automated checks now exist for FF-001 through
+> FF-020. Only FF-019 is `Verified`: every other story retains at least one
+> simulator, signed-in iCloud, physical iPhone, or physical Watch validation
+> item, so none is marked `Done`.
 
 ---
 
 ## Board
 
-Legend — `Deps`: upstream story/WA (blocking), `Own`: current owner, `Impl
-commit`: commit that implements, `Targeted`: targeted test command, `Full`:
-full-suite test result, `Runtime`: runtime/hardware validation result, `Rev`:
-reviewer sign-off.
+The detailed commands, log paths, and release-level verdict are recorded in
+[`FINAL-REVIEW-2026-08-11.md`](FINAL-REVIEW-2026-08-11.md).
 
-| ID | Title | Sev | Status | Deps | Own | Impl commit | Targeted | Full | Runtime | Rev |
-|----|-------|-----|--------|------|-----|-------------|----------|------|---------|-----|
-| FF-001 | [Localized weight parsing](stories/FF-001-localized-weight-parsing.md) | P1 | In Review | — | DeepSeek V4 Flash 0731 | e0b4867 | WeightInputParser suite + LocalizedWeightEntryTests + de_DE XCUITest | pkg 400+87 pass; iOS 26.5 sim 39/7 pass; iOS+Watch builds pass | Sim: de_DE iOS 26.5 XCUITest pass; Hw: physical iPhone outstanding | — |
-| FF-002 | [Watch terminal command identity](stories/FF-002-watch-terminal-command-identity.md) | P1 | In Review | — | DeepSeek V4 Flash 0731 | e0b4867 | WatchSyncTests + WatchTerminalCommandIdentityTests + WatchStructuredSetSyncTests | pkg 400+87 pass; iOS 26.5 sim 39/7 pass; iOS+Watch builds pass | Sim: interactive Watch run outstanding; Hw: outstanding | — |
-| FF-003 | [Watch engine workout identity](stories/FF-003-watch-engine-workout-identity.md) | P1 | Planned | FF-002 | Unassigned | — | Recovery/context tests + A-to-B hardware | — | — | — |
-| FF-004 | [Onboarding deep-link deferral](stories/FF-004-onboarding-deep-link-deferral.md) | P1 | In Review | — | DeepSeek V4 Flash 0731 | e0b4867 | OnboardingDeepLinkDeferralTests + StarterSlateCleanupTests | pkg 400+87 pass; iOS 26.5 sim 39/7 pass; iOS+Watch builds pass | Sim: mounted ContentView run outstanding; Hw: outstanding | — |
-| FF-005 | [Outdoor interval split preservation](stories/FF-005-outdoor-interval-split-preservation.md) | P1 | In Review | — | DeepSeek V4 Flash 0731 | e0b4867 | CardioRouteSplitPreservationTests + IntervalRunnerDistanceTests | pkg 400+87 pass; iOS 26.5 sim 39/7 pass; iOS+Watch builds pass | Sim: live history UI run outstanding; Hw: outstanding | — |
-| FF-006 | [Workout finish idempotency](stories/FF-006-workout-finish-idempotency.md) | P1-risk | Planned | — | Unassigned | — | exactly-once HealthKit/Watch/XP tests | — | — | — |
-| FF-007 | [Reset backup deletion can fail silently](stories/FF-007-reset-backup-deletion.md) | P1 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-008 | [Backup restore lacks rollback](stories/FF-008-restore-rollback-atomicity.md) | P1 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-009 | [Long-range health aggregation performance risk](stories/FF-009-long-range-health-aggregation-performance.md) | P1 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-010 | [Recovered outdoor session doesn't restart route collection](stories/FF-010-watch-route-recovery.md) | P2 | Planned | FF-002 | Unassigned | — | — | — | — | — |
-| FF-011 | [Health authorization denial/stalled requests no-op silently](stories/FF-011-health-authorization-recovery.md) | P2 | Planned | FF-009 | Unassigned | — | — | — | — | — |
-| FF-012 | [Deferred HealthKit fills resume after reset](stories/FF-012-workout-finisher-deferred-lifetime.md) | P2 | Planned | FF-006 | Unassigned | — | — | — | — | — |
-| FF-013 | [Completing mid-yoga-hold doesn't record partial hold](stories/FF-013-yoga-partial-hold-completion.md) | P2 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-014 | [Yoga finished-flow resume idempotency](stories/FF-014-yoga-finished-resume-idempotency.md) | P2 | Planned | FF-013 | Unassigned | — | — | — | — | — |
-| FF-015 | [Yoga pose-count semantics](stories/FF-015-yoga-pose-count-semantics.md) | P2 | Planned | FF-013 | Unassigned | — | — | — | — | — |
-| FF-016 | [Superset drop-set round indexing](stories/FF-016-superset-drop-round-indexing.md) | P2 | Planned | FF-002 | Unassigned | — | — | — | — | — |
-| FF-017 | [Relative history filter midnight invalidation](stories/FF-017-relative-history-midnight-invalidation.md) | P3 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-018 | [Backup rotation atomicity](stories/FF-018-backup-rotation-atomicity.md) | P3 | Planned | FF-007 | Unassigned | — | — | — | — | — |
-| FF-019 | [Backup allowed-key coverage (test integrity)](stories/FF-019-backup-allowed-key-coverage.md) | P3 | Planned | — | Unassigned | — | — | — | — | — |
-| FF-020 | [Automatic backup release boundary](stories/FF-020-automatic-backup-release-boundary.md) | P1 | Planned | FF-007 | Unassigned | — | — | — | — | — |
+| ID | Title | Sev | Status | Automated evidence | Remaining runtime evidence |
+|----|-------|-----|--------|--------------------|----------------------------|
+| FF-001 | [Localized weight parsing](stories/FF-001-localized-weight-parsing.md) | P1 | In Review | Parser/unit and `de_DE` UI checks pass | Physical localized entry |
+| FF-002 | [Watch terminal command identity](stories/FF-002-watch-terminal-command-identity.md) | P1 | In Review | Wire/identity tests and Watch compile pass | Paired iPhone/Watch terminal race |
+| FF-003 | [Watch engine workout identity](stories/FF-003-watch-engine-workout-identity.md) | P1 | In Review | Durable identity and exact-attribution tests pass | Paired A-to-B recovery flow |
+| FF-004 | [Onboarding deep-link deferral](stories/FF-004-onboarding-deep-link-deferral.md) | P1 | In Review | Deferral and starter-state tests pass | Mounted lifecycle/deep-link run |
+| FF-005 | [Outdoor interval split preservation](stories/FF-005-outdoor-interval-split-preservation.md) | P1 | In Review | Split/distance tests pass | Physical GPS and history flow |
+| FF-006 | [Workout finish idempotency](stories/FF-006-workout-finish-idempotency.md) | P1-risk | In Review | Terminal save/XP/checkpoint retry tests pass | Rapid UI finish + mirrored Watch |
+| FF-007 | [Reset backup deletion can fail silently](stories/FF-007-reset-backup-deletion.md) | P1 | In Review | Backup deletion/reset failure tests pass | Real iCloud online/offline reset |
+| FF-008 | [Backup restore lacks rollback](stories/FF-008-restore-rollback-atomicity.md) | P1 | In Review | Isolated rollback/dedup tests pass | Clean-install split-store restore |
+| FF-009 | [Long-range health aggregation performance](stories/FF-009-long-range-health-aggregation-performance.md) | P1 | In Review | 730-day chunk/cancel/off-main tests pass | Large real HealthKit history profiling |
+| FF-010 | [Watch route recovery](stories/FF-010-watch-route-recovery.md) | P2 | In Review | Recovery policy compiles and route guards pass | Kill/relaunch outdoor Watch route |
+| FF-011 | [Health authorization recovery](stories/FF-011-health-authorization-recovery.md) | P2 | In Review | Denial/timeout/cancellation tests pass | Physical permission matrix |
+| FF-012 | [Deferred HealthKit fill lifetime](stories/FF-012-workout-finisher-deferred-lifetime.md) | P2 | In Review | ID-only fresh-context/cancel tests pass | Deferred fill during physical reset |
+| FF-013 | [Yoga partial-hold completion](stories/FF-013-yoga-partial-hold-completion.md) | P2 | In Review | Partial-hold/checkpoint tests pass | Complete/Skip parity on hardware |
+| FF-014 | [Yoga finished-flow resume](stories/FF-014-yoga-finished-resume-idempotency.md) | P2 | In Review | Finished-resume/retry tests pass | Kill-before-commit relaunch flow |
+| FF-015 | [Yoga pose-count semantics](stories/FF-015-yoga-pose-count-semantics.md) | P2 | In Review | Cross-presentation count tests pass | Live/history/share visual parity |
+| FF-016 | [Superset drop-set round indexing](stories/FF-016-superset-drop-round-indexing.md) | P2 | In Review | Shared round-policy tests pass | Phone/Watch rest-boundary flow |
+| FF-017 | [Relative history midnight invalidation](stories/FF-017-relative-history-midnight-invalidation.md) | P3 | In Review | Midnight/time-zone search tests pass | Mounted midnight rollover |
+| FF-018 | [Backup rotation atomicity](stories/FF-018-backup-rotation-atomicity.md) | P3 | In Review | Staged rotation/failure tests pass | Files/iCloud cancellation flow |
+| FF-019 | [Backup allowed-key coverage](stories/FF-019-backup-allowed-key-coverage.md) | P3 | Verified | Exhaustive package guard passes | None |
+| FF-020 | [Automatic backup release boundary](stories/FF-020-automatic-backup-release-boundary.md) | P1 | In Review | Automatic scheduling/status/retry/delete and Health-provenance tests pass | Signed-in create/delete/restore + stable entitlements |

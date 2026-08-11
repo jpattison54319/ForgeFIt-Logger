@@ -7,21 +7,34 @@ struct SettingsHealthSection: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
 
-    @Binding var connected: Bool
-    @Binding var connecting: Bool
     @Binding var showHistoryImporter: Bool
 
     @AppStorage("healthWriteEnabled") private var healthWriteEnabled = true
+    @State private var authorization = HealthAuthorizationStore.shared
 
     var body: some View {
         Section {
-            if connected {
+            if authorization.state.isConnected {
                 SettingsRow(icon: "heart.fill", iconTint: theme.danger, title: "Apple Health", subtitle: "Connected") {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(theme.success)
                 }
                 .themedListRow()
+            } else if authorization.state.requiresPermissionReview {
+                Button {
+                    HealthAuthorizationRecovery.openSettings()
+                } label: {
+                    SettingsRowLabel(
+                        icon: "gearshape.fill",
+                        iconTint: theme.danger,
+                        title: "Review Apple Health Access",
+                        subtitle: "Settings, or Health → Sharing → Apps → ForgeFit"
+                    )
+                }
+                .buttonStyle(.plain)
+                .themedListRow()
+                .accessibilityIdentifier("settings-open-health-access")
             } else {
                 Button {
                     connect()
@@ -29,12 +42,25 @@ struct SettingsHealthSection: View {
                     SettingsRowLabel(
                         icon: "heart.fill",
                         iconTint: theme.danger,
-                        title: connecting ? "Connecting\u{2026}" : "Connect Apple Health"
+                        title: authorization.state.isRequesting
+                            ? "Connecting\u{2026}"
+                            : authorization.state == .notDetermined
+                                ? "Connect Apple Health"
+                                : "Try Apple Health Again"
                     )
                 }
                 .buttonStyle(.plain)
                 .themedListRow()
-                .disabled(connecting || !HealthService.shared.isAvailable)
+                .disabled(authorization.state.isRequesting || authorization.state == .unavailable)
+            }
+
+            if let issue = authorization.state.issueMessage {
+                Text(issue)
+                    .font(.footnote)
+                    .foregroundStyle(authorization.state.requiresPermissionReview ? theme.textPrimary : theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .themedListRow()
+                    .accessibilityIdentifier("settings-health-authorization-issue")
             }
 
             Toggle(isOn: $healthWriteEnabled) {
@@ -58,23 +84,19 @@ struct SettingsHealthSection: View {
         } header: {
             SettingsSectionHeader(title: "Apple Health & Fitness")
         } footer: {
-            Text(connected
+            Text(authorization.state.isConnected
                 ? "Manage exact permissions in the Health app \u{2192} Sharing \u{2192} Apps."
                 : "Reads workout metrics and recovery data to drive readiness scores and auto-fill. Writes finished workouts back to Health & Fitness."
             )
         }
+        .onAppear { authorization.refresh() }
     }
 
     private func connect() {
-        connecting = true
         Task {
-            _ = await HealthService.shared.requestAuthorization()
+            guard await authorization.connect() else { return }
             await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-            await MainActor.run {
-                connected = HealthService.shared.isConnected
-                connecting = false
-                HealthMetricsStore.shared.refresh(force: true)
-            }
+            HealthMetricsStore.shared.refresh(force: true)
         }
     }
 }

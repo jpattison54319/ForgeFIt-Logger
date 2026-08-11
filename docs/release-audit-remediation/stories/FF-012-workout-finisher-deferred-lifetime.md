@@ -1,8 +1,8 @@
 # FF-012 — Deferred HealthKit fills can resume after reset deletes their models
 
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P2
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem

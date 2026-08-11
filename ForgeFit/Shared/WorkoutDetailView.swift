@@ -1298,7 +1298,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let runSession = CardioSessionModel(
         userID: userID, workoutExerciseID: runWE.id, modality: "run",
         startedAt: runStart, liveStartedAt: runStart, endedAt: runStart.addingTimeInterval(1080),
-        durationSeconds: 1080, distanceMeters: 3200, activeEnergyKcal: 240,
+        durationSeconds: 1080, distanceMeters: 3200, distanceSource: .route, activeEnergyKcal: 240,
         avgHR: 152, maxHR: 171, hrZoneSeconds: [60, 240, 480, 240, 60],
         routePoints: runRoutePoints,
         splits: runSplits)
@@ -1318,7 +1318,8 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let bikeSession = CardioSessionModel(
         userID: userID, workoutExerciseID: bikeWE.id, modality: "cycle",
         startedAt: bikeStart, liveStartedAt: bikeStart, endedAt: bikeStart.addingTimeInterval(600),
-        durationSeconds: 600, distanceMeters: 4000, activeEnergyKcal: 110, avgHR: 138, effort: 6,
+        durationSeconds: 600, distanceMeters: 4000, distanceSource: .userEntered,
+        activeEnergyKcal: 110, avgHR: 138, effort: 6,
         intervalsAutoApplied: true,
         splits: bikeSplits)
 
@@ -1326,7 +1327,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let legacySession = CardioSessionModel(
         userID: userID, modality: "row",
         startedAt: start.addingTimeInterval(3800),
-        durationSeconds: 480, distanceMeters: 1200, avgHR: 129)
+        durationSeconds: 480, distanceMeters: 1200, distanceSource: .userEntered, avgHR: 129)
 
     let workout = WorkoutModel(
         userID: userID, title: "Push + Engine", startedAt: start, endedAt: start.addingTimeInterval(4400),
@@ -1358,7 +1359,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let session = CardioSessionModel(
         userID: userID, workoutExerciseID: runWE.id, modality: "run",
         startedAt: start, liveStartedAt: start, endedAt: start.addingTimeInterval(1620),
-        durationSeconds: 1620, distanceMeters: 5000, activeEnergyKcal: 380,
+        durationSeconds: 1620, distanceMeters: 5000, distanceSource: .userEntered, activeEnergyKcal: 380,
         avgHR: 156, maxHR: 178, hrZoneSeconds: [120, 300, 720, 360, 120])
     let workout = WorkoutModel(
         userID: userID, title: "Morning Run", startedAt: start, endedAt: start.addingTimeInterval(1700),

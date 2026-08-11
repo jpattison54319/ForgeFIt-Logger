@@ -8,5 +8,6 @@ enum SettingsRoute: Hashable {
     case platesAndBars
     case reminders
     case yogaGuidance
+    case iCloudBackup
     case privacyPolicy
 }

@@ -75,12 +75,10 @@ struct HomeView: View {
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
     @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
-    @State private var connectingHealth = false
-    /// Mirrors `HealthService.isConnected`. Held in state rather than read in
-    /// `body`: the authorization lookup would otherwise run on every render,
-    /// including every frame of a scroll. Re-read whenever the app returns to
-    /// the foreground, which is where a Settings-app permission change lands.
-    @State private var healthConnected = false
+    @State private var healthAuthorization = HealthAuthorizationStore.shared
+
+    private var connectingHealth: Bool { healthAuthorization.state.isRequesting }
+    private var healthConnected: Bool { healthAuthorization.state.isConnected }
     // Keeps the check-in strip visible while the user is mid-selection —
     // without it the row would vanish on the first tap. Resets when Home
     // reloads, so an answered check-in stays collapsed on later visits.
@@ -610,7 +608,7 @@ struct HomeView: View {
             // Screenshot/UI-test hook, same family as -initialTab (unset in
             // production).
             .onAppear {
-                healthConnected = HealthService.shared.isConnected
+                healthAuthorization.refresh()
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
                 #if DEBUG
                 // UI automation keeps exercising the dormant coach surfaces
@@ -630,12 +628,7 @@ struct HomeView: View {
                 if phase != .active { commitCheckinDraft() }
                 // Granting or revoking access happens in Apple's Health app,
                 // so the answer can only have changed while we were away.
-                if phase == .active { healthConnected = HealthService.shared.isConnected }
-            }
-            // In-app grant: the prompt's own button flips this the moment the
-            // permission sheet resolves, without waiting for a foreground trip.
-            .onChange(of: connectingHealth) { _, isConnecting in
-                if !isConnecting { healthConnected = HealthService.shared.isConnected }
+                if phase == .active { healthAuthorization.refresh() }
             }
             .onDisappear { commitCheckinDraft() }
             .sheet(isPresented: $showExploreLibrary) {
@@ -792,26 +785,21 @@ struct HomeView: View {
                     Text("Readiness needs Apple Health")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
-                    Text("Sleep, HRV, and resting heart rate come from Health. Until it's connected, ForgeFit tracks your training only.")
+                    Text(healthAuthorization.state.issueMessage
+                        ?? "Sleep, HRV, and resting heart rate come from Health. Until it's connected, ForgeFit tracks your training only.")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: Space.sm)
-                Button(connectingHealth ? "…" : "Connect") {
-                    connectingHealth = true
-                    Task {
-                        _ = await HealthService.shared.requestAuthorization()
-                        await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-                        healthMetrics.refresh(force: true)
-                        connectingHealth = false
-                    }
+                Button(homeHealthActionTitle) {
+                    performHomeHealthAction()
                 }
                 .font(.bodyStrong)
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
                 .tint(theme.accent)
-                .disabled(connectingHealth)
+                .disabled(connectingHealth || healthAuthorization.state == .unavailable)
                 .accessibilityIdentifier("home-connect-health")
             }
         }
@@ -837,25 +825,38 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     // Triggers the Health permission directly — no detour
                     // through the full Settings sheet to find the right card.
-                    Button(connectingHealth ? "Connecting…" : "Connect Apple Health") {
-                        connectingHealth = true
-                        Task {
-                            _ = await HealthService.shared.requestAuthorization()
-                            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-                            healthMetrics.refresh(force: true)
-                            connectingHealth = false
-                        }
+                    Button(homeHealthActionTitle) {
+                        performHomeHealthAction()
                     }
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .tint(theme.accent)
-                    .disabled(connectingHealth)
+                    .disabled(connectingHealth || healthAuthorization.state == .unavailable)
                     Button("Explore programs") { showExploreLibrary = true }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                 }
                 .buttonBorderShape(.capsule)
             }
+        }
+    }
+
+    private var homeHealthActionTitle: String {
+        if connectingHealth { return "Connecting…" }
+        if healthAuthorization.state.requiresPermissionReview { return "Open Settings" }
+        if healthAuthorization.state == .notDetermined { return "Connect" }
+        return "Try Again"
+    }
+
+    private func performHomeHealthAction() {
+        if healthAuthorization.state.requiresPermissionReview {
+            HealthAuthorizationRecovery.openSettings()
+            return
+        }
+        Task {
+            guard await healthAuthorization.connect() else { return }
+            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
+            healthMetrics.refresh(force: true)
         }
     }
 

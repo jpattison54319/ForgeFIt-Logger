@@ -1,11 +1,12 @@
 import ForgeCore
 import Foundation
 
-/// Pure model ↔ DTO projection for the sanitized backup. `backupWorkout` is
-/// the entire sanitization boundary: its output type (`BackupWorkout`) has
-/// no health properties, so nothing health-derived can survive the mapping.
-/// The inverse (`workoutModel`) materializes models with their ORIGINAL ids
-/// — restore dedup and cross-layer UUID references depend on that.
+/// Pure model ↔ DTO projection for the sanitized backup. The boundary is
+/// layered: DTOs omit Health fields, while this mapper removes whole
+/// HealthKit-imported workouts and values whose shared model property has
+/// HealthKit provenance. The inverse (`workoutModel`) materializes models
+/// with their ORIGINAL ids — restore dedup and cross-layer UUID references
+/// depend on that.
 public enum BackupMapper {
 
     // MARK: - Model → DTO (export)
@@ -28,6 +29,10 @@ public enum BackupMapper {
             appVersion: appVersion,
             preferences: preferences,
             workouts: workouts
+                // Apple Health imports can be rebuilt from the user's Health
+                // store on the destination device. Their entire record is
+                // Health-derived, so none of it belongs in iCloud.
+                .filter { !isHealthKitImportedWorkout($0) }
                 .sorted { $0.startedAt < $1.startedAt }
                 .map { backupWorkout(from: $0, exerciseNames: exerciseNames) },
             importBatches: batches.map(backupBatch(from:)),
@@ -142,7 +147,8 @@ public enum BackupMapper {
     }
 
     private static func backupCardioSession(from session: CardioSessionModel) -> BackupCardioSession {
-        BackupCardioSession(
+        let safeSplits = session.splits.filter { !$0.autoDetected }
+        return BackupCardioSession(
             id: session.id,
             workoutExerciseID: session.workoutExerciseID,
             workoutBlockID: session.workoutBlockID,
@@ -152,7 +158,7 @@ public enum BackupMapper {
             endedAt: session.endedAt,
             sourceDevice: session.sourceDevice,
             durationSeconds: session.durationSeconds,
-            distanceMeters: session.distanceMeters,
+            distanceMeters: backupDistance(from: session),
             effort: session.effort,
             avgPaceSecondsPerKm: session.avgPaceSecondsPerKm,
             split500mSeconds: session.split500mSeconds,
@@ -162,9 +168,12 @@ public enum BackupMapper {
             resistanceLevel: session.resistanceLevel,
             inclinePercent: session.inclinePercent,
             elevationGainMeters: session.elevationGainMeters,
-            intervalsAutoApplied: session.intervalsAutoApplied,
+            // Auto-detected intervals can be derived from HealthKit heart-rate
+            // samples. Omit their applied marker with the rows so restore can
+            // re-run detection only after local Health enrichment.
+            intervalsAutoApplied: false,
             yogaStyleRaw: session.yogaStyleRaw,
-            posesCompleted: session.posesCompleted,
+            posesCompleted: session.logicalYogaPosesCompleted,
             poolLengthMeters: session.poolLengthMeters,
             lengthsCompleted: session.lengthsCompleted,
             totalStrokes: session.totalStrokes,
@@ -172,11 +181,40 @@ public enum BackupMapper {
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             deletedAt: session.deletedAt,
-            splits: session.splits.sorted { $0.index < $1.index }.map(backupSplit(from:)),
+            splits: safeSplits.sorted { $0.index < $1.index }.map(backupSplit(from:)),
             routePoints: session.routePoints
                 .sorted { $0.timestamp < $1.timestamp }
                 .map(backupRoutePoint(from:))
         )
+    }
+
+    private static func isHealthKitImportedWorkout(_ workout: WorkoutModel) -> Bool {
+        workout.sourceDevice?.hasPrefix("healthkit") == true
+    }
+
+    /// A generic distance value is not proof of safe provenance: HealthKit
+    /// fills the same local property used by manual/machine entry. New writes
+    /// carry an explicit source. For legacy rows without one, preserve only
+    /// cases whose local/file provenance is independently evident.
+    private static func backupDistance(from session: CardioSessionModel) -> Double? {
+        guard let distance = session.distanceMeters else { return nil }
+        switch session.distanceSource {
+        case .healthKit:
+            return nil
+        case .userEntered, .route, .watchInput, .importedFile, .restoredBackup:
+            return distance
+        case nil:
+            if session.routePoints.count >= 2 { return distance }
+            if session.poolLengthMeters != nil, session.lengthsCompleted != nil { return distance }
+            if session.sourceDevice?.hasPrefix("import-") == true
+                || session.sourceDevice == "gpx-import" {
+                return distance
+            }
+            // Pre-provenance post-hoc/manual records never entered a live
+            // HealthKit window. A legacy live session without a route is
+            // ambiguous and is conservatively omitted.
+            return session.liveStartedAt == nil ? distance : nil
+        }
     }
 
     private static func backupSplit(from split: CardioSplitModel) -> BackupCardioSplit {
@@ -444,6 +482,7 @@ public enum BackupMapper {
             session.sourceDevice = backupSession.sourceDevice
             session.durationSeconds = backupSession.durationSeconds
             session.distanceMeters = backupSession.distanceMeters
+            session.distanceSource = backupSession.distanceMeters == nil ? nil : .restoredBackup
             session.effort = backupSession.effort
             session.avgPaceSecondsPerKm = backupSession.avgPaceSecondsPerKm
             session.split500mSeconds = backupSession.split500mSeconds

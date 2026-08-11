@@ -1,15 +1,15 @@
 # ForgeFit — App Store submission pack
 
-Prepared 2026-08-10 for ForgeFit **1.0**, bundle `org.xpetsllc.ForgeFit`,
+Updated 2026-08-11 for ForgeFit **1.0 (56)**, bundle `org.xpetsllc.ForgeFit`,
 iPhone only (`TARGETED_DEVICE_FAMILY = 1`).
 
 Everything below is copy-and-paste ready for App Store Connect. Character
 counts are given against Apple's limits; each field is already inside its
 limit. Assets live in [`artifacts/appstore/`](../artifacts/appstore/).
 
-> **Read the open items in the last section before you submit.** Two of them
-> (support contact, and the Xcode toolchain) are hard blockers that no amount
-> of metadata fixes.
+> **Read the open items in the last section before you submit.** Stable cloud
+> archive/processing, launch support copy, and signed-in iCloud/hardware
+> verification remain separate release checks.
 
 ---
 
@@ -109,10 +109,10 @@ Track a repeating microcycle and see where you are in the week.
 YOUR DATA STAYS YOURS
 No account. No ads. No analytics. No servers. Your workouts live in a database
 on your iPhone. iCloud syncs your training plan across your devices through your
-own private CloudKit database. Apple Health data is processed on-device and is
-excluded from iCloud sync and from ForgeFit's backups. Export everything to JSON
-or CSV whenever you want, and import your history from Hevy, Strong, or CSV on
-day one.
+own private CloudKit database and automatically keeps a sanitized workout-history
+backup in your iCloud Drive. Apple Health data is processed on-device and is
+excluded from that sync and backup. Export everything to JSON or CSV whenever
+you want, and import your history from Hevy, Strong, or CSV on day one.
 
 ForgeFit is a training tool, not a medical device. Its scores and
 recommendations describe your own recorded data; they do not diagnose, treat, or
@@ -160,8 +160,9 @@ yoga flows, an Apple Watch companion, and a daily readiness score built from
 your own Apple Health baselines — with the readings behind it always one tap
 away.
 
-Your history stays on your device. Import from Hevy, Strong, or CSV to start
-with everything you have already logged.
+Your history remains local-first and a sanitized copy is backed up privately to
+your iCloud Drive. Import from Hevy, Strong, or CSV to start with everything you
+have already logged.
 ```
 
 ---
@@ -172,7 +173,7 @@ with everything you have already logged.
 |---|---|---|
 | **Support URL** (required) | `https://jpattison54319.github.io/forgefit-site/support.html` | Live page exists; **needs a contact method Apple accepts — see §9** |
 | **Marketing URL** (optional) | `https://jpattison54319.github.io/forgefit-site/` | Live; remove the "In beta on TestFlight" pill before launch |
-| **Privacy Policy URL** (required) | `https://jpattison54319.github.io/forgefit-site/privacy.html` | Live; mirrors `docs/privacy-policy.md` |
+| **Privacy Policy URL** (required) | `https://jpattison54319.github.io/forgefit-site/privacy.html` | Live and aligned with the 1.0 source policy as of site commit `e20b60d` (2026-08-11) |
 | **EULA** | Leave blank — Apple's standard licence applies | — |
 
 The site source is the `forgefit-site` repo, served by GitHub Pages. If a custom
@@ -207,9 +208,14 @@ The reasoning you should be able to defend if asked:
 - iCloud sync uses the user's **private** CloudKit database. Data in a user's
   own private CloudKit database is not accessible to the developer and is not
   "collected" under Apple's definition.
-- The optional iCloud Drive backup writes to the user's own iCloud Drive.
-- Apple Health data is processed on device and is excluded from both iCloud
-  sync and the backup file.
+- ForgeFit automatically writes a sanitized workout-history backup to the
+  user's own iCloud Drive. The developer does not receive or have access to
+  those private files, so this does not change the "Data Not Collected"
+  recommendation under Apple's developer-access definition.
+- Apple Health data is processed on device. HealthKit-imported workouts,
+  HealthKit-filled distance, Health-derived automatic intervals, heart rate,
+  energy, readiness, body weight, and other Health data are excluded from
+  automatic iCloud sync and backup.
 - Community, the only feature that ever used the **public** CloudKit database,
   is off in 1.0.
 
@@ -381,19 +387,31 @@ what this pass found:
 2. **Marketing site still says beta.** `index.html` leads with an "In beta on
    TestFlight" pill and `support.html` opens with TestFlight instructions.
    Both need launch copy before the URLs go on the product page.
-3. **Build toolchain.** Build 50 was made with an Xcode 27 beta; App Store
-   Connect rejects beta-SDK builds. Rebuild on the stable App Store toolchain.
-   Only `Xcode-beta.app` is installed on this Mac today.
-4. **CloudKit environment.** `com.apple.developer.icloud-container-environment`
-   is still `Development`. It must be `Production` in the uploaded build, and
-   §8's "Data Not Collected" answer assumes it.
-5. **iCloud Drive backup.** It is automatic, has no visible status or off
-   switch, contains detailed training history and precise route points, and has
-   never been restored end-to-end into a clean install. That is a product
-   decision, and the privacy policy's wording depends on which way it goes.
-6. **`PersistenceBootstrap.makeContainer()` still calls `fatalError`** when the
-   local log won't open, which permanently bricks the app for that user. This is
-   the kind of thing that turns into one-star reviews you cannot answer.
-7. **Physical-device smoke test** of the iPhone + Watch workout lifecycle is
-   still unverified — simulator evidence does not cover WatchConnectivity,
-   HealthKit delivery, haptics, routes, alarms, audio, or BLE.
+3. **Build toolchain.** The only locally installed Xcode is 27.0 beta
+   (`27A5228h`).
+   Apple's July 2026 App Store Connect release notes allow Xcode 27 beta builds
+   for TestFlight, not App Store submission. Build 56 therefore needs a
+   successful stable-Xcode Xcode Cloud archive before it is selected for review.
+4. **CloudKit environment.** The source entitlement intentionally no longer
+   hardcodes `Development`; signing should inject the provisioning profile's
+   environment. Inspect the stable archive's signed entitlements and confirm
+   `Production` before upload—source configuration alone is not archive proof.
+5. **Automatic iCloud Drive backup.** Source tests cover scheduling, visible
+   success/failure and retry state, two-slot rotation, deletion, restore
+   isolation, and Health-provenance filtering. A signed-in clean-install test
+   still must confirm automatic file creation, failure recovery, deletion, and
+   restore on a second iPhone before this is called device-verified.
+6. **Hardware-specific pass.** Build 55 was signed, installed, and launched on
+   James's iPhone 16 Pro Max, and the owner reported the visible smoke check
+   looked good. That does not by itself prove paired-Watch terminal races,
+   HealthKit delivery, GPS routes, haptics, alarms, audio, or BLE.
+
+Resolved: the hosted privacy page was deployed from site commit `e20b60d` and
+live-checked against the automatic CloudKit plan sync and sanitized iCloud Drive
+workout-backup behavior.
+
+Resolved in source during the final audit: persistence startup no longer calls
+`fatalError`, no longer replaces a failed store with an empty one, and blocks
+on a recovery screen if either data preservation or required backup exclusion
+cannot be established. This still needs clean-install/update testing from the
+stable archive on a physical iPhone.

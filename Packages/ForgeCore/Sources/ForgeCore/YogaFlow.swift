@@ -46,6 +46,54 @@ public enum YogaStyle: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// One user-facing yoga pose may contain two separately timed holds. The
+/// runner keeps those Left/Right holds separate for accurate timing, while
+/// every count shown to the user treats an adjacent complementary pair as one
+/// logical pose.
+public enum YogaPoseCounting {
+    public static func logicalCount(labels: [String]) -> Int {
+        let parsedLabels = labels.compactMap(parse)
+        var count = 0
+        var index = 0
+
+        while index < parsedLabels.count {
+            let current = parsedLabels[index]
+            if index + 1 < parsedLabels.count {
+                let next = parsedLabels[index + 1]
+                if current.name == next.name, current.side.isComplementary(to: next.side) {
+                    count += 1
+                    index += 2
+                    continue
+                }
+            }
+            count += 1
+            index += 1
+        }
+
+        return count
+    }
+
+    private enum HoldSide {
+        case left
+        case right
+        case none
+
+        func isComplementary(to other: HoldSide) -> Bool {
+            (self == .left && other == .right) || (self == .right && other == .left)
+        }
+    }
+
+    private static func parse(_ label: String) -> (name: String, side: HoldSide)? {
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return nil }
+        for (suffix, side) in [(" — Left", HoldSide.left), (" — Right", HoldSide.right)]
+        where label.hasSuffix(suffix) {
+            return (String(label.dropLast(suffix.count)), side)
+        }
+        return (label, .none)
+    }
+}
+
 /// A guided yoga sequence: an ordered list of timed pose holds. The yoga
 /// sibling of `IntervalPlan` — deliberately a separate type because a pose
 /// step carries pose identity, side, and cue info that would contaminate the

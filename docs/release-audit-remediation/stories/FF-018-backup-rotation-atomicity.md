@@ -2,9 +2,9 @@
 
 - **ID:** FF-018
 - **Title:** Backup rotation atomicity
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P3
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem

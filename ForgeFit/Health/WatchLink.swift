@@ -582,15 +582,17 @@ final class WatchLink: NSObject {
                 : session.elevationGainMeters
             session.endedAt = now
             session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
+            let completingYoga = session.isYogaSession
             if session.isYogaSession {
-                YogaFlowRunnerHub.shared.stop(for: session.id)
+                YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
                 YogaSessionCompletion.complete(
                     session: session,
                     workoutExercise: workoutExercise,
                     exercise: library,
                     context: context,
                     endedAt: now,
-                    useClockDuration: false
+                    useClockDuration: false,
+                    clearCheckpoint: false
                 )
             }
             // Look up the exercise to tell an outdoor run from a treadmill —
@@ -610,7 +612,13 @@ final class WatchLink: NSObject {
             CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
             let hadManualIntervalPlan = workoutExercise
                 .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
-            try? context.save()
+            if context.saveReportingFailure() != nil {
+                publishState(policy: .immediate)
+                return
+            }
+            if completingYoga {
+                YogaRuntimeCheckpointStore.clear(sessionID: session.id)
+            }
             publishState(policy: .immediate)
             let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
             Task { @MainActor in
@@ -623,6 +631,7 @@ final class WatchLink: NSObject {
                 // when there's no route to trust.
                 if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
                     session.distanceMeters = dist
+                    session.distanceSource = .healthKit
                 }
                 session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
                 try? context.save()
@@ -637,6 +646,10 @@ final class WatchLink: NSObject {
             }
 
         case .liveMetrics(let metrics):
+            guard WatchLiveMetricsAttributionPolicy.mayApply(
+                metricsWorkoutID: metrics.workoutID,
+                activeWorkoutID: active?.id
+            ) else { return }
             LiveMetricsHub.shared.updateFromWatch(metrics)
             CardioRouteRecorder.shared.updateWatchDistance(metrics.distanceMeters)
             if let session = active?.cardioSessions.first(where: {
@@ -849,7 +862,7 @@ final class WatchLink: NSObject {
         guard let session = workout.cardioSessions.first(where: { $0.workoutBlockID == block.id }),
               session.endedAt == nil else { return }
         let anchor = ensureYogaAnchor(for: block, in: workout, context: context)
-        YogaFlowRunnerHub.shared.stop(for: session.id)
+        YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
         let exercise = exercise(for: anchor, in: context)
@@ -859,10 +872,15 @@ final class WatchLink: NSObject {
             exercise: exercise,
             context: context,
             endedAt: end,
-            useClockDuration: true
+            useClockDuration: true,
+            clearCheckpoint: false
         )
         block.updatedAt = end
-        try? context.save()
+        if context.saveReportingFailure() != nil {
+            publishState(policy: .immediate)
+            return
+        }
+        YogaRuntimeCheckpointStore.clear(sessionID: session.id)
         finishBlockHealthSession(session, start: start, end: end, modality: .other, context: context)
         publishState(policy: .immediate)
     }
@@ -1000,7 +1018,10 @@ final class WatchLink: NSObject {
                     workout.cardioSessions.append(session)
                 }
                 if movement.targetUnit == .seconds { session.durationSeconds = (session.durationSeconds ?? 0) + Int(delta) }
-                if movement.targetUnit == .meters { session.distanceMeters = (session.distanceMeters ?? 0) + delta }
+                if movement.targetUnit == .meters {
+                    session.distanceMeters = (session.distanceMeters ?? 0) + delta
+                    session.distanceSource = .watchInput
+                }
                 session.endedAt = date
             } else {
                 let set = SetModel(
@@ -1096,12 +1117,17 @@ final class WatchLink: NSObject {
         }
 
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let roundIndex = supersetRoundIndex(for: set, in: sets) else { return }
+        guard let roundIndex = SupersetRoundPolicy.logicalRoundIndex(
+            for: set.id,
+            in: sets.map(\.supersetProgress)
+        ) else { return }
         let groupMembers = (active?.exercises ?? []).filter { $0.supersetGroup == group }.sorted { $0.position < $1.position }
         let roundComplete = groupMembers.allSatisfy { member in
             let memberSets = member.sets.sorted { $0.position < $1.position }
-            guard roundIndex < memberSets.count else { return true }
-            return setAndDropChainComplete(at: roundIndex, in: memberSets)
+            return SupersetRoundPolicy.isRoundSatisfied(
+                roundIndex,
+                in: memberSets.map(\.supersetProgress)
+            )
         }
         guard roundComplete else { return }
         startRest(after: set, in: workoutExercise, label: "\(SupersetUI.label(for: group)) rest")
@@ -1109,26 +1135,10 @@ final class WatchLink: NSObject {
 
     private func hasPendingDropSet(after set: SetModel, in workoutExercise: WorkoutExerciseModel) -> Bool {
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return false }
-        let next = index + 1
-        guard next < sets.count, sets[next].setType == .drop else { return false }
-        return sets[next].completedAt == nil
-    }
-
-    private func supersetRoundIndex(for set: SetModel, in sets: [SetModel]) -> Int? {
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return nil }
-        guard set.setType == .drop else { return index }
-        return sets[..<index].lastIndex { $0.setType != .drop }
-    }
-
-    private func setAndDropChainComplete(at index: Int, in sets: [SetModel]) -> Bool {
-        guard index < sets.count, sets[index].completedAt != nil else { return false }
-        var next = index + 1
-        while next < sets.count, sets[next].setType == .drop {
-            guard sets[next].completedAt != nil else { return false }
-            next += 1
-        }
-        return true
+        return SupersetRoundPolicy.hasPendingDrop(
+            after: set.id,
+            in: sets.map(\.supersetProgress)
+        )
     }
 
     private func startRest(after set: SetModel, in workoutExercise: WorkoutExerciseModel, label: String? = nil) {
@@ -1183,9 +1193,12 @@ extension WatchLink: WCSessionDelegate {
     private func applyReceivedLiveMetrics(_ payload: [String: Any]) {
         guard let data = payload[WatchWire.liveMetricsKey] as? Data,
               let command = WatchWire.decode(WatchCommand.self, from: data),
-              case .liveMetrics(let metrics) = command else { return }
-        LiveMetricsHub.shared.updateFromWatch(metrics)
-        CardioRouteRecorder.shared.updateWatchDistance(metrics.distanceMeters)
+              case .liveMetrics = command else { return }
+        // Route the coalesced application-context fallback through the exact
+        // same workout-identity gate and cardio side effects as the immediate
+        // message channel. Otherwise a final packet from workout A can arrive
+        // after B starts and silently become B's HR, energy, or distance.
+        handle(command)
     }
 }
 #endif

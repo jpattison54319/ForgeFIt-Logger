@@ -206,7 +206,7 @@ enum InsightSnapshotter {
                 // Completed poses come from the session row; sessions logged
                 // before that field existed fall back to the planned flow —
                 // a finished flow was logged as fully done.
-                yogaPosesCompleted: yogaSessions.compactMap(\.posesCompleted).reduce(0, +).nonZero
+                yogaPosesCompleted: yogaSessions.compactMap(\.logicalYogaPosesCompleted).reduce(0, +).nonZero
                     ?? workout.exercises
                     .compactMap { YogaFlowPlan.decode(from: $0.yogaFlowJSON)?.steps.count }
                     .reduce(0, +),

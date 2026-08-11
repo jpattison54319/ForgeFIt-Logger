@@ -66,7 +66,9 @@ struct CoachCornerView: View {
     private var effectiveCoachPlan: (plan: CoachAdjustments.Plan, sourceLabel: String)? {
         guard suggestion != nil else { return nil }
         let global = CoachAdjustments.plan(for: recovery.action)
-        let local = recovery.action == .trainAsPlanned ? doseContext.flatMap(CoachAdjustments.localizedPlan(for:)) : nil
+        let local = recovery.action == .trainAsPlanned
+            ? doseContext.flatMap { CoachAdjustments.localizedPlan(for: $0) }
+            : nil
         return CoachAdjustments.effectivePlan(daily: global ?? local, weeklyDeloadActive: weeklyDeloadActive)
     }
 

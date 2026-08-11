@@ -13,7 +13,7 @@ struct OnboardingView: View {
     @State private var path: [OnboardingStep] = []
     @State private var unit: WeightUnit = .lb
     @State private var focus: TrainingFocus = .mixed
-    @State private var connecting = false
+    @State private var healthAuthorization = HealthAuthorizationStore.shared
     @State private var showHistoryImporter = false
     @State private var loadedPreferences = false
 
@@ -29,8 +29,9 @@ struct OnboardingView: View {
                     OnboardingSetupStep(unit: $unit, focus: $focus, onContinue: showHealth)
                 case .health:
                     OnboardingHealthStep(
-                        connecting: connecting,
+                        authorizationState: healthAuthorization.state,
                         onConnect: connectHealth,
+                        onOpenSettings: HealthAuthorizationRecovery.openSettings,
                         onContinueWithoutHealth: finish
                     )
                 }
@@ -71,11 +72,10 @@ struct OnboardingView: View {
     /// a button that just says "Connecting…" — reads as a hang on first launch.
     /// The scan finishes in the background and Home fills in as it lands.
     private func connectHealth() {
-        guard !connecting else { return }
-        connecting = true
+        guard !healthAuthorization.state.isRequesting else { return }
         let container = modelContext.container
         Task {
-            _ = await HealthService.shared.requestAuthorization()
+            guard await healthAuthorization.connect() else { return }
             finish()
             await HealthWorkoutImporter.shared.importRecent(in: container)
             HealthMetricsStore.shared.refresh(force: true)

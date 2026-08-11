@@ -392,6 +392,18 @@ struct WorkoutHistoryQuery: Equatable {
             let start = calendar.date(byAdding: .day, value: -days, to: now) ?? now
             return DateInterval(start: start, end: now)
         }
+
+        /// Whether the window is derived from the current wall time (trailing
+        /// 7/30/90-day windows, the current year) rather than anchored to
+        /// explicit dates. Relative filters must invalidate their memoized
+        /// result when the local calendar day turns over; anchored filters
+        /// must never churn with the clock.
+        var isRelativeToNow: Bool {
+            switch self {
+            case .all, .month, .custom: false
+            case .last7Days, .last30Days, .last90Days, .thisYear: true
+            }
+        }
     }
 
     enum SourceFilter: String, CaseIterable, Equatable {
@@ -493,6 +505,42 @@ enum WorkoutHistoryQueryEngine {
             result.sort { ($0.effectiveSets, $0.startedAt) > ($1.effectiveSets, $1.startedAt) }
         }
         return result
+    }
+
+    // MARK: Relative-window day policy
+
+    /// Day-aware memo key for the filtered history list. Relative date
+    /// filters (7/30/90 days, this year) compute their window from the
+    /// current calendar day, so the key embeds `startOfDay(now)` — otherwise
+    /// a view kept alive across midnight keeps serving yesterday's window
+    /// until the query or the data fingerprint changes. Anchored filters
+    /// (`all`, a specific month, a custom range) are fixed by the query
+    /// itself and keep the byte-identical legacy key, so their memoization
+    /// never churns with the clock. `now` and `calendar` are injected so the
+    /// midnight transition is deterministically testable.
+    static func memoKey(
+        fingerprint: String,
+        query: WorkoutHistoryQuery,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        var key = "\(fingerprint)|\(query.searchText)|\(query.kind.rawValue)|\(query.date.title)|\(query.muscle ?? "")|\(query.exercise?.id.uuidString ?? "")|\(query.source.rawValue)|\(query.prsOnly)|\(query.sort.rawValue)"
+        if query.date.isRelativeToNow {
+            key += "|\(calendar.startOfDay(for: now).timeIntervalSinceReferenceDate)"
+        }
+        return key
+    }
+
+    /// The next local midnight after `date` — the moment a day-anchored memo
+    /// key must turn over. Anchored to the calendar (never a fixed 24-hour
+    /// step) so DST transitions and timezone changes stay correct; falls back
+    /// to +24h only when the calendar cannot produce a boundary.
+    static func nextDayBoundary(after date: Date, calendar: Calendar) -> Date {
+        calendar.nextDate(
+            after: date,
+            matching: DateComponents(hour: 0, minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ) ?? calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86_400)
     }
 
     // MARK: Smart suggestions

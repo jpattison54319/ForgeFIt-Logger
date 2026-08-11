@@ -181,10 +181,11 @@ struct YogaWorkoutPipelineTests {
         context.insert(completed)
         try context.save()
 
-        YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
-        defer { YogaFlowRunnerHub.shared.stop(for: session.id) }
+        let hub = YogaFlowRunnerHub()
+        hub.start(plan: plan, session: session, context: context)
+        defer { hub.stop(for: session.id) }
 
-        let runner = try #require(YogaFlowRunnerHub.shared.runner(for: session.id))
+        let runner = try #require(hub.runner(for: session.id))
         #expect(runner.currentIndex == 1)
         #expect(runner.currentStep?.displayName == "Low Lunge")
         _ = container

@@ -156,6 +156,7 @@ actor HealthWorkoutImportWorker {
                         sourceDevice: source,
                         durationSeconds: durationSeconds,
                         distanceMeters: distanceMeters,
+                        distanceSource: distanceMeters == nil ? nil : .healthKit,
                         activeEnergyKcal: energyKcal,
                         avgHR: avgHR,
                         maxHR: maxHR,

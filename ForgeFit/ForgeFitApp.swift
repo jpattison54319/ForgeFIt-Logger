@@ -5,6 +5,7 @@ import SwiftData
 @main
 struct ForgeFitApp: App {
     @StateObject private var themeManager = ThemeManager()
+    @State private var persistenceState: PersistenceLaunchState
 
     init() {
         // Generous shared URL cache so exercise illustrations survive offline
@@ -27,23 +28,38 @@ struct ForgeFitApp: App {
         if ProcessInfo.processInfo.arguments.contains("--reset-quick-actions") {
             UserDefaults.standard.removeObject(forKey: AppQuickActionStore.key)
         }
-    }
 
-    // Split persistence (5.1.3(ii)): local-only training log + CloudKit
-    // plan store, with the one-time legacy migration. See PersistenceBootstrap.
-    var sharedModelContainer: ModelContainer = PersistenceBootstrap.makeContainer()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--simulate-persistence-failure") {
+            // UI-test-only launch seam. It proves the app can reach the
+            // recovery surface without first touching a persistent store.
+            _persistenceState = State(initialValue: .blocked(.workoutLogUnavailable))
+        } else {
+            _persistenceState = State(initialValue: PersistenceBootstrap.makeContainer())
+        }
+        #else
+        _persistenceState = State(initialValue: PersistenceBootstrap.makeContainer())
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(themeManager)
-                // Dynamic Type is token-anchored (Theme.swift type ramp); the
-                // ceiling keeps dense fixed-frame surfaces — the set-entry
-                // grid, tab bar, 44 pt headers — usable at the largest sizes.
-                // AX1 is the largest size the layouts were audited at; raise
-                // only with a fresh layout pass.
-                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            Group {
+                switch persistenceState {
+                case let .ready(container):
+                    ContentView()
+                        .modelContainer(container)
+                case let .blocked(failure):
+                    PersistenceRecoveryView(failure: failure) {
+                        persistenceState = PersistenceBootstrap.makeContainer()
+                    }
+                }
+            }
+            .environmentObject(themeManager)
+            // Dynamic Type is token-anchored (Theme.swift type ramp); the
+            // ceiling keeps dense fixed-frame surfaces — the set-entry grid,
+            // tab bar, and 44 pt headers usable at the largest audited size.
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
-        .modelContainer(sharedModelContainer)
     }
 }

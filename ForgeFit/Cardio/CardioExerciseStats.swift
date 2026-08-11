@@ -302,7 +302,7 @@ nonisolated enum CardioExerciseStats {
             result.append(Record(kind: .longestPractice, value: Double(longest.seconds), date: longest.entry.date))
         }
         if let most = entries
-            .compactMap({ entry in entry.session?.posesCompleted.map { (entry: entry, poses: $0) } })
+            .compactMap({ entry in entry.session?.logicalYogaPosesCompleted.map { (entry: entry, poses: $0) } })
             .filter({ $0.poses > 0 })
             .max(by: { $0.poses < $1.poses }) {
             result.append(Record(kind: .mostPoses, value: Double(most.poses), date: most.entry.date))
@@ -318,7 +318,7 @@ nonisolated enum CardioExerciseStats {
             parts.append(Fmt.durationShort(seconds))
         }
         if let session = entry.session {
-            if let poses = session.posesCompleted, poses > 0 {
+            if let poses = session.logicalYogaPosesCompleted, poses > 0 {
                 parts.append("\(poses) pose\(poses == 1 ? "" : "s")")
             }
             if let style = session.yogaStyleRaw.flatMap(YogaStyle.init(rawValue:)) {
@@ -334,7 +334,7 @@ nonisolated enum CardioExerciseStats {
     /// One-line session summary in the modality's vocabulary:
     /// "42min · 8.2 km · 5:11 /km · 152 bpm". Metrics appear only when
     /// present — imported or manual logs may carry duration alone.
-    static func summary(for entry: SessionEntry, kind: CardioKind, distanceUnit: DistanceUnit = Fmt.distanceUnit) -> String {
+    static func summary(for entry: SessionEntry, kind: CardioKind, distanceUnit: DistanceUnit) -> String {
         var parts: [String] = []
         if let seconds = entry.durationSeconds, seconds > 0 {
             parts.append(Fmt.durationShort(seconds))

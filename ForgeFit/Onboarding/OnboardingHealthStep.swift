@@ -2,9 +2,12 @@ import SwiftUI
 
 struct OnboardingHealthStep: View {
     @Environment(\.theme) private var theme
-    let connecting: Bool
+    let authorizationState: HealthAuthorizationState
     let onConnect: () -> Void
+    let onOpenSettings: () -> Void
     let onContinueWithoutHealth: () -> Void
+
+    private var connecting: Bool { authorizationState.isRequesting }
 
     var body: some View {
         ZStack {
@@ -64,6 +67,22 @@ struct OnboardingHealthStep: View {
                         }
                         .accessibilityElement(children: .combine)
                     }
+
+                    if let issue = authorizationState.issueMessage {
+                        Card {
+                            HStack(alignment: .top, spacing: Space.md) {
+                                Image(systemName: authorizationState.requiresPermissionReview
+                                    ? "exclamationmark.shield.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(theme.danger)
+                                    .accessibilityHidden(true)
+                                Text(issue)
+                                    .font(.body)
+                                    .foregroundStyle(theme.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .accessibilityIdentifier("onboarding-health-authorization-issue")
+                    }
                 }
                 .padding(.horizontal, Space.xl)
                 .padding(.vertical, Space.xxl)
@@ -71,13 +90,23 @@ struct OnboardingHealthStep: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Space.sm) {
-                PrimaryButton(
-                    title: connecting ? "Connecting…" : "Connect Apple Health",
-                    systemImage: "heart.fill",
-                    action: onConnect
-                )
-                .disabled(connecting)
-                .accessibilityIdentifier("onboarding-connect-health")
+                if authorizationState.requiresPermissionReview {
+                    PrimaryButton(
+                        title: "Open Settings",
+                        systemImage: "gearshape.fill",
+                        action: onOpenSettings
+                    )
+                    .accessibilityIdentifier("onboarding-open-health-settings")
+                } else {
+                    PrimaryButton(
+                        title: connecting ? "Connecting…" : authorizationState == .notDetermined
+                            ? "Connect Apple Health" : "Try Apple Health Again",
+                        systemImage: "heart.fill",
+                        action: onConnect
+                    )
+                    .disabled(connecting || authorizationState == .unavailable)
+                    .accessibilityIdentifier("onboarding-connect-health")
+                }
 
                 SecondaryButton(title: "Continue without Health", action: onContinueWithoutHealth)
                     .disabled(connecting)

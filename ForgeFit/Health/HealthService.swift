@@ -1,11 +1,12 @@
 import Foundation
+import os
 import ForgeCore
 #if canImport(HealthKit)
 import HealthKit
 #endif
 
 /// Metrics pulled from HealthKit for a cardio segment's time window.
-struct CardioSnapshot {
+struct CardioSnapshot: Equatable, Sendable {
     var durationSeconds: Int?
     var avgHR: Int?
     var maxHR: Int?
@@ -27,16 +28,209 @@ struct DailyActivityMetric: Equatable, Sendable {
     var comparableTimeSteps: Double? = nil
 }
 
+/// Pure, HealthKit-free safety bounds for the long-range recovery fetches in
+/// `HealthService.dailyMetrics`.
+///
+/// The all-day channels are fetched in bounded date chunks — never a global
+/// cap — so a legitimate 730-day history loads in full across chunks while
+/// every single request stays small. Each channel has a deliberately generous
+/// practical ceiling; a corrupted or unexpectedly dense dataset is surfaced
+/// as `.truncated` instead of allowing several million HealthKit objects to be
+/// materialized in one callback and risking an out-of-memory termination.
+nonisolated enum HealthQueryBounds {
+    /// Chunk width for low-frequency all-day channels (HRV, resting HR,
+    /// respiratory rate, SpO₂, sleep). Thirty days keeps the 730-day insight
+    /// path to 25 requests per channel instead of 105, while these channels
+    /// still remain far below their per-request safety ceiling.
+    static let allDayChunkWidth: TimeInterval = 30 * 24 * 60 * 60
+
+    /// Per-channel 30-day caps. Their combined worst-case callback payload is
+    /// bounded while remaining far above normal Apple Watch/ring density.
+    static let hrvSamplesPerChunk = 20_000
+    static let restingHRSamplesPerChunk = 5_000
+    static let respiratorySamplesPerChunk = 50_000
+    static let oxygenSamplesPerChunk = 250_000
+    static let sleepSamplesPerChunk = 100_000
+
+    /// Keep compound nocturnal-HR predicates and callback payloads bounded
+    /// independently of total history length. Three ordinary sleep windows at
+    /// 1 Hz from three overlapping sources remain below this cap.
+    static let sleepWindowsPerQuery = 3
+    static let nocturnalHRSamplesPerQuery = 300_000
+
+    /// Whether a sample query hit its `limit` — the only honest "bounded"
+    /// signal HealthKit can give. `count == limit` can only mean more samples
+    /// exist than were requested; a false positive requires a dataset of
+    /// exactly `limit` samples.
+    static func isTruncated(_ count: Int, limit: Int) -> Bool {
+        limit > 0 && count == limit
+    }
+
+    static func chunkRanges(totalCount: Int, maximumCount: Int) -> [Range<Int>] {
+        guard totalCount > 0, maximumCount > 0 else { return [] }
+        return stride(from: 0, to: totalCount, by: maximumCount).map {
+            $0..<min($0 + maximumCount, totalCount)
+        }
+    }
+}
+
+/// Result of a bounded, cancellable HealthKit sample fetch.
+nonisolated enum BoundedQueryOutcome<Value> {
+    case value(Value)
+    /// The enclosing task was cancelled before or during the fetch; the
+    /// in-flight query was stopped and no data (partial or otherwise) is
+    /// reported.
+    case cancelled
+    /// A query hit its physical ceiling — an anomaly (no wearable produces
+    /// that much data), surfaced rather than silently truncating results.
+    case truncated
+
+    var samples: Value? {
+        if case .value(let samples) = self { return samples }
+        return nil
+    }
+
+    var isTruncated: Bool {
+        if case .truncated = self { return true }
+        return false
+    }
+}
+
+/// Once-only delivery coordination between a HealthKit results handler and
+/// the enclosing task's cancellation, which can arrive on any thread and at
+/// any phase of a query's life:
+///
+/// - **before the query exists** — cancellation wins: `register` resumes the
+///   cancellation immediately and the caller never starts the query;
+/// - **while in flight** — cancellation resumes `.cancelled` exactly once and
+///   stops the underlying query at most once (`markQueryStarted` makes the
+///   query stoppable);
+/// - **after the handler already delivered** — cancellation is a no-op; a
+///   completed query does not need stopping.
+///
+/// Both the resume and the stop are invoked at most once, so a handler that
+/// lands after a cancellation can neither double-resume the continuation nor
+/// double-stop the query. The type is HealthKit-free so the phases can be
+/// unit-driven with recording closures.
+///
+/// `@unchecked Sendable` is sound: every mutable property is read and written
+/// exclusively under `lock`, and `cancelledValue` is immutable, so the gate is
+/// safe to hand to `withTaskCancellationHandler`'s `@Sendable` closures.
+nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let cancelledValue: Value
+    private var resume: ((Value) -> Void)?
+    private var stop: (() -> Void)?
+    private var queryStarted = false
+    private var finished = false
+    private var cancellationWon = false
+
+    init(cancelledValue: Value) {
+        self.cancelledValue = cancelledValue
+    }
+
+    /// Publishes the resume and stop actions. Returns false when a
+    /// cancellation already won — in that case `resume(cancelledValue)` is
+    /// called immediately and the caller must not start any work (there is
+    /// nothing to stop).
+    @discardableResult
+    func register(resume: @escaping (Value) -> Void, stop: @escaping () -> Void) -> Bool {
+        var cancelledEarly = false
+        lock.lock()
+        if finished {
+            cancelledEarly = true
+        } else {
+            self.resume = resume
+            self.stop = stop
+        }
+        lock.unlock()
+        if cancelledEarly { resume(cancelledValue) }
+        return !cancelledEarly
+    }
+
+    /// Claims the right to start the query. A cancellation that already won
+    /// returns false, so the caller never calls `execute`.
+    func beginQueryStart() -> Bool {
+        lock.lock()
+        let mayStart = !finished
+        lock.unlock()
+        return mayStart
+    }
+
+    /// Called immediately after `execute`. If cancellation landed in the tiny
+    /// begin/execute window, it deliberately deferred `stop` until this point
+    /// so we never stop an unstarted query and then accidentally execute it.
+    func markQueryStarted() {
+        lock.lock()
+        queryStarted = true
+        let shouldStop = cancellationWon
+        lock.unlock()
+        if shouldStop { attemptStop() }
+    }
+
+    /// The query's results handler delivered (any HealthKit thread).
+    func finish(_ value: Value) {
+        settle()?(value)
+    }
+
+    /// Enclosing task cancelled (any thread, any phase).
+    func cancel() {
+        if let deliveredResume = settle() {
+            lock.lock()
+            cancellationWon = true
+            let shouldStop = queryStarted
+            lock.unlock()
+            deliveredResume(cancelledValue)
+            if shouldStop { attemptStop() }
+        }
+    }
+
+    private func settle() -> ((Value) -> Void)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return nil }
+        finished = true
+        let delivered = resume
+        resume = nil
+        return delivered
+    }
+
+    /// Invokes `stop` at most once, and only once the query target exists.
+    private func attemptStop() {
+        lock.lock()
+        guard queryStarted else {
+            lock.unlock()
+            return
+        }
+        queryStarted = false
+        let stopQuery = stop
+        stop = nil
+        lock.unlock()
+        stopQuery?()
+    }
+}
+
 /// Reads and writes cardiovascular / workout data with Apple Health & Fitness
 /// (populated by Apple Watch or any connected source). Reading auto-fills cardio
 /// metrics for a segment's time window; writing saves finished workouts back to
 /// Health. Degrades gracefully when Health is unavailable.
 /// HealthKit is thread-safe, and all values returned from this service are
-/// immutable projections. Keep the service nonisolated so callers that run on
-/// a worker executor do not silently hop back to the app target's default
-/// MainActor for sample sorting, bucketing, and nocturnal analysis.
+/// immutable projections. Keep the service nonisolated so HealthKit reads
+/// never hop back to the app target's default MainActor; the heavy per-day
+/// bucketing, binning, and source-dominance pass runs behind the explicit
+/// `CancellableDetachedWork` boundary inside `dailyMetrics`, so no caller —
+/// including `@MainActor` ones like `InsightDataCoordinator` — can inherit
+/// that CPU work onto the main actor.
 nonisolated final class HealthService: @unchecked Sendable {
     static let shared = HealthService()
+
+    /// Anomaly channel for safety-bound hits: a bounded query reaching a
+    /// physical ceiling is surfaced here and the refresh is dropped — never
+    /// silently truncated into seemingly-real metrics.
+    private static let queryBoundsLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "ForgeFit",
+        category: "HealthQueryBounds"
+    )
 
     #if canImport(HealthKit)
     private let store = HKHealthStore()
@@ -58,6 +252,20 @@ nonisolated final class HealthService: @unchecked Sendable {
         return store.authorizationStatus(for: HKObjectType.workoutType()) == .sharingAuthorized
         #else
         return false
+        #endif
+    }
+
+    var authorizationState: HealthAuthorizationState {
+        #if canImport(HealthKit)
+        guard isAvailable else { return .unavailable }
+        switch store.authorizationStatus(for: HKObjectType.workoutType()) {
+        case .sharingAuthorized: return .connected
+        case .sharingDenied: return .denied
+        case .notDetermined: return .notDetermined
+        @unknown default: return .failed("Apple Health returned an unknown permission state.")
+        }
+        #else
+        return .unavailable
         #endif
     }
 
@@ -107,8 +315,22 @@ nonisolated final class HealthService: @unchecked Sendable {
 
     @discardableResult
     func requestAuthorization() async -> Bool {
+        let outcome = await requestAuthorizationOutcome()
+        await HealthAuthorizationStore.shared.apply(outcome)
+        return outcome.isConnected
+    }
+
+    func requestAuthorizationOutcome(
+        timeout: Duration = .seconds(45)
+    ) async -> HealthAuthorizationState {
         #if canImport(HealthKit)
-        guard isAvailable else { return false }
+        let current = authorizationState
+        guard current != .unavailable else { return .unavailable }
+        guard current != .connected else { return .connected }
+        // HealthKit will not present the system sheet a second time after
+        // workout write access was denied. Return an explicit recovery state
+        // so callers show the Health-app affordance instead of silently no-op.
+        guard current != .denied else { return .denied }
         // UI test automation reinstalls the app fresh, so HealthKit
         // authorization has never been decided; requesting it would pop the
         // real system permission sheet full-screen over whatever the test is
@@ -116,15 +338,25 @@ nonisolated final class HealthService: @unchecked Sendable {
         // data-type toggles, not a one-tap "Allow"). --reset-store is already
         // this codebase's signal for an automation launch; real users never
         // pass it, so this only ever short-circuits test runs.
-        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return false }
-        do {
-            try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
-            return isConnected
-        } catch {
-            return false
+        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return .notDetermined }
+        return await HealthAuthorizationRequestRunner.run(timeout: timeout) { [self] complete in
+            store.requestAuthorization(toShare: shareTypes, read: readTypes) { success, error in
+                if let error {
+                    complete(.failed(error.localizedDescription))
+                    return
+                }
+                guard success else {
+                    complete(.failed("The system did not complete the permission request."))
+                    return
+                }
+                let resolved = self.authorizationState
+                // Completion means the sheet resolved, not that access was
+                // granted. A still-undetermined write type is not success.
+                complete(resolved == .notDetermined ? .denied : resolved)
+            }
         }
         #else
-        return false
+        return .unavailable
         #endif
     }
 
@@ -281,21 +513,42 @@ nonisolated final class HealthService: @unchecked Sendable {
         guard isAvailable else { return [] }
         guard let start = calendar.date(byAdding: .day, value: -days, to: calendar.startOfDay(for: end)) else { return [] }
 
-        async let hrvSamplesAsync = quantitySamples(.heartRateVariabilitySDNN, from: start, to: end)
-        async let rhrSamplesAsync = quantitySamples(.restingHeartRate, from: start, to: end)
-        async let respiratorySamplesAsync = quantitySamples(.respiratoryRate, from: start, to: end)
-        async let oxygenSamplesAsync = quantitySamples(.oxygenSaturation, from: start, to: end)
-        async let sleepSamplesAsync = sleepSamples(from: start, to: end)
+        // Five bounded, cancellable channel fetches. Each channel loads the
+        // whole range in 30-day date chunks deduplicated at chunk seams by
+        // sample UUID, so there is NO global cap — a legitimate 730-day
+        // history is fetched in full across chunks while every single request
+        // stays small and cancellable. A chunk's per-request limit is the
+        // practical per-channel safety ceiling; a hit surfaces as `.truncated`
+        // (logged, refresh dropped) instead of silently shortening results or
+        // materializing an unbounded callback payload.
+        let chunkWidth = HealthQueryBounds.allDayChunkWidth
 
-        let msUnit = HKUnit.secondUnit(with: .milli)
-        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+        async let hrvOutcome = chunkedQuantitySamples(.heartRateVariabilitySDNN, from: start, to: end, chunkWidth: chunkWidth, limitPerChunk: HealthQueryBounds.hrvSamplesPerChunk)
+        async let rhrOutcome = chunkedQuantitySamples(.restingHeartRate, from: start, to: end, chunkWidth: chunkWidth, limitPerChunk: HealthQueryBounds.restingHRSamplesPerChunk)
+        async let respiratoryOutcome = chunkedQuantitySamples(.respiratoryRate, from: start, to: end, chunkWidth: chunkWidth, limitPerChunk: HealthQueryBounds.respiratorySamplesPerChunk)
+        async let oxygenOutcome = chunkedQuantitySamples(.oxygenSaturation, from: start, to: end, chunkWidth: chunkWidth, limitPerChunk: HealthQueryBounds.oxygenSamplesPerChunk)
+        async let sleepOutcome = chunkedSleepSamples(from: start, to: end, chunkWidth: chunkWidth, limitPerChunk: HealthQueryBounds.sleepSamplesPerChunk)
 
-        let hrvSamples = await hrvSamplesAsync
-        let rhrSamples = await rhrSamplesAsync
-        let respiratorySamples = await respiratorySamplesAsync
-        let oxygenSamples = await oxygenSamplesAsync
-        let allSleepSegments = await sleepSamplesAsync
+        let (hrvResult, rhrResult, respiratoryResult, oxygenResult, sleepResult) = await (
+            hrvOutcome, rhrOutcome, respiratoryOutcome, oxygenOutcome, sleepOutcome
+        )
+
+        // A channel reached its physical ceiling — impossible for wearable
+        // data, so surface the anomaly and drop the refresh rather than serve
+        // partial or truncated metrics. (.cancelled channels are folded into
+        // the guard below, matching the pre-FF-009 behaviour on cancellation.)
+        guard !hrvResult.isTruncated, !rhrResult.isTruncated, !respiratoryResult.isTruncated,
+              !oxygenResult.isTruncated, !sleepResult.isTruncated else {
+            Self.queryBoundsLogger.critical("An all-day HealthKit channel exceeded its physical ceiling for days=\(days, privacy: .public); dropping this refresh instead of returning truncated metrics")
+            return []
+        }
         guard !Task.isCancelled else { return [] }
+
+        let hrvSamples = hrvResult.samples ?? []
+        let rhrSamples = rhrResult.samples ?? []
+        let respiratorySamples = respiratoryResult.samples ?? []
+        let oxygenSamples = oxygenResult.samples ?? []
+        let allSleepSegments = sleepResult.samples ?? []
         let sleepSegments = allSleepSegments.filter(isAsleep)
 
         // Nocturnal window: restrict HRV to sleep and derive sleeping HR — the
@@ -305,134 +558,35 @@ nonisolated final class HealthService: @unchecked Sendable {
             fromAsleepSegments: sleepSegments.map { ($0.startDate, $0.endDate) },
             calendar: calendar
         )
-        let nocturnalHR = await heartRateSamplesDuringSleep(windows: windows)
+        let nocturnalHROutcome = await heartRateSamplesDuringSleep(windows: windows)
         guard !Task.isCancelled else { return [] }
-        let nightly = NocturnalAggregator.nightly(
+        guard case .value(let nocturnalHR) = nocturnalHROutcome else {
+            if nocturnalHROutcome.isTruncated {
+                Self.queryBoundsLogger.critical("Nocturnal HR fetch exceeded its physical ceiling across \(windows.count, privacy: .public) sleep windows; dropping this refresh instead of returning truncated metrics")
+            }
+            return []
+        }
+        // Pure, HealthKit-free Sendable inputs cross the detached boundary; the
+        // heavy bucketing, binning, and source-dominance math lives in
+        // `RecoveryDailyAggregator` and runs on a detached executor so it
+        // never inherits a MainActor caller, with the caller's cancellation
+        // forwarded into the work.
+        let msUnit = HKUnit.secondUnit(with: .milli)
+        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+
+        let inputs = RecoveryDailyAggregator.SampleInputs(
+            calendar: calendar,
+            hrv: hrvSamples.map { (start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: msUnit), sourceBundleID: $0.sourceRevision.source.bundleIdentifier) },
+            restingHR: rhrSamples.map { (start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: bpmUnit), sourceBundleID: $0.sourceRevision.source.bundleIdentifier) },
+            respiratory: respiratorySamples.map { (start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: bpmUnit), sourceBundleID: $0.sourceRevision.source.bundleIdentifier) },
+            oxygen: oxygenSamples.map { (start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: .percent()) * 100, sourceBundleID: $0.sourceRevision.source.bundleIdentifier) },
+            asleepSegments: sleepSegments.map { (start: $0.startDate, end: $0.endDate, sourceBundleID: $0.sourceRevision.source.bundleIdentifier) },
+            allSleepSegments: allSleepSegments.map { (start: $0.startDate, end: $0.endDate, rawValue: $0.value) },
             windows: windows,
-            hrv: hrvSamples.map { ($0.startDate, $0.quantity.doubleValue(for: msUnit)) },
-            hr: nocturnalHR.map { ($0.date, $0.bpm) }
+            nocturnalHR: nocturnalHR
         )
-
-        func readinessDay(for sample: HKQuantitySample) -> Date {
-            let midpoint = sample.startDate.addingTimeInterval(sample.endDate.timeIntervalSince(sample.startDate) / 2)
-            if let window = windows.first(where: { midpoint >= $0.start && midpoint <= $0.end }) {
-                return window.day
-            }
-            return calendar.startOfDay(for: sample.endDate)
-        }
-
-        // Bucket by calendar day. Sleep is attributed to the day it ENDED
-        // (last night's sleep belongs to today's readiness). All-day HRV / RHR
-        // remain as fallbacks when the nocturnal window is empty.
-        var hrvByDay: [Date: [Double]] = [:]
-        var hrvSourcesByDay: [Date: [String]] = [:]
-        var nocturnalHRVSourcesByDay: [Date: [String]] = [:]
-        for sample in hrvSamples {
-            let day = calendar.startOfDay(for: sample.endDate)
-            hrvByDay[day, default: []].append(sample.quantity.doubleValue(for: msUnit))
-            hrvSourcesByDay[day, default: []].append(sample.sourceRevision.source.bundleIdentifier)
-            if let window = windows.first(where: { sample.startDate >= $0.start && sample.startDate <= $0.end }) {
-                nocturnalHRVSourcesByDay[window.day, default: []].append(sample.sourceRevision.source.bundleIdentifier)
-            }
-        }
-        var rhrByDay: [Date: [Double]] = [:]
-        var rhrSourcesByDay: [Date: [String]] = [:]
-        for sample in rhrSamples {
-            let day = calendar.startOfDay(for: sample.endDate)
-            rhrByDay[day, default: []].append(sample.quantity.doubleValue(for: bpmUnit))
-            rhrSourcesByDay[day, default: []].append(sample.sourceRevision.source.bundleIdentifier)
-        }
-        var respiratoryByDay: [Date: [Double]] = [:]
-        var respiratorySourcesByDay: [Date: [String]] = [:]
-        for sample in respiratorySamples {
-            let day = readinessDay(for: sample)
-            respiratoryByDay[day, default: []]
-                .append(sample.quantity.doubleValue(for: bpmUnit))
-            respiratorySourcesByDay[day, default: []]
-                .append(sample.sourceRevision.source.bundleIdentifier)
-        }
-        var oxygenByDay: [Date: [Double]] = [:]
-        var oxygenSourcesByDay: [Date: [String]] = [:]
-        for sample in oxygenSamples {
-            let day = readinessDay(for: sample)
-            oxygenByDay[day, default: []]
-                .append(sample.quantity.doubleValue(for: .percent()) * 100)
-            oxygenSourcesByDay[day, default: []]
-                .append(sample.sourceRevision.source.bundleIdentifier)
-        }
-        var sleepByDay: [Date: Int] = [:]
-        var sleepSourcesByDay: [Date: [String]] = [:]
-        for sample in sleepSegments {
-            let day = calendar.startOfDay(for: sample.endDate)
-            sleepByDay[day, default: 0]
-                += Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
-            sleepSourcesByDay[day, default: []].append(sample.sourceRevision.source.bundleIdentifier)
-        }
-        // Stage breakdown (deep / REM / awake-in-bed). Sources that write
-        // unstaged "asleep" samples leave these empty and the metric's stage
-        // fields stay nil — total minutes drive the score either way.
-        var deepByDay: [Date: Int] = [:]
-        var remByDay: [Date: Int] = [:]
-        var awakeByDay: [Date: Int] = [:]
-        for sample in allSleepSegments {
-            let day = calendar.startOfDay(for: sample.endDate)
-            let minutes = Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
-            switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
-            case .asleepDeep: deepByDay[day, default: 0] += minutes
-            case .asleepREM: remByDay[day, default: 0] += minutes
-            case .awake: awakeByDay[day, default: 0] += minutes
-            default: break
-            }
-        }
-
-        // Merged sleep-window bounds per readiness day (min start, max end over
-        // the night's windows) — the bed/wake anchors integrity detection reads.
-        var windowBoundsByDay: [Date: (start: Date, end: Date)] = [:]
-        for window in windows {
-            if let existing = windowBoundsByDay[window.day] {
-                windowBoundsByDay[window.day] = (min(existing.start, window.start), max(existing.end, window.end))
-            } else {
-                windowBoundsByDay[window.day] = (window.start, window.end)
-            }
-        }
-
-        let allDays = Set(hrvByDay.keys)
-            .union(rhrByDay.keys)
-            .union(respiratoryByDay.keys)
-            .union(oxygenByDay.keys)
-            .union(sleepByDay.keys)
-            .union(nightly.keys)
-        return allDays.sorted().map { day in
-            RecoveryEngine.DailyHealthMetric(
-                date: day,
-                hrvSDNN: hrvByDay[day].map { $0.reduce(0, +) / Double($0.count) },
-                restingHR: rhrByDay[day].map { Int(($0.reduce(0, +) / Double($0.count)).rounded()) },
-                respiratoryRate: respiratoryByDay[day].map { $0.reduce(0, +) / Double($0.count) },
-                oxygenSaturationPercent: oxygenByDay[day].map { $0.reduce(0, +) / Double($0.count) },
-                sleepTotalMinutes: sleepByDay[day],
-                source: "healthkit",
-                hrvSourceBundleID: dominantSource(nocturnalHRVSourcesByDay[day] ?? hrvSourcesByDay[day] ?? []),
-                restingHRSourceBundleID: dominantSource(rhrSourcesByDay[day] ?? []),
-                sleepingHRSourceBundleID: dominantSource(nocturnalHR.filter { sample in
-                    windows.contains { $0.day == day && sample.date >= $0.start && sample.date <= $0.end }
-                }.map(\.sourceBundleID)),
-                sleepSourceBundleID: dominantSource(sleepSourcesByDay[day] ?? []),
-                respiratoryRateSourceBundleID: dominantSource(respiratorySourcesByDay[day] ?? []),
-                oxygenSaturationSourceBundleID: dominantSource(oxygenSourcesByDay[day] ?? []),
-                hrvSampleCount: hrvByDay[day]?.count,
-                nocturnalHRV: nightly[day]?.hrv,
-                nocturnalHRVOccupiedBinCount: nightly[day]?.hrvOccupiedBinCount,
-                nocturnalHRVSampleSpanMinutes: nightly[day]?.hrvSampleSpanMinutes,
-                sleepingHR: nightly[day]?.sleepingHR,
-                sleepingHRSampleCount: nightly[day]?.sleepingHRSampleCount,
-                sleepingHROccupiedBinCount: nightly[day]?.sleepingHROccupiedBinCount,
-                sleepingHRSampleSpanMinutes: nightly[day]?.sleepingHRSampleSpanMinutes,
-                sleepStart: windowBoundsByDay[day]?.start,
-                sleepEnd: windowBoundsByDay[day]?.end,
-                sleepDeepMinutes: deepByDay[day],
-                sleepREMMinutes: remByDay[day],
-                sleepAwakeMinutes: awakeByDay[day]
-            )
+        return await CancellableDetachedWork.run {
+            RecoveryDailyAggregator.daily(inputs)
         }
         #else
         return []
@@ -616,25 +770,194 @@ nonisolated final class HealthService: @unchecked Sendable {
         }
     }
 
-    /// Heart-rate samples that fall within the given sleep windows, fetched in a
-    /// single query (OR of per-window predicates) so sleeping HR costs one
-    /// round-trip rather than one per night.
-    private func heartRateSamplesDuringSleep(windows: [NocturnalAggregator.SleepWindow]) async -> [(date: Date, bpm: Int, sourceBundleID: String)] {
-        guard !windows.isEmpty, let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
-        let unit = HKUnit.count().unitDivided(by: .minute())
-        let predicate = NSCompoundPredicate(orPredicateWithSubpredicates:
-            windows.map { HKQuery.predicateForSamples(withStart: $0.start, end: $0.end, options: []) })
-        let samples: [HKQuantitySample] = await withCheckedContinuation { cont in
-            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
-                cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+    /// Mutable slot for the in-flight `HKQuery` so the cancellation path can
+    /// stop it the moment it exists, even when cancellation and construction
+    /// race. Lock-guarded: the writer (query construction) and the reader (the
+    /// cancel path on another thread) must not race.
+    private final class InFlightQueryTarget: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: HKQuery?
+        var query: HKQuery? {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return stored
             }
-            store.execute(query)
-        }
-        return samples.map {
-            ($0.startDate, Int($0.quantity.doubleValue(for: unit).rounded()), $0.sourceRevision.source.bundleIdentifier)
+            set {
+                lock.lock()
+                stored = newValue
+                lock.unlock()
+            }
         }
     }
 
+    /// Runs one bounded, cancellable `HKSampleQuery`, coordinating the results
+    /// handler and the enclosing task's cancellation through
+    /// `InFlightHealthQuery` so the continuation resumes exactly once and the
+    /// underlying query is stopped at most once. A result at exactly `limit`
+    /// is reported as `.truncated` — HealthKit offers no cursor, so that can
+    /// only mean more samples exist than were requested.
+    private func runSampleQuery<Sample: HKSample>(
+        type: HKSampleType,
+        predicate: NSPredicate?,
+        limit: Int,
+        sortDescriptors: [NSSortDescriptor]?
+    ) async -> BoundedQueryOutcome<[Sample]> {
+        let target = InFlightQueryTarget()
+        let gate = InFlightHealthQuery<BoundedQueryOutcome<[Sample]>>(cancelledValue: .cancelled)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<BoundedQueryOutcome<[Sample]>, Never>) in
+                guard gate.register(
+                    resume: { continuation.resume(returning: $0) },
+                    stop: {
+                        if let query = target.query { self.store.stop(query) }
+                    }
+                ) else {
+                    // Cancellation won before the query existed; nothing was
+                    // ever started, so there is nothing to stop.
+                    return
+                }
+                let query = HKSampleQuery(
+                    sampleType: type,
+                    predicate: predicate,
+                    limit: limit,
+                    sortDescriptors: sortDescriptors
+                ) { _, samples, _ in
+                    let typed = (samples as? [Sample]) ?? []
+                    let outcome: BoundedQueryOutcome<[Sample]> =
+                        HealthQueryBounds.isTruncated(typed.count, limit: limit) ? .truncated : .value(typed)
+                    gate.finish(outcome)
+                }
+                target.query = query
+                guard gate.beginQueryStart() else { return }
+                self.store.execute(query)
+                gate.markQueryStarted()
+            }
+        } onCancel: {
+            gate.cancel()
+        }
+    }
+
+    /// Fetches every sample of `type` within `range` using bounded date
+    /// chunks, unions them, and deduplicates at chunk seams by sample UUID.
+    /// Chunk predicates mirror the range predicate's options (`[]`), so
+    /// membership semantics are unchanged; HealthKit returns a sample for
+    /// every chunk its dates overlap, so a seam sample or a long multi-chunk
+    /// sample can appear more than once — the UUID set collapses those to the
+    /// single sample the old all-at-once query returned. There is no global
+    /// cap: a legitimate 730-day history is fetched in full across chunks.
+    /// Returns `.truncated` when one chunk reached its practical safety cap —
+    /// the caller surfaces it rather than serving partial results.
+    private func chunkedSamples<Sample: HKSample>(
+        of type: HKSampleType,
+        range: (start: Date, end: Date),
+        chunkWidth: TimeInterval,
+        limitPerChunk: Int,
+        sortDescriptors: [NSSortDescriptor]?
+    ) async -> BoundedQueryOutcome<[Sample]> {
+        var cursor = range.start
+        var chunks: [(start: Date, end: Date)] = []
+        while cursor < range.end {
+            let chunkEnd = min(cursor.addingTimeInterval(chunkWidth), range.end)
+            chunks.append((cursor, chunkEnd))
+            cursor = chunkEnd
+        }
+        guard !chunks.isEmpty else { return .value([]) }
+
+        var collected: [Sample] = []
+        var seen = Set<UUID>()
+        for chunk in chunks {
+            guard !Task.isCancelled else { return .cancelled }
+            let predicate = HKQuery.predicateForSamples(withStart: chunk.start, end: chunk.end, options: [])
+            let outcome: BoundedQueryOutcome<[Sample]> = await runSampleQuery(
+                type: type,
+                predicate: predicate,
+                limit: limitPerChunk,
+                sortDescriptors: sortDescriptors
+            )
+            switch outcome {
+            case .value(let samples):
+                for sample in samples where seen.insert(sample.uuid).inserted {
+                    collected.append(sample)
+                }
+            case .cancelled:
+                return .cancelled
+            case .truncated:
+                return .truncated
+            }
+        }
+        return .value(collected)
+    }
+
+    private func chunkedQuantitySamples(
+        _ id: HKQuantityTypeIdentifier,
+        from start: Date,
+        to end: Date,
+        chunkWidth: TimeInterval,
+        limitPerChunk: Int
+    ) async -> BoundedQueryOutcome<[HKQuantitySample]> {
+        guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return .value([]) }
+        return await chunkedSamples(of: type, range: (start, end), chunkWidth: chunkWidth, limitPerChunk: limitPerChunk, sortDescriptors: nil)
+    }
+
+    private func chunkedSleepSamples(
+        from start: Date,
+        to end: Date,
+        chunkWidth: TimeInterval,
+        limitPerChunk: Int
+    ) async -> BoundedQueryOutcome<[HKCategorySample]> {
+        guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return .value([]) }
+        return await chunkedSamples(of: type, range: (start, end), chunkWidth: chunkWidth, limitPerChunk: limitPerChunk, sortDescriptors: nil)
+    }
+
+    /// Heart-rate samples that fall within the given sleep windows. Long
+    /// histories are split into bounded groups so HealthKit never receives a
+    /// 730-clause predicate or materializes the entire result in one callback.
+    /// UUID deduplication preserves the old inclusive-window semantics at
+    /// boundaries. Each three-window group has a fixed practical cap, and an
+    /// anomalous hit drops the whole refresh.
+    private func heartRateSamplesDuringSleep(
+        windows: [NocturnalAggregator.SleepWindow]
+    ) async -> BoundedQueryOutcome<[(date: Date, bpm: Int, sourceBundleID: String)]> {
+        guard !windows.isEmpty, let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            return .value([])
+        }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        var values: [(date: Date, bpm: Int, sourceBundleID: String)] = []
+        var seen = Set<UUID>()
+        for range in HealthQueryBounds.chunkRanges(
+            totalCount: windows.count,
+            maximumCount: HealthQueryBounds.sleepWindowsPerQuery
+        ) {
+            guard !Task.isCancelled else { return .cancelled }
+            let group = Array(windows[range])
+            let predicate = NSCompoundPredicate(orPredicateWithSubpredicates:
+                group.map { HKQuery.predicateForSamples(withStart: $0.start, end: $0.end, options: []) })
+            let outcome: BoundedQueryOutcome<[HKQuantitySample]> = await runSampleQuery(
+                type: type,
+                predicate: predicate,
+                limit: HealthQueryBounds.nocturnalHRSamplesPerQuery,
+                sortDescriptors: nil
+            )
+            switch outcome {
+            case .value(let samples):
+                for sample in samples where seen.insert(sample.uuid).inserted {
+                    values.append((
+                        sample.startDate,
+                        Int(sample.quantity.doubleValue(for: unit).rounded()),
+                        sample.sourceRevision.source.bundleIdentifier
+                    ))
+                }
+            case .cancelled: return .cancelled
+            case .truncated: return .truncated
+            }
+        }
+        return .value(values)
+    }
+
+    /// Most frequently reported source, used by the untouched full-history
+    /// `sleepHistory` path. The `dailyMetrics` path uses the moved copy inside
+    /// `RecoveryDailyAggregator`; the two share identical semantics.
     private func dominantSource(_ sources: [String]) -> String? {
         Dictionary(grouping: sources, by: { $0 })
             .max { lhs, rhs in lhs.value.count < rhs.value.count }?.key

@@ -678,7 +678,7 @@ struct ActiveWorkoutLoggerView: View {
         HStack {
             if isPureYoga {
                 let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
-                let poses = workout.cardioSessions.compactMap { $0.posesCompleted }.reduce(0, +)
+                let poses = workout.cardioSessions.compactMap { $0.logicalYogaPosesCompleted }.reduce(0, +)
                 let hrs = workout.cardioSessions.compactMap { $0.avgHR }
                 StatColumn(label: "Duration", value: Fmt.durationShort(loggedTime > 0 ? loggedTime : elapsed), valueColor: theme.accent, animatesValue: true)
                 StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—", animatesValue: true)
@@ -1121,7 +1121,7 @@ struct ActiveWorkoutLoggerView: View {
         }
         for session in sessions {
             WorkoutFinisher.cancelLiveRuntime(for: session)
-            YogaFlowRunnerHub.shared.stop(for: session.id)
+            YogaFlowRunnerHub.shared.stop(for: session.id, clearCheckpoint: true)
             modelContext.delete(session)
         }
         workout.cardioSessions.removeAll { session in
@@ -1365,12 +1365,17 @@ struct ActiveWorkoutLoggerView: View {
         }
 
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let roundIndex = supersetRoundIndex(for: set, in: sets) else { return }
+        guard let roundIndex = SupersetRoundPolicy.logicalRoundIndex(
+            for: set.id,
+            in: sets.map(\.supersetProgress)
+        ) else { return }
         let groupMembers = sortedExercises.filter { $0.supersetGroup == group }
         let roundComplete = groupMembers.allSatisfy { member in
             let memberSets = member.sets.sorted { $0.position < $1.position }
-            guard roundIndex < memberSets.count else { return true }
-            return setAndDropChainComplete(at: roundIndex, in: memberSets)
+            return SupersetRoundPolicy.isRoundSatisfied(
+                roundIndex,
+                in: memberSets.map(\.supersetProgress)
+            )
         }
         guard roundComplete else { return }
         startRest(after: set, in: workoutExercise, label: "\(SupersetUI.label(for: group)) rest")
@@ -1378,26 +1383,10 @@ struct ActiveWorkoutLoggerView: View {
 
     private func hasPendingDropSet(after set: SetModel, in workoutExercise: WorkoutExerciseModel) -> Bool {
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return false }
-        let next = index + 1
-        guard next < sets.count, sets[next].setType == .drop else { return false }
-        return sets[next].completedAt == nil
-    }
-
-    private func supersetRoundIndex(for set: SetModel, in sets: [SetModel]) -> Int? {
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return nil }
-        guard set.setType == .drop else { return index }
-        return sets[..<index].lastIndex { $0.setType != .drop }
-    }
-
-    private func setAndDropChainComplete(at index: Int, in sets: [SetModel]) -> Bool {
-        guard index < sets.count, sets[index].completedAt != nil else { return false }
-        var next = index + 1
-        while next < sets.count, sets[next].setType == .drop {
-            guard sets[next].completedAt != nil else { return false }
-            next += 1
-        }
-        return true
+        return SupersetRoundPolicy.hasPendingDrop(
+            after: set.id,
+            in: sets.map(\.supersetProgress)
+        )
     }
 
     private func startRest(after set: SetModel, in workoutExercise: WorkoutExerciseModel, label: String? = nil) {
@@ -1540,6 +1529,11 @@ private struct PostWorkoutSummaryView: View {
     @State private var routineName: String?
     @State private var showRoutineUpdatePrompt = false
     @State private var saveError: String?
+    /// FF-006 in-flight gate: held from the moment a Save commits until the
+    /// sheet dismisses (success) or the finisher surfaces a failure (release
+    /// so "Try saving again" works). The routine prompt does not hold it, so
+    /// dismissing that dialog can never strand the gate.
+    @State private var saveGate = WorkoutFinisher.InFlightGate()
     /// One-shot notification prime, shown at the value moment (a finished
     /// workout) instead of buried in Settings — accepting turns on the
     /// rest-timer alerts, reminders, and Wrapped alerts that
@@ -1711,7 +1705,8 @@ private struct PostWorkoutSummaryView: View {
                 PostWorkoutActionBar(
                     onKeepLogging: onCancel,
                     onShare: shareWorkout,
-                    onSave: requestSave
+                    onSave: requestSave,
+                    isSaving: saveGate.isActive
                 )
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -1989,8 +1984,10 @@ private struct PostWorkoutSummaryView: View {
 
     /// On Save: if this workout was started from a routine and structural
     /// changes were made mid-session, ask before finishing. Otherwise save
-    /// straight away.
+    /// straight away. The gate is checked (not held) here — the routine
+    /// prompt must not strand it if dismissed without a choice.
     private func requestSave() {
+        guard !saveGate.isActive else { return }
         guard let routineID = workout.routineID,
               let routine = fetchRoutine(id: routineID) else {
             commitSave()
@@ -2007,16 +2004,25 @@ private struct PostWorkoutSummaryView: View {
     }
 
     private func applyRoutineChangesAndSave() {
+        // Acquired before ANY routine mutation so a rapid second commit
+        // cannot re-enter mid-apply.
+        guard saveGate.tryBegin() else { return }
         if let plan = routinePlan,
            let routineID = workout.routineID,
            let routine = fetchRoutine(id: routineID) {
             RoutineChangeSync.apply(plan, to: routine, from: workout, in: modelContext)
             try? modelContext.save()
         }
-        commitSave()
+        commitSaveUnderGate()
     }
 
     private func commitSave() {
+        guard saveGate.tryBegin() else { return }
+        commitSaveUnderGate()
+    }
+
+    private func commitSaveUnderGate() {
+        // All progression/RPE mutations happen only while the gate is held.
         // Resolve what the lifter did with each suggestion (accepted at the
         // suggested weight, edited to another, or untouched) before finishing.
         ProgressionPlanner.resolveStatuses(for: workout, in: modelContext)
@@ -2024,6 +2030,11 @@ private struct PostWorkoutSummaryView: View {
         workout.wholeSessionRPERatedAt = sessionRPERatedAt
         workout.wholeSessionRPEProtocolVersion = sessionRPE == nil ? nil : "whole-session-cr10-immediate-v1"
         saveError = onSave(finishRequestedAt)
+        if saveError != nil {
+            // A surfaced failure re-opens the gate so "Try saving again" works;
+            // success keeps it held through dismissal.
+            saveGate.end()
+        }
     }
 
     private func fetchRoutine(id: UUID) -> RoutineModel? {

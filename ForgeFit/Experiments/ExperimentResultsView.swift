@@ -1335,7 +1335,7 @@ private extension ExperimentAllDataView {
         if let steps = session.totalSteps {
             rows.append(.init(label: "Steps", value: steps.formatted()))
         }
-        if let poses = session.posesCompleted {
+        if let poses = session.logicalYogaPosesCompleted {
             rows.append(.init(label: "Poses completed", value: poses.formatted()))
         }
         return rows

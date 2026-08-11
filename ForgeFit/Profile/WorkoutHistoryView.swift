@@ -1,6 +1,7 @@
 import ForgeData
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// The "See all workouts" destination: full history with search, smart
 /// filters, sorting, and windowed pagination.
@@ -12,6 +13,7 @@ import SwiftUI
 /// multi-year history mounts a handful of cards, not thousands.
 struct WorkoutHistoryView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
@@ -24,17 +26,33 @@ struct WorkoutHistoryView: View {
     @State private var debounceTask: Task<Void, Never>?
     @State private var visibleCount = WorkoutHistoryView.pageSize
     @State private var filteredMemo = Memo<String, [WorkoutHistoryEntry]>()
+    /// The wall time relative windows are computed against. Held as @State so
+    /// the memo key and the engine share ONE instant, and so the midnight /
+    /// foreground refresh below is a real state change that re-runs the body.
+    @State private var now = Date()
+    /// Bumped when external wall-clock state changes so the midnight task is
+    /// cancelled and re-anchored instead of continuing to sleep toward a
+    /// boundary computed in an obsolete timezone/clock.
+    @State private var boundaryRefreshGeneration = 0
     @State private var showCustomRange = false
     @State private var customStart = Date()
     @State private var customEnd = Date()
+
+    /// Calendar for day boundaries and the midnight tick. Read live as
+    /// `autoupdatingCurrent` so a timezone change while the screen is resident
+    /// is reflected at the next body evaluation.
+    private var dayCalendar: Calendar { .autoupdatingCurrent }
 
     private var fingerprint: String { AnalyticsFingerprint.of(workouts) }
 
     private var filtered: [WorkoutHistoryEntry] {
         guard let index else { return [] }
-        let key = "\(fingerprint)|\(query.searchText)|\(query.kind.rawValue)|\(query.date.title)|\(query.muscle ?? "")|\(query.exercise?.id.uuidString ?? "")|\(query.source.rawValue)|\(query.prsOnly)|\(query.sort.rawValue)"
+        let calendar = dayCalendar
+        let key = WorkoutHistoryQueryEngine.memoKey(
+            fingerprint: fingerprint, query: query, now: now, calendar: calendar
+        )
         return filteredMemo(key) {
-            WorkoutHistoryQueryEngine.apply(query, to: index)
+            WorkoutHistoryQueryEngine.apply(query, to: index, now: now, calendar: calendar)
         }
     }
 
@@ -67,6 +85,42 @@ struct WorkoutHistoryView: View {
             let built = await WorkoutHistoryIndexer.build(workouts: workouts, exercises: exercises)
             guard !Task.isCancelled else { return }
             index = built
+            // An index rebuild can complete long after this view first
+            // appeared (large import, foreground resume). Refresh the shared
+            // clock at the same commit point so relative windows never reuse
+            // the view's stale launch instant with the new fingerprint.
+            now = Date()
+        }
+        .task(id: boundaryRefreshGeneration) {
+            // Relative filters memoize against the local calendar day. Sleep to
+            // the exact next local midnight (re-anchored every iteration so DST
+            // and clock changes stay correct) and refresh `now` — a real state
+            // change, so the body re-derives the day-aware memo key and
+            // recomputes the window only when the day actually turned over.
+            // Cancellation is checked before every sleep AND after it: no
+            // post-cancel state write, no rescheduled sleep, no spin.
+            while !Task.isCancelled {
+                let wake = WorkoutHistoryQueryEngine.nextDayBoundary(
+                    after: Date(), calendar: dayCalendar
+                )
+                do {
+                    try await Task.sleep(for: .seconds(max(1, wake.timeIntervalSinceNow)))
+                } catch {
+                    break
+                }
+                now = Date()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // A suspended app freezes its clock: a midnight (or timezone / clock
+            // change) while hidden must be caught the moment the user returns.
+            if phase == .active { refreshClockBoundary() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            refreshClockBoundary()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.NSSystemTimeZoneDidChange)) { _ in
+            refreshClockBoundary()
         }
         .onChange(of: searchDraft) { _, newValue in
             debounceTask?.cancel()
@@ -85,6 +139,11 @@ struct WorkoutHistoryView: View {
                 WorkoutDetailView(workout: workout, exercises: exercises, history: workouts)
             }
         }
+    }
+
+    private func refreshClockBoundary() {
+        now = Date()
+        boundaryRefreshGeneration &+= 1
     }
 
     private var header: some View {

@@ -197,6 +197,7 @@ enum WorkoutHistoryImportService {
                         sourceDevice: "import-\(source.rawValue)",
                         durationSeconds: duration > 0 ? duration : max(0, Int(draft.endedAt.timeIntervalSince(draft.startedAt))),
                         distanceMeters: distance > 0 ? distance : nil,
+                        distanceSource: distance > 0 ? .importedFile : nil,
                         avgPaceSecondsPerKm: CardioMetrics.paceSecPerKm(
                             distanceMeters: distance > 0 ? distance : nil,
                             durationSeconds: duration > 0 ? duration : nil

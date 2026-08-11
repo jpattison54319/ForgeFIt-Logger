@@ -9,8 +9,7 @@ struct SettingsView: View {
 
     @State private var watch = WatchLink.shared
     @State private var ble = BLEHeartRateService.shared
-    @State private var connected = HealthService.shared.isConnected
-    @State private var connecting = false
+    @State private var healthAuthorization = HealthAuthorizationStore.shared
     @State private var showHRMPairing = false
     @State private var showHistoryImporter = false
     @State private var showExportSheet = false
@@ -21,14 +20,12 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 SettingsHeroSection(
-                    healthConnected: connected,
+                    healthConnected: healthAuthorization.state.isConnected,
                     watchPaired: watch.isPaired,
                     hrmConnected: ble.state == .connected
                 )
                 SettingsAppearanceSection()
                 SettingsHealthSection(
-                    connected: $connected,
-                    connecting: $connecting,
                     showHistoryImporter: $showHistoryImporter
                 )
                 SettingsWatchSection()
@@ -66,6 +63,8 @@ struct SettingsView: View {
                     RemindersDetailView()
                 case .yogaGuidance:
                     YogaGuidanceSettingsView()
+                case .iCloudBackup:
+                    BackupSettingsView()
                 case .privacyPolicy:
                     PrivacyPolicyView()
                 }
@@ -92,7 +91,7 @@ struct SettingsView: View {
         .onAppear {
             watch.activate()
             ble.reconnectIfRemembered()
-            connected = HealthService.shared.isConnected
+            healthAuthorization.refresh()
         }
     }
 }

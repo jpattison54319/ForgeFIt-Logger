@@ -651,6 +651,7 @@ struct WorkoutHistoryImportView: View {
             sourceDevice: "gpx-import",
             durationSeconds: durationSeconds,
             distanceMeters: cumulative > 0 ? cumulative : nil,
+            distanceSource: cumulative > 0 ? .importedFile : nil,
             avgHR: avgHR,
             maxHR: heartRates.max(),
             hrZoneSeconds: CardioMetrics.measuredZoneSecondsArray(series: series) ?? []

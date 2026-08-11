@@ -125,6 +125,9 @@ nonisolated enum CardioRouteMath {
             context.insert(point)
             session.routePoints.append(point)
         }
+        if session.routePoints.count >= 2 {
+            session.distanceSource = .route
+        }
         replaceSplits(for: session, in: context)
     }
 }
@@ -284,6 +287,9 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
             ? zip(session.routePoints.sorted { $0.timestamp < $1.timestamp }, session.routePoints.sorted { $0.timestamp < $1.timestamp }.dropFirst())
                 .reduce(0) { $0 + CardioRouteMath.distanceMeters($1.0, $1.1) }
             : session.distanceMeters
+        if session.routePoints.count > 1 {
+            session.distanceSource = .route
+        }
         session.elevationGainMeters = elevationGain(session.routePoints)
         session.updatedAt = Date()
     }

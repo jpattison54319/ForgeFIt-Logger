@@ -646,8 +646,8 @@ struct ExperimentTrainingRollup: Equatable {
             yogaSessions: yoga.count,
             yogaDurationSeconds: yoga.compactMap(\.durationSeconds).reduce(0, +),
             yogaDurationSamples: yoga.compactMap(\.durationSeconds).count,
-            yogaPoses: yoga.compactMap(\.posesCompleted).reduce(0, +),
-            yogaPoseSamples: yoga.compactMap(\.posesCompleted).count
+            yogaPoses: yoga.compactMap(\.logicalYogaPosesCompleted).reduce(0, +),
+            yogaPoseSamples: yoga.compactMap(\.logicalYogaPosesCompleted).count
         )
     }
 }
@@ -706,7 +706,7 @@ struct ExperimentWorkoutSummaryPresentation: Equatable {
             )
         }
         if !yoga.isEmpty {
-            let poses = yoga.compactMap(\.posesCompleted).reduce(0, +)
+            let poses = yoga.compactMap(\.logicalYogaPosesCompleted).reduce(0, +)
             parts.append(
                 poses > 0
                     ? "\(poses) pose\(poses == 1 ? "" : "s")"

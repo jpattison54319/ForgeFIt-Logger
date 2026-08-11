@@ -1,8 +1,8 @@
 # FF-008 — Backup restore lacks rollback, can persist a partial restore
 
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P1 — release gate
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem
@@ -81,7 +81,52 @@ Repository-relative paths and symbols:
 _Workers: update Status, Owner, work log, files changed, tests
 requested/run, and residual risks. The manager alone sets Done and signs off._
 
-- (empty — no work claimed)
+- **2026-08-11 — DeepSeek V4 Flash 0731 — FF-008 (claim → In Review):**
+  First pass used a staged-`[any PersistentModel]` array plus a compensating
+  delete-then-save cleanup. **Changes requested by manager:** replace that
+  design entirely; do not build on it. `commit` must create a fresh isolated
+  `ModelContext` from the caller context's container, perform all
+  fetches/inserts and the injected save in that restore context, and on any
+  thrown save call `restoreContext.rollback()` before rethrowing — isolating
+  rollback so unrelated unsaved caller-context edits survive, and
+  guaranteeing a later caller save cannot commit failed-restore residue.
+  Do not simulate a save-that-succeeds-then-throws (SwiftData save is the
+  transactional boundary). **Fixed as requested** (PlanImportService pattern):
+  `commit(_:restorePreferences:in:performSave:)` now wraps `performCommit` in
+  `ModelContext(context.container)` with autosave disabled and calls
+  `restoreContext.rollback()` on any thrown error before rethrowing;
+  preferences stay deferred (UserDefaults) until the isolated store save
+  succeeds. Public API and caller behavior unchanged — the caller
+  (`WorkoutHistoryImportView.restore`) needed no edits because rollback
+  completes inside `commit` before the error surfaces.
+
+  **Files changed:**
+  - `ForgeFit/Backup/BackupRestoreService.swift` — isolated-context
+    transaction wrapper + `rollback()`; all fetch/insert/save moved into the
+    restore context; preferences applied only after the isolated save;
+    staged-array/delete-save helpers removed.
+  - `ForgeFitTests/BackupRestoreRollbackTests.swift` (new) — deterministic
+    failure-injection tests via the `performSave` seam.
+
+  **Tests written — explicitly NOT RUN** (file-edits-only session; no
+  build/test was permitted): injected save failure → zero restored rows
+  across every restored model kind; later caller save commits no
+  failed-restore residue; unrelated unsaved caller model survives failure and
+  can subsequently save; retry after failure commits exactly once; success
+  persists the full representative graph (workouts, exercises, sets, library
+  recreation, cardio graph, batches, microcycle tracking/windows, rest days);
+  preferences unchanged on failure and applied on success.
+
+  **Residual risks (real device/store):** cross-context visibility of the
+  isolated save to the caller's `mainContext` (on restore success the caller
+  enriches by fetching restored workout ids in its own context) is unverified
+  on a real device; a real CloudKit-backed save that partially commits before
+  reporting failure cannot be undone by `rollback()` — SwiftData save is the
+  transaction boundary, so the save result must be treated as authoritative.
+  Apple does not document a distributed atomic guarantee for one context save
+  spanning ForgeFit's separate SQLite stores. The story's required split-store
+  runtime validation (forced failure on a clean device, zero partial rows) has
+  NOT been performed.
 
 ## Reviewer log
 

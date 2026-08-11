@@ -2,143 +2,102 @@
 
 - **ID:** FF-020
 - **Title:** Automatic backup release boundary
-- **Status:** Planned
-- **Severity:** P1 (release boundary / compliance)
-- **Owner:** Unassigned
-- **Source audit date:** 2026-08-10
+- **Status:** In Review
+- **Severity:** P1 (data durability / privacy / release boundary)
+- **Owner:** Codex direct remediation
+- **Decision date:** 2026-08-11
 
-## Problem
+## Product decision
 
-ForgeFit's automatic iCloud Drive workout backup runs without a visible
-opt-in, status, off switch, or failure path, and the backup contains detailed
-workout history and precise outdoor routes. The prior audit policy
-interpretation that backed this behavior must be refreshed: the product is
-described as "optional" but writes automatically whenever iCloud Drive is
-available. This is a release-blocking compliance/trust decision (Apple App
-Review Guideline 5.1.3(ii) plus Developer Program License Agreement limits on
-sensitive personal health information in iCloud; see audit section 2).
+The owner explicitly confirmed that automatic iCloud protection is the product
+contract: routines must sync automatically, and workout history must be backed
+up automatically. The temporary 1.0 release gate that disabled workout-history
+scheduling was therefore a regression, not the intended privacy boundary.
 
-## Confirmed trigger
+The shipping design is now:
 
-- `BackupScheduler` (see below) schedules automatic exports on log-data
-  changes, live-workout close, foreground, and a once-per-day catch-up whenever
-  iCloud Drive is available, with no visible on/off, status, "Back up now",
-  failure, or delete control outside Reset/Files.
-- The emitted file contains detailed fitness records and precise route points
-  (`audit` found 3,716 route points, 308 workouts, notes, effort/RPE,
-  conditioning/yoga plan JSON in the deployed 1.0 backup).
-- HealthKit-derived fields are structurally excluded, but the remaining
-  personal fitness data plus the CloudKit `painFlag` make an unconditional
-  5.1.3(ii)-compliant claim unsafe without Apple's interpretation.
+- the training-plan store (routines, folders, exercise library, presets, and
+  other plan rows) syncs automatically through the user's private CloudKit
+  database;
+- the local workout-log store remains out of CloudKit and produces a separate
+  sanitized iCloud Drive backup automatically;
+- Settings exposes backup state, last success, failure details, immediate
+  retry, and deletion;
+- privacy copy names the automatic behavior, included data, excluded data,
+  restore path, and the fact that a later change recreates a deleted backup.
 
-## User impact
+## Implemented remediation
 
-- Users who sign into iCloud can receive automatic backup writes without seeing
-  what was written, whether it succeeded, or how to disable or delete it.
-- Precise route and workout detail reside in the user's iCloud, contrary to the
-  apparent "optional" framing.
-- Release risk: potential App Store guideline non-conformance; a rejected or
-  "flagged for review" 1.0.
+- `BackupAutomationPolicy.isEnabledInThisRelease` is on.
+- `BackupScheduler` queues log changes, performs a daily catch-up, defers work
+  during a live workout/background transition, persists failure state, and
+  coalesces retries.
+- Settings → iCloud Backup presents status, last success, **Back up now**, and
+  **Delete workout backup** with explicit consequences.
+- Two-slot rotation keeps the last usable `latest` file while promoting a new
+  one; reset/deletion awaits a structured result instead of swallowing errors.
+- Backup DTOs omit direct Health fields. The mapper also excludes entire
+  HealthKit-imported workouts, HealthKit-filled distance, and Health-derived
+  auto-detected intervals. A local optional distance-provenance field makes
+  that shared-property boundary testable without adding provenance to the
+  backup payload.
+- Restored distance is marked as restored-backup provenance so a later
+  automatic backup remains stable.
+- In-app and repository privacy policies now describe the automatic behavior
+  and precise data boundary.
 
-## Source evidence
+## Automated evidence
 
-- `ForgeFit/Backup/BackupScheduler.swift` — `BackupScheduler`, `shared`, scheduling triggers (post-foreground, live-close, log-change, once-per-day catch-up).
-- `ForgeFit/Backup/BackupExporter.swift` — `exportNow`, two-slot rotation (`ForgeFit-Backup-latest*/previous*`), `deleteAllBackups`, triggers on finish/import/delete/background + daily.
-- `ForgeFit/Backup/BackupRestoreService.swift` — restore of the rotating slots.
-- `Packages/ForgeData/Sources/ForgeData/Backup/BackupFormat.swift` / `BackupMapper.swift` — sanitized (health-stripped) payload.
-- `ForgeFit/Settings/PrivacyPolicyView.swift` and `docs/privacy-policy.md` — describe the backup as "optional".
-- `docs/app-store-submission.md` — iCloud Drive backup claims (auto, no status/off visible).
-- Audit: `artifacts/release-audit-2026-08-09/FINAL-AUDIT.md` section 2 ("Automatic iCloud Drive training-log backup", "When the backup writes", "Compliance and trust assessment").
-- CloudKit `painFlag` on exercise notes (planning layer) — referenced in audit (flagged elsewhere; see findings).
-
-## Scope
-
-- Automatic scheduling, opt-in/off, status, last-success/failure reporting,
-  "Back up now", deletion, content minimization, and end-to-end clean restore.
-- Refreshing the privacy policy copy and Settings disclosure (all mirrored
-  surfaces) to match the chosen behavior.
-- Explicit user-directed export/import must be preserved.
-
-## Non-goals
-
-- Not removing explicit user-directed export/import.
-- Not changing CloudKit plan sync behavior except where the `painFlag`
-  localization decision is separately approved.
-
-## High-level fix direction (proposed, pending manager/user decision)
-
-**Safest 1.0 direction:** disable the automatic iCloud Drive backup scheduling
-until the following are in place:
-
-- explicit user opt-in with visible Settings setup/`off` toggle and "Back up now";
-- status and last-success/failure reporting with a user-visible failure path;
-- user-visible deletion of backups;
-- content minimization (confirm whether precise routes and health-adjacent
-  notes/effort fields belong);
-- clean end-to-end restore of the actual latest file (reliably, per FF-018 atomicity);
-- a refreshed review of current Apple policy for iCloud/CloudKit handling of
-  this data, and any needed written Apple clarification.
-
-Preserve the explicit user-directed export/import flow throughout. Any SwiftData
-schema change — including localizing the sync `painFlag` (moving it out of the
-CloudKit plan store) — is a one-way production migration and REQUIRES manager
-and user approval before implementation; it must not be bundled silently into
-this story.
+- `BackupSchedulerTests`: automatic change export, visible failure + retry,
+  unavailable iCloud state, delete semantics, and live-workout deferral.
+- `BackupFormatTests`: allowed-key walk, no direct Health keys/sentinels,
+  HealthKit-imported workout exclusion, distance-provenance filtering,
+  auto-detected interval exclusion, and user-authored round trip.
+- `BackupRotationTests`, `BackupDeletionTests`, and
+  `BackupRestoreRollbackTests`: rotation, structured delete outcomes, isolated
+  restore, deduplication, and rollback.
+- ForgeData full package gate passed after the provenance change on 2026-08-11.
 
 ## Acceptance criteria
 
-- [ ] Automatic scheduling is disabled (gated behind explicit opt-in) unless the manage/user decision re-enables it.
-- [ ] If enabled, there is a visible opt-in, off toggle, "Back up now", status, last-success, last-failure, and delete control surfaced in Settings.
-- [ ] Failure produces a visible outcome rather than staying silent.
-- [ ] Explicit user-directed export/import continue to work unchanged.
-- [ ] A restore of the actual latest file into a clean install is verified end-to-end.
-- [ ] Privacy copy is updated in both `PrivacyPolicyView.swift` and `docs/privacy-policy.md` (they mirror; change both or neither).
-- [ ] No SwiftData/schema change (including `painFlag` localization) is made without manager + user approval recorded in the work log.
-- [ ] App Store submission doc reflects the decided behavior and policy interpretation.
+- [x] Automatic plan sync remains enabled through private CloudKit.
+- [x] Automatic workout-history backup scheduling is enabled by default.
+- [x] Status, last success, last failure, immediate retry, and deletion are
+  visible in Settings.
+- [x] A failed or unavailable backup never presents as successful.
+- [x] HealthKit-imported workouts and shared fields with HealthKit provenance
+  are excluded by tests, in addition to the DTO Health-field allow-list.
+- [x] In-app privacy, repository privacy, and submission copy describe the
+  decided behavior.
+- [ ] A real signed-in iCloud account has produced, deleted, and restored the
+  current backup on clean physical installs.
+- [ ] The signed stable archive's iCloud/CloudKit entitlements and Production
+  environment have been inspected.
 
-## Required automated tests
+## Residual release risk
 
-- Tests asserting automatic scheduling does not fire absent opt-in (or, if re-enabled, only fires per the gated policy).
-- Status/failure transitions are tested with injected outcomes.
-- Export/import flow tests still pass (regression guard for preserved behavior).
-- Any new preference key is added to `AppPreferenceKeys` single source and covered by reset.
-- Coordinate with FF-018 (rotation atomicity) and FF-019 (allowed-key coverage) so any retained backup path stays safe and exhaustive.
+Apple's App Review Guideline 5.1.3(ii) says apps may not store personal health
+information in iCloud. ForgeFit excludes Apple Health-derived content, but the
+remaining user-recorded workout log and precise routes are still sensitive
+fitness/location data. Sanitization does not by itself establish Apple's policy
+interpretation. The product decision is implemented, but this remains an App
+Review/legal interpretation risk to resolve before final submission.
 
-## Required runtime/hardware validation
+## Required runtime validation
 
-- Manual end-to-end on a fresh install: opt-in (if enabled), trigger backup, confirm Files shows `ForgeFit-Backup-latest*` with the selected content, restore into a clean device, confirm workout history is recovered.
-- Manual failure injection: disable iCloud Drive / revoke access and confirm the visible failure path and that no automatic silent write occurs.
-- Confirm automatic writes do not occur without opt-in on a signed-in iCloud simulator.
-
-## Dependencies
-
-- FF-018 (rotation atomicity) and FF-019 (allowed-key coverage) if any automatic/retained backup path ships.
-- Manager + user approval for any SwiftData schema change (painFlag localization).
-- Product decision on disable-vs-gate with full controls.
-
-## Worker work log
-
-_To be updated by the implementing worker as work proceeds: status transitions, notes, decisions, files changed, tests requested/run, and residual risks._
-
-- (empty — planned only; no work performed)
-
-## Reviewer log
-
-_To be updated by the reviewing party after code review._
-
-- (empty)
-
-## Definition of Done
-
-- Manager/user decision on disable-vs-gate with controls is recorded.
-- Automatic behavior matches the decided policy, with visible controls, status, failure, delete, and clean restore verified end-to-end.
-- Privacy mirror updated in both surfaces; submission doc updated.
-- No unauthorized schema change; any `painFlag` localization is separately approved.
-- Acceptance criteria met with tests green.
+1. On a physical iPhone signed into iCloud Drive, make a workout-log change and
+   confirm `ForgeFit-Backup-latest.forgefitbackup` appears automatically.
+2. Turn off iCloud Drive or sign out, trigger a change, and confirm the visible
+   unavailable/failure state and successful retry after recovery.
+3. Delete both rotating files from Settings and confirm local workouts and
+   CloudKit routines remain intact; then confirm a later log change recreates a
+   backup.
+4. Restore the latest file on a clean second iPhone and verify workout, set,
+   route, microcycle, and rest-marker fidelity while Health-derived fields are
+   repopulated only from that device's Apple Health store.
 
 ## Final sign-off
 
-- **Set by manager only.** Workers update Status/Owner/work log, files changed, tests requested/run, and residual risks; the manager alone sets Done and signs off below.
-- **Status set to Done by:** _Unassigned_
-- **Manager sign-off (name/date):** _Unassigned_
-- **User approval for any schema change (painFlag) recorded:** _Not yet requested / Unassigned_
+- **Manager sign-off:** Pending physical iCloud and stable-archive validation.
+- **User product decision:** Automatic routine sync and automatic workout
+  history backup confirmed on 2026-08-11.

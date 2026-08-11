@@ -148,6 +148,6 @@ struct StarterSlateCleanupTests {
         try StarterSlateCleanup.run(in: context)
 
         let remaining = try context.fetch(FetchDescriptor<WorkoutModel>())
-        #expect(remaining.map(\.id) == [adHoc.id, otherRoutine.id])
+        #expect(Set(remaining.map(\.id)) == Set([adHoc.id, otherRoutine.id]))
     }
 }

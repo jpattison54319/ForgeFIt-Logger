@@ -37,8 +37,10 @@ final class SyncCoordinator {
     /// social both key off this set). Analytics caches, insights, plan rows,
     /// and exercise-library edits deliberately don't wake the pipeline.
     private static let logEntities: Set<String> = [
-        "WorkoutModel", "WorkoutExerciseModel", "SetModel",
-        "CardioSessionModel", "CardioSplitModel", "CardioRoutePointModel"
+        "WorkoutModel", "WorkoutBlockModel", "WorkoutExerciseModel", "SetModel",
+        "WorkoutImportBatchModel", "CardioSessionModel", "CardioSplitModel",
+        "CardioRoutePointModel", "MicrocycleTrackingModel",
+        "MicrocycleWindowModel", "RestDayModel"
     ]
 
     private let social: SocialService
@@ -157,6 +159,8 @@ final class SyncCoordinator {
         switch identifier.entityName {
         case "WorkoutModel":
             return (model(identifier) as WorkoutModel?)?.id
+        case "WorkoutBlockModel":
+            return (model(identifier) as WorkoutBlockModel?)?.workout?.id
         case "WorkoutExerciseModel":
             return (model(identifier) as WorkoutExerciseModel?)?.workout?.id
         case "SetModel":

@@ -118,7 +118,12 @@ enum XPService {
 
     @MainActor
     @discardableResult
-    static func awardXPIfNeeded(for workout: WorkoutModel, in context: ModelContext, now: Date = Date()) -> Award {
+    static func awardXPIfNeeded(
+        for workout: WorkoutModel,
+        in context: ModelContext,
+        now: Date = Date(),
+        persist: Bool = true
+    ) -> Award {
         if let amount = workout.xpAwardedAmount, workout.xpAwardedAt != nil {
             return Award(amount: amount, base: 0, duration: 0, strength: 0, cardioDuration: 0, cardioDistance: 0, eligible: amount > 0)
         }
@@ -142,7 +147,13 @@ enum XPService {
             componentsJSON: componentsJSON(for: award),
             createdAt: now
         ))
-        try? context.save()
+        // Most callers use XP as a standalone operation and keep the legacy
+        // immediate save. WorkoutFinisher passes `persist: false` so endedAt,
+        // XP, session finalization, and every terminal mutation share its one
+        // rollback-capable save boundary.
+        if persist {
+            try? context.save()
+        }
         return award
     }
 

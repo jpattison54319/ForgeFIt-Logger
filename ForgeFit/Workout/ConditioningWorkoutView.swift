@@ -17,6 +17,10 @@ struct ConditioningWorkoutView: View {
     @State private var progress: ConditioningProgress
     @State private var showScore = false
     @State private var saveError: String?
+    /// FF-006 in-flight gate: held from the first Save tap until the sheet
+    /// dismisses (success) or the finisher surfaces a failure (release so the
+    /// error alert's retry works).
+    @State private var finishGate = WorkoutFinisher.InFlightGate()
 
     private let plan: ConditioningPlan
 
@@ -123,12 +127,19 @@ struct ConditioningWorkoutView: View {
                 plan: plan,
                 progress: $progress,
                 completionContext: completionContext,
+                isSaving: finishGate.isActive,
                 onKeepLogging: { showScore = false },
                 onSave: { rounds, load in
+                    // Acquired before ANY conditioning mutation so a rapid
+                    // second commit cannot re-enter mid-apply (FF-006).
+                    guard finishGate.tryBegin() else { return }
                     guard ConditioningProgressEngine.requiredRoundsRemaining(
                         for: progress,
                         plan: plan
-                    ) == 0 else { return }
+                    ) == 0 else {
+                        finishGate.end()
+                        return
+                    }
                     apply(ConditioningProgressEvent(action: .setScore(
                         rounds: rounds,
                         partialMovementID: nil,
@@ -233,7 +244,10 @@ struct ConditioningWorkoutView: View {
             let session = workout.cardioSessions.first { $0.workoutExerciseID == workoutExercise.id }
                 ?? makeCardioSession(for: workoutExercise, exercise: exercise, at: date)
             if movement.targetUnit == .seconds { session.durationSeconds = (session.durationSeconds ?? 0) + Int(value) }
-            if movement.targetUnit == .meters { session.distanceMeters = (session.distanceMeters ?? 0) + value }
+            if movement.targetUnit == .meters {
+                session.distanceMeters = (session.distanceMeters ?? 0) + value
+                session.distanceSource = .userEntered
+            }
             session.endedAt = date
             return
         }
@@ -263,7 +277,10 @@ struct ConditioningWorkoutView: View {
             workoutExercise.sets.removeAll { $0.id == set.id }
         } else if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
             if movement.targetUnit == .seconds { session.durationSeconds = max(0, (session.durationSeconds ?? 0) - Int(value)) }
-            if movement.targetUnit == .meters { session.distanceMeters = max(0, (session.distanceMeters ?? 0) - value) }
+            if movement.targetUnit == .meters {
+                session.distanceMeters = max(0, (session.distanceMeters ?? 0) - value)
+                session.distanceSource = .userEntered
+            }
         }
     }
 
@@ -321,6 +338,7 @@ struct ConditioningWorkoutView: View {
         workout.conditioningResultJSON = resultJSON
         if let error = WorkoutFinisher.finish(workout, in: modelContext) {
             saveError = error
+            finishGate.end()
             return
         }
         showScore = false
@@ -598,6 +616,9 @@ private struct ConditioningScoreSheet: View {
     let plan: ConditioningPlan
     @Binding var progress: ConditioningProgress
     let completionContext: ConditioningCompletionContext
+    /// True while a finish is committing: the commit control disables and
+    /// reads "Saving…" so a rapid second tap cannot re-enter (FF-006).
+    let isSaving: Bool
     let onKeepLogging: () -> Void
     let onSave: (Int, Double?) -> Void
 
@@ -608,12 +629,14 @@ private struct ConditioningScoreSheet: View {
         plan: ConditioningPlan,
         progress: Binding<ConditioningProgress>,
         completionContext: ConditioningCompletionContext,
+        isSaving: Bool,
         onKeepLogging: @escaping () -> Void,
         onSave: @escaping (Int, Double?) -> Void
     ) {
         self.plan = plan
         _progress = progress
         self.completionContext = completionContext
+        self.isSaving = isSaving
         self.onKeepLogging = onKeepLogging
         self.onSave = onSave
         let current = progress.wrappedValue
@@ -676,10 +699,10 @@ private struct ConditioningScoreSheet: View {
                             }
                         }
                     }
-                    PrimaryButton(title: completionContext.commitTitle, systemImage: "checkmark") {
+                    PrimaryButton(title: isSaving ? "Saving…" : completionContext.commitTitle, systemImage: "checkmark") {
                         onSave(rounds, load)
                     }
-                    .disabled(requiredRoundsRemaining > 0)
+                    .disabled(requiredRoundsRemaining > 0 || isSaving)
                     SecondaryButton(
                         title: completionContext.returnTitle,
                         systemImage: "arrow.uturn.backward",

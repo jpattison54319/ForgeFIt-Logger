@@ -654,7 +654,6 @@ struct CardioExerciseCard: View {
         Task {
             let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: kind)
             await MainActor.run {
-                if let d = snap.durationSeconds { session.durationSeconds = d }
                 if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
                 if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
                 if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
@@ -666,6 +665,7 @@ struct CardioExerciseCard: View {
                 // when there's no route to trust.
                 if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
                     session.distanceMeters = dist
+                    session.distanceSource = .healthKit
                 }
                 // Provisional estimate — finalize() below replaces it with the
                 // measured distribution when the HR series has real coverage.
@@ -824,8 +824,9 @@ struct CardioExerciseCard: View {
                let meters = CardioDerivations.swimDistanceMeters(
                    poolLengthMeters: session.poolLengthMeters,
                    lengths: session.lengthsCompleted
-               ) {
+                ) {
                 session.distanceMeters = meters
+                session.distanceSource = .userEntered
             }
             // Manual field edits must not fabricate a distribution over real
             // data: keep the measured series-derived zones when they exist and
@@ -872,7 +873,10 @@ private struct CardioSessionEditor: View {
                 } else if kind.usesDistance {
                     field("Distance", kind.usesFixedMeters ? "m" : Fmt.distanceUnit.abbreviation,
                           get: session.distanceMeters.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.distance(fromMeters: $0) },
-                          set: { session.distanceMeters = $0.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.meters(fromDistance: $0) } })
+                          set: {
+                              session.distanceMeters = $0.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.meters(fromDistance: $0) }
+                              session.distanceSource = $0 == nil ? nil : .userEntered
+                          })
                 }
                 field("Avg HR", "bpm", get: session.avgHR.map(Double.init), set: { session.avgHR = $0.map { Int($0) } })
                 field("Max HR", "bpm", get: session.maxHR.map(Double.init), set: { session.maxHR = $0.map { Int($0) } })

@@ -378,9 +378,7 @@ struct XPProgressBar: View {
                     .foregroundStyle(theme.textPrimary)
             }
             VStack(alignment: .leading, spacing: Space.sm) {
-                (Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent)
-                    + Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary)
-                    + Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))
+                Text("\(Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent))\(Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary))\(Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))")
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)

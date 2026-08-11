@@ -649,7 +649,7 @@ extension TrainingAnalytics {
         return YogaOverview(
             sessions: items.count,
             minutes: items.reduce(0) { $0 + (($1.session.durationSeconds ?? 0) / 60) },
-            poses: items.reduce(0) { $0 + ($1.session.posesCompleted ?? 0) },
+            poses: items.reduce(0) { $0 + ($1.session.logicalYogaPosesCompleted ?? 0) },
             topRegions: Array(regions.prefix(6))
         )
     }

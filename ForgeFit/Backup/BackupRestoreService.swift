@@ -89,16 +89,66 @@ enum BackupRestoreService {
         return file
     }
 
-    static func commit(_ file: ForgeFitBackupFile, restorePreferences: Bool, in context: ModelContext) throws -> RestoreResult {
+    /// Restores a backup through one isolated save attempt: every fetch,
+    /// insert, and save runs in a fresh context on the caller's container, so
+    /// a pre-commit failure rolls back ONLY the restore's own pending changes.
+    /// Unrelated unsaved edits already pending in the caller's context survive,
+    /// and no later caller save can commit failed-restore residue (the
+    /// PlanImportService pattern). Preferences are UserDefaults writes with no
+    /// transaction scope of their own, so they land only after the isolated
+    /// store save has succeeded.
+    ///
+    /// `performSave` is the failure-injection seam for tests, replacing the
+    /// restore context's store save (default `save()`). An injected save must
+    /// throw WITHOUT committing. Rollback only undoes an attempt that was never
+    /// persisted. This seam does not claim distributed atomicity if a real
+    /// save spanning multiple persistent stores fails after one store commits;
+    /// that boundary requires split-store runtime validation.
+    static func commit(
+        _ file: ForgeFitBackupFile,
+        restorePreferences: Bool,
+        in context: ModelContext,
+        performSave: ((ModelContext) throws -> Void)? = nil
+    ) throws -> RestoreResult {
+        // A dedicated context makes failure rollback restore-only; unrelated
+        // UI edits already pending in the caller's context are never touched.
+        let restoreContext = ModelContext(context.container)
+        restoreContext.autosaveEnabled = false
+        let save = performSave ?? { try $0.save() }
+
+        var result: RestoreResult
+        do {
+            result = try performCommit(file, in: restoreContext, save: save)
+        } catch {
+            restoreContext.rollback()
+            throw error
+        }
+
+        // UserDefaults writes are outside SwiftData's transaction scope, so
+        // they land only after the isolated store save succeeded — a failed
+        // restore must not leave preferences half-applied either.
+        if restorePreferences {
+            result.restoredPreferences = restore(preferences: file.preferences)
+        }
+        return result
+    }
+
+    /// The restore body, running entirely in `restoreContext` so `commit` can
+    /// roll the whole attempt back with a single `rollback()`.
+    private static func performCommit(
+        _ file: ForgeFitBackupFile,
+        in restoreContext: ModelContext,
+        save: (ModelContext) throws -> Void
+    ) throws -> RestoreResult {
         var result = RestoreResult()
         let userID = ForgeFitDemo.userID
 
         // Dedup keys, mirroring the import pipeline's two secondary sets
         // plus the primary id set only backups can offer.
-        let existing = try context.fetch(FetchDescriptor<WorkoutModel>())
-        let existingIDs = Set(existing.map(\.id))
-        let existingFingerprints = Set(existing.compactMap(\.importFingerprint))
-        let existingExternalKeys = Set(existing.compactMap { workout -> String? in
+        let existing = try restoreContext.fetch(FetchDescriptor<WorkoutModel>())
+        var seenIDs = Set(existing.map(\.id))
+        var seenFingerprints = Set(existing.compactMap(\.importFingerprint))
+        var seenExternalKeys = Set(existing.compactMap { workout -> String? in
             guard let source = workout.externalSource, let external = workout.externalWorkoutID else { return nil }
             return "\(source)|\(external)"
         })
@@ -106,16 +156,28 @@ enum BackupRestoreService {
         // Exercise linkage: resolve against the plan layer; name-match as a
         // fallback; recreate (with the ORIGINAL id) as a last resort so the
         // restored history never points at a missing exercise.
-        var library = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        var library = try restoreContext.fetch(FetchDescriptor<ExerciseLibraryModel>())
         var libraryIDs = Set(library.map(\.id))
 
         for backupWorkout in file.workouts {
-            if existingIDs.contains(backupWorkout.id)
-                || backupWorkout.importFingerprint.map(existingFingerprints.contains) == true
-                || zip(backupWorkout.externalSource, backupWorkout.externalID)
-                    .map({ existingExternalKeys.contains("\($0)|\($1)") }) == true {
+            let externalKey = zip(backupWorkout.externalSource, backupWorkout.externalID)
+                .map { "\($0)|\($1)" }
+            if seenIDs.contains(backupWorkout.id)
+                || backupWorkout.importFingerprint.map(seenFingerprints.contains) == true
+                || externalKey.map(seenExternalKeys.contains) == true {
                 result.skippedDuplicates += 1
                 continue
+            }
+            // Update the seen sets immediately, not only from pre-existing
+            // rows. A hand-edited or merged backup can repeat an id,
+            // fingerprint, or external key inside the same file; accepting
+            // the first occurrence must make every later occurrence a skip.
+            seenIDs.insert(backupWorkout.id)
+            if let fingerprint = backupWorkout.importFingerprint {
+                seenFingerprints.insert(fingerprint)
+            }
+            if let externalKey {
+                seenExternalKeys.insert(externalKey)
             }
 
             var resolved = backupWorkout
@@ -131,7 +193,7 @@ enum BackupRestoreService {
                     recreated.ownerID = userID
                     recreated.needsReview = true
                     recreated.classificationConfidence = 0
-                    context.insert(recreated)
+                    restoreContext.insert(recreated)
                     library.append(recreated)
                     libraryIDs.insert(exerciseID)
                     result.recreatedExercises += 1
@@ -139,26 +201,26 @@ enum BackupRestoreService {
             }
 
             let graph = BackupMapper.workoutModel(from: resolved, userID: userID)
-            context.insert(graph.workout)
+            restoreContext.insert(graph.workout)
             for block in graph.blocks {
-                context.insert(block)
+                restoreContext.insert(block)
                 graph.workout.blocks.append(block)
             }
             for exercise in graph.exercises {
-                context.insert(exercise)
+                restoreContext.insert(exercise)
                 graph.workout.exercises.append(exercise)
             }
             for set in graph.sets {
-                context.insert(set)
+                restoreContext.insert(set)
                 // Sets carry no parent pointer in the DTO — attach by the
                 // exercise their backup parent declared, preserved in order.
             }
             attach(sets: graph.sets, from: resolved, to: graph.exercises)
             for session in graph.sessions {
-                context.insert(session)
+                restoreContext.insert(session)
                 graph.workout.cardioSessions.append(session)
             }
-            attachCardioChildren(graph: graph, in: context)
+            attachCardioChildren(graph: graph, in: restoreContext)
             graph.workout.recomputeTotalVolume()
             result.restoredWorkouts += 1
             result.restoredWorkoutIDs.append(graph.workout.id)
@@ -166,37 +228,37 @@ enum BackupRestoreService {
 
         // Import-batch provenance rows (id-deduped), then a row recording
         // this restore itself.
-        let existingBatchIDs = Set(try context.fetch(FetchDescriptor<WorkoutImportBatchModel>()).map(\.id))
-        for batch in file.importBatches where !existingBatchIDs.contains(batch.id) {
-            context.insert(BackupMapper.batchModel(from: batch, userID: userID))
+        var seenBatchIDs = Set(try restoreContext.fetch(FetchDescriptor<WorkoutImportBatchModel>()).map(\.id))
+        for batch in file.importBatches where seenBatchIDs.insert(batch.id).inserted {
+            restoreContext.insert(BackupMapper.batchModel(from: batch, userID: userID))
         }
 
-        let existingTrackingIDs = Set(
-            try context.fetch(FetchDescriptor<MicrocycleTrackingModel>()).map(\.id)
+        var seenTrackingIDs = Set(
+            try restoreContext.fetch(FetchDescriptor<MicrocycleTrackingModel>()).map(\.id)
         )
-        for tracking in file.microcycleTrackings ?? [] where !existingTrackingIDs.contains(tracking.id) {
-            context.insert(BackupMapper.trackingModel(from: tracking, userID: userID))
+        for tracking in file.microcycleTrackings ?? [] where seenTrackingIDs.insert(tracking.id).inserted {
+            restoreContext.insert(BackupMapper.trackingModel(from: tracking, userID: userID))
             result.restoredMicrocycleTrackings += 1
         }
 
-        let existingWindowIDs = Set(
-            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).map(\.id)
+        var seenWindowIDs = Set(
+            try restoreContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).map(\.id)
         )
-        for window in file.microcycleWindows ?? [] where !existingWindowIDs.contains(window.id) {
-            context.insert(BackupMapper.windowModel(from: window, userID: userID))
+        for window in file.microcycleWindows ?? [] where seenWindowIDs.insert(window.id).inserted {
+            restoreContext.insert(BackupMapper.windowModel(from: window, userID: userID))
             result.restoredMicrocycleWindows += 1
         }
 
-        let existingRestDayIDs = Set(
-            try context.fetch(FetchDescriptor<RestDayModel>()).map(\.id)
+        var seenRestDayIDs = Set(
+            try restoreContext.fetch(FetchDescriptor<RestDayModel>()).map(\.id)
         )
-        for restDay in file.restDays ?? [] where !existingRestDayIDs.contains(restDay.id) {
-            context.insert(BackupMapper.restDayModel(from: restDay, userID: userID))
+        for restDay in file.restDays ?? [] where seenRestDayIDs.insert(restDay.id).inserted {
+            restoreContext.insert(BackupMapper.restDayModel(from: restDay, userID: userID))
             result.restoredRestDays += 1
         }
 
         if result.restoredWorkouts > 0 {
-            context.insert(WorkoutImportBatchModel(
+            restoreContext.insert(WorkoutImportBatchModel(
                 userID: userID,
                 source: "ForgeFit Backup",
                 fileName: "iCloud restore",
@@ -208,11 +270,7 @@ enum BackupRestoreService {
             ))
         }
 
-        if restorePreferences {
-            result.restoredPreferences = restore(preferences: file.preferences)
-        }
-
-        try context.save()
+        try save(restoreContext)
         return result
     }
 
@@ -255,8 +313,11 @@ enum BackupRestoreService {
             switch value {
             case .string(let string):
                 // JSON-blob and CSV-encoded prefs round-trip through strings.
-                if key == "homeQuickStartActions.v1" || key.hasPrefix("plateInventory") || key == WarmupRampConfigStore.key,
-                   let data = Data(base64Encoded: string) {
+                if key == "homeQuickStartActions.v1" || key.hasPrefix("plateInventory") || key == WarmupRampConfigStore.key {
+                    // A hand-edited backup must not change a Data-valued
+                    // preference into a String. Invalid base64 is skipped and
+                    // does not count as restored.
+                    guard let data = Data(base64Encoded: string) else { continue }
                     defaults.set(data, forKey: key)
                 } else if key == "reminderWeekdays" {
                     defaults.set(string.split(separator: ",").compactMap { Int($0) }, forKey: key)

@@ -1,8 +1,8 @@
 # FF-010 — Recovered outdoor session does not restart route collection
 
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P2
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem

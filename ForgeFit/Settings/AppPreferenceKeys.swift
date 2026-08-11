@@ -64,6 +64,8 @@ enum AppPreferenceKeys {
         "morningReadinessLastFiredDay",
         "storeSplitMigration.v1.done",
         "backupLastSuccessAt",
+        BackupScheduler.lastFailureMessageKey,
+        BackupScheduler.lastFailureAtKey,
         HealthWorkoutImporter.lastAutomaticAttemptKey,
         ExperimentNotificationRoute.pendingURLDefaultsKey,
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,

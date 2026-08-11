@@ -63,9 +63,9 @@ enum ProgressionPlanner {
         in context: ModelContext,
         heldExerciseIDs: Set<UUID> = [],
         holdReasons: [UUID: String] = [:],
-        parked: Bool = ProgressionPlanner.isParked
+        parked: Bool? = nil
     ) {
-        guard !parked else { return }
+        guard !(parked ?? isParked) else { return }
         let planned = plan(
             routine: routine, exercises: exercises, in: context,
             excludingWorkoutID: workout.id,
@@ -107,9 +107,9 @@ enum ProgressionPlanner {
         in context: ModelContext,
         heldExerciseIDs: Set<UUID> = [],
         holdReasons: [UUID: String] = [:],
-        parked: Bool = ProgressionPlanner.isParked
+        parked: Bool? = nil
     ) -> [PlannedProgression] {
-        guard !parked else { return [] }
+        guard !(parked ?? isParked) else { return [] }
         return plan(
             routine: routine, exercises: exercises, in: context,
             excludingWorkoutID: nil,

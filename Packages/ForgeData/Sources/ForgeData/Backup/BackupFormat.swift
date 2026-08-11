@@ -1,16 +1,14 @@
 import Foundation
 
 /// ForgeFit's sanitized training-log backup, v1 — the file written to the
-/// user's iCloud Drive (App Store Guideline 5.1.3(ii): no personal health
-/// information in iCloud).
+/// user's iCloud Drive.
 ///
-/// THE SANITIZATION BOUNDARY IS THE TYPE SYSTEM: these DTOs simply have no
-/// properties for health data. There is no `avgHR`, no `activeEnergyKcal`,
-/// no `hrZoneSeconds`, no `readinessAtStart`, no `hkWorkoutUUID`, no `tss`,
-/// no `sampleSeriesJSON`, no `bodyweightKg`, no steps/floors, and no
-/// check-in, wrapped-report, or HR-zone-config types at all — so no code
-/// path can leak what the output type cannot express. Health metrics are
-/// re-attached on restore from the user's own Apple Health store.
+/// The boundary is layered. These DTOs have no direct properties for Health
+/// data (`avgHR`, energy, readiness, HealthKit UUIDs, samples, body weight,
+/// steps/floors, check-ins, or reports). `BackupMapper` additionally removes
+/// HealthKit-imported workouts and values stored in otherwise generic fields
+/// when their provenance is HealthKit. Health metrics are re-attached on
+/// restore from the user's own Apple Health store.
 ///
 /// Field names deliberately mirror the "ForgeFit JSON" import shape where
 /// they overlap, so `WorkoutHistoryImportParser.parseForgeFitJSON` can read

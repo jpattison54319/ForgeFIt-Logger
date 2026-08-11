@@ -1,8 +1,8 @@
 # FF-007 — Reset backup deletion is unstructured and can fail silently
 
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P1 — release gate
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem
@@ -93,7 +93,62 @@ Repository-relative paths and symbols:
 _Workers: update Status, Owner, work log, files changed, tests
 requested/run, and residual risks. The manager alone sets Done and signs off._
 
-- (empty — no work claimed)
+- **2026-08-11 — DeepSeek V4 Flash 0731 — FF-007 (worker).** Implemented the
+  awaited, structured backup deletion:
+  - `BackupExporter` gains an injectable `BackupDeleting` seam and returns a
+    structured `BackupDeletionResult` (`deleted` / `unavailable` / `cancelled`
+    / `failed(reason)`); coordinator and removal errors are surfaced, never
+    swallowed; the success stamp is cleared and status returns to `.idle` only
+    on `.deleted`. Unavailable (signed out / offline / inaccessible container)
+    is treated as UNRESOLVED, not success — the backup may still exist, and
+    stamp and status stay untouched. Failure and cancellation also leave stamp
+    and status untouched.
+  - `AccountResetService.resetAllAppData` is `async` and awaits the deletion
+    before deciding the outcome; it posts `forgeFitAccountResetDidComplete`
+    only when deletion succeeded, and otherwise returns a consequence outcome
+    (`backupDeletionFailed` / `backupDeletionCancelled` /
+    `backupDeletionUnavailable`). `finishResetAfterBackupDeletionFailure`
+    releases the onboarding transition only after the user acknowledges the
+    consequence.
+  - `ResetDataSheet` runs the reset asynchronously with a duplicate-tap guard,
+    cancels its task on disappear, and renders consequence-stated copy
+    ("backup … may still exist … delete it in Files → iCloud Drive → ForgeFit →
+    Backups") with a visible Continue-to-onboarding action after
+    acknowledgement; Cancel is hidden and interactive dismiss disabled while a
+    consequence is pending.
+  - Privacy copy updated in both `ForgeFit/Settings/PrivacyPolicyView.swift`
+    and `docs/privacy-policy.md` (mirrored): reset "also removes the backup
+    and tells you if it couldn't be deleted".
+
+- **Files changed:**
+  - `ForgeFit/Backup/BackupExporter.swift`
+  - `ForgeFit/Settings/AccountResetService.swift`
+  - `ForgeFit/Settings/ResetDataSheet.swift`
+  - `ForgeFit/Settings/PrivacyPolicyView.swift`
+  - `docs/privacy-policy.md`
+  - `ForgeFitTests/BackupDeletionTests.swift` (new)
+
+- **Tests: authored but explicitly NOT run** (file-edits-only session; no
+  shell/builds). `ForgeFitTests/BackupDeletionTests.swift` covers: delete
+  success → reset completes and posts completion; unavailable/failed/cancelled
+  → completion held until acknowledged; notification-ordering (incl. the
+  unavailable acknowledgement path); exporter success/failure/cancellation
+  status + stamp semantics against a temp-directory override; consequence
+  copy; and the mirrored privacy wording. Run with `xcodebuild test
+  -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination
+  'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5'
+  -only-testing:ForgeFitTests/BackupDeletionTests` (redirect to a log file,
+  then check the exit code).
+
+- **Residual simulator/iCloud/device boundaries:** simulators have no iCloud
+  account, so the real ubiquity-container `.unavailable` path and real
+  `NSFileCoordinator` behavior against iCloud Drive are covered only via the
+  injected stub — device validation with a real iCloud account (online,
+  offline, signed-out) per the runtime/hardware section is still required. The
+  privacy-mirror test reads repo files through `#filePath` host paths, so it
+  needs a runner with repo access (simulator/CI) and would fail on a physical
+  device. Full-reset tests transiently clear process-wide defaults and `Fmt`
+  units, mitigated by a snapshot/restore helper and a serialized suite.
 
 ## Reviewer log
 

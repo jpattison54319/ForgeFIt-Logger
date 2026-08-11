@@ -1,6 +1,7 @@
 import ForgeCore
 import ForgeData
 import Foundation
+import Observation
 import SwiftData
 #if canImport(WidgetKit)
 import WidgetKit
@@ -94,8 +95,100 @@ enum WorkoutFinisher {
         return workout.exercises.contains { !($0.notes ?? "").isEmpty }
     }
 
+    /// The payload of one HealthKit workout write, captured before dispatch so
+    /// the seamed path — and the tests that count it — see exactly the values
+    /// the live writer would receive. All fields are Sendable value types
+    /// (Date, Bool, Double?, String?, and String-raw CardioKind).
+    struct HealthKitSaveRequest: Sendable {
+        let start: Date
+        let end: Date
+        let isCardio: Bool
+        let isYoga: Bool
+        let modality: CardioKind?
+        let energyKcal: Double?
+        let distanceMeters: Double?
+        let effortScore: Double?
+        let workoutName: String?
+    }
+
+    /// The terminal side-effect surface of a finished workout, injectable so
+    /// tests can count HealthKit scheduling, Watch relay, and backup dispatch
+    /// without claiming real HealthKit writes. The production default routes
+    /// to the live services and preserves current behavior. Runtime teardown
+    /// (`cancelLiveRuntime`) deliberately stays outside the seam: it is
+    /// internally idempotent, so re-entry cannot duplicate a write.
+    struct FinishEffects {
+        var scheduleHealthKitSave: (HealthKitSaveRequest) -> Void
+        var scheduleHeartRateSamples: ([(date: Date, bpm: Int)]) -> Void
+        var sendWorkoutFinishedToWatch: () -> Void
+        var publishWatchState: () -> Void
+        var noteLogDataChanged: () -> Void
+
+        /// The production implementation, rebuilt fresh per access so no
+        /// caller can share mutable routing state with a test recorder. All
+        /// closures run on the main actor (the module's default isolation)
+        /// exactly like the calls they replace.
+        static var live: FinishEffects {
+            FinishEffects(
+                scheduleHealthKitSave: { request in
+                    Task {
+                        await HealthService.shared.saveWorkout(
+                            from: request.start, to: request.end,
+                            isCardio: request.isCardio,
+                            isYoga: request.isYoga,
+                            modality: request.modality,
+                            energyKcal: request.energyKcal,
+                            distanceMeters: request.distanceMeters,
+                            effortScore: request.effortScore,
+                            workoutName: request.workoutName
+                        )
+                    }
+                },
+                scheduleHeartRateSamples: { samples in
+                    Task { await HealthService.shared.saveHeartRateSamples(samples) }
+                },
+                sendWorkoutFinishedToWatch: {
+                    WatchLink.shared.sendCommand(.workoutFinished)
+                },
+                publishWatchState: {
+                    WatchLink.shared.publishState()
+                },
+                noteLogDataChanged: {
+                    BackupScheduler.shared.noteLogDataChanged()
+                }
+            )
+        }
+    }
+
+    /// Rejects re-entry while a terminal action is in flight (FF-006 UI
+    /// gate) and publishes the held state so Save surfaces can disable their
+    /// commit control and show "Saving…" while held. Each phone Save surface
+    /// holds one so a rapid second tap cannot re-enter the finisher; the
+    /// persisted-state gate in `finish` remains the second, authoritative
+    /// layer. The gate is released only when the finisher/save fails — a
+    /// success keeps it held through dismissal.
+    @MainActor
+    @Observable
+    final class InFlightGate {
+        private(set) var isActive = false
+
+        /// Returns true when the gate was free and is now held.
+        @discardableResult
+        func tryBegin() -> Bool {
+            guard !isActive else { return false }
+            isActive = true
+            return true
+        }
+
+        /// Re-opens the gate (a failed save must stay retryable).
+        func end() {
+            isActive = false
+        }
+    }
+
     /// Returns an error message when the terminal save fails (the workout
-    /// stays live and nothing downstream runs) — `nil` on success. Callers
+    /// stays live and nothing downstream runs). `nil` is both a fresh success
+    /// and a no-op success for an already-finished workout (FF-006). Callers
     /// with a UI surface the message; the watch path is best-effort.
     @MainActor
     @discardableResult
@@ -104,8 +197,25 @@ enum WorkoutFinisher {
         in context: ModelContext,
         liveMetrics: WatchLiveMetrics? = nil,
         watchSavedToHealth: Bool = false,
-        endedAt requestedEnd: Date? = nil
+        endedAt requestedEnd: Date? = nil,
+        effects: FinishEffects? = nil,
+        terminalSave: ((ModelContext) -> String?)? = nil
     ) -> String? {
+        // Per-call injection (FF-006): tests hand in a recorder to count
+        // dispatch, and a terminal-save stand-in to exercise failure. The
+        // defaults keep every existing call site unchanged and, being
+        // per-call, immunity to parallel-test races that a shared global
+        // would invite.
+        let dispatchedEffects = effects ?? .live
+        let dispatchTerminalSave = terminalSave ?? { $0.saveReportingFailure() }
+        // FF-006 exactly-once gate: terminal state that already committed
+        // (finished, or discarded) makes this call a no-op success. `endedAt`
+        // is only persisted by a successful terminal save below — a failed
+        // save rolls back to nil and the workout stays live, so a retry is
+        // still processed. Every downstream side effect (HealthKit, Watch
+        // relay, XP/streak, backup) therefore fires at most once per workout,
+        // while distinct workouts finish independently.
+        guard workout.endedAt == nil, workout.deletedAt == nil else { return nil }
         if let blocker = conditioningTargetBlocker(in: workout) {
             return blocker
         }
@@ -121,12 +231,18 @@ enum WorkoutFinisher {
         WorkoutEffortPolicy.prepareForFinish(workout)
         let now = max(workout.startedAt, min(requestedEnd ?? .now, .now))
         let workoutExercisesByID = Dictionary(workout.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        // The deferred HealthKit fills below outlive this call. If the
-        // container deinits first (unit tests; theoretical shutdown races),
-        // its context resets and every captured model is destroyed — touching
-        // one is a fatal error. Each deferred Task retains the container so
-        // the store outlives the fill.
+        // Deferred fills retain the container but never a context or model.
+        // They carry IDs/value snapshots and refetch after each HealthKit await
+        // so reset or history deletion cannot leave a stale model reference.
         let container = context.container
+        // Build deferred work while terminal models are being finalized, but
+        // do not launch any task until the one terminal save succeeds. A
+        // failed save must leave no enrichment task racing the rollback.
+        var deferredSessionEnrichments: [() -> Void] = []
+        // Yoga completion checkpoints are transaction companions: retain
+        // them through rollback, and remove them only after the terminal
+        // SwiftData save commits.
+        var yogaCheckpointsPendingCommit = Set<UUID>()
         // BLE-monitor readings buffered for this session — captured now,
         // before endLiveSurfaces() drops the buffer, for the deferred fills
         // and the HealthKit write below.
@@ -164,29 +280,40 @@ enum WorkoutFinisher {
                 // flexibility credit for skipped practice. (Matches cardio,
                 // whose non-live sessions are left alone.)
                 guard wasLive || session.sourceDevice == CardioSessionModel.yogaManualSource else { continue }
+                // A live class mid-hold records the hold in progress exactly
+                // as Skip does, so finishing the surrounding workout cannot
+                // drop partial credit (FF-013). The runner does it while
+                // alive; YogaSessionCompletion.complete reconciles the
+                // terminated-app case where no runner exists.
+                YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
                 YogaSessionCompletion.complete(
                     session: session,
                     workoutExercise: workoutExercise,
                     exercise: exercise,
                     context: context,
                     endedAt: now,
-                    useClockDuration: wasLive
+                    useClockDuration: wasLive,
+                    clearCheckpoint: false
                 )
+                yogaCheckpointsPendingCommit.insert(session.id)
                 guard wasLive else { continue }
                 let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
-                Task { @MainActor in
-                    defer { withExtendedLifetime(container) {} }
-                    let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: .other)
-                    if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                    if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                    if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                    // Distance is meaningless on the mat — a same-window walk
-                    // sample must not become "yoga distance".
-                    // Provisional estimate; finalize() replaces it with the
-                    // measured distribution when the HR series has coverage.
-                    session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                    try? context.save()
-                    await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: context)
+                let enrichmentRequest = DeferredWorkoutEnrichmentCoordinator.SessionRequest(
+                    sessionID: session.id,
+                    start: start,
+                    end: now,
+                    modality: .other,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: false,
+                    providesGPSDistance: false,
+                    hadManualIntervalPlan: false
+                )
+                deferredSessionEnrichments.append {
+                    DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                        enrichmentRequest,
+                        container: container
+                    )
                 }
             } else if session.liveStartedAt != nil {
                 let workoutExercise = session.workoutExerciseID.flatMap { workoutExercisesByID[$0] }
@@ -202,20 +329,22 @@ enum WorkoutFinisher {
                 let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
                 let hadManualIntervalPlan = workoutExercise
                     .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
-                Task { @MainActor in
-                    defer { withExtendedLifetime(container) {} }
-                    let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: kind)
-                    if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                    if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                    if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                    if let dist = snap.distanceMeters, !(providesGPSDistance && session.routePoints.count >= 2) {
-                        session.distanceMeters = dist
-                    }
-                    // Provisional estimate; finalize() replaces it with the
-                    // measured distribution when the HR series has coverage.
-                    session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                    try? context.save()
-                    await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: context)
+                let enrichmentRequest = DeferredWorkoutEnrichmentCoordinator.SessionRequest(
+                    sessionID: session.id,
+                    start: start,
+                    end: now,
+                    modality: kind,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: true,
+                    providesGPSDistance: providesGPSDistance,
+                    hadManualIntervalPlan: hadManualIntervalPlan
+                )
+                deferredSessionEnrichments.append {
+                    DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                        enrichmentRequest,
+                        container: container
+                    )
                 }
             }
         }
@@ -229,24 +358,24 @@ enum WorkoutFinisher {
         }
         workout.endedAt = now
         workout.recomputeTotalVolume()
-        XPService.awardXPIfNeeded(for: workout, in: context, now: now)
+        XPService.awardXPIfNeeded(for: workout, in: context, now: now, persist: false)
         // Terminal save: if this fails, NOTHING committed (rollback undid
         // endedAt/XP/cardio completions) — the workout is still live, so skip
         // every downstream write and let the caller surface the failure.
-        if let failure = context.saveReportingFailure() {
+        if let failure = dispatchTerminalSave(context) {
             return failure
         }
+        yogaCheckpointsPendingCommit.forEach {
+            YogaRuntimeCheckpointStore.clear(sessionID: $0)
+        }
+        deferredSessionEnrichments.forEach { $0() }
 
         let start = workout.startedAt
         if workout.avgHR == nil || workout.maxHR == nil || workout.activeEnergyKcal == nil {
-            Task { @MainActor in
-                defer { withExtendedLifetime(container) {} }
-                let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: .other)
-                if workout.avgHR == nil, let hr = snap.avgHR { workout.avgHR = hr }
-                if workout.maxHR == nil, let mx = snap.maxHR { workout.maxHR = mx }
-                if workout.activeEnergyKcal == nil, let e = snap.activeEnergyKcal { workout.activeEnergyKcal = e }
-                try? context.save()
-            }
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleWorkout(
+                .init(workoutID: workout.id, start: start, end: now),
+                container: container
+            )
         }
 
         // 3. Write to Apple Health — skipped when the watch's live workout
@@ -292,33 +421,30 @@ enum WorkoutFinisher {
                 guard !values.isEmpty else { return nil }
                 return values.reduce(0, +) / Double(values.count)
             }()
-            Task {
-                await HealthService.shared.saveWorkout(
-                    from: start, to: now,
-                    isCardio: (pureSessions && !pureYoga) || pureConditioningBlocks,
-                    isYoga: pureYoga,
-                    modality: cardioKind ?? (pureConditioningBlocks ? .other : nil),
-                    energyKcal: energy, distanceMeters: distance,
-                    effortScore: effortScore,
-                    workoutName: workout.title
-                )
-            }
+            dispatchedEffects.scheduleHealthKitSave(HealthKitSaveRequest(
+                start: start, end: now,
+                isCardio: (pureSessions && !pureYoga) || pureConditioningBlocks,
+                isYoga: pureYoga,
+                modality: cardioKind ?? (pureConditioningBlocks ? .other : nil),
+                energyKcal: energy, distanceMeters: distance,
+                effortScore: effortScore,
+                workoutName: workout.title
+            ))
         }
         // BLE-monitor heart rate goes to Health under the same toggle, and is
         // skipped when the watch streamed (its session already wrote HR —
         // writing ours too would double-plot every graph).
         if writeEnabled && !watchSavedToHealth && !bleSamples.isEmpty {
-            let samples = bleSamples.map { (date: $0.date, bpm: $0.bpm) }
-            Task { await HealthService.shared.saveHeartRateSamples(samples) }
+            dispatchedEffects.scheduleHeartRateSamples(bleSamples.map { (date: $0.date, bpm: $0.bpm) })
         }
 
         // Tell the watch the session is over and refresh its snapshot.
-        WatchLink.shared.sendCommand(.workoutFinished)
-        WatchLink.shared.publishState()
+        dispatchedEffects.sendWorkoutFinishedToWatch()
+        dispatchedEffects.publishWatchState()
         cancelLiveRuntime()
         // A finished workout is the log change that matters most — refresh
         // the sanitized iCloud backup (debounced).
-        BackupScheduler.shared.noteLogDataChanged()
+        dispatchedEffects.noteLogDataChanged()
         return nil
     }
 
@@ -328,6 +454,9 @@ enum WorkoutFinisher {
     @MainActor
     @discardableResult
     static func discard(_ workout: WorkoutModel, in context: ModelContext) -> String? {
+        // FF-006 repeat-discard no-op: an already-tombstoned workout must not
+        // re-run the Watch relay or runtime teardown for one user action.
+        guard workout.deletedAt == nil else { return nil }
         let now = Date()
         workout.updatedAt = now
         workout.deletedAt = now
@@ -375,7 +504,7 @@ enum WorkoutFinisher {
         HRZoneGuard.shared.deactivate()
         PaceGuard.shared.deactivate()
         PaceAnnouncer.shared.stop()
-        YogaFlowRunnerHub.shared.stop()
+        YogaFlowRunnerHub.shared.stop(clearCheckpoint: true)
         NotificationScheduler.shared.cancelWorkoutCues()
         LiveMetricsHub.shared.endSession()
         BLEHeartRateService.shared.stopWorkoutConnection()
@@ -392,7 +521,7 @@ enum WorkoutFinisher {
         CardioGoalAnnouncer.shared.cancel(sessionID: session.id)
         CardioRouteRecorder.shared.cancel(sessionID: session.id)
         IntervalRunnerHub.shared.stop(for: session.id)
-        YogaFlowRunnerHub.shared.stop(for: session.id)
+        YogaFlowRunnerHub.shared.stop(for: session.id, clearCheckpoint: true)
         guard session.liveStartedAt != nil, session.endedAt == nil else { return }
         HRZoneGuard.shared.deactivate()
         PaceGuard.shared.deactivate()

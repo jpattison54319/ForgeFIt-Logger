@@ -34,8 +34,8 @@ public enum ForgeDataSchema {
     /// The LOCAL-ONLY training log. These models may contain Health-derived
     /// fields (heart rate, energy, zones, readiness, body weight, check-ins),
     /// so they never sync to CloudKit. Cross-device continuity comes from
-    /// the sanitized iCloud Drive backup (health fields stripped by type)
-    /// plus re-enrichment from the user's own Apple Health store.
+    /// the sanitized iCloud Drive backup (DTO allow-list plus provenance
+    /// filtering) and re-enrichment from the user's own Apple Health store.
     public static var logModels: [any PersistentModel.Type] {
         [
             WorkoutModel.self,
@@ -575,6 +575,7 @@ public final class RoutineSetModel {
             }
         }
     }
+
 }
 
 @Model
@@ -1063,6 +1064,10 @@ public final class SetModel {
         }
     }
 
+    public var supersetProgress: SupersetSetProgress {
+        SupersetSetProgress(id: id, setType: setType, isComplete: completedAt != nil)
+    }
+
     public var weightMode: WeightMode {
         get { WeightMode(rawValue: weightModeRaw) ?? .external }
         set {
@@ -1202,6 +1207,19 @@ public final class SetModel {
     }
 }
 
+/// Provenance for the aggregate distance stored on a cardio session. The log
+/// store is local-only, but the sanitized iCloud backup uses this marker to
+/// omit values filled from HealthKit while preserving user/machine, route,
+/// Watch-input, and user-directed-import distances.
+public enum CardioDistanceSource: String, Codable, Sendable {
+    case userEntered
+    case route
+    case watchInput
+    case importedFile
+    case healthKit
+    case restoredBackup
+}
+
 @Model
 public final class CardioSessionModel {
     public var id: UUID = UUID()
@@ -1223,6 +1241,7 @@ public final class CardioSessionModel {
     public var sourceDevice: String?
     public var durationSeconds: Int?
     public var distanceMeters: Double?
+    public var distanceSourceRaw: String?
     public var activeEnergyKcal: Double?
     public var avgHR: Int?
     public var maxHR: Int?
@@ -1253,7 +1272,9 @@ public final class CardioSessionModel {
     /// Per-region seconds-under-stretch snapshot (JSON `[String: Int]`),
     /// computed once at finish so analytics never re-derive from splits.
     public var flexibilityExposureJSON: String?
-    /// Number of pose holds completed in a guided class.
+    /// Number of logical poses completed in a guided class. Builds predating
+    /// the logical-pose policy may contain an expanded Left/Right hold count;
+    /// `logicalYogaPosesCompleted` derives the corrected value from splits.
     public var posesCompleted: Int?
     /// Swimming contract (nil on every other modality). Pool length ×
     /// lengths is the distance source of truth for pool swims; /100 m pace
@@ -1294,6 +1315,7 @@ public final class CardioSessionModel {
         sourceDevice: String? = nil,
         durationSeconds: Int? = nil,
         distanceMeters: Double? = nil,
+        distanceSource: CardioDistanceSource? = nil,
         activeEnergyKcal: Double? = nil,
         avgHR: Int? = nil,
         maxHR: Int? = nil,
@@ -1337,6 +1359,7 @@ public final class CardioSessionModel {
         self.sourceDevice = sourceDevice
         self.durationSeconds = durationSeconds
         self.distanceMeters = distanceMeters
+        self.distanceSourceRaw = distanceSource?.rawValue
         self.activeEnergyKcal = activeEnergyKcal
         self.avgHR = avgHR
         self.maxHR = maxHR
@@ -1375,9 +1398,35 @@ public final class CardioSessionModel {
     public var isConditioningSession: Bool { modality == Self.conditioningModality }
     public var isWorkoutBlockSession: Bool { workoutBlockID != nil }
 
+    public var distanceSource: CardioDistanceSource? {
+        get { distanceSourceRaw.flatMap(CardioDistanceSource.init(rawValue:)) }
+        set { distanceSourceRaw = newValue?.rawValue }
+    }
+
     public var yogaStyle: YogaStyle? {
         get { yogaStyleRaw.flatMap(YogaStyle.init(rawValue:)) }
         set { yogaStyleRaw = newValue?.rawValue }
+    }
+
+    /// Canonical user-facing pose count. Split labels are authoritative for
+    /// legacy and partial sessions; duplicate split indexes are ignored so a
+    /// replayed completion cannot inflate the result.
+    public var logicalYogaPosesCompleted: Int? {
+        var seenIndexes = Set<Int>()
+        let labels = splits
+            .sorted {
+                if $0.index != $1.index { return $0.index < $1.index }
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            .compactMap { split -> String? in
+                guard seenIndexes.insert(split.index).inserted,
+                      let label = split.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !label.isEmpty else { return nil }
+                return label
+            }
+        guard !labels.isEmpty else { return posesCompleted }
+        return YogaPoseCounting.logicalCount(labels: labels)
     }
 
     /// The `modality` string marking a yoga session (vs a `CardioKind` raw).

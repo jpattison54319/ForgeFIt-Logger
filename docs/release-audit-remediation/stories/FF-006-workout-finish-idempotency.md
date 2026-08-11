@@ -1,8 +1,8 @@
 # FF-006 — Workout Finish Idempotency
 
-**Status:** Planned
+**Status:** In Review
 **Severity:** P1-risk
-**Owner:** Unassigned
+**Owner:** Codex direct remediation
 **Source audit date:** 2026-08-10
 
 ## Problem

@@ -8,6 +8,56 @@ import SwiftData
 import UIKit
 #endif
 
+/// Durable, local execution state for one guided hold. This is deliberately
+/// transient app state rather than workout history: it exists only so an app
+/// relaunch or a Watch-initiated finish can distinguish time actually held
+/// from time spent paused or with another timed segment active.
+nonisolated struct YogaRuntimeCheckpoint: Codable, Equatable, Sendable {
+    let stepIndex: Int
+    let elapsedSeconds: Int
+    let isPaused: Bool
+    let capturedAt: Date
+
+    func elapsed(at date: Date, cappedAt maximum: Int) -> Int {
+        let runningDelta = isPaused ? 0 : max(0, Int(date.timeIntervalSince(capturedAt)))
+        return min(maximum, max(0, elapsedSeconds + runningDelta))
+    }
+}
+
+/// Per-session UserDefaults storage survives process death without adding a
+/// CloudKit/SwiftData schema field for runtime-only state. Completion and
+/// discard clear it; stopping a runner to switch timed segments freezes it.
+nonisolated enum YogaRuntimeCheckpointStore {
+    static let keyPrefix = "forgefit.yoga.runtime.v1."
+
+    static func load(
+        sessionID: UUID,
+        defaults: UserDefaults = .standard
+    ) -> YogaRuntimeCheckpoint? {
+        guard let data = defaults.data(forKey: keyPrefix + sessionID.uuidString) else { return nil }
+        return try? JSONDecoder().decode(YogaRuntimeCheckpoint.self, from: data)
+    }
+
+    static func save(
+        _ checkpoint: YogaRuntimeCheckpoint,
+        sessionID: UUID,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let data = try? JSONEncoder().encode(checkpoint) else { return }
+        defaults.set(data, forKey: keyPrefix + sessionID.uuidString)
+    }
+
+    static func clear(sessionID: UUID, defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: keyPrefix + sessionID.uuidString)
+    }
+
+    static func clearAll(defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(keyPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+}
+
 /// App-wide handle to the (single) running guided yoga class so the watch
 /// snapshot, Live Activity, the logger card, and the full-screen player all
 /// see the same pose state. Mutually exclusive with a running interval
@@ -35,17 +85,41 @@ final class YogaFlowRunnerHub {
                 .filter { 0..<runner.steps.count ~= $0 }
         )
         let startIndex = (0..<runner.steps.count).first { !completedIndexes.contains($0) } ?? runner.steps.count
-        runner.start(at: startIndex)
+        if startIndex == runner.steps.count {
+            // Every persisted hold already exists. Reopening this uncommitted
+            // session must not replay the completion clip or write guidance
+            // history a second time (FF-014).
+            runner.restoreFinishedSilently()
+        } else {
+            runner.restoreOrStart(at: startIndex, completedIndexes: completedIndexes)
+        }
     }
 
     func runner(for sessionID: UUID) -> YogaFlowRunner? {
         runner?.sessionID == sessionID ? runner : nil
     }
 
-    func stop(for sessionID: UUID? = nil) {
+    func stop(for sessionID: UUID? = nil, clearCheckpoint: Bool = false) {
         if let sessionID, runner?.sessionID != sessionID { return }
+        let resolvedSessionID = sessionID ?? runner?.sessionID
         runner?.stop()
         runner = nil
+        if clearCheckpoint, let resolvedSessionID {
+            YogaRuntimeCheckpointStore.clear(sessionID: resolvedSessionID)
+        }
+    }
+
+    /// Complete a running class mid-hold: record the current partial hold with
+    /// the same credit Skip applies, then stop the runner without issuing
+    /// guidance. Completion callers follow up with
+    /// `YogaSessionCompletion.complete`, which derives pose count, exposure,
+    /// and history from the recorded split, and reconciles the interrupted
+    /// hold itself when no runner exists (app terminated mid-class). Deletion
+    /// and discard paths keep using `stop(for:)`, which never credits.
+    func complete(for sessionID: UUID, persist: Bool = true) {
+        guard let runner, runner.sessionID == sessionID else { return }
+        runner.complete(persist: persist)
+        self.runner = nil
     }
 }
 
@@ -149,6 +223,58 @@ final class YogaFlowRunner {
         beginStep(at: max(0, index), announceEntry: true)
     }
 
+    /// Restore the exact current hold after process death. Running time since
+    /// the last checkpoint counts; paused time does not. If the hold elapsed
+    /// while the app was gone, credit that one hold at its plan cap and start
+    /// the next at zero rather than pretending guidance advanced off-process.
+    func restoreOrStart(at fallbackIndex: Int, completedIndexes: Set<Int>) {
+        guard let checkpoint = YogaRuntimeCheckpointStore.load(sessionID: sessionID),
+              steps.indices.contains(checkpoint.stepIndex),
+              !completedIndexes.contains(checkpoint.stepIndex) else {
+            beginStep(at: fallbackIndex, announceEntry: true)
+            return
+        }
+
+        let step = steps[checkpoint.stepIndex]
+        let now = Date.now
+        let elapsed = checkpoint.elapsed(at: now, cappedAt: step.seconds)
+        currentIndex = checkpoint.stepIndex
+        if elapsed >= step.seconds {
+            let endedAt = checkpoint.capturedAt.addingTimeInterval(
+                TimeInterval(max(0, step.seconds - checkpoint.elapsedSeconds))
+            )
+            stepStartedAt = endedAt.addingTimeInterval(-TimeInterval(step.seconds))
+            recordSplit(upTo: endedAt, durationSeconds: step.seconds)
+            beginStep(at: checkpoint.stepIndex + 1, announceEntry: true)
+        } else if checkpoint.isPaused {
+            isPaused = true
+            pausedRemaining = max(1, step.seconds - elapsed)
+            stepStartedAt = now.addingTimeInterval(-TimeInterval(elapsed))
+            stepEndsAt = now.addingTimeInterval(TimeInterval(pausedRemaining))
+            persistCheckpoint(at: now)
+            _ = guidancePlan(for: step, index: checkpoint.stepIndex)
+            WatchLink.shared.publishState()
+        } else {
+            isPaused = false
+            stepStartedAt = now.addingTimeInterval(-TimeInterval(elapsed))
+            stepEndsAt = now.addingTimeInterval(TimeInterval(step.seconds - elapsed))
+            persistCheckpoint(at: now)
+            WatchLink.shared.publishState()
+            scheduleAdvance(playFromStart: false)
+        }
+    }
+
+    /// All holds were already persisted before this runner was constructed.
+    /// Restore terminal presentation state without terminal side effects.
+    func restoreFinishedSilently() {
+        advanceTask?.cancel()
+        advanceTask = nil
+        currentIndex = steps.count
+        isFinished = true
+        isPaused = false
+        YogaRuntimeCheckpointStore.clear(sessionID: sessionID)
+    }
+
     /// Skip forward to the next hold (records the current split short).
     func skip() {
         guard !isFinished else { return }
@@ -161,6 +287,47 @@ final class YogaFlowRunner {
         } else {
             beginStep(at: currentIndex + 1, announceEntry: true)
         }
+    }
+
+    /// Complete the class now instead of advancing: the hold in progress is
+    /// credited with the seconds actually held — identical partial-credit
+    /// semantics to `skip()` — then guidance stops and no further hold
+    /// begins. The session-completion pipeline that every caller runs
+    /// afterwards derives pose count, exposure, and history from the recorded
+    /// split. Distinct from `finishFlow()`, which runs only when every planned
+    /// hold actually completed.
+    func complete(persist: Bool = true) {
+        guard !isFinished else { return }
+        advanceTask?.cancel()
+        advanceTask = nil
+        let now = Date.now
+        // `recordSplit` guarantees at least one credited second. Freeze the
+        // same value in the checkpoint so a failed outer transaction can
+        // roll the split back and reconstruct it exactly on retry.
+        let creditedSeconds = max(1, currentElapsedSeconds(at: now))
+        let completedStepIndex = currentIndex
+        YogaGuidanceAudio.shared.stop(clearCaption: true)
+        recordSplit(
+            upTo: now,
+            durationSeconds: creditedSeconds,
+            persist: persist
+        )
+        currentIndex = steps.count
+        isFinished = true
+        if persist {
+            YogaRuntimeCheckpointStore.clear(sessionID: sessionID)
+        } else {
+            YogaRuntimeCheckpointStore.save(
+                YogaRuntimeCheckpoint(
+                    stepIndex: completedStepIndex,
+                    elapsedSeconds: creditedSeconds,
+                    isPaused: true,
+                    capturedAt: now
+                ),
+                sessionID: sessionID
+            )
+        }
+        WatchLink.shared.publishState()
     }
 
     /// Go back to the start of the current hold, or the previous one when
@@ -180,11 +347,14 @@ final class YogaFlowRunner {
 
     func pause() {
         guard !isPaused, !isFinished else { return }
+        let now = Date.now
+        let elapsed = currentElapsedSeconds(at: now)
         isPaused = true
-        pausedRemaining = max(1, Int(stepEndsAt.timeIntervalSinceNow.rounded()))
+        pausedRemaining = max(1, currentSeconds - elapsed)
         advanceTask?.cancel()
         advanceTask = nil
         YogaGuidanceAudio.shared.stop()
+        persistCheckpoint(at: now)
         WatchLink.shared.publishState()
     }
 
@@ -194,11 +364,22 @@ final class YogaFlowRunner {
         // Re-anchor the wall clock to the captured remainder.
         stepStartedAt = Date().addingTimeInterval(TimeInterval(pausedRemaining - currentSeconds))
         stepEndsAt = Date().addingTimeInterval(TimeInterval(pausedRemaining))
+        persistCheckpoint()
         scheduleAdvance()
         WatchLink.shared.publishState()
     }
 
     func stop() {
+        // A stopped runner may be resumed later (for example after switching
+        // to an interval block). Freeze the checkpoint so that off-runner wall
+        // time cannot become yoga hold credit.
+        if !isFinished, !isPaused {
+            let now = Date.now
+            let elapsed = currentElapsedSeconds(at: now)
+            isPaused = true
+            pausedRemaining = max(1, currentSeconds - elapsed)
+            persistCheckpoint(at: now)
+        }
         advanceTask?.cancel()
         advanceTask = nil
         YogaGuidanceAudio.shared.stop(clearCaption: true)
@@ -208,12 +389,28 @@ final class YogaFlowRunner {
         currentStep?.seconds ?? 0
     }
 
-    private func currentElapsedSeconds() -> Int {
+    private func currentElapsedSeconds(at date: Date = .now) -> Int {
         if isPaused {
             max(0, currentSeconds - pausedRemaining)
         } else {
-            max(0, Int(Date.now.timeIntervalSince(stepStartedAt)))
+            min(currentSeconds, max(0, Int(date.timeIntervalSince(stepStartedAt))))
         }
+    }
+
+    private func persistCheckpoint(at date: Date = .now) {
+        guard !isFinished, steps.indices.contains(currentIndex) else {
+            YogaRuntimeCheckpointStore.clear(sessionID: sessionID)
+            return
+        }
+        YogaRuntimeCheckpointStore.save(
+            YogaRuntimeCheckpoint(
+                stepIndex: currentIndex,
+                elapsedSeconds: currentElapsedSeconds(at: date),
+                isPaused: isPaused,
+                capturedAt: date
+            ),
+            sessionID: sessionID
+        )
     }
 
     private func beginStep(at index: Int, announceEntry: Bool) {
@@ -227,6 +424,7 @@ final class YogaFlowRunner {
         let step = steps[index]
         stepStartedAt = Date()
         stepEndsAt = stepStartedAt.addingTimeInterval(TimeInterval(step.seconds))
+        persistCheckpoint(at: stepStartedAt)
 
         let guidancePlan = guidancePlan(for: step, index: index)
         // The watch mirrors pose state from the phone snapshot — push every
@@ -248,6 +446,7 @@ final class YogaFlowRunner {
         stepEndsAt = now.addingTimeInterval(TimeInterval(step.seconds))
         pausedRemaining = step.seconds
         isPaused = true
+        persistCheckpoint(at: now)
         _ = guidancePlan(for: step, index: index)
         WatchLink.shared.publishState()
     }
@@ -296,7 +495,22 @@ final class YogaFlowRunner {
         advanceTask = nil
         currentIndex = steps.count
         isFinished = true
-        session.posesCompleted = steps.count
+        // Keep a full final-hold checkpoint until the surrounding session's
+        // terminal save commits. If the last split save failed and the app is
+        // terminated, relaunch can reconstruct that final hold instead of
+        // silently losing it.
+        if let finalStep = steps.last {
+            YogaRuntimeCheckpointStore.save(
+                YogaRuntimeCheckpoint(
+                    stepIndex: finalStep.id,
+                    elapsedSeconds: finalStep.seconds,
+                    isPaused: true,
+                    capturedAt: .now
+                ),
+                sessionID: sessionID
+            )
+        }
+        session.posesCompleted = plan.steps.count
         try? context.save()
         let completion = YogaGuidancePlanner.completionClip(
             sessionSeed: guidanceSeed,
@@ -349,7 +563,11 @@ final class YogaFlowRunner {
 
     /// Persist the completed hold as a split on the session — the raw
     /// material for per-region flexibility analytics.
-    private func recordSplit(upTo end: Date, durationSeconds overrideDuration: Int? = nil) {
+    private func recordSplit(
+        upTo end: Date,
+        durationSeconds overrideDuration: Int? = nil,
+        persist: Bool = true
+    ) {
         guard currentIndex < steps.count else { return }
         let step = steps[currentIndex]
         let duration = max(1, overrideDuration ?? Int(end.timeIntervalSince(stepStartedAt)))
@@ -367,7 +585,7 @@ final class YogaFlowRunner {
         split.cardioSession = session
         context.insert(split)
         session.splits.append(split)
-        try? context.save()
+        if persist { try? context.save() }
     }
 
     /// Distinct patterns: light tap for switching sides of the same pose,

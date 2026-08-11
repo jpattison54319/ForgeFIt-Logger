@@ -631,7 +631,11 @@ struct ExerciseDetailView: View {
                             .foregroundStyle(theme.textPrimary)
                         Text(isYoga
                              ? CardioExerciseStats.yogaSummary(for: entry)
-                             : CardioExerciseStats.summary(for: entry, kind: cardioKind))
+                             : CardioExerciseStats.summary(
+                                for: entry,
+                                kind: cardioKind,
+                                distanceUnit: Fmt.distanceUnit
+                             ))
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textSecondary)
                     }

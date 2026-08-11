@@ -2,9 +2,9 @@
 
 - **ID:** FF-017
 - **Title:** Relative history filter midnight invalidation
-- **Status:** Planned
+- **Status:** In Review
 - **Severity:** P3
-- **Owner:** Unassigned
+- **Owner:** Codex direct remediation
 - **Source audit date:** 2026-08-10
 
 ## Problem
@@ -82,7 +82,61 @@ deterministically testable across a simulated midnight transition.
 
 _To be updated by the implementing worker as work proceeds: status transitions, notes, decisions._
 
-- (empty — planned only; no work performed)
+- 2026-08-11 — DeepSeek V4 Flash 0731 — FF-017: Claimed (Planned → In Progress) and
+  implemented over two sessions. Day-aware relative-filter memoization behind an
+  injected now/calendar policy plus a real midnight state tick in the view. Tests are
+  authored but were NOT executed (file-edits-only sessions: no shell/test/build/git).
+  Not verified; not Done — awaiting review.
+
+  Files changed:
+
+  - `ForgeFit/Profile/WorkoutHistorySearch.swift` — added
+    `WorkoutHistoryQuery.DateFilter.isRelativeToNow` (true only for
+    last7Days/last30Days/last90Days/thisYear),
+    `WorkoutHistoryQueryEngine.memoKey(fingerprint:query:now:calendar:)` (appends
+    `calendar.startOfDay(for: now)` to the memo key ONLY for relative filters;
+    `all`/`month`/`custom` keep the byte-identical legacy key, so static memoization
+    never churns), and
+    `WorkoutHistoryQueryEngine.nextDayBoundary(after:calendar:)` (calendar-anchored
+    next local midnight, DST/timezone-correct, for the tick).
+  - `ForgeFit/Profile/WorkoutHistoryView.swift` — `filtered` now keys the memo via
+    `memoKey` and runs the engine with the SAME injected `now` (`@State`) and
+    `Calendar.autoupdatingCurrent`, so key and value share one instant. A
+    cancellation-safe `.task` loop sleeps to the exact next local midnight
+    (re-anchoring each iteration, checking `Task.isCancelled` before every sleep and
+    after it — no post-cancel write, no rescheduled sleep) and refreshes `now`,
+    re-running the body so the day-aware key is re-derived AT the boundary. A second
+    `.onChange(of: scenePhase)` handler refreshes `now` on every return to `.active`,
+    covering a midnight, timezone, or clock change that happened while the app was
+    suspended.
+  - `ForgeFitTests/WorkoutHistorySearchTests.swift` — new "Relative-window memo
+    policy (FF-017)" section with 9 deterministic, injected-clock tests: relative
+    memo keys shift at midnight but not within a day (all four relative filters);
+    static keys are clock-independent (all/month/custom); next-local-midnight;
+    nextDayBoundary across the US DST fall-back; relative filter recomputes across
+    midnight with zero query/fingerprint change (via a `Memo` mirroring the view);
+    static custom filter memo holds across body re-evaluations AND midnight (one
+    compute); relative filter stays memoized within a calendar day; 30/90-day window
+    boundary include/exclude semantics; this-year window across the year boundary.
+
+  Tests explicitly NOT run (cannot claim green): the entire
+  `ForgeFitTests/WorkoutHistorySearchTests` suite (9 new + existing) — no
+  shell/test/build was permitted in these sessions. Run it on a simulator pinned to
+  OS=26.5 (see AGENTS.md) before review.
+
+  Residual timezone/DST risks (accepted, behavioral):
+  - The tick re-anchors to `Calendar.autoupdatingCurrent` each iteration, but the
+    sleep itself is a fixed-duration `Task.sleep`; after a fall-back DST transition
+    the next wake can land up to ~23h after the boundary (the following midnight
+    re-syncs it).
+  - A timezone change while the user stays in the foreground is only reflected at
+    the next body re-evaluation (autoupdatingCurrent is read live; the scenePhase
+    refresh only runs when the app re-activates).
+  - A manual clock change while remaining in the foreground waits for the next
+    scheduled wake (up to ~24h worst case); on return from background it is caught
+    immediately by the scenePhase handler.
+  - The four relative windows deliberately keep the pre-fix `[now − N days, now]`
+    semantics — changing window meaning was an explicit non-goal.
 
 ## Reviewer log
 

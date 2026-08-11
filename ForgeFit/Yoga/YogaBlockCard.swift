@@ -25,6 +25,7 @@ struct YogaBlockCard: View {
     @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var importing = false
     @State private var activeSegmentMessage: String?
+    @State private var completionSaveError: String?
 
     private var plan: YogaFlowPlan? {
         YogaFlowPlan.decode(from: block.planSnapshotJSON)
@@ -75,6 +76,14 @@ struct YogaBlockCard: View {
         )) {
         } message: {
             Text(activeSegmentMessage ?? "Complete the current segment first.")
+        }
+        .alert("Yoga Wasn't Saved", isPresented: Binding(
+            get: { completionSaveError != nil },
+            set: { if !$0 { completionSaveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { completionSaveError = nil }
+        } message: {
+            Text("\(completionSaveError ?? "") Your yoga session is still active. Resume it and try completing again.")
         }
         .accessibilityIdentifier("live-yoga-block")
     }
@@ -202,6 +211,9 @@ struct YogaBlockCard: View {
             }
             .buttonStyle(PressableButtonStyle())
             .accessibilityIdentifier("complete-yoga-block")
+            Text("Completing counts the hold you're in.")
+                .font(.label)
+                .foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -214,7 +226,7 @@ struct YogaBlockCard: View {
             }
             HStack {
                 StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
-                StatColumn(label: "Poses", value: session.posesCompleted.map(String.init) ?? "—")
+                StatColumn(label: "Poses", value: session.logicalYogaPosesCompleted.map(String.init) ?? "—")
                 StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
                 StatColumn(label: "kcal", value: session.activeEnergyKcal.map { String(Int($0)) } ?? "—")
             }
@@ -357,7 +369,9 @@ struct YogaBlockCard: View {
 
     private func complete(_ session: CardioSessionModel) {
         guard let workoutExercise else { return }
-        YogaFlowRunnerHub.shared.stop(for: session.id)
+        // Record the hold in progress before stopping (Skip's partial credit,
+        // FF-013); YogaSessionCompletion.complete derives the rest.
+        YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
         showPlayer = false
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
@@ -368,10 +382,16 @@ struct YogaBlockCard: View {
             exercise: exercise,
             context: modelContext,
             endedAt: end,
-            useClockDuration: true
+            useClockDuration: true,
+            clearCheckpoint: false
         )
         block.updatedAt = end
-        try? modelContext.save()
+        if let failure = modelContext.saveReportingFailure() {
+            completionSaveError = failure
+            WatchLink.shared.publishState()
+            return
+        }
+        YogaRuntimeCheckpointStore.clear(sessionID: session.id)
         importing = true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         Task {

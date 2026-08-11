@@ -60,9 +60,8 @@ enum YogaHistoryPresentation {
     }
 
     static func poseCount(session: CardioSessionModel?, plan: YogaFlowPlan?) -> Int {
-        let rows = poses(session: session, plan: plan)
-        if !rows.isEmpty { return rows.count }
-        return session?.posesCompleted ?? 0
+        if let count = session?.logicalYogaPosesCompleted { return count }
+        return plan?.steps.count ?? 0
     }
 
     static func title(

@@ -1,3 +1,4 @@
+import CoreLocation
 import ForgeCore
 import ForgeData
 import Foundation
@@ -11,6 +12,12 @@ import SwiftData
 @MainActor
 enum CardioSeriesService {
 
+    struct RoutePointSnapshot: Sendable {
+        let timestamp: Date
+        let latitude: Double
+        let longitude: Double
+    }
+
     /// Assemble the series, store it, and (for free-form sessions) auto-detect
     /// and apply interval laps. Safe to call once per completed session.
     static func finalize(session: CardioSessionModel, hadManualIntervalPlan: Bool, in context: ModelContext) async {
@@ -18,11 +25,40 @@ enum CardioSeriesService {
         let end = session.endedAt ?? Date()
         guard end > start else { return }
 
+        // Nothing actor-bound or SwiftData-backed crosses the first await.
+        // Reset/history deletion can run while HealthKit responds; after the
+        // response we refetch by ID in a fresh context and abandon missing or
+        // tombstoned sessions (FF-012).
+        let sessionID = session.id
+        let container = context.container
+        let routePoints = session.routePoints.map {
+            RoutePointSnapshot(
+                timestamp: $0.timestamp,
+                latitude: $0.latitude,
+                longitude: $0.longitude
+            )
+        }
+
         // Capture BLE monitor readings up front — the hub's buffer is
         // session-scoped and may be dropped before this async work resumes.
         let bleSamples = LiveMetricsHub.shared.bleSamples(from: start, to: end)
-        let series = await buildSeries(start: start, end: end, routePoints: session.routePoints, extraHRSamples: bleSamples)
+        let series = await buildSeries(
+            start: start,
+            end: end,
+            routePoints: routePoints,
+            extraHRSamples: bleSamples
+        )
+        guard !Task.isCancelled else { return }
         guard !series.isEmpty else { return }
+
+        let freshContext = ModelContext(container)
+        freshContext.autosaveEnabled = false
+        let id = sessionID
+        guard let session = try? freshContext.fetch(
+            FetchDescriptor<CardioSessionModel>(predicate: #Predicate { $0.id == id })
+        ).first,
+              session.deletedAt == nil,
+              session.endedAt != nil else { return }
         session.sampleSeriesJSON = series.encodedJSON()
         // Real time-in-zone from the series replaces the avg-HR estimate that
         // completion stamped as a provisional value — this is what lets the
@@ -41,9 +77,10 @@ enum CardioSeriesService {
         if !hasStoredManualIntervals, !hadManualIntervalPlan, !session.isYogaSession, !session.intervalsAutoApplied,
            let segments = CardioSampleSeries.detectIntervals(in: series),
            segments.contains(where: { $0.kind == .work }) {
-            applyDetectedIntervals(segments, to: session, series: series, start: start, in: context)
+            applyDetectedIntervals(segments, to: session, series: series, start: start, in: freshContext)
         }
-        try? context.save()
+        guard !Task.isCancelled else { return }
+        try? freshContext.save()
     }
 
     // MARK: - Series assembly
@@ -51,7 +88,7 @@ enum CardioSeriesService {
     static func buildSeries(
         start: Date,
         end: Date,
-        routePoints: [CardioRoutePointModel],
+        routePoints: [RoutePointSnapshot],
         extraHRSamples: [LiveHRAggregator.HRSample] = []
     ) async -> CardioSampleSeries {
         let duration = max(0, Int(end.timeIntervalSince(start)))
@@ -71,7 +108,8 @@ enum CardioSeriesService {
             var accumulated = 0.0
             cumulative.append((max(0, Int(sorted[0].timestamp.timeIntervalSince(start))), 0))
             for (a, b) in zip(sorted, sorted.dropFirst()) {
-                accumulated += CardioRouteMath.distanceMeters(a, b)
+                accumulated += CLLocation(latitude: a.latitude, longitude: a.longitude)
+                    .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
                 cumulative.append((max(0, Int(b.timestamp.timeIntervalSince(start))), accumulated))
             }
         }

@@ -6,6 +6,9 @@ struct PostWorkoutActionBar: View {
     let onKeepLogging: () -> Void
     let onShare: () -> Void
     let onSave: () -> Void
+    /// True while a finish is committing: the Save control disables and reads
+    /// "Saving…" so a rapid second tap cannot re-enter the finisher (FF-006).
+    let isSaving: Bool
 
     @Environment(\.theme) private var theme
 
@@ -28,13 +31,14 @@ struct PostWorkoutActionBar: View {
                 )
                 .accessibilityIdentifier("post-workout-share-button")
 
-                Button("Save", systemImage: "checkmark", action: onSave)
+                Button(isSaving ? "Saving…" : "Save", systemImage: "checkmark", action: onSave)
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.capsule)
                     .controlSize(.large)
                     .tint(theme.accent)
-                    .accessibilityLabel("Save workout")
+                    .disabled(isSaving)
+                    .accessibilityLabel(isSaving ? "Saving workout" : "Save workout")
                     .accessibilityIdentifier("save-workout-button")
             }
         }
