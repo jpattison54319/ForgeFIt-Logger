@@ -37,6 +37,44 @@ final class RoutineHierarchyUITests: XCTestCase {
     }
 
     @MainActor
+    func testDraggingChildAboveParentUnnestsInDroppedOrder() {
+        let app = launch(with: "--seed-routine-hierarchy-nested")
+        let parent = folder("Macro 1", in: app)
+        let child = folder("Hybrid Athlete", in: app)
+        let childHandle = folderHandle("Hybrid Athlete", in: app)
+
+        XCTAssertTrue(parent.waitForExistence(timeout: 8))
+        XCTAssertTrue(childHandle.exists && childHandle.isHittable)
+        XCTAssertGreaterThan(child.frame.minY, parent.frame.minY)
+
+        let source = childHandle.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        )
+        let insertionSlot = app.coordinate(withNormalizedOffset: .zero).withOffset(
+            CGVector(dx: parent.frame.midX, dy: parent.frame.minY - 30)
+        )
+        source.press(
+            forDuration: 0.8,
+            thenDragTo: insertionSlot,
+            withVelocity: .slow,
+            thenHoldForDuration: 0.8
+        )
+
+        let childMovedAboveParent = NSPredicate { _, _ in
+            child.exists && parent.exists && child.frame.minY < parent.frame.minY
+        }
+        let expectation = XCTNSPredicateExpectation(
+            predicate: childMovedAboveParent,
+            object: app
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [expectation], timeout: 5),
+            .completed,
+            "Expected the child folder to become a root folder above its former parent."
+        )
+    }
+
+    @MainActor
     func testMixedLibraryLabelsRootRoutinesAsUngrouped() {
         let app = launch(with: "--seed-routine-hierarchy-mixed")
 

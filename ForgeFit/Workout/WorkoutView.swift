@@ -33,7 +33,6 @@ private enum DragPayload: Equatable {
 }
 
 private enum DropTarget: Equatable {
-    case root
     case folder(UUID)
 }
 
@@ -338,7 +337,24 @@ struct WorkoutHomeView: View {
                     }
                 }
 
-                ForEach(topLevelFolders) { folder in folderSection(folder) }
+                ForEach(topLevelFolders) { folder in
+                    VStack(alignment: .leading, spacing: 0) {
+                        RoutineFolderRootInsertionTarget(
+                            title: rootInsertionTitle(before: folder),
+                            acceptsDrop: canInsertDraggedFolder(before: folder)
+                        ) { providers in
+                            handleDrop(
+                                providers,
+                                into: nil,
+                                rootFolderBefore: folder.id
+                            )
+                        }
+                        folderSection(folder)
+                    }
+                    // The insertion target consumes the existing section gap,
+                    // preserving the resting hierarchy's current spacing.
+                    .padding(.top, -Space.xl)
+                }
 
                 // Pinned below everything that's live; exists only once
                 // something is archived, so it never clutters a fresh library.
@@ -356,9 +372,9 @@ struct WorkoutHomeView: View {
                         .accessibilityIdentifier("routine-library-reorder-overlay")
                 }
             }
-            // The whole routine canvas represents the root level. Child card
-            // and folder targets take precedence, while a release on any
-            // remaining canvas area moves a routine to Ungrouped.
+            // The whole routine canvas represents the root level. Exact
+            // folder insertion slots take precedence; a release on remaining
+            // canvas moves a routine to Ungrouped or a folder to the root end.
             .onDrop(of: [.plainText], isTargeted: nil) { providers in
                 handleDrop(providers, into: nil)
             }
@@ -908,7 +924,9 @@ struct WorkoutHomeView: View {
             if !hasChildren {
                 Menu {
                     if folder.parentID != nil {
-                        Button("Top Level", systemImage: "arrow.up.to.line") { nest(folder, into: nil) }
+                        Button("Top Level", systemImage: "arrow.up.to.line") {
+                            moveFolderToRoot(folder, before: nil)
+                        }
                     }
                     ForEach(topLevelFolders.filter { $0.id != folder.id && $0.id != folder.parentID }) { target in
                         Button(target.name, systemImage: "folder") { nest(folder, into: target) }
@@ -1011,6 +1029,40 @@ struct WorkoutHomeView: View {
         return parent.parentID == nil && parent.id != folder.id && folder.parentID != parent.id
     }
 
+    private func rootInsertionTitle(before target: RoutineFolderModel) -> String {
+        guard case .folder(let id) = draggedPayload,
+              let dragged = folders.first(where: { $0.id == id }) else {
+            return "Place folder above \(target.name)"
+        }
+        if canInsertDraggedFolder(before: target) {
+            return "\(dragged.name) above \(target.name)"
+        }
+        return "Already in this position"
+    }
+
+    private func canInsertDraggedFolder(before target: RoutineFolderModel) -> Bool {
+        guard case .folder(let id) = draggedPayload,
+              let dragged = folders.first(where: { $0.id == id }),
+              let destinationIDs = RoutineFolderRootOrdering.destinationIDs(
+                moving: id,
+                before: target.id,
+                currentRootIDs: topLevelFolders.map(\.id)
+              ) else {
+            return false
+        }
+        return dragged.parentID != nil || destinationIDs != topLevelFolders.map(\.id)
+    }
+
+    private func moveFolderToRoot(_ folder: RoutineFolderModel, before targetID: UUID?) {
+        guard RoutineFolderRootOrdering.move(
+            folder,
+            before: targetID,
+            currentRoots: topLevelFolders,
+            allFolders: folders
+        ) else { return }
+        save()
+    }
+
     // MARK: - Hold-to-reorder routines
 
     private var routineReorderSections: [RoutineReorderSession.Section] {
@@ -1085,8 +1137,13 @@ struct WorkoutHomeView: View {
         routineReorderSession = nil
     }
 
-    /// Routes a drop of routines and/or folders onto `folder` (nil = root).
-    private func handleDrop(_ providers: [NSItemProvider], into folder: RoutineFolderModel?) -> Bool {
+    /// Routes a drop onto `folder`; nil means root, with an optional exact
+    /// insertion target for folder payloads.
+    private func handleDrop(
+        _ providers: [NSItemProvider],
+        into folder: RoutineFolderModel?,
+        rootFolderBefore targetID: UUID? = nil
+    ) -> Bool {
         let usableProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }
         guard !usableProviders.isEmpty else {
             clearDragFeedback()
@@ -1100,7 +1157,11 @@ struct WorkoutHomeView: View {
                     return
                 }
                 Task { @MainActor in
-                    _ = handleDrop([payload], into: folder)
+                    _ = handleDrop(
+                        [payload],
+                        into: folder,
+                        rootFolderBefore: targetID
+                    )
                     clearDragFeedback()
                 }
             }
@@ -1108,15 +1169,28 @@ struct WorkoutHomeView: View {
         return true
     }
 
-    /// Routes a drop of routines and/or folders onto `folder` (nil = root).
-    private func handleDrop(_ payloads: [String], into folder: RoutineFolderModel?) -> Bool {
+    /// Routes decoded payloads onto a folder or an exact root insertion slot.
+    private func handleDrop(
+        _ payloads: [String],
+        into folder: RoutineFolderModel?,
+        rootFolderBefore targetID: UUID? = nil
+    ) -> Bool {
         var handled = false
         for payload in payloads {
             guard let parsed = DragPayload(rawValue: payload) else { continue }
             switch parsed {
             case .folder(let id):
                 guard let dragged = folders.first(where: { $0.id == id }) else { continue }
-                handled = nest(dragged, into: folder) || handled
+                if let folder {
+                    handled = nest(dragged, into: folder) || handled
+                } else {
+                    handled = RoutineFolderRootOrdering.move(
+                        dragged,
+                        before: targetID,
+                        currentRoots: topLevelFolders,
+                        allFolders: folders
+                    ) || handled
+                }
 
             case .routine(let id):
                 guard let routine = activeRoutines.first(where: { $0.id == id }) else {
