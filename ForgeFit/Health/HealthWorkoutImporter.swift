@@ -107,9 +107,10 @@ actor HealthWorkoutImporter {
                 activeImport.wasAutomaticallyRequested = true
                 self.activeImport = activeImport
             }
+            let task = activeImport.task
             return await withTaskCancellationHandler(
-                operation: { await activeImport.task.value },
-                onCancel: { activeImport.task.cancel() }
+                operation: { await task.value },
+                onCancel: { task.cancel() }
             )
         }
 
