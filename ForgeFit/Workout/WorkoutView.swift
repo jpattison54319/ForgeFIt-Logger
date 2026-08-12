@@ -626,14 +626,13 @@ struct WorkoutHomeView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("routine-folder-\(folder.name)")
-                    // Folders drag like routines — drop one onto another to nest.
-                    .onDrag {
+                    Spacer()
+                    RoutineFolderDragHandle(folderName: folder.name) {
                         cancelRoutineReorder()
                         let payload = DragPayload.folder(folder.id)
                         draggedPayload = payload
                         return dragProvider(for: payload)
                     }
-                    Spacer()
                     folderMenu(folder, isActive: isActive, hasChildren: !children.isEmpty)
                 }
 
