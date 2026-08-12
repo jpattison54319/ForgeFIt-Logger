@@ -1713,6 +1713,10 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-routine-reorder") {
                 try RoutineReorderUITestFixture.seed(in: modelContext)
             }
+            try RoutineHierarchyUITestFixture.seedIfRequested(
+                arguments: ProcessInfo.processInfo.arguments,
+                in: modelContext
+            )
             // App Store screenshot/preview capture. Runs after the catalogs so
             // it can resolve bundled routine templates by slug.
             if ProcessInfo.processInfo.arguments.contains("--seed-appstore-demo") {

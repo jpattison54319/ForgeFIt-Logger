@@ -315,9 +315,19 @@ struct WorkoutHomeView: View {
                         .onDrop(of: [.plainText], isTargeted: nil) { providers in
                             handleDrop(providers, into: nil)
                         }
+                } else if folders.isEmpty {
+                    VStack(spacing: Space.md) {
+                        ForEach(ungroupedRows) { routine in
+                            routineCard(routine)
+                        }
+                    }
+                    .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                        handleDrop(providers, into: nil)
+                    }
                 } else {
                     UngroupedRoutineSection(
                         isCollapsed: $ungroupedCollapsed,
+                        count: ungroupedRows.count,
                         onDrop: { providers in handleDrop(providers, into: nil) }
                     ) {
                         VStack(spacing: Space.md) {
@@ -686,6 +696,7 @@ struct WorkoutHomeView: View {
                     .background(theme.surfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     .accessibilityIdentifier("microcycle-folder-progress")
+                    .padding(.leading, Space.lg)
                 }
 
                 if !isCollapsed {
@@ -698,11 +709,23 @@ struct WorkoutHomeView: View {
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("add-routine-to-empty-folder-\(folder.name)")
+                        .padding(.leading, Space.lg)
                     } else {
-                        ForEach(displayedItems) { routine in
-                            routineCard(routine)
+                        if !displayedItems.isEmpty {
+                            VStack(spacing: Space.md) {
+                                ForEach(displayedItems) { routine in
+                                    routineCard(routine)
+                                }
+                            }
+                            .padding(.leading, Space.lg)
                         }
-                        ForEach(children) { child in folderSection(child) }
+                        if !children.isEmpty {
+                            RoutineHierarchyRail {
+                                ForEach(children) { child in
+                                    folderSection(child)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -712,14 +735,13 @@ struct WorkoutHomeView: View {
                     dropHint(feedback)
                 }
             }
-            .padding(Space.sm)
             .background(folderBackground(isTargeted: isTargeted, isRejected: isRejected))
             .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .stroke(
-                        folderStroke(isTargeted: isTargeted, isRejected: isRejected, isActive: isActive),
-                        lineWidth: isTargeted ? 2 : 1
+                        folderStroke(isTargeted: isTargeted, isRejected: isRejected),
+                        lineWidth: isTargeted ? 2 : 0
                     )
             )
             .animation(.easeOut(duration: 0.15), value: isTargeted)
@@ -751,9 +773,19 @@ struct WorkoutHomeView: View {
         let target = DropTarget.folder(folder.id)
         guard let draggedPayload else {
             if childFolders(of: folder).isEmpty {
-                return DropFeedback(target: target, accepts: true, title: "Release to add here", detail: "Accepts routines and child folders")
+                return DropFeedback(
+                    target: target,
+                    accepts: true,
+                    title: "Add to \(folder.name)",
+                    detail: "Routines and child folders"
+                )
             }
-            return DropFeedback(target: target, accepts: true, title: "Release to nest a folder here", detail: "Routines stay inside child folders")
+            return DropFeedback(
+                target: target,
+                accepts: true,
+                title: "Move folder into \(folder.name)",
+                detail: "This mesocycle contains subfolders only"
+            )
         }
 
         switch draggedPayload {
@@ -767,7 +799,12 @@ struct WorkoutHomeView: View {
             if !childFolders(of: folder).isEmpty {
                 return DropFeedback(target: target, accepts: false, title: "Can't add routines here", detail: "This folder contains subfolders only")
             }
-            return DropFeedback(target: target, accepts: true, title: "Release to add routine", detail: "Moves \(routine.name) into \(folder.name)")
+            return DropFeedback(
+                target: target,
+                accepts: true,
+                title: "Move \(routine.name) into \(folder.name)",
+                detail: "Places it at the end"
+            )
 
         case .folder(let id):
             guard let dragged = folders.first(where: { $0.id == id }) else {
@@ -788,7 +825,15 @@ struct WorkoutHomeView: View {
                 }
                 return DropFeedback(target: target, accepts: false, title: "Can't add folder here", detail: nil)
             }
-            return DropFeedback(target: target, accepts: true, title: "Release to nest folder", detail: "Moves \(dragged.name) into \(folder.name)")
+            let detail = childFolders(of: folder).isEmpty && !routines(in: folder).isEmpty
+                ? "Existing routines move into \(dragged.name)"
+                : "Adds it as a microcycle"
+            return DropFeedback(
+                target: target,
+                accepts: true,
+                title: "Move \(dragged.name) into \(folder.name)",
+                detail: detail
+            )
         }
     }
 
@@ -1167,12 +1212,12 @@ struct WorkoutHomeView: View {
 
     private func folderBackground(isTargeted: Bool, isRejected: Bool) -> Color {
         if isTargeted { return isRejected ? theme.danger.opacity(0.12) : theme.accentSoft }
-        return theme.surface.opacity(0.5)
+        return .clear
     }
 
-    private func folderStroke(isTargeted: Bool, isRejected: Bool, isActive: Bool) -> Color {
+    private func folderStroke(isTargeted: Bool, isRejected: Bool) -> Color {
         if isTargeted { return isRejected ? theme.danger : theme.accent }
-        return isActive ? theme.accent.opacity(0.45) : theme.separator
+        return .clear
     }
 
     // MARK: - Actions

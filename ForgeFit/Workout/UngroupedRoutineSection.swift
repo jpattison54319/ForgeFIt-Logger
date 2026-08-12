@@ -8,6 +8,7 @@ struct UngroupedRoutineSection<Content: View>: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var isCollapsed: Bool
+    let count: Int
     let onDrop: ([NSItemProvider]) -> Bool
     @ViewBuilder let content: Content
 
@@ -16,6 +17,13 @@ struct UngroupedRoutineSection<Content: View>: View {
             Button(action: toggle) {
                 HStack(spacing: Space.sm) {
                     Text("Ungrouped")
+                    Text("\(count)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.textTertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(theme.surfaceElevated)
+                        .clipShape(Capsule())
                     Spacer(minLength: Space.md)
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: 12, weight: .bold))
