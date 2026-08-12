@@ -1,4 +1,5 @@
 #if DEBUG
+import ForgeCore
 import ForgeData
 import Foundation
 import SwiftData
@@ -11,6 +12,8 @@ enum RoutineHierarchyUITestFixture {
         case single = "--seed-routine-hierarchy-single"
         case nested = "--seed-routine-hierarchy-nested"
         case mixed = "--seed-routine-hierarchy-mixed"
+        case manyExercises = "--seed-routine-hierarchy-many-exercises"
+        case ungroupedDisclosure = "--seed-routine-hierarchy-ungrouped-disclosure"
     }
 
     static func seedIfRequested(arguments: [String], in context: ModelContext) throws {
@@ -43,6 +46,34 @@ enum RoutineHierarchyUITestFixture {
             let folder = insertFolder("Hybrid Athlete", position: 0, into: context)
             insertRoutine("Root Hotel", folderID: nil, position: 0, into: context)
             insertRoutine("Mixed Push", folderID: folder.id, position: 0, into: context)
+
+        case .manyExercises:
+            insertRoutine(
+                "Long Routine",
+                folderID: nil,
+                position: 0,
+                exerciseIDs: [
+                    GlobalExerciseLibrary.machineChestPressID,
+                    GlobalExerciseLibrary.overheadCableTricepsExtensionID,
+                    GlobalExerciseLibrary.chestSupportedTBarRowID,
+                    GlobalExerciseLibrary.bayesianCableCurlID,
+                ],
+                into: context
+            )
+            insertRoutine(
+                "Short Routine",
+                folderID: nil,
+                position: 1,
+                exerciseIDs: [
+                    GlobalExerciseLibrary.romanianDeadliftID,
+                    GlobalExerciseLibrary.smithMachineSquatID,
+                ],
+                into: context
+            )
+
+        case .ungroupedDisclosure:
+            _ = insertFolder("Plans", position: 0, into: context)
+            insertRoutine("Full Body A", folderID: nil, position: 0, into: context)
         }
 
         try context.save()
@@ -69,13 +100,21 @@ enum RoutineHierarchyUITestFixture {
         _ name: String,
         folderID: UUID?,
         position: Int,
+        exerciseIDs: [UUID] = [],
         into context: ModelContext
     ) {
         context.insert(RoutineModel(
             userID: ForgeFitDemo.userID,
             name: name,
             folderID: folderID,
-            position: position
+            position: position,
+            exercises: exerciseIDs.enumerated().map { index, exerciseID in
+                RoutineExerciseModel(
+                    userID: ForgeFitDemo.userID,
+                    exerciseID: exerciseID,
+                    position: index
+                )
+            }
         ))
     }
 }

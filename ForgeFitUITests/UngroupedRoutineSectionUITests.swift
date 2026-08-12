@@ -16,6 +16,8 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
             "-initialTab", "workout",
+            "-workoutUngroupedCollapsed", "NO",
+            "--seed-routine-hierarchy-ungrouped-disclosure",
         ]
         app.launch()
 
@@ -23,18 +25,21 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
         let starter = app.buttons["start-routine-Full Body A"].firstMatch
         XCTAssertTrue(disclosure.waitForExistence(timeout: 8))
         XCTAssertTrue(starter.waitForExistence(timeout: 3))
+        keepScreenshot(named: "Ungrouped expanded", from: app)
 
         tap(disclosure, in: app)
         let collapsed = NSPredicate(format: "value == %@", "Collapsed")
         expectation(for: collapsed, evaluatedWith: disclosure)
         waitForExpectations(timeout: 3)
         XCTAssertFalse(starter.waitForExistence(timeout: 1))
+        keepScreenshot(named: "Ungrouped collapsed", from: app)
 
         app.terminate()
         app.launchArguments = [
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
             "-initialTab", "workout",
+            "--seed-routine-hierarchy-ungrouped-disclosure",
         ]
         app.launch()
 
@@ -56,5 +61,12 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
         } else {
             element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
+    }
+
+    private func keepScreenshot(named name: String, from app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

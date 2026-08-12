@@ -25,9 +25,9 @@ struct UngroupedRoutineSection<Content: View>: View {
                         .background(theme.surfaceElevated)
                         .clipShape(Capsule())
                     Spacer(minLength: Space.md)
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(theme.textSecondary)
+                        .foregroundStyle(isCollapsed ? theme.textSecondary : theme.accent)
                         .accessibilityHidden(true)
                 }
                 .contentShape(Rectangle())

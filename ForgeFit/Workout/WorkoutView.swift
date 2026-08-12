@@ -78,6 +78,10 @@ struct WorkoutHomeView: View {
     private var microcycleWindows: [MicrocycleWindowModel]
 
     @State private var collapsed: Set<UUID> = []
+    /// Routine summaries are intentionally session-only. Every launch starts
+    /// compact, while navigation and scrolling within this session retain the
+    /// user's open cards without writing a presentation preference.
+    @State private var expandedRoutineSummaries: Set<UUID> = []
     @State private var navigationPath = NavigationPath()
     @State private var newRoutine: RoutineModel?
     /// Set only by `createRoutine` — tells the editor this routine is a
@@ -1242,6 +1246,7 @@ struct WorkoutHomeView: View {
         return RoutineCard(
             routine: routine,
             exercises: exercises,
+            isSummaryExpanded: expandedRoutineSummaries.contains(routine.id),
             alternationState: state,
             isAlternationOwner: state?.owner.id == routine.id,
             hasConfiguredAlternation: hasConfiguredAlternation,
@@ -1260,8 +1265,17 @@ struct WorkoutHomeView: View {
             onReorderDragEnded: routineReorderDragEnded,
             onAccessibilityMoveBy: { offset in
                 accessibilityMoveRoutine(routine, by: offset)
-            }
+            },
+            onToggleSummary: { toggleRoutineSummary(routine.id) }
         )
+    }
+
+    private func toggleRoutineSummary(_ routineID: UUID) {
+        if expandedRoutineSummaries.contains(routineID) {
+            expandedRoutineSummaries.remove(routineID)
+        } else {
+            expandedRoutineSummaries.insert(routineID)
+        }
     }
 
     private func dragProvider(for payload: DragPayload) -> NSItemProvider {
@@ -1586,6 +1600,7 @@ private struct RoutineCard: View {
     @Environment(\.theme) private var theme
     let routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
+    let isSummaryExpanded: Bool
     let alternationState: RoutineAlternationService.State?
     let isAlternationOwner: Bool
     let hasConfiguredAlternation: Bool
@@ -1603,6 +1618,7 @@ private struct RoutineCard: View {
     var onReorderDragChanged: (CGFloat) -> Void = { _ in }
     var onReorderDragEnded: () -> Void = {}
     var onAccessibilityMoveBy: (Int) -> Void = { _ in }
+    var onToggleSummary: () -> Void = {}
 
     private var displayRoutine: RoutineModel {
         isAlternationOwner ? (alternationState?.due ?? routine) : routine
@@ -1617,10 +1633,6 @@ private struct RoutineCard: View {
         isAlternationOwner ? alternationState?.other : nil
     }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: displayRoutine) }
-
-    private func exerciseName(for re: RoutineExerciseModel) -> String {
-        exercises.first { $0.id == re.exerciseID }?.name ?? "Exercise"
-    }
 
     private var conditioningSummary: String? {
         let json = displayRoutine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
@@ -1736,20 +1748,13 @@ private struct RoutineCard: View {
                                 .font(.tag)
                                 .foregroundStyle(theme.accent)
                         }
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(orderedItems) { item in
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(theme.textTertiary)
-                                        .frame(width: 4, height: 4)
-                                    Text(itemName(item))
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(theme.textSecondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                }
-                            }
-                        }
+                        RoutineExerciseSummaryDisclosure(
+                            routineName: displayRoutine.name,
+                            items: orderedItems,
+                            exercises: exercises,
+                            isExpanded: isSummaryExpanded,
+                            onToggle: onToggleSummary
+                        )
                     }
 
                     if let otherStartRoutine {
@@ -1770,12 +1775,6 @@ private struct RoutineCard: View {
         .accessibilityIdentifier("routine-card-\(routine.name)")
     }
 
-    private func itemName(_ item: OrderedRoutineItem) -> String {
-        switch item {
-        case .exercise(let exercise): exerciseName(for: exercise)
-        case .block(let block): block.kind.title
-        }
-    }
 }
 
 /// Typed pushes for Workout-tab screens that aren't model-backed.
