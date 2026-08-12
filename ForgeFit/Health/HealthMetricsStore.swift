@@ -88,7 +88,14 @@ final class HealthMetricsStore {
     private(set) var activeRefreshCount = 0
     var isRefreshing: Bool { activeRefreshCount > 0 }
 
-    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    private struct RefreshOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    @ObservationIgnored private var refreshOperation: RefreshOperation?
+    @ObservationIgnored private var cancelledRefreshOperation: RefreshOperation?
+    @ObservationIgnored private var isLiveWorkoutActive = false
 
     init(worker: any HealthMetricsLoading = HealthMetricsWorker()) {
         self.worker = worker
@@ -105,9 +112,23 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         Task { @MainActor [weak self] in
             await self?.refreshCoalesced(force: force)
         }
+    }
+
+    /// Cancels the owned HealthKit refresh, not merely a caller awaiting it.
+    /// A later idle refresh starts from scratch so partial results can never be
+    /// published over the live logger.
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        isLiveWorkoutActive = isActive
+        guard isActive else { return }
+        if let refreshOperation {
+            cancelledRefreshOperation = refreshOperation
+            refreshOperation.task.cancel()
+        }
+        refreshOperation = nil
     }
 
     /// Awaitable variant for pull-to-refresh: always re-queries HealthKit so
@@ -117,6 +138,7 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         await refreshCoalesced(force: true)
     }
 
@@ -127,14 +149,26 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         await refreshCoalesced(force: false)
     }
 
     /// Every trigger joins one shared query instead of starting another set of
     /// five HealthKit reads while launch's refresh is still in flight.
     private func refreshCoalesced(force: Bool) async {
-        if let refreshTask {
-            await refreshTask.value
+        guard !isLiveWorkoutActive else { return }
+        if let cancelledRefreshOperation {
+            await cancelledRefreshOperation.task.value
+            if self.cancelledRefreshOperation?.id == cancelledRefreshOperation.id {
+                self.cancelledRefreshOperation = nil
+            }
+            guard !isLiveWorkoutActive, !Task.isCancelled else { return }
+        }
+        if let refreshOperation {
+            // A coalesced waiter does not own the shared refresh. Lifecycle
+            // priority cancels it through `setLiveWorkoutActive`; one view
+            // disappearing must not starve every other waiter.
+            await refreshOperation.task.value
             return
         }
         if !force,
@@ -143,16 +177,20 @@ final class HealthMetricsStore {
             return
         }
 
+        let id = UUID()
         let task = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
             await self.performRefresh()
         }
-        refreshTask = task
+        refreshOperation = RefreshOperation(id: id, task: task)
         await task.value
-        refreshTask = nil
+        if refreshOperation?.id == id {
+            refreshOperation = nil
+        }
     }
 
     private func performRefresh() async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return }
         activeRefreshCount += 1
         defer { activeRefreshCount -= 1 }
 
@@ -164,7 +202,7 @@ final class HealthMetricsStore {
             operation: { await workerTask.value },
             onCancel: { workerTask.cancel() }
         )
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         rawMetrics = result.daily
         metrics = SleepOverrideStore.shared.process(result.daily)
         metricsRevision &+= 1

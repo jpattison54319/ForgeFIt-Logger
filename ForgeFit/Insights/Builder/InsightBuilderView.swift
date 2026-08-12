@@ -25,6 +25,7 @@ struct InsightBuilderView: View {
     @State private var name = ""
     @State private var preview: InsightResult?
     @State private var previewTask: Task<Void, Never>?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showMetricPicker: MetricSlot?
     /// The canvas as it was seeded — Cancel warns only when work would be lost.
     @State private var seededRecipe: InsightRecipe?
@@ -178,6 +179,11 @@ struct InsightBuilderView: View {
             }
             .onAppear(perform: seedCanvas)
             .onChange(of: recipe) { _, _ in schedulePreview() }
+            .onChange(of: performanceGate.isLiveWorkoutActive) { _, isActive in
+                previewTask?.cancel()
+                previewTask = nil
+                if !isActive { schedulePreview() }
+            }
         }
     }
 
@@ -748,19 +754,24 @@ struct InsightBuilderView: View {
     private func schedulePreview() {
         previewTask?.cancel()
         preview = nil
-        guard validation.isValid else { return }
+        guard validation.isValid,
+              performanceGate.allowsNonWorkoutWork else { return }
         let snapshot = recipe
         previewTask = Task { [workouts, exercises, checkins, routines] in
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             let result = await InsightDataCoordinator.shared.result(
                 for: snapshot, workouts: workouts, exercises: exercises, checkins: checkins,
                 routines: routines
             )
             // A slow evaluation must never replace the preview of a newer
             // recipe — cancellation plus a signature check closes the race.
-            guard !Task.isCancelled, snapshot.analysisSignature == recipe.analysisSignature else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork,
+                  snapshot.analysisSignature == recipe.analysisSignature else { return }
             preview = result
+            previewTask = nil
         }
     }
 

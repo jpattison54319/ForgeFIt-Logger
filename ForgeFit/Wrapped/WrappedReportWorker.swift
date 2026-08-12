@@ -20,16 +20,23 @@ nonisolated struct WrappedReportWorker: Sendable {
         weightUnit: WeightUnit = .lb
     ) async -> [WrappedReportNotice] {
         let container = modelContainer
-        let task = Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) { () -> [WrappedReportNotice] in
+            guard !Task.isCancelled else { return [] }
             let context = ModelContext(container)
-            return WrappedReportService.generateIfDue(
+            context.autosaveEnabled = false
+            let reports = WrappedReportService.generateIfDue(
                 in: context,
                 healthMetrics: healthMetrics,
                 now: now,
                 calendar: calendar,
                 weightUnit: weightUnit,
                 coalesceAutomaticAttempt: true
-            ).map {
+            )
+            guard !Task.isCancelled else {
+                context.rollback()
+                return []
+            }
+            return reports.map {
                 WrappedReportNotice(
                     title: WrappedReportService.title(for: $0, calendar: calendar)
                 )

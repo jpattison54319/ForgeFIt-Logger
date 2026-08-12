@@ -37,6 +37,7 @@ struct WorkoutHistoryView: View {
     @State private var showCustomRange = false
     @State private var customStart = Date()
     @State private var customEnd = Date()
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
 
     /// Calendar for day boundaries and the midnight tick. Read live as
     /// `autoupdatingCurrent` so a timezone change while the screen is resident
@@ -44,6 +45,10 @@ struct WorkoutHistoryView: View {
     private var dayCalendar: Calendar { .autoupdatingCurrent }
 
     private var fingerprint: String { AnalyticsFingerprint.of(workouts) }
+
+    private var indexTaskKey: String {
+        "\(fingerprint)|live:\(performanceGate.isLiveWorkoutActive)"
+    }
 
     private var filtered: [WorkoutHistoryEntry] {
         guard let index else { return [] }
@@ -81,9 +86,11 @@ struct WorkoutHistoryView: View {
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
-        .task(id: fingerprint) {
+        .task(id: indexTaskKey) {
+            guard performanceGate.allowsNonWorkoutWork else { return }
             let built = await WorkoutHistoryIndexer.build(workouts: workouts, exercises: exercises)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             index = built
             // An index rebuild can complete long after this view first
             // appeared (large import, foreground resume). Refresh the shared

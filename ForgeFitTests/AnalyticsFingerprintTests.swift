@@ -61,7 +61,7 @@ struct AnalyticsFingerprintTests {
         #expect(AnalyticsFingerprint.of([done]) != before, "historical edits must refresh the memos")
     }
 
-    @Test func startingAndDeletingWorkoutsMoveTheFingerprint() throws {
+    @Test func startingAnActiveWorkoutDoesNotWakeCompletedHistoryAnalytics() throws {
         let (container, context) = try TestStore.make()
         _ = container
 
@@ -70,13 +70,61 @@ struct AnalyticsFingerprintTests {
         context.insert(done)
         let baseline = AnalyticsFingerprint.of([done])
 
-        // Starting a session changes the live count (once, not per set).
+        // Starting a session changes no completed-history input.
         let active = WorkoutModel(userID: ForgeFitDemo.userID, title: "Live", startedAt: Date(timeIntervalSince1970: 1_700_100_000))
         context.insert(active)
-        #expect(AnalyticsFingerprint.of([done, active]) != baseline)
+        #expect(AnalyticsFingerprint.of([done, active]) == baseline)
 
-        // Soft-deleting the completed workout changes both counts.
+        // Soft-deleting completed history still invalidates every consumer.
         done.deletedAt = Date(timeIntervalSince1970: 1_700_200_000)
         #expect(AnalyticsFingerprint.of([done, active]) != baseline)
+    }
+
+    @Test func savedInsightFingerprintDefersTheActiveWorkoutUntilFinish() throws {
+        let (container, context) = try TestStore.make()
+        _ = container
+        let now = Date(timeIntervalSince1970: 1_700_300_000)
+        let done = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Done",
+            startedAt: now.addingTimeInterval(-7_200),
+            endedAt: now.addingTimeInterval(-3_600),
+            updatedAt: now.addingTimeInterval(-3_600)
+        )
+        let active = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Live",
+            startedAt: now,
+            updatedAt: now
+        )
+        context.insert(done)
+        context.insert(active)
+        let coordinator = InsightDataCoordinator()
+
+        let baseline = coordinator.fingerprint(
+            workouts: [done],
+            checkins: [],
+            now: now
+        )
+        #expect(coordinator.fingerprint(
+            workouts: [done, active],
+            checkins: [],
+            now: now
+        ) == baseline)
+
+        active.updatedAt = now.addingTimeInterval(60)
+        active.totalVolume = 900
+        #expect(coordinator.fingerprint(
+            workouts: [done, active],
+            checkins: [],
+            now: now
+        ) == baseline)
+
+        active.endedAt = now.addingTimeInterval(3_600)
+        #expect(coordinator.fingerprint(
+            workouts: [done, active],
+            checkins: [],
+            now: now
+        ) != baseline)
     }
 }

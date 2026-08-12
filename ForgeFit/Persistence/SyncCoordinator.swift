@@ -33,6 +33,11 @@ import SwiftData
 @MainActor
 final class SyncCoordinator {
 
+    private struct SyncOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     /// Log-store entities whose changes mean training data moved (backup +
     /// social both key off this set). Analytics caches, insights, plan rows,
     /// and exercise-library edits deliberately don't wake the pipeline.
@@ -46,26 +51,43 @@ final class SyncCoordinator {
     private let social: SocialService
     private let context: ModelContext
     private let debounce: Duration
+    private let postWorkoutDelay: Duration
     private var saveObserver: NSObjectProtocol?
     private var pathMonitor: NWPathMonitor?
+    private var connectivityMonitoringRequested = false
     /// Workout ids touched since the last flush, and the flush task itself —
     /// a burst of saves (logging a set every few seconds) coalesces into one
     /// routing pass.
     private var pendingWorkoutIDs: Set<UUID> = []
     private var flushTask: Task<Void, Never>?
+    private var syncOperation: SyncOperation?
+    private var cancelledSyncTask: Task<Void, Never>?
+    private var resumeTask: Task<Void, Never>?
+    private var isLiveWorkoutActive = false
+    private var needsFullSyncAfterWorkout = false
     /// Ids whose `updatedAt` the last flush stamped itself: the stamp's own
     /// save echoes through the change feed and must not re-trigger routing.
     private var suppressEcho: Set<UUID> = []
 
-    init(social: SocialService, container: ModelContainer, debounce: Duration = .seconds(2)) {
+    init(
+        social: SocialService,
+        container: ModelContainer,
+        debounce: Duration = .seconds(2),
+        postWorkoutDelay: Duration = .seconds(2)
+    ) {
         self.social = social
         self.context = ModelContext(container)
         self.debounce = debounce
+        self.postWorkoutDelay = postWorkoutDelay
     }
 
     deinit {
         if let saveObserver { NotificationCenter.default.removeObserver(saveObserver) }
         pathMonitor?.cancel()
+        flushTask?.cancel()
+        syncOperation?.task.cancel()
+        cancelledSyncTask?.cancel()
+        resumeTask?.cancel()
     }
 
     // MARK: - Lifecycle
@@ -82,6 +104,14 @@ final class SyncCoordinator {
         }
 
         guard monitorConnectivity else { return }
+        connectivityMonitoringRequested = true
+        startConnectivityMonitorIfAllowed()
+    }
+
+    private func startConnectivityMonitorIfAllowed() {
+        guard connectivityMonitoringRequested,
+              !isLiveWorkoutActive,
+              pathMonitor == nil else { return }
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
@@ -92,16 +122,81 @@ final class SyncCoordinator {
         pathMonitor = monitor
     }
 
+    /// Saves remain durable locally during a workout, but relationship walks
+    /// and network reconciliation wait until the logger releases priority.
+    /// Any number of suppressed events becomes one post-workout full converge.
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            if !pendingWorkoutIDs.isEmpty || syncOperation != nil {
+                needsFullSyncAfterWorkout = true
+            }
+            flushTask?.cancel()
+            flushTask = nil
+            if let task = syncOperation?.task {
+                cancelledSyncTask = task
+                task.cancel()
+            }
+            syncOperation = nil
+            resumeTask?.cancel()
+            resumeTask = nil
+            pathMonitor?.cancel()
+            pathMonitor = nil
+        } else if needsFullSyncAfterWorkout || !pendingWorkoutIDs.isEmpty {
+            schedulePostWorkoutCatchUp()
+        }
+        if !isActive {
+            startConnectivityMonitorIfAllowed()
+        }
+    }
+
     /// Foreground / launch / opt-in entry point: drain the outbox, then run
     /// the converge pass (throttled unless forced).
     func syncNow(force: Bool = false) async {
+        guard !isLiveWorkoutActive else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         guard social.isOptedIn else { return }
+        if let syncOperation {
+            await syncOperation.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performSync(force: force)
+        }
+        syncOperation = SyncOperation(id: id, task: task)
+        await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
+        if syncOperation?.id == id {
+            syncOperation = nil
+        }
+    }
+
+    private func performSync(force: Bool) async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         await social.drainShareOutbox { [weak self] ids in self?.makeItems(for: ids) ?? [] }
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         await social.reconcileSharedWorkouts(
             eligible: eligibleStamps(),
             deletedIDs: deletedWorkoutIDs(),
             force: force
         ) { [weak self] ids in self?.makeItems(for: ids) ?? [] }
+        if !Task.isCancelled, !isLiveWorkoutActive {
+            needsFullSyncAfterWorkout = false
+        }
     }
 
     // MARK: - Change feed
@@ -130,6 +225,10 @@ final class SyncCoordinator {
         BackupScheduler.shared.noteLogDataChanged()
 
         guard social.isOptedIn else { return }
+        guard !isLiveWorkoutActive else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         var touched = Set<UUID>()
         var sawNonEcho = false
         for identifier in liveChanges {
@@ -183,6 +282,10 @@ final class SyncCoordinator {
     // MARK: - Routing
 
     private func scheduleFlush() {
+        guard !isLiveWorkoutActive else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         guard flushTask == nil else { return }
         flushTask = Task { [weak self, debounce] in
             try? await Task.sleep(for: debounce)
@@ -193,6 +296,10 @@ final class SyncCoordinator {
     }
 
     private func flush() async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         let ids = pendingWorkoutIDs
         pendingWorkoutIDs = []
         guard !ids.isEmpty, social.isOptedIn else { return }
@@ -200,6 +307,11 @@ final class SyncCoordinator {
         var ops: [UUID: SocialService.ShareOp] = [:]
         var stampsToSave = false
         for id in ids {
+            guard !Task.isCancelled, !isLiveWorkoutActive else {
+                pendingWorkoutIDs.formUnion(ids)
+                needsFullSyncAfterWorkout = true
+                return
+            }
             guard let workout = workout(id) else { continue }   // hard-deleted
             if workout.deletedAt != nil {
                 ops[id] = .unpublish
@@ -214,6 +326,11 @@ final class SyncCoordinator {
             }
             // In-progress and imported workouts don't touch the community.
         }
+        guard !Task.isCancelled, !isLiveWorkoutActive else {
+            pendingWorkoutIDs.formUnion(ids)
+            needsFullSyncAfterWorkout = true
+            return
+        }
         if stampsToSave { try? context.save() }
 
         social.enqueueShare(ops)
@@ -225,7 +342,29 @@ final class SyncCoordinator {
     func flushNow() async {
         flushTask?.cancel()
         flushTask = nil
+        guard !isLiveWorkoutActive else {
+            needsFullSyncAfterWorkout = true
+            return
+        }
         await flush()
+    }
+
+    private func schedulePostWorkoutCatchUp() {
+        resumeTask?.cancel()
+        resumeTask = Task { @MainActor [weak self, postWorkoutDelay] in
+            if postWorkoutDelay > .zero {
+                try? await Task.sleep(for: postWorkoutDelay)
+            }
+            guard let self, !Task.isCancelled, !isLiveWorkoutActive else { return }
+            if let cancelledSyncTask {
+                await cancelledSyncTask.value
+                self.cancelledSyncTask = nil
+            }
+            guard !Task.isCancelled, !isLiveWorkoutActive else { return }
+            pendingWorkoutIDs.removeAll()
+            resumeTask = nil
+            await syncNow(force: true)
+        }
     }
 
     // MARK: - Local truth readers

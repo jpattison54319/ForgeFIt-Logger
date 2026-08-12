@@ -15,6 +15,7 @@ struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var healthMetrics = HealthMetricsStore.shared
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showSettings = false
     // Coach surfaces remain implemented and testable, but are intentionally
     // dormant while the Home header uses its more useful calendar shortcut.
@@ -123,6 +124,15 @@ struct HomeView: View {
             + "\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)|"
             + "\(healthMetrics.metricsRevision)|"
             + todayCheckinTags.joined(separator: ",")
+    }
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
+
+    private var analyticsTaskKey: String {
+        "\(analyticsRequestKey)|live:\(pausesForLiveWorkout)"
     }
 
     private var todayAnalytics: HomeAnalyticsResult? {
@@ -257,7 +267,8 @@ struct HomeView: View {
         // Before the first Health query, a workouts-only strain value can look
         // real and overwrite today's valid cache. Keep the same launch gate,
         // but do no score work on MainActor while waiting.
-        guard healthMetrics.lastRefreshed != nil else { return }
+        guard healthMetrics.lastRefreshed != nil,
+              !pausesForLiveWorkout else { return }
 
         dashboardMaintenanceTask?.cancel()
         dashboardMaintenanceTask = nil
@@ -279,7 +290,9 @@ struct HomeView: View {
 
         do {
             let result = try await worker.calculateCurrent(input)
-            guard !Task.isCancelled, key == analyticsRequestKey else { return }
+            guard !Task.isCancelled,
+                  !pausesForLiveWorkout,
+                  key == analyticsRequestKey else { return }
 
             dashboardAnalytics = result
             dashboardAnalyticsKey = key
@@ -307,6 +320,7 @@ struct HomeView: View {
         worker: HomeAnalyticsWorker,
         input: HomeAnalyticsInput
     ) {
+        guard !pausesForLiveWorkout else { return }
         let snapshotStore = RecoverySnapshotStore.shared
         let backfillEligible = workouts.contains {
             $0.endedAt != nil && $0.deletedAt == nil
@@ -321,7 +335,7 @@ struct HomeView: View {
             do {
                 if shouldBackfill {
                     let snapshots = try await worker.calculateBackfill(input)
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, !pausesForLiveWorkout else { return }
                     snapshotStore.mergeBackfill(snapshots)
                 }
                 if !bodyweight.isEmpty {
@@ -331,7 +345,7 @@ struct HomeView: View {
                 // Maintenance is retryable on the next refresh. Visible scores
                 // have already published and remain fully interactive.
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !pausesForLiveWorkout else { return }
             dashboardMaintenanceTask = nil
         }
     }
@@ -556,7 +570,13 @@ struct HomeView: View {
             // Health/SwiftData snapshots are captured quickly on MainActor;
             // every history-wide score pass then runs on HomeAnalyticsWorker's
             // detached context. SwiftUI receives only the finished projection.
-            .task(id: analyticsRequestKey) {
+            .task(id: analyticsTaskKey) {
+                guard !pausesForLiveWorkout else {
+                    dashboardMaintenanceTask?.cancel()
+                    dashboardMaintenanceTask = nil
+                    dashboardIsComputing = false
+                    return
+                }
                 await refreshDashboardAnalytics(for: analyticsRequestKey)
             }
             .fullScreenCover(item: $presentedWrappedReport) { report in

@@ -648,43 +648,30 @@ struct CardioExerciseCard: View {
         )
         CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
         try? modelContext.save()
-        importing = true
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: kind)
-            await MainActor.run {
-                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // Skip auto distance for treadmills / indoor machines (manual
-                // entry). For outdoor runs, keep the GPS route distance when we
-                // recorded a route — it's what the splits are summed from, so
-                // overwriting it with HealthKit's shorter estimate makes the
-                // total disagree with the splits. Only fall back to HealthKit
-                // when there's no route to trust.
-                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
-                    session.distanceMeters = dist
-                    session.distanceSource = .healthKit
-                }
-                // Provisional estimate — finalize() below replaces it with the
-                // measured distribution when the HR series has real coverage.
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-            }
-            // Capture the time-series (measured zones) and auto-detect intervals (free-form runs).
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: modelContext)
-            await MainActor.run {
-                CardioGoalAnnouncer.shared.finish(
-                    sessionID: session.id,
-                    distanceMeters: session.distanceMeters ?? distanceAtEnd,
-                    durationSeconds: session.durationSeconds,
-                    activeEnergyKcal: session.activeEnergyKcal,
-                    elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
-                )
-                importing = false
-                recompute()
-            }
-        }
+        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: end,
+                modality: kind,
+                fallbackAvgHR: bleStats?.avgHR,
+                fallbackMaxHR: bleStats?.maxHR,
+                importsDistance: providesGPSDistance,
+                providesGPSDistance: providesGPSDistance,
+                hadManualIntervalPlan: hadManualIntervalPlan
+            ),
+            container: modelContext.container
+        )
+        CardioGoalAnnouncer.shared.finish(
+            sessionID: session.id,
+            distanceMeters: session.distanceMeters ?? distanceAtEnd,
+            durationSeconds: session.durationSeconds,
+            activeEnergyKcal: session.activeEnergyKcal,
+            elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
+        )
+        importing = false
     }
 
     private var header: some View {

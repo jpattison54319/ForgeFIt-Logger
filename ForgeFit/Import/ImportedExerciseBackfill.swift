@@ -8,7 +8,8 @@ enum ImportedExerciseBackfill {
     private static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
 
     static func runIfNeeded(in context: ModelContext) async {
-        guard !UserDefaults.standard.bool(forKey: didRunKey) else { return }
+        guard LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !UserDefaults.standard.bool(forKey: didRunKey) else { return }
 
         let descriptor = FetchDescriptor<ExerciseLibraryModel>(
             predicate: #Predicate { exercise in
@@ -27,13 +28,27 @@ enum ImportedExerciseBackfill {
 
         let seedCorpus = WorkoutHistoryImportService.seedCorpus()
         let namesByID = Dictionary(candidates.map { ($0.id, $0.importedRawName ?? $0.name) }, uniquingKeysWith: { first, _ in first })
-        let classifications = await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
             let classifier = ExerciseClassifier(seedCorpus: seedCorpus)
-            return namesByID.mapValues { classifier.classify(name: $0) }
-        }.value
+            var classifications: [UUID: ExerciseClassification] = [:]
+            classifications.reserveCapacity(namesByID.count)
+            for (id, name) in namesByID {
+                guard !Task.isCancelled else { return classifications }
+                classifications[id] = classifier.classify(name: name)
+            }
+            return classifications
+        }
+        let classifications = await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
+        guard !Task.isCancelled,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
 
         var didChange = false
         for exercise in candidates {
+            guard !Task.isCancelled,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
             guard let classification = classifications[exercise.id] else { continue }
             exercise.primaryMuscles = classification.primaryMuscles
             exercise.secondaryMuscles = classification.secondaryMuscles
@@ -54,10 +69,9 @@ enum ImportedExerciseBackfill {
         }
         UserDefaults.standard.set(true, forKey: didRunKey)
 
-        if candidates.contains(where: \.needsReview) {
-            Task { @MainActor in
-                await ExerciseAIClassifier.refineFlaggedExercises(in: context)
-            }
+        if candidates.contains(where: \.needsReview),
+           LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork {
+            ExerciseAIClassifier.scheduleRefinement(in: context)
         }
     }
 }

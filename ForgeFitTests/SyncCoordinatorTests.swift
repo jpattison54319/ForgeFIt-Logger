@@ -33,7 +33,12 @@ import Testing
             handle: "james", displayName: "James", visibility: .everyone,
             stats: ProfileSnapshot(totalXP: 0, workoutCount: 0, lifetimeHours: 0, stats: SocialStats(), now: Date(timeIntervalSince1970: 1_700_000_000))
         )
-        let coordinator = SyncCoordinator(social: service, container: container, debounce: .zero)
+        let coordinator = SyncCoordinator(
+            social: service,
+            container: container,
+            debounce: .zero,
+            postWorkoutDelay: .zero
+        )
         coordinator.start(monitorConnectivity: false)
         return Pipeline(container: container, context: context, backend: backend, service: service, coordinator: coordinator)
     }
@@ -129,5 +134,23 @@ import Testing
 
         let settled = await settles { await remoteRefs(pipeline.backend).map(\.id) == [live.id] }
         #expect(settled, "only the live completed workout may publish — imported and in-progress stay local")
+    }
+
+    @Test func liveWorkoutDefersSaveResolutionAndPublishesOnceAfterResume() async throws {
+        let pipeline = try await makePipeline("sync-pipeline-live-priority")
+        defer { _ = pipeline.container }
+        pipeline.coordinator.setLiveWorkoutActive(true)
+
+        let workout = insertFinishedWorkout(in: pipeline.context)
+        try pipeline.context.save()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(await remoteRefs(pipeline.backend).isEmpty)
+
+        pipeline.coordinator.setLiveWorkoutActive(false)
+        let published = await settles {
+            await remoteRefs(pipeline.backend).map(\.id) == [workout.id]
+        }
+        #expect(published)
+        #expect(await pipeline.backend.publishCount == 1)
     }
 }

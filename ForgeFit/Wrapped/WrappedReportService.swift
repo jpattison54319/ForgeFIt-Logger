@@ -54,6 +54,15 @@ nonisolated enum WrappedReportService {
         weightUnit: WeightUnit = .lb,
         coalesceAutomaticAttempt: Bool = false
     ) -> [WrappedReportModel] {
+        guard !Task.isCancelled else { return [] }
+        var stampedAutomaticAttempt = false
+        defer {
+            if stampedAutomaticAttempt, Task.isCancelled {
+                // A workout-start cancellation must leave this daily job due;
+                // the post-workout foreground pass owns the retry.
+                UserDefaults.standard.removeObject(forKey: lastAutomaticAttemptKey)
+            }
+        }
         if coalesceAutomaticAttempt,
            let lastAttempt = UserDefaults.standard.object(
                forKey: lastAutomaticAttemptKey
@@ -65,6 +74,7 @@ nonisolated enum WrappedReportService {
             // Stamp before computation so repeated foreground notifications
             // cannot queue duplicate full-history passes on the same day.
             UserDefaults.standard.set(now, forKey: lastAutomaticAttemptKey)
+            stampedAutomaticAttempt = true
         }
 
         // Checking whether a keyed report exists is a tiny indexed fetch. Load
@@ -85,18 +95,21 @@ nonisolated enum WrappedReportService {
         }
         var created: [WrappedReportModel] = []
 
+        guard !Task.isCancelled else { return [] }
         if let monthStart = WrappedSchedule.dueMonthStart(now: now, calendar: calendar) {
             let year = calendar.component(.year, from: monthStart)
             let month = calendar.component(.month, from: monthStart)
             if let existing = fetchReport(type: "monthly", year: year, month: month, in: context) {
                 if WrappedSchedule.isInRefreshWindow(now: now, calendar: calendar),
                    let payload = builder().buildMonth(starting: monthStart),
+                   !Task.isCancelled,
                    payload.encodedJSON() != existing.payloadJSON {
                     existing.payloadJSON = payload.encodedJSON()
                     existing.updatedAt = now
                     try? context.save()
                 }
             } else if let payload = builder().buildMonth(starting: monthStart) {
+                guard !Task.isCancelled else { return [] }
                 let interval = calendar.dateInterval(of: .month, for: monthStart)
                 let report = WrappedReportModel(
                     userID: ForgeFitDemo.userID,
@@ -115,9 +128,11 @@ nonisolated enum WrappedReportService {
             }
         }
 
+        guard !Task.isCancelled else { return [] }
         if let dueYear = WrappedSchedule.dueYear(now: now, calendar: calendar),
            fetchReport(type: "yearly", year: dueYear, month: 0, in: context) == nil,
            let payload = builder().buildYear(dueYear) {
+            guard !Task.isCancelled else { return [] }
             var components = DateComponents()
             components.year = dueYear
             components.month = 1

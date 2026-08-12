@@ -63,6 +63,8 @@ struct WorkoutHomeView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+
     let routines: [RoutineModel]
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
@@ -492,7 +494,8 @@ struct WorkoutHomeView: View {
         .onChange(of: activeRoutines.map(\.id)) {
             openPendingImportedRoutineIfAvailable()
         }
-        .task {
+        .task(id: performanceGate.isLiveWorkoutActive) {
+            guard performanceGate.allowsNonWorkoutWork else { return }
             CyclePreferenceMigration.migrate()
             _ = try? MicrocycleTrackingService.reconcile(in: modelContext)
         }

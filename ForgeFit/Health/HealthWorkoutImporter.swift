@@ -28,11 +28,47 @@ actor HealthWorkoutImporter {
     nonisolated static let shared = HealthWorkoutImporter()
     nonisolated static let lastAutomaticAttemptKey = "healthWorkoutImport.lastAutomaticAttempt"
 
-    private var activeImport: Task<Int, Never>?
+    private struct ImportOperation: Sendable {
+        let id: UUID
+        let task: Task<Int, Never>
+        var wasAutomaticallyRequested: Bool
+    }
+
+    private var activeImport: ImportOperation?
+    private var cancelledImportTask: Task<Int, Never>?
+    private var isLiveWorkoutActive = false
+    private var latestPerformanceRevision = 0
+
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        applyLiveWorkoutState(isActive)
+    }
+
+    func setLiveWorkoutActive(_ isActive: Bool, revision: Int) {
+        guard revision >= latestPerformanceRevision else { return }
+        latestPerformanceRevision = revision
+        applyLiveWorkoutState(isActive)
+    }
+
+    private func applyLiveWorkoutState(_ isActive: Bool) {
+        isLiveWorkoutActive = isActive
+        guard isActive else { return }
+        if let operation = activeImport {
+            if operation.wasAutomaticallyRequested {
+                // `importRecentIfDue` stamps before starting to coalesce
+                // foreground notifications. A workout-owned cancellation must
+                // undo that stamp so the post-workout maintenance pass can
+                // immediately retry instead of waiting five minutes.
+                UserDefaults.standard.removeObject(forKey: Self.lastAutomaticAttemptKey)
+            }
+            cancelledImportTask = operation.task
+            operation.task.cancel()
+        }
+        activeImport = nil
+    }
 
     @discardableResult
     func importRecent(in container: ModelContainer, days: Int = 60) async -> Int {
-        await runImport(in: container, days: days)
+        await runImport(in: container, days: days, automatic: false)
     }
 
     @discardableResult
@@ -41,6 +77,7 @@ actor HealthWorkoutImporter {
         days: Int = 60,
         now: Date = .now
     ) async -> Int {
+        guard !isLiveWorkoutActive else { return 0 }
         let defaults = UserDefaults.standard
         let lastAttempt = defaults.object(forKey: Self.lastAutomaticAttemptKey) as? Date
         guard HealthWorkoutImportPolicy.isAutomaticImportDue(
@@ -51,12 +88,29 @@ actor HealthWorkoutImporter {
         // Stamp before starting so repeated lifecycle notifications cannot
         // queue identical 60-day scans while this one is awaiting HealthKit.
         defaults.set(now, forKey: Self.lastAutomaticAttemptKey)
-        return await runImport(in: container, days: days)
+        return await runImport(in: container, days: days, automatic: true)
     }
 
-    private func runImport(in container: ModelContainer, days: Int) async -> Int {
-        if let activeImport {
-            return await activeImport.value
+    private func runImport(
+        in container: ModelContainer,
+        days: Int,
+        automatic: Bool
+    ) async -> Int {
+        guard !isLiveWorkoutActive else { return 0 }
+        if let cancelledImportTask {
+            _ = await cancelledImportTask.value
+            self.cancelledImportTask = nil
+            guard !isLiveWorkoutActive, !Task.isCancelled else { return 0 }
+        }
+        if var activeImport {
+            if automatic, !activeImport.wasAutomaticallyRequested {
+                activeImport.wasAutomaticallyRequested = true
+                self.activeImport = activeImport
+            }
+            return await withTaskCancellationHandler(
+                operation: { await activeImport.task.value },
+                onCancel: { activeImport.task.cancel() }
+            )
         }
 
         // A SwiftData ModelActor adopts the queue on which it is created.
@@ -66,9 +120,19 @@ actor HealthWorkoutImporter {
             let worker = HealthWorkoutImportWorker(modelContainer: container)
             return await worker.importRecent(days: days)
         }
-        activeImport = task
-        let imported = await task.value
-        activeImport = nil
+        let id = UUID()
+        activeImport = ImportOperation(
+            id: id,
+            task: task,
+            wasAutomaticallyRequested: automatic
+        )
+        let imported = await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
+        if activeImport?.id == id {
+            activeImport = nil
+        }
         return imported
     }
 }
@@ -93,6 +157,7 @@ actor HealthWorkoutImportWorker {
         #if canImport(HealthKit)
         guard HealthService.shared.isAvailable else { return 0 }
         let context = modelContext
+        context.autosaveEnabled = false
         let end = Date()
         guard let start = Calendar.current.date(byAdding: .day, value: -days, to: end) else { return 0 }
         let healthStore = HKHealthStore()
@@ -105,13 +170,28 @@ actor HealthWorkoutImportWorker {
         var existing = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
         var existingHealthUUIDs = Set(existing.compactMap(\.hkWorkoutUUID))
         var imported = 0
+        var shouldCommit = false
+        // A workout-start cancellation rolls the private batch back instead
+        // of performing a potentially large SwiftData save while the logger
+        // is becoming interactive. The automatic throttle is cleared by the
+        // scheduling actor, so the entire batch retries after the workout.
+        defer {
+            if shouldCommit, !Task.isCancelled {
+                if imported > 0 { try? context.save() }
+            } else {
+                context.rollback()
+            }
+        }
 
         for healthWorkout in healthWorkouts {
+            guard !Task.isCancelled else { return 0 }
             guard !existingHealthUUIDs.contains(healthWorkout.uuid),
                   !hasSimilarLocalWorkout(to: healthWorkout, in: existing) else { continue }
 
             let avgHR = await heartRate(.discreteAverage, for: healthWorkout, store: healthStore).map { Int($0.rounded()) }
+            guard !Task.isCancelled else { return 0 }
             let maxHR = await heartRate(.discreteMax, for: healthWorkout, store: healthStore).map { Int($0.rounded()) }
+            guard !Task.isCancelled else { return 0 }
             let durationSeconds = max(1, Int(healthWorkout.duration.rounded()))
             let energyKcal = activeEnergyKcal(for: healthWorkout)
             let distanceMeters = healthWorkout.totalDistance?.doubleValue(for: .meter())
@@ -182,17 +262,26 @@ actor HealthWorkoutImportWorker {
                 exercises: workoutExercise.map { [$0] } ?? [],
                 cardioSessions: cardioSession.map { [$0] } ?? []
             )
+            let importedRoute: [CLLocation]?
+            if cardioSession != nil, kind.cardioKind?.supportsOutdoorRoute == true {
+                importedRoute = await routeLocations(for: healthWorkout, store: healthStore)
+                guard !Task.isCancelled else { return 0 }
+            } else {
+                importedRoute = nil
+            }
+
+            guard !Task.isCancelled else { return 0 }
             context.insert(workout)
             existingHealthUUIDs.insert(healthWorkout.uuid)
             existing.append(workout)
-            if let cardioSession, kind.cardioKind?.supportsOutdoorRoute == true {
-                let locations = await routeLocations(for: healthWorkout, store: healthStore)
-                CardioRouteMath.replaceRoute(for: cardioSession, locations: locations, in: context)
+            if let cardioSession, let importedRoute {
+                CardioRouteMath.replaceRoute(for: cardioSession, locations: importedRoute, in: context)
             }
             imported += 1
         }
 
-        if imported > 0 { try? context.save() }
+        guard !Task.isCancelled else { return 0 }
+        shouldCommit = true
         return imported
         #else
         return 0
@@ -201,31 +290,34 @@ actor HealthWorkoutImportWorker {
 
     #if canImport(HealthKit)
     private func fetchWorkouts(from start: Date, to end: Date, store: HKHealthStore) async -> [HKWorkout] {
+        guard !Task.isCancelled else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
-        return await withCheckedContinuation { continuation in
-            let query = HKSampleQuery(
+        return await HealthService.runCancellableQuery(
+            store: store,
+            cancelledValue: []
+        ) { finish in
+            HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: [sort]
             ) { _, samples, _ in
-                continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+                finish((samples as? [HKWorkout]) ?? [])
             }
-            store.execute(query)
         }
     }
 
     private func heartRate(_ option: HKStatisticsOptions, for workout: HKWorkout, store: HKHealthStore) async -> Double? {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return nil }
+        guard !Task.isCancelled,
+              let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return nil }
         let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: [])
         let unit = HKUnit.count().unitDivided(by: .minute())
-        return await withCheckedContinuation { continuation in
-            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: option) { _, stats, _ in
+        return await HealthService.runCancellableQuery(store: store, cancelledValue: nil) { finish in
+            HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: option) { _, stats, _ in
                 let quantity = option == .discreteMax ? stats?.maximumQuantity() : stats?.averageQuantity()
-                continuation.resume(returning: quantity?.doubleValue(for: unit))
+                finish(quantity?.doubleValue(for: unit))
             }
-            store.execute(query)
         }
     }
 
@@ -235,37 +327,42 @@ actor HealthWorkoutImportWorker {
     }
 
     private func routeLocations(for workout: HKWorkout, store: HKHealthStore) async -> [CLLocation] {
+        guard !Task.isCancelled else { return [] }
         let routeType = HKSeriesType.workoutRoute()
         let predicate = HKQuery.predicateForObjects(from: workout)
-        let routes: [HKWorkoutRoute] = await withCheckedContinuation { continuation in
-            let query = HKSampleQuery(
+        let routes: [HKWorkoutRoute] = await HealthService.runCancellableQuery(
+            store: store,
+            cancelledValue: []
+        ) { finish in
+            HKSampleQuery(
                 sampleType: routeType,
                 predicate: predicate,
                 limit: HKObjectQueryNoLimit,
                 sortDescriptors: nil
             ) { _, samples, _ in
-                continuation.resume(returning: (samples as? [HKWorkoutRoute]) ?? [])
+                finish((samples as? [HKWorkoutRoute]) ?? [])
             }
-            store.execute(query)
         }
 
         var routeLocations: [CLLocation] = []
         for route in routes {
+            guard !Task.isCancelled else { return [] }
             routeLocations.append(contentsOf: await locations(for: route, store: store))
         }
+        guard !Task.isCancelled else { return [] }
         return routeLocations.sorted { $0.timestamp < $1.timestamp }
     }
 
     private func locations(for route: HKWorkoutRoute, store: HKHealthStore) async -> [CLLocation] {
-        await withCheckedContinuation { continuation in
+        guard !Task.isCancelled else { return [] }
+        return await HealthService.runCancellableQuery(store: store, cancelledValue: []) { finish in
             var collected: [CLLocation] = []
-            let query = HKWorkoutRouteQuery(route: route) { _, locations, done, _ in
+            return HKWorkoutRouteQuery(route: route) { _, locations, done, _ in
                 collected.append(contentsOf: locations ?? [])
                 if done {
-                    continuation.resume(returning: collected)
+                    finish(collected)
                 }
             }
-            store.execute(query)
         }
     }
 

@@ -392,23 +392,22 @@ struct YogaBlockCard: View {
             return
         }
         YogaRuntimeCheckpointStore.clear(sessionID: session.id)
-        importing = true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snapshot = await HealthService.shared.importSnapshot(from: start, to: end, modality: .other)
-            await MainActor.run {
-                if let heartRate = snapshot.avgHR ?? bleStats?.avgHR { session.avgHR = heartRate }
-                if let maxHeartRate = snapshot.maxHR ?? bleStats?.maxHR { session.maxHR = maxHeartRate }
-                if let energy = snapshot.activeEnergyKcal { session.activeEnergyKcal = energy }
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(
-                    avgHR: session.avgHR,
-                    durationSeconds: session.durationSeconds
-                )
-                importing = false
-                try? modelContext.save()
-            }
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: modelContext)
-        }
+        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: end,
+                modality: .other,
+                fallbackAvgHR: bleStats?.avgHR,
+                fallbackMaxHR: bleStats?.maxHR,
+                importsDistance: false,
+                providesGPSDistance: false,
+                hadManualIntervalPlan: false
+            ),
+            container: modelContext.container
+        )
+        importing = false
         WatchLink.shared.publishState()
     }
 }

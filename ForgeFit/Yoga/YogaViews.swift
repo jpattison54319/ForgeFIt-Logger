@@ -491,25 +491,22 @@ struct YogaExerciseCard: View {
             return
         }
         YogaRuntimeCheckpointStore.clear(sessionID: session.id)
-        importing = true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: .other)
-            await MainActor.run {
-                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // No distance on the mat — deliberately not filled.
-                // Provisional estimate; finalize() replaces it with the
-                // measured distribution when the HR series has coverage.
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                importing = false
-                persist()
-            }
-            // Store the HR series so zones are measured, not estimated
-            // (interval detection never runs for yoga sessions).
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: modelContext)
-        }
+        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: end,
+                modality: .other,
+                fallbackAvgHR: bleStats?.avgHR,
+                fallbackMaxHR: bleStats?.maxHR,
+                importsDistance: false,
+                providesGPSDistance: false,
+                hadManualIntervalPlan: false
+            ),
+            container: modelContext.container
+        )
+        importing = false
         WatchLink.shared.publishState()
     }
 

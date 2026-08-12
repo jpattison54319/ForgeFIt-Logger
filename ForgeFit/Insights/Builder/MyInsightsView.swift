@@ -354,6 +354,12 @@ private struct SavedInsightCard: View {
     var onMoveDown: (() -> Void)?
 
     @State private var result: InsightResult?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
 
     private var recipe: InsightRecipe? {
         InsightRecipe.decode(from: card.recipeJSON)
@@ -456,16 +462,19 @@ private struct SavedInsightCard: View {
                 result = nil
                 return
             }
-            result = await InsightDataCoordinator.shared.result(
+            guard !pausesForLiveWorkout else { return }
+            let nextResult = await InsightDataCoordinator.shared.result(
                 for: recipe, workouts: workouts, exercises: exercises, checkins: checkins,
                 routines: routines
             )
+            guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+            result = nextResult
         }
     }
 
     /// Re-evaluates only when the recipe or the underlying data changes.
     private var taskKey: String {
-        (recipe?.analysisSignature ?? "corrupt") + "|" +
+        (recipe?.analysisSignature ?? "corrupt") + "|live:\(pausesForLiveWorkout)|" +
             InsightDataCoordinator.shared.fingerprint(
                 workouts: workouts, checkins: checkins, exercises: exercises, routines: routines
             )
@@ -501,6 +510,16 @@ private struct SavedInsightDetailSheet: View {
     var onDuplicate: (() -> Void)?
 
     @State private var result: InsightResult?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
+
+    private var performanceTaskKey: String {
+        "\(decodedRecipe?.analysisSignature ?? "corrupt")|live:\(pausesForLiveWorkout)"
+    }
 
     private var decodedRecipe: InsightRecipe? {
         InsightRecipe.decode(from: card.recipeJSON)
@@ -581,12 +600,15 @@ private struct SavedInsightDetailSheet: View {
                     Button("Done") { dismiss() }.font(.bodyStrong)
                 }
             }
-            .task {
-                guard let recipe = decodedRecipe, recipeIsValid else { return }
-                result = await InsightDataCoordinator.shared.result(
+            .task(id: performanceTaskKey) {
+                guard let recipe = decodedRecipe, recipeIsValid,
+                      !pausesForLiveWorkout else { return }
+                let nextResult = await InsightDataCoordinator.shared.result(
                     for: recipe, workouts: workouts, exercises: exercises, checkins: checkins,
                     routines: routines
                 )
+                guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+                result = nextResult
             }
         }
     }

@@ -20,10 +20,87 @@ import FoundationModels
 enum ExerciseAIClassifier {
     static var isSupported: Bool { AICoach.isSupported }
 
+    private struct RefinementOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    private static var activeOperation: RefinementOperation?
+    private static var cancelledOperation: RefinementOperation?
+    private static var pendingContext: ModelContext?
+    private static var pendingRevision = 0
+    private static var isLiveWorkoutActive = false
+
+    /// Keeps the optional Apple Intelligence refinement off the interaction
+    /// path while preserving the request for one retry after the workout.
+    static func scheduleRefinement(in context: ModelContext) {
+        guard isSupported else { return }
+        pendingContext = context
+        pendingRevision &+= 1
+        startPendingRefinementIfAllowed()
+    }
+
+    static func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            if let activeOperation {
+                cancelledOperation = activeOperation
+                activeOperation.task.cancel()
+            }
+            activeOperation = nil
+        } else {
+            startPendingRefinementIfAllowed()
+        }
+    }
+
+    static func cancelAll() {
+        activeOperation?.task.cancel()
+        cancelledOperation?.task.cancel()
+        activeOperation = nil
+        cancelledOperation = nil
+        pendingContext = nil
+        pendingRevision &+= 1
+    }
+
+    private static func startPendingRefinementIfAllowed() {
+        guard !isLiveWorkoutActive,
+              activeOperation == nil,
+              let context = pendingContext else { return }
+
+        let prior = cancelledOperation
+        let revision = pendingRevision
+        let id = UUID()
+        let task = Task { @MainActor in
+            if let prior { await prior.task.value }
+            guard !Task.isCancelled, !isLiveWorkoutActive else { return }
+            await refineFlaggedExercises(in: context)
+            guard !Task.isCancelled, !isLiveWorkoutActive else { return }
+            if activeOperation?.id == id {
+                activeOperation = nil
+                if cancelledOperation?.id == prior?.id {
+                    cancelledOperation = nil
+                }
+                if pendingRevision == revision {
+                    pendingContext = nil
+                } else {
+                    // Another import arrived after this pass captured its
+                    // candidates. Run once more so those newer rows are not
+                    // silently left behind.
+                    startPendingRefinementIfAllowed()
+                }
+            }
+        }
+        activeOperation = RefinementOperation(id: id, task: task)
+    }
+
     /// Classify up to `limit` still-flagged custom exercises that haven't already
     /// been touched by the AI or the user.
     static func refineFlaggedExercises(in context: ModelContext, limit: Int = 40) async {
-        guard isSupported else { return }
+        guard isSupported,
+              !isLiveWorkoutActive,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !Task.isCancelled else { return }
 
         let aiRaw = ClassificationSource.ai.rawValue
         let manualRaw = ClassificationSource.manual.rawValue
@@ -38,10 +115,29 @@ enum ExerciseAIClassifier {
             $0.classificationSourceRaw != aiRaw && $0.classificationSourceRaw != manualRaw
         }), !flagged.isEmpty else { return }
 
-        var didChange = false
+        // Keep model mutation transactional with respect to lifecycle
+        // cancellation. Model calls can suspend for seconds; collecting value
+        // results first prevents a half-refined main context from being swept
+        // into a live-workout save if the session starts between calls.
+        var guesses: [UUID: AIGuess] = [:]
         for exercise in flagged.prefix(limit) {
+            guard !isLiveWorkoutActive,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                  !Task.isCancelled else { return }
             let name = exercise.importedRawName ?? exercise.name
             guard let guess = await classify(name: name) else { continue }
+            guard !isLiveWorkoutActive,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                  !Task.isCancelled else { return }
+            guesses[exercise.id] = guess
+        }
+
+        guard !isLiveWorkoutActive,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !Task.isCancelled else { return }
+        var didChange = false
+        for exercise in flagged.prefix(limit) {
+            guard let guess = guesses[exercise.id] else { continue }
             let primary = guess.sanitizedPrimary
             guard !primary.isEmpty else { continue }
 
@@ -58,6 +154,9 @@ enum ExerciseAIClassifier {
             exercise.updatedAt = Date()
             didChange = true
         }
+        guard !isLiveWorkoutActive,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !Task.isCancelled else { return }
         if didChange { try? context.save() }
     }
 

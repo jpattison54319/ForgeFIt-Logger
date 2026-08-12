@@ -247,7 +247,7 @@ struct BackupDeletionTests {
     // MARK: - Mirrored privacy copy
 
     @Test func privacyPolicyDeletionWordingIsMirroredAndConsequenceAware() throws {
-        let phrase = "attempts to remove it and tells you if it could not"
+        let phrase = "attempts to remove the backup and tells you if it could not"
         let viewSource = try readRepoFile(
             "ForgeFit", "Settings", "PrivacyPolicyView.swift",
             file: #filePath

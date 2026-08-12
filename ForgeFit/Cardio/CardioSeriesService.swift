@@ -66,7 +66,15 @@ enum CardioSeriesService {
         if let measured = CardioMetrics.measuredZoneSecondsArray(series: series) {
             session.hrZoneSeconds = measured
         }
-        session.updatedAt = Date()
+        let updatedAt = Date()
+        session.updatedAt = updatedAt
+        session.workout?.updatedAt = updatedAt
+        if let workoutExerciseID = session.workoutExerciseID,
+           let workoutExercise = session.workout?.exercises.first(where: {
+               $0.id == workoutExerciseID
+           }) {
+            workoutExercise.updatedAt = updatedAt
+        }
 
         // A yoga class's HR ebb and flow is not interval training — the series
         // is kept (zones, HR chart) but never chopped into work/recover laps.

@@ -69,6 +69,7 @@ enum AccountResetService {
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
         DeferredWorkoutEnrichmentCoordinator.shared.cancelAll()
+        ExerciseAIClassifier.cancelAll()
         WorkoutFinisher.cancelLiveRuntime()
         try deleteAll(RestDayModel.self, in: context)
         try deleteAll(MicrocycleWindowModel.self, in: context)

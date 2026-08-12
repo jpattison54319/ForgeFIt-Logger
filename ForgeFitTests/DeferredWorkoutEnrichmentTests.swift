@@ -46,6 +46,62 @@ struct DeferredWorkoutEnrichmentTests {
         #expect(restored.distanceSource == .healthKit)
     }
 
+    @Test func sessionEnrichmentInvalidatesItsCompletedWorkoutAndExercise() async throws {
+        let (container, context) = try TestStore.make()
+        let oldStamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let start = oldStamp.addingTimeInterval(60)
+        let exercise = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            updatedAt: oldStamp
+        )
+        let session = CardioSessionModel(
+            userID: ForgeFitDemo.userID,
+            workoutExerciseID: exercise.id,
+            modality: CardioKind.run.rawValue,
+            startedAt: start,
+            liveStartedAt: start,
+            endedAt: start,
+            durationSeconds: 600,
+            updatedAt: oldStamp
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(600),
+            updatedAt: oldStamp,
+            exercises: [exercise],
+            cardioSessions: [session]
+        )
+        context.insert(workout)
+        try context.save()
+
+        await DeferredWorkoutEnrichmentCoordinator.shared.enrichSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: start,
+                modality: .run,
+                fallbackAvgHR: nil,
+                fallbackMaxHR: nil,
+                importsDistance: false,
+                providesGPSDistance: false,
+                hadManualIntervalPlan: true
+            ),
+            container: container,
+            snapshot: { CardioSnapshot(avgHR: 144) }
+        )
+
+        let fresh = ModelContext(container)
+        let workoutID = workout.id
+        let restored = try #require(fresh.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(restored.updatedAt > oldStamp)
+        #expect(restored.exercises.first?.updatedAt ?? .distantPast > oldStamp)
+        #expect(restored.cardioSessions.first?.avgHR == 144)
+    }
+
     @Test func hardDeleteWhileHealthQueryIsSuspendedCannotResurrectWorkout() async throws {
         let (container, context) = try TestStore.make()
         let workout = finishedWorkout(in: context)
@@ -135,6 +191,49 @@ struct DeferredWorkoutEnrichmentTests {
         #expect(row.avgHR == nil)
     }
 
+    @Test func liveWorkoutPausesAndRetriesScheduledFillAfterResume() async throws {
+        let coordinator = DeferredWorkoutEnrichmentCoordinator.shared
+        coordinator.cancelAll()
+        coordinator.setLiveWorkoutActive(false)
+        defer {
+            coordinator.cancelAll()
+            coordinator.setLiveWorkoutActive(false)
+        }
+
+        let (container, context) = try TestStore.make()
+        let workout = finishedWorkout(in: context)
+        let id = workout.id
+        let gate = RetryingSnapshotGate(value: CardioSnapshot(avgHR: 151))
+        let request = DeferredWorkoutEnrichmentCoordinator.WorkoutRequest(
+            workoutID: id,
+            start: workout.startedAt,
+            end: workout.endedAt!
+        )
+
+        let task = coordinator.scheduleWorkout(
+            request,
+            container: container,
+            snapshot: { await gate.provide() }
+        )
+        await gate.waitUntilStarted(attempt: 1)
+
+        coordinator.setLiveWorkoutActive(true)
+        await gate.release(attempt: 1)
+        for _ in 0..<100 { await Task.yield() }
+        #expect(await gate.startedCount() == 1)
+
+        coordinator.setLiveWorkoutActive(false)
+        await gate.waitUntilStarted(attempt: 2)
+        await gate.release(attempt: 2)
+        await task.value
+
+        let fresh = ModelContext(container)
+        let row = try #require(fresh.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == id })
+        ).first)
+        #expect(row.avgHR == 151)
+    }
+
     @Test func softDeletedWorkoutIsRejectedAtRefetchBoundary() async throws {
         let (container, context) = try TestStore.make()
         let workout = finishedWorkout(in: context)
@@ -200,4 +299,31 @@ private actor SnapshotGate {
         continuation?.resume()
         continuation = nil
     }
+}
+
+private actor RetryingSnapshotGate {
+    private let value: CardioSnapshot
+    private var starts = 0
+    private var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
+
+    init(value: CardioSnapshot) {
+        self.value = value
+    }
+
+    func provide() async -> CardioSnapshot {
+        starts += 1
+        let attempt = starts
+        await withCheckedContinuation { continuations[attempt] = $0 }
+        return value
+    }
+
+    func waitUntilStarted(attempt: Int) async {
+        while starts < attempt { await Task.yield() }
+    }
+
+    func release(attempt: Int) {
+        continuations.removeValue(forKey: attempt)?.resume()
+    }
+
+    func startedCount() -> Int { starts }
 }

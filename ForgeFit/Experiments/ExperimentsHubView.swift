@@ -211,6 +211,7 @@ struct ExperimentsHubView: View {
     @State private var showingSetup = false
     @State private var showingInitialResults = false
     @State private var persistError: String?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
 
     private var liveExperiments: [ExperimentModel] {
         experiments.filter { $0.deletedAt == nil }
@@ -296,7 +297,8 @@ struct ExperimentsHubView: View {
         } message: {
             Text(persistError ?? "")
         }
-        .task {
+        .task(id: performanceGate.isLiveWorkoutActive) {
+            guard performanceGate.allowsNonWorkoutWork else { return }
             do {
                 _ = try ExperimentLifecycleService.reconcile(in: modelContext)
                 if initialResultsExperiment != nil {

@@ -230,9 +230,7 @@ enum WorkoutHistoryImportService {
         batch.skippedDuplicateCount = skipped
         try context.save()
         if flaggedForReview > 0 {
-            Task { @MainActor in
-                await ExerciseAIClassifier.refineFlaggedExercises(in: context)
-            }
+            ExerciseAIClassifier.scheduleRefinement(in: context)
         }
 
         return WorkoutHistoryImportCommitResult(

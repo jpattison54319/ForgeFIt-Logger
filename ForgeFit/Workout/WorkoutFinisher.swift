@@ -226,6 +226,91 @@ enum WorkoutFinisher {
         guard hasSubstance(workout) else {
             return discard(workout, in: context)
         }
+
+        // SwiftData's `rollback()` restores the store transaction, but model
+        // references already held by SwiftUI can retain their just-mutated
+        // scalar values. Capture every field this terminal pass changes so a
+        // failed save is visibly and behaviorally live again in the same
+        // context — most importantly `endedAt`, the idempotency gate for a
+        // user's retry.
+        let workoutBeforeFinish = (
+            endedAt: workout.endedAt,
+            totalVolume: workout.totalVolume,
+            avgHR: workout.avgHR,
+            maxHR: workout.maxHR,
+            activeEnergyKcal: workout.activeEnergyKcal,
+            hrZoneSeconds: workout.hrZoneSeconds,
+            xpAwardedAmount: workout.xpAwardedAmount,
+            xpAwardedAt: workout.xpAwardedAt,
+            updatedAt: workout.updatedAt
+        )
+        let setEffortBeforeFinish = workout.exercises.flatMap(\.sets).map {
+            (model: $0, rpe: $0.rpe, rir: $0.rir)
+        }
+        let blockStateBeforeFinish = workout.blocks.map {
+            (model: $0, resultJSON: $0.resultJSON, updatedAt: $0.updatedAt)
+        }
+        let sessionStateBeforeFinish = workout.cardioSessions.map {
+            (
+                model: $0,
+                endedAt: $0.endedAt,
+                durationSeconds: $0.durationSeconds,
+                distanceMeters: $0.distanceMeters,
+                distanceSourceRaw: $0.distanceSourceRaw,
+                elevationGainMeters: $0.elevationGainMeters,
+                updatedAt: $0.updatedAt,
+                yogaStyleRaw: $0.yogaStyleRaw,
+                flexibilityExposureJSON: $0.flexibilityExposureJSON,
+                posesCompleted: $0.posesCompleted,
+                routePoints: $0.routePoints,
+                splits: $0.splits
+            )
+        }
+        let workoutUserID = workout.userID
+        let progressBeforeFinish = ((try? context.fetch(FetchDescriptor<UserProgressModel>(
+            predicate: #Predicate { $0.userID == workoutUserID && $0.deletedAt == nil }
+        ))) ?? []).first.map {
+            (model: $0, totalXP: $0.totalXP, level: $0.level, updatedAt: $0.updatedAt)
+        }
+
+        func restoreFailedTerminalMutation() {
+            workout.endedAt = workoutBeforeFinish.endedAt
+            workout.totalVolume = workoutBeforeFinish.totalVolume
+            workout.avgHR = workoutBeforeFinish.avgHR
+            workout.maxHR = workoutBeforeFinish.maxHR
+            workout.activeEnergyKcal = workoutBeforeFinish.activeEnergyKcal
+            workout.hrZoneSeconds = workoutBeforeFinish.hrZoneSeconds
+            workout.xpAwardedAmount = workoutBeforeFinish.xpAwardedAmount
+            workout.xpAwardedAt = workoutBeforeFinish.xpAwardedAt
+            workout.updatedAt = workoutBeforeFinish.updatedAt
+            for state in setEffortBeforeFinish {
+                state.model.rpe = state.rpe
+                state.model.rir = state.rir
+            }
+            for state in blockStateBeforeFinish {
+                state.model.resultJSON = state.resultJSON
+                state.model.updatedAt = state.updatedAt
+            }
+            for state in sessionStateBeforeFinish {
+                state.model.endedAt = state.endedAt
+                state.model.durationSeconds = state.durationSeconds
+                state.model.distanceMeters = state.distanceMeters
+                state.model.distanceSourceRaw = state.distanceSourceRaw
+                state.model.elevationGainMeters = state.elevationGainMeters
+                state.model.updatedAt = state.updatedAt
+                state.model.yogaStyleRaw = state.yogaStyleRaw
+                state.model.flexibilityExposureJSON = state.flexibilityExposureJSON
+                state.model.posesCompleted = state.posesCompleted
+                state.model.routePoints = state.routePoints
+                state.model.splits = state.splits
+            }
+            if let progressBeforeFinish {
+                progressBeforeFinish.model.totalXP = progressBeforeFinish.totalXP
+                progressBeforeFinish.model.level = progressBeforeFinish.level
+                progressBeforeFinish.model.updatedAt = progressBeforeFinish.updatedAt
+            }
+        }
+
         // Hidden effort must never leak into history, exports, analytics, or
         // HealthKit. Failure mode fills only unrated completed non-warm-up sets.
         WorkoutEffortPolicy.prepareForFinish(workout)
@@ -239,6 +324,7 @@ enum WorkoutFinisher {
         // do not launch any task until the one terminal save succeeds. A
         // failed save must leave no enrichment task racing the rollback.
         var deferredSessionEnrichments: [() -> Void] = []
+        var routeSessionsPendingCommit = Set<UUID>()
         // Yoga completion checkpoints are transaction companions: retain
         // them through rollback, and remove them only after the terminal
         // SwiftData save commits.
@@ -323,7 +409,11 @@ enum WorkoutFinisher {
                 session.endedAt = now
                 session.durationSeconds = max(1, Int(now.timeIntervalSince(start)))
                 if providesGPSDistance {
-                    CardioRouteRecorder.shared.stop(session: session, in: context)
+                    CardioRouteRecorder.shared.stageRouteForTerminalSave(
+                        session: session,
+                        in: context
+                    )
+                    routeSessionsPendingCommit.insert(session.id)
                 }
                 let kind = CardioKind.from(modality: session.modality)
                 let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
@@ -363,7 +453,11 @@ enum WorkoutFinisher {
         // endedAt/XP/cardio completions) — the workout is still live, so skip
         // every downstream write and let the caller surface the failure.
         if let failure = dispatchTerminalSave(context) {
+            restoreFailedTerminalMutation()
             return failure
+        }
+        routeSessionsPendingCommit.forEach {
+            CardioRouteRecorder.shared.cancel(sessionID: $0)
         }
         yogaCheckpointsPendingCommit.forEach {
             YogaRuntimeCheckpointStore.clear(sessionID: $0)
@@ -457,10 +551,14 @@ enum WorkoutFinisher {
         // FF-006 repeat-discard no-op: an already-tombstoned workout must not
         // re-run the Watch relay or runtime teardown for one user action.
         guard workout.deletedAt == nil else { return nil }
+        let previousUpdatedAt = workout.updatedAt
+        let previousDeletedAt = workout.deletedAt
         let now = Date()
         workout.updatedAt = now
         workout.deletedAt = now
         if let failure = context.saveReportingFailure() {
+            workout.updatedAt = previousUpdatedAt
+            workout.deletedAt = previousDeletedAt
             return failure
         }
         // Tell the watch the workout is gone. Phone-initiated discards remain

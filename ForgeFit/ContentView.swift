@@ -93,6 +93,7 @@ struct ContentView: View {
     @State private var restTimer = RestTimerController.shared
     @State private var intervalHub = IntervalRunnerHub.shared
     @State private var yogaHub = YogaFlowRunnerHub.shared
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
     /// Mirrors the quick-action fan's open state (via `onExpandedChange`) so
@@ -120,6 +121,9 @@ struct ContentView: View {
     @State private var pendingPlanMaintenance = false
     @State private var pendingPlanMaintenanceVersionStamp = false
     @State private var foregroundMaintenanceTask: Task<Void, Never>?
+    @State private var deferredLaunchMaintenanceTask: Task<Void, Never>?
+    @State private var pendingDeferredLaunchMaintenance = false
+    @State private var experimentNotificationScheduleTask: Task<Void, Never>?
     @State private var experimentEndTask: Task<Void, Never>?
     @State private var microcycleTransitionTask: Task<Void, Never>?
     @State private var experimentWorkoutPrompt: ExperimentWorkoutPrompt?
@@ -235,6 +239,7 @@ struct ContentView: View {
             .preferredColorScheme(resolvedColorScheme)
             .tint(activeTheme.accent)
             .task {
+                social.setLiveWorkoutActive(activeWorkout != nil)
                 await social.bootstrap()
                 // The sync pipeline: watches every SwiftData save and keeps
                 // backup + community converged with the local log (see
@@ -243,6 +248,7 @@ struct ContentView: View {
                 // catches up anything done offline last session.
                 if syncCoordinator == nil {
                     let coordinator = SyncCoordinator(social: social, container: modelContext.container)
+                    coordinator.setLiveWorkoutActive(activeWorkout != nil)
                     coordinator.start()
                     syncCoordinator = coordinator
                 }
@@ -464,6 +470,7 @@ struct ContentView: View {
             .onChange(of: appState.startRequestID) { _, requestID in handleStartRequestChange(requestID) }
             .onChange(of: routineListVersion) {
                 WatchLink.shared.invalidateRoutineSummaryCache()
+                guard activeWorkout == nil else { return }
                 WatchLink.shared.publishState()
             }
             .onChange(of: planRowsVersion) {
@@ -732,7 +739,7 @@ struct ContentView: View {
         workoutCountReactionTask?.cancel()
         workoutCountReactionTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, activeWorkout == nil else { return }
             updateWidgetSnapshot()
             WatchLink.shared.invalidateRoutineSummaryCache()
             WatchLink.shared.publishState()
@@ -742,7 +749,9 @@ struct ContentView: View {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
             }
-            guard !appState.showingLogger, scenePhase == .active else { return }
+            guard !appState.showingLogger,
+                  activeWorkout == nil,
+                  scenePhase == .active else { return }
             experimentWorkoutPrompt = makeExperimentWorkoutPrompt()
         }
     }
@@ -1016,16 +1025,17 @@ struct ContentView: View {
         if phase == .active {
             UserDefaults.standard.set(Date(), forKey: "lastActiveDate")
             reconcileLiveRuntimeOwnership()
-            reconcileExperimentLifecycle()
-            reconcileMicrocycleLifecycle()
             BackupScheduler.shared.resumeAfterForeground()
-            NotificationScheduler.shared.refreshStatus()
             updateWidgetSnapshot()
 
             if LiveWorkoutLifecyclePolicy.shouldRunForegroundMaintenance(
                 hasActiveWorkout: activeWorkout != nil
             ) {
+                reconcileExperimentLifecycle()
+                reconcileMicrocycleLifecycle()
+                NotificationScheduler.shared.refreshStatus()
                 scheduleForegroundMaintenance()
+                scheduleDeferredLaunchMaintenanceIfNeeded()
                 scheduleLaunchPlanMaintenanceIfNeeded()
                 if pendingPlanMaintenance, planDeduplicationTask == nil {
                     schedulePlanDeduplication()
@@ -1033,16 +1043,24 @@ struct ContentView: View {
             } else {
                 foregroundMaintenanceTask?.cancel()
                 foregroundMaintenanceTask = nil
+                deferredLaunchMaintenanceTask?.cancel()
+                deferredLaunchMaintenanceTask = nil
+                experimentNotificationScheduleTask?.cancel()
+                experimentNotificationScheduleTask = nil
             }
         } else if phase == .background {
             experimentEndTask?.cancel()
             experimentEndTask = nil
+            experimentNotificationScheduleTask?.cancel()
+            experimentNotificationScheduleTask = nil
             microcycleTransitionTask?.cancel()
             microcycleTransitionTask = nil
             planDeduplicationTask?.cancel()
             planDeduplicationTask = nil
             foregroundMaintenanceTask?.cancel()
             foregroundMaintenanceTask = nil
+            deferredLaunchMaintenanceTask?.cancel()
+            deferredLaunchMaintenanceTask = nil
             // Leave the widget with the freshest snapshot we have — otherwise it
             // would serve whatever it last read until the next app open.
             flushStructuralLiveSurfaceUpdate()
@@ -1105,15 +1123,28 @@ struct ContentView: View {
     private func handleActiveWorkoutChange(oldID: UUID?, newID: UUID?) {
         structuralLiveSurfaceUpdateTask?.cancel()
         structuralLiveSurfaceUpdateTask = nil
-        BackupScheduler.shared.setLiveWorkoutActive(newID != nil)
+        setLiveWorkoutPerformancePriority(newID != nil)
         if newID != nil {
+            workoutCountReactionTask?.cancel()
+            workoutCountReactionTask = nil
             planDeduplicationTask?.cancel()
             planDeduplicationTask = nil
             foregroundMaintenanceTask?.cancel()
             foregroundMaintenanceTask = nil
+            deferredLaunchMaintenanceTask?.cancel()
+            deferredLaunchMaintenanceTask = nil
+            experimentEndTask?.cancel()
+            experimentEndTask = nil
+            experimentNotificationScheduleTask?.cancel()
+            experimentNotificationScheduleTask = nil
+            microcycleTransitionTask?.cancel()
+            microcycleTransitionTask = nil
         } else if scenePhase == .active {
+            reconcileExperimentLifecycle()
             reconcileMicrocycleLifecycle()
+            NotificationScheduler.shared.refreshStatus()
             scheduleForegroundMaintenance()
+            scheduleDeferredLaunchMaintenanceIfNeeded()
             if pendingPlanMaintenance || hasDuplicatePlanRows {
                 schedulePlanDeduplication()
             }
@@ -1149,6 +1180,28 @@ struct ContentView: View {
         if UserDefaults.standard.object(forKey: "liveSyncEnabled") == nil
             || UserDefaults.standard.bool(forKey: "liveSyncEnabled") {
             HealthService.shared.startWatchApp(cardioKind: watchCardioKind(for: workout))
+        }
+    }
+
+    /// One transition fans out to every app-owned maintenance service. Each
+    /// service still owns its cancellation handle so stopping the awaiting
+    /// ContentView task can never leave detached work running invisibly.
+    private func setLiveWorkoutPerformancePriority(_ isActive: Bool) {
+        performanceGate.setLiveWorkoutActive(isActive)
+        let revision = performanceGate.transitionRevision
+        HealthMetricsStore.shared.setLiveWorkoutActive(isActive)
+        ReadinessDelivery.shared.setLiveWorkoutActive(isActive)
+        InsightDataCoordinator.shared.setLiveWorkoutActive(isActive)
+        DeferredWorkoutEnrichmentCoordinator.shared.setLiveWorkoutActive(isActive)
+        ExerciseAIClassifier.setLiveWorkoutActive(isActive)
+        social.setLiveWorkoutActive(isActive)
+        BackupScheduler.shared.setLiveWorkoutActive(isActive)
+        syncCoordinator?.setLiveWorkoutActive(isActive)
+        Task {
+            await HealthWorkoutImporter.shared.setLiveWorkoutActive(
+                isActive,
+                revision: revision
+            )
         }
     }
 
@@ -1276,6 +1329,7 @@ struct ContentView: View {
         if let raw = UserDefaults.standard.string(forKey: "distanceUnitRaw"), let du = DistanceUnit(rawValue: raw) {
             Fmt.distanceUnit = du
         }
+        setLiveWorkoutPerformancePriority(activeWorkout != nil)
         WatchLink.shared.configure(context: modelContext)
         WatchLink.shared.activate()
         WatchLink.shared.onWorkoutStartedFromWatch = { appState.showingLogger = true }
@@ -1288,7 +1342,11 @@ struct ContentView: View {
             LiveMetricsHub.shared.beginSession()
             BLEHeartRateService.shared.reconnectIfRemembered()
         }
-        await seedLaunchData()
+        if performanceGate.allowsNonWorkoutWork {
+            await seedLaunchData()
+        } else {
+            pendingDeferredLaunchMaintenance = true
+        }
         #if DEBUG
         // Forced-reset automation can rebuild the visible shell while the
         // launch task is running. Re-assert this in-memory fixture after that
@@ -1301,9 +1359,17 @@ struct ContentView: View {
             seedCurrentWeekDemo()
         }
         #endif
-        await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
-        SetTypeRetirementBackfill.run(in: modelContext)
-        WeightModeBackfill.convertIfNeeded(in: modelContext)
+        if performanceGate.allowsNonWorkoutWork {
+            await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
+            if performanceGate.allowsNonWorkoutWork {
+                SetTypeRetirementBackfill.run(in: modelContext)
+                WeightModeBackfill.convertIfNeeded(in: modelContext)
+            } else {
+                pendingDeferredLaunchMaintenance = true
+            }
+        } else {
+            pendingDeferredLaunchMaintenance = true
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
@@ -1344,15 +1410,49 @@ struct ContentView: View {
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
         consumePendingExperimentNotificationRoute()
-        CyclePreferenceMigration.migrate()
-        reconcileExperimentLifecycle()
-        reconcileMicrocycleLifecycle()
+        if performanceGate.allowsNonWorkoutWork {
+            CyclePreferenceMigration.migrate()
+            reconcileExperimentLifecycle()
+            reconcileMicrocycleLifecycle()
+        } else {
+            pendingDeferredLaunchMaintenance = true
+        }
         ReadinessDelivery.shared.configure(container: modelContext.container)
         BackupScheduler.shared.configure(container: modelContext.container)
-        BackupScheduler.shared.setLiveWorkoutActive(activeWorkout != nil)
         BackupScheduler.shared.dailyCheckIfDue()
         updateWidgetSnapshot()
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+    }
+
+    /// Cold-launch migrations are idempotent but can be expensive. If the app
+    /// was restored directly into a workout, run them once after the terminal
+    /// transition and a short interaction-free grace period.
+    private func scheduleDeferredLaunchMaintenanceIfNeeded() {
+        guard pendingDeferredLaunchMaintenance,
+              performanceGate.allowsNonWorkoutWork,
+              scenePhase == .active,
+              deferredLaunchMaintenanceTask == nil else { return }
+
+        deferredLaunchMaintenanceTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
+            await seedLaunchData()
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
+            await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
+            SetTypeRetirementBackfill.run(in: modelContext)
+            WeightModeBackfill.convertIfNeeded(in: modelContext)
+            CyclePreferenceMigration.migrate()
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
+            reconcileExperimentLifecycle()
+            reconcileMicrocycleLifecycle()
+            pendingDeferredLaunchMaintenance = false
+            deferredLaunchMaintenanceTask = nil
+        }
     }
 
     /// Scheduled experiment endings are date truth, not notification truth:
@@ -1362,6 +1462,9 @@ struct ContentView: View {
     private func reconcileExperimentLifecycle() {
         experimentEndTask?.cancel()
         experimentEndTask = nil
+        experimentNotificationScheduleTask?.cancel()
+        experimentNotificationScheduleTask = nil
+        guard performanceGate.allowsNonWorkoutWork else { return }
         do {
             _ = try ExperimentLifecycleService.reconcile(in: modelContext)
             guard let active = try ExperimentLifecycleService.activeExperiment(in: modelContext) else {
@@ -1373,10 +1476,14 @@ struct ContentView: View {
                 experiment: active,
                 trackers: trackers
             )
-            Task {
+            experimentNotificationScheduleTask = Task { @MainActor in
+                guard !Task.isCancelled,
+                      performanceGate.allowsNonWorkoutWork else { return }
                 _ = await ExperimentNotificationScheduler.schedule(
                     notificationSchedule
                 )
+                guard !Task.isCancelled else { return }
+                experimentNotificationScheduleTask = nil
             }
             let experimentID = active.id
             let wait = active.plannedEndAt.timeIntervalSinceNow
@@ -1410,6 +1517,7 @@ struct ContentView: View {
     private func reconcileMicrocycleLifecycle() {
         microcycleTransitionTask?.cancel()
         microcycleTransitionTask = nil
+        guard performanceGate.allowsNonWorkoutWork else { return }
         do {
             _ = try MicrocycleTrackingService.reconcile(in: modelContext)
             guard let transition = try MicrocycleTrackingService.nextTransitionDate(
@@ -1762,6 +1870,15 @@ struct ContentView: View {
     }
 
     private func handleAccountReset() {
+        setLiveWorkoutPerformancePriority(false)
+        foregroundMaintenanceTask?.cancel()
+        foregroundMaintenanceTask = nil
+        deferredLaunchMaintenanceTask?.cancel()
+        deferredLaunchMaintenanceTask = nil
+        experimentEndTask?.cancel()
+        experimentEndTask = nil
+        experimentNotificationScheduleTask?.cancel()
+        experimentNotificationScheduleTask = nil
         microcycleTransitionTask?.cancel()
         microcycleTransitionTask = nil
         appState.selectedTab = .home

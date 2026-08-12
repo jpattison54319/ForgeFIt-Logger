@@ -30,11 +30,37 @@ final class DeferredWorkoutEnrichmentCoordinator {
         let end: Date
     }
 
-    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private struct Attempt {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
 
-    func scheduleSession(_ request: SessionRequest, container: ModelContainer) {
-        let token = UUID()
-        let task = Task { @MainActor [weak self] in
+    /// The outer task survives a live-workout pause; only its current Health
+    /// query attempt is cancelled. Once the logger releases priority, the
+    /// request retries from its original value snapshot and stable model ID.
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var activeAttempts: [UUID: Attempt] = [:]
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isLiveWorkoutActive = false
+
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            activeAttempts.values.forEach { $0.task.cancel() }
+        } else {
+            let waiters = idleWaiters
+            idleWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+    }
+
+    @discardableResult
+    func scheduleSession(
+        _ request: SessionRequest,
+        container: ModelContainer
+    ) -> Task<Void, Never> {
+        schedule { @MainActor [weak self] in
             guard let self else { return }
             await self.enrichSession(request, container: container) {
                 await HealthService.shared.importSnapshot(
@@ -43,9 +69,7 @@ final class DeferredWorkoutEnrichmentCoordinator {
                     modality: request.modality
                 )
             }
-            self.tasks[token] = nil
         }
-        tasks[token] = task
     }
 
     @discardableResult
@@ -69,11 +93,40 @@ final class DeferredWorkoutEnrichmentCoordinator {
         container: ModelContainer,
         snapshot: @escaping @Sendable () async -> CardioSnapshot
     ) -> Task<Void, Never> {
+        schedule { @MainActor [weak self] in
+            guard let self else { return }
+            await self.enrichWorkout(request, container: container, snapshot: snapshot)
+        }
+    }
+
+    @discardableResult
+    private func schedule(
+        _ operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never> {
         let token = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.enrichWorkout(request, container: container, snapshot: snapshot)
+            while !Task.isCancelled {
+                await waitUntilIdle()
+                guard !Task.isCancelled else { break }
+                guard !isLiveWorkoutActive else { continue }
+
+                let attemptID = UUID()
+                let attemptTask = Task { @MainActor in await operation() }
+                activeAttempts[token] = Attempt(id: attemptID, task: attemptTask)
+                await attemptTask.value
+                if activeAttempts[token]?.id == attemptID {
+                    activeAttempts[token] = nil
+                }
+
+                // A lifecycle-cancelled query may finish after the workout has
+                // already closed. Retry it rather than mistaking that cancelled
+                // pass for a completed enrichment.
+                if attemptTask.isCancelled || isLiveWorkoutActive { continue }
+                break
+            }
             self.tasks[token] = nil
+            self.activeAttempts[token] = nil
         }
         tasks[token] = task
         return task
@@ -81,7 +134,21 @@ final class DeferredWorkoutEnrichmentCoordinator {
 
     func cancelAll() {
         tasks.values.forEach { $0.cancel() }
-        tasks.removeAll()
+        activeAttempts.values.forEach { $0.task.cancel() }
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitUntilIdle() async {
+        guard isLiveWorkoutActive else { return }
+        await withCheckedContinuation { continuation in
+            if isLiveWorkoutActive {
+                idleWaiters.append(continuation)
+            } else {
+                continuation.resume()
+            }
+        }
     }
 
     /// Internal injection seam for reset/deletion race tests.
@@ -91,7 +158,8 @@ final class DeferredWorkoutEnrichmentCoordinator {
         snapshot: @escaping @Sendable () async -> CardioSnapshot
     ) async {
         let values = await snapshot()
-        guard !Task.isCancelled else { return }
+        await Task.yield()
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
 
         let context = ModelContext(container)
         context.autosaveEnabled = false
@@ -115,7 +183,16 @@ final class DeferredWorkoutEnrichmentCoordinator {
             avgHR: session.avgHR,
             durationSeconds: session.durationSeconds
         )
-        guard !Task.isCancelled else { return }
+        let updatedAt = Date()
+        session.updatedAt = updatedAt
+        session.workout?.updatedAt = updatedAt
+        if let workoutExerciseID = session.workoutExerciseID,
+           let workoutExercise = session.workout?.exercises.first(where: {
+               $0.id == workoutExerciseID
+           }) {
+            workoutExercise.updatedAt = updatedAt
+        }
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         try? context.save()
 
         // `finalize` follows the same capture-values → await → fresh-refetch
@@ -134,7 +211,8 @@ final class DeferredWorkoutEnrichmentCoordinator {
         snapshot: @escaping @Sendable () async -> CardioSnapshot
     ) async {
         let values = await snapshot()
-        guard !Task.isCancelled else { return }
+        await Task.yield()
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
 
         let context = ModelContext(container)
         context.autosaveEnabled = false
@@ -149,7 +227,7 @@ final class DeferredWorkoutEnrichmentCoordinator {
         if workout.activeEnergyKcal == nil, let energy = values.activeEnergyKcal {
             workout.activeEnergyKcal = energy
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         try? context.save()
     }
 }

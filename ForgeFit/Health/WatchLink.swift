@@ -144,7 +144,11 @@ final class WatchLink: NSObject {
             exerciseByID = Dictionary(scoped.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         }
         let routineSummaries: [WatchRoutineSummary]
-        if let routineSummaryCache {
+        if active != nil {
+            // The watch is showing the active workout. Routine alternation and
+            // completed-history scans are unrelated until that workout closes.
+            routineSummaries = []
+        } else if let routineSummaryCache {
             routineSummaries = routineSummaryCache
         } else {
             let routines = (try? context.fetch(FetchDescriptor<RoutineModel>(
@@ -621,29 +625,27 @@ final class WatchLink: NSObject {
             }
             publishState(policy: .immediate)
             let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
-            Task { @MainActor in
-                let snap = await HealthService.shared.importSnapshot(from: start, to: now, modality: kind)
-                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // Keep the GPS route distance when a route was recorded (the
-                // splits are summed from it); only take HealthKit's distance
-                // when there's no route to trust.
-                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
-                    session.distanceMeters = dist
-                    session.distanceSource = .healthKit
-                }
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                try? context.save()
-                await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: context)
-                CardioGoalAnnouncer.shared.finish(
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
                     sessionID: session.id,
-                    distanceMeters: session.distanceMeters ?? distanceAtEnd,
-                    durationSeconds: session.durationSeconds,
-                    activeEnergyKcal: session.activeEnergyKcal,
-                    elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
-                )
-            }
+                    start: start,
+                    end: now,
+                    modality: kind,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: providesGPSDistance,
+                    providesGPSDistance: providesGPSDistance,
+                    hadManualIntervalPlan: hadManualIntervalPlan
+                ),
+                container: context.container
+            )
+            CardioGoalAnnouncer.shared.finish(
+                sessionID: session.id,
+                distanceMeters: session.distanceMeters ?? distanceAtEnd,
+                durationSeconds: session.durationSeconds,
+                activeEnergyKcal: session.activeEnergyKcal,
+                elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
+            )
 
         case .liveMetrics(let metrics):
             guard WatchLiveMetricsAttributionPolicy.mayApply(
@@ -946,20 +948,20 @@ final class WatchLink: NSObject {
         context: ModelContext
     ) {
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        let container = context.container
-        Task { @MainActor in
-            defer { withExtendedLifetime(container) {} }
-            let snapshot = await HealthService.shared.importSnapshot(from: start, to: end, modality: modality)
-            if let heartRate = snapshot.avgHR ?? bleStats?.avgHR { session.avgHR = heartRate }
-            if let maxHeartRate = snapshot.maxHR ?? bleStats?.maxHR { session.maxHR = maxHeartRate }
-            if let energy = snapshot.activeEnergyKcal { session.activeEnergyKcal = energy }
-            session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(
-                avgHR: session.avgHR,
-                durationSeconds: session.durationSeconds
-            )
-            try? context.save()
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: context)
-        }
+        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: end,
+                modality: modality,
+                fallbackAvgHR: bleStats?.avgHR,
+                fallbackMaxHR: bleStats?.maxHR,
+                importsDistance: false,
+                providesGPSDistance: false,
+                hadManualIntervalPlan: false
+            ),
+            container: context.container
+        )
     }
 
     private func materializeConditioningChanges(

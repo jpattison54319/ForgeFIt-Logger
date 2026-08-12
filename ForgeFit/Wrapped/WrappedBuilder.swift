@@ -31,17 +31,20 @@ nonisolated struct WrappedBuilder {
     // MARK: - Monthly
 
     func buildMonth(starting monthStart: Date) -> WrappedPayload? {
+        guard !Task.isCancelled else { return nil }
         guard let interval = calendar.dateInterval(of: .month, for: monthStart) else { return nil }
         let analytics = TrainingAnalytics(workouts: workouts, exercises: exercises, calendar: calendar, now: interval.end)
         let month = analytics.completed.filter { interval.contains($0.startedAt) }
         guard !month.isEmpty else { return nil }
 
         let report = analytics.monthlyReport(for: interval.start)
+        guard !Task.isCancelled else { return nil }
         let monthName = interval.start.formatted(dateStyle.month(.wide))
         let year = calendar.component(.year, from: interval.start)
         let activeDayNumbers = activeDays(in: month)
         let mix = trainingMix(of: month)
         let strength = strengthProgress(month: month, interval: interval, recordsSet: report.recordsSet)
+        guard !Task.isCancelled else { return nil }
         let insights = WrappedInsights.evaluate(ingredients(
             month: month, report: report, mix: mix,
             activeDays: activeDayNumbers.count,
@@ -73,6 +76,7 @@ nonisolated struct WrappedBuilder {
         if let muscles = muscleMap(month: month) {
             pages.append(.muscleMap(muscles))
         }
+        guard !Task.isCancelled else { return nil }
         if let strength {
             pages.append(.strengthProgress(strength))
         }
@@ -85,6 +89,7 @@ nonisolated struct WrappedBuilder {
         if let boss = bossBattle(of: month) {
             pages.append(.bossBattle(boss))
         }
+        guard !Task.isCancelled else { return nil }
         if let improved = insights.improved {
             pages.append(.improved(.init(headline: improved.headline, detail: improved.detail)))
         }
@@ -105,6 +110,7 @@ nonisolated struct WrappedBuilder {
             highlight: report.recordsSet > 0 ? "\(report.recordsSet) record\(report.recordsSet == 1 ? "" : "s") set" : nil
         )))
 
+        guard !Task.isCancelled else { return nil }
         return WrappedPayload(
             title: "\(monthName) Wrapped",
             periodLabel: "\(monthName) \(year)",
@@ -115,6 +121,7 @@ nonisolated struct WrappedBuilder {
     // MARK: - Yearly
 
     func buildYear(_ year: Int) -> WrappedPayload? {
+        guard !Task.isCancelled else { return nil }
         var components = DateComponents()
         components.year = year
         components.month = 1
@@ -131,6 +138,7 @@ nonisolated struct WrappedBuilder {
         let totalVolume = inYear.reduce(0.0) { $0 + ($1.totalVolume ?? 0) }
         let activeDayCount = Set(inYear.map { calendar.startOfDay(for: $0.startedAt) }).count
         let mix = trainingMix(of: inYear)
+        guard !Task.isCancelled else { return nil }
 
         var pages: [WrappedPage] = []
         pages.append(.cover(.init(
@@ -153,6 +161,7 @@ nonisolated struct WrappedBuilder {
         if let strength = strengthProgress(month: inYear, interval: yearInterval, recordsSet: recordsSet(in: inYear, interval: yearInterval)) {
             pages.append(.strengthProgress(strength))
         }
+        guard !Task.isCancelled else { return nil }
         if let cardio = cardioEngine(of: inYear, report: nil) {
             pages.append(.cardioEngine(cardio))
         }
@@ -174,6 +183,7 @@ nonisolated struct WrappedBuilder {
             highlight: nil
         )))
 
+        guard !Task.isCancelled else { return nil }
         return WrappedPayload(
             title: "\(year) Wrapped",
             periodLabel: "\(year)",
@@ -191,6 +201,7 @@ nonisolated struct WrappedBuilder {
         var strengthCount = 0, cardioCount = 0, yogaCount = 0
         var strengthMinutes = 0, cardioMinutes = 0, yogaMinutes = 0
         for workout in period {
+            guard !Task.isCancelled else { break }
             let minutes = Int((workout.endedAt ?? workout.startedAt).timeIntervalSince(workout.startedAt) / 60)
             if isPureYoga(workout) {
                 yogaCount += 1
@@ -249,6 +260,7 @@ nonisolated struct WrappedBuilder {
         let byID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var entries: [(set: SetEntry, exercise: ExerciseInfo)] = []
         for workout in period {
+            guard !Task.isCancelled else { return [:] }
             for we in workout.exercises {
                 guard let exercise = byID[we.exerciseID], !exercise.isCardio else { continue }
                 for set in we.sets where set.completedAt != nil {
@@ -332,6 +344,7 @@ nonisolated struct WrappedBuilder {
         let prior = workouts.filter { $0.endedAt != nil && $0.deletedAt == nil && $0.startedAt < interval.start }
         var priorBest: [UUID: Double] = [:]
         for workout in prior {
+            guard !Task.isCancelled else { return nil }
             for we in workout.exercises {
                 for set in we.sets where set.completedAt != nil {
                     if let e1rm = set.estimated1RM {
@@ -342,6 +355,7 @@ nonisolated struct WrappedBuilder {
         }
         var bestGain: (exerciseID: UUID, gain: Double)?
         for workout in month {
+            guard !Task.isCancelled else { return nil }
             for we in workout.exercises {
                 guard let prior = priorBest[we.exerciseID], prior > 0 else { continue }
                 for set in we.sets where set.completedAt != nil {

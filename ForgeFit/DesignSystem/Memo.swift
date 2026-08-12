@@ -42,30 +42,24 @@ final class MemoTable<Key: Hashable, Value> {
 }
 
 /// Cheap change-detection key for anything derived from workout history.
-/// O(workouts) with no per-set work: counts, the newest `updatedAt`, and the
-/// stored per-workout volume rollup together move whenever a workout is
-/// added, finished, deleted, edited, or a set completion changes its volume.
+/// O(workouts) with no per-set work: completed count, newest `updatedAt`, and
+/// stored volume move whenever completed-history analytics can change.
 ///
-/// IN-PROGRESS workouts contribute only to the `live` count — never their
-/// `updatedAt` or volume. Every memo consumer computes over COMPLETED
-/// workouts, and folding the active session in meant each mid-workout save
-/// (which stamps `updatedAt`/`totalVolume`) invalidated every kept-resident
-/// tab's memo behind the logger — a full history-wide analytics recompute per
-/// logged set. Finishing still invalidates: `ended` changes.
+/// IN-PROGRESS workouts contribute nothing. Every memo consumer computes over
+/// completed workouts, so starting or editing a live session must not wake the
+/// keep-resident tabs behind the logger. Finishing still invalidates.
 enum AnalyticsFingerprint {
     static func of(_ workouts: [WorkoutModel]) -> String {
-        var live = 0
         var ended = 0
         var latestUpdate = Date.distantPast
         var volumeSum = 0.0
         for workout in workouts where workout.deletedAt == nil {
-            live += 1
             guard workout.endedAt != nil else { continue }
             ended += 1
             if workout.updatedAt > latestUpdate { latestUpdate = workout.updatedAt }
             volumeSum += workout.totalVolume ?? 0
         }
-        return "\(live)|\(ended)|\(latestUpdate.timeIntervalSince1970)|\(volumeSum)"
+        return "\(ended)|\(latestUpdate.timeIntervalSince1970)|\(volumeSum)"
     }
 
     /// Fingerprint that also invalidates when Apple Health recovery data

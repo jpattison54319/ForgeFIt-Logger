@@ -103,6 +103,7 @@ enum WorkoutHistoryIndexer {
         exercises: [ExerciseLibraryModel],
         calendar: Calendar = .current
     ) async -> WorkoutHistoryIndex {
+        guard !Task.isCancelled else { return .empty }
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let exerciseByFoldedName = Dictionary(
             exercises.map { (fold($0.name), $0) },
@@ -126,7 +127,10 @@ enum WorkoutHistoryIndexer {
         var monthCounts: [String: (interval: DateInterval, count: Int)] = [:]
 
         for (index, workout) in completed.enumerated() {
-            if index.isMultiple(of: 200) { await Task.yield() }
+            if index.isMultiple(of: 100) {
+                await Task.yield()
+                guard !Task.isCancelled else { return .empty }
+            }
             guard seenIDs.insert(workout.id).inserted else { continue }
 
             let presentation = WorkoutPresentationPlan.make(for: workout)

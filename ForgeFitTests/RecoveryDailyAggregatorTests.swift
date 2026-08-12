@@ -174,6 +174,18 @@ struct RecoveryDailyAggregatorTests {
         #expect(stops == 0)
     }
 
+    @Test func lifecycleCancellationBeforeRegistrationKeepsItsRetryReason() {
+        let gate = InFlightHealthQuery<String>(cancelledValue: "task-cancelled")
+        var values: [String] = []
+        var stops = 0
+        gate.cancel(returning: "live-workout-pause")
+
+        #expect(!gate.register(resume: { values.append($0) }, stop: { stops += 1 }))
+        #expect(!gate.beginQueryStart())
+        #expect(values == ["live-workout-pause"])
+        #expect(stops == 0)
+    }
+
     @Test func cancellationDuringQueryStartStopsOnlyAfterExecutionBegins() {
         let gate = InFlightHealthQuery<String>(cancelledValue: "cancelled")
         var values: [String] = []
@@ -189,6 +201,31 @@ struct RecoveryDailyAggregatorTests {
 
         #expect(values == ["cancelled"])
         #expect(stops == 1)
+    }
+
+    @MainActor
+    @Test func liveWorkoutQueryGateStopsReadsAndReleasesDeferredCallers() async {
+        let owner = LiveWorkoutHealthQueryGate()
+        let query = InFlightHealthQuery<String>(cancelledValue: "task-cancelled")
+        var values: [String] = []
+        var stops = 0
+        #expect(query.register(resume: { values.append($0) }, stop: { stops += 1 }))
+        #expect(query.beginQueryStart())
+        query.markQueryStarted()
+        #expect(owner.register { query.cancel(returning: "live-workout-pause") } != nil)
+
+        owner.setLiveWorkoutActive(true)
+        query.finish("late-result")
+        #expect(values == ["live-workout-pause"])
+        #expect(stops == 1)
+
+        let waiter = Task { @MainActor in
+            await owner.waitUntilIdle()
+            return !Task.isCancelled
+        }
+        await Task.yield()
+        owner.setLiveWorkoutActive(false)
+        #expect(await waiter.value)
     }
 
     private func date(

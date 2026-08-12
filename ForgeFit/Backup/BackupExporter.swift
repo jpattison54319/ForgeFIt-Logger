@@ -77,15 +77,21 @@ nonisolated struct BackupSnapshotWorker: Sendable {
 
     func snapshot(metadata: BackupSnapshotMetadata) async throws -> ForgeFitBackupFile {
         let container = modelContainer
-        let task = Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .background) {
             try Task.checkCancellation()
             let context = ModelContext(container)
             let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
+            try Task.checkCancellation()
             let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())
+            try Task.checkCancellation()
             let microcycleTrackings = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+            try Task.checkCancellation()
             let microcycleWindows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            try Task.checkCancellation()
             let restDays = try context.fetch(FetchDescriptor<RestDayModel>())
+            try Task.checkCancellation()
             let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            try Task.checkCancellation()
             let names = Dictionary(
                 exercises.map { ($0.id, $0.name) },
                 uniquingKeysWith: { first, _ in first }
@@ -177,8 +183,8 @@ actor BackupExporter {
         backupDirectoryURL()?.appendingPathComponent("ForgeFit-Backup-previous.\(Self.fileExtension)")
     }
 
-    /// Snapshot on a private SwiftData context, then map + compress + write on
-    /// this actor. Returns the resulting status.
+    /// Snapshot, encoding, compression, and coordinated writes all run below
+    /// interaction priority with cancellation boundaries between phases.
     @discardableResult
     func exportNow(container: ModelContainer) async -> Status {
         guard !Task.isCancelled else { return .idle }
@@ -191,37 +197,16 @@ actor BackupExporter {
         status = .exporting
         do {
             let file = try await Self.snapshotFile(container: container)
-            guard !Task.isCancelled else {
-                status = .idle
-                return status
-            }
-            let data = try BackupMapper.encode(file)
-            let compressed = try (data as NSData).compressed(using: .zlib) as Data
-
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            // Coordinate both slots. Rotation copies the prior latest to the
-            // previous slot before atomically replacing latest, so there is no
-            // move boundary at which the current backup disappears (FF-018).
-            var coordinatorError: NSError?
-            var rotationError: Error?
-            NSFileCoordinator().coordinate(
-                writingItemAt: latestURL,
-                options: .forReplacing,
-                writingItemAt: previousURL,
-                options: .forReplacing,
-                error: &coordinatorError
-            ) { coordinatedLatest, coordinatedPrevious in
-                do {
-                    try BackupFileRotation.rotate(
-                        newData: compressed,
-                        latestURL: coordinatedLatest,
-                        previousURL: coordinatedPrevious
-                    )
-                } catch {
-                    rotationError = error
-                }
-            }
-            if let error = coordinatorError ?? (rotationError.map { $0 as NSError }) { throw error }
+            try Task.checkCancellation()
+            let compressed = try await Self.encodeAndCompress(file)
+            try Task.checkCancellation()
+            try await Self.writeBackup(
+                compressed,
+                directory: directory,
+                latestURL: latestURL,
+                previousURL: previousURL
+            )
+            try Task.checkCancellation()
 
             let stamp = Date()
             UserDefaults.standard.set(stamp, forKey: Self.lastSuccessKey)
@@ -235,6 +220,70 @@ actor BackupExporter {
             status = .failed(error.localizedDescription)
         }
         return status
+    }
+
+    private nonisolated static func encodeAndCompress(
+        _ file: ForgeFitBackupFile
+    ) async throws -> Data {
+        let task = Task.detached(priority: .background) {
+            try Task.checkCancellation()
+            let data = try BackupMapper.encode(file)
+            try Task.checkCancellation()
+            let compressed = try (data as NSData).compressed(using: .zlib) as Data
+            try Task.checkCancellation()
+            return compressed
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    private nonisolated static func writeBackup(
+        _ compressed: Data,
+        directory: URL,
+        latestURL: URL,
+        previousURL: URL
+    ) async throws {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try Task.checkCancellation()
+
+            // Coordinate both slots. Cancellation can stop rotation before
+            // either atomic write without invalidating the prior latest file.
+            var coordinatorError: NSError?
+            var rotationError: Error?
+            NSFileCoordinator().coordinate(
+                writingItemAt: latestURL,
+                options: .forReplacing,
+                writingItemAt: previousURL,
+                options: .forReplacing,
+                error: &coordinatorError
+            ) { coordinatedLatest, coordinatedPrevious in
+                do {
+                    try BackupFileRotation.rotate(
+                        newData: compressed,
+                        latestURL: coordinatedLatest,
+                        previousURL: coordinatedPrevious,
+                        atStep: { _ in try Task.checkCancellation() }
+                    )
+                } catch {
+                    rotationError = error
+                }
+            }
+            if let error = coordinatorError ?? (rotationError.map { $0 as NSError }) {
+                throw error
+            }
+            try Task.checkCancellation()
+        }
+        try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
     }
 
     /// Reads either a zlib-compressed or plain-JSON backup file.

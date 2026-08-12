@@ -38,16 +38,23 @@ final class InsightDataCoordinator {
         let windowRevision: Int64
     }
 
+    private struct InFlightOperation {
+        let id: UUID
+        let task: Task<InsightResult, Never>
+    }
+
     private var cache: [CacheKey: InsightResult] = [:]
-    private var inFlight: [CacheKey: Task<InsightResult, Never>] = [:]
+    private var inFlight: [CacheKey: InFlightOperation] = [:]
+    private var isLiveWorkoutActive = false
     /// Session snapshots shared across every card evaluating the same data —
     /// N saved cards snapshot the log once, not N times.
     private var snapshotCache: (fingerprint: String, sessions: [InsightSessionSnapshot], checkins: [InsightCheckinSnapshot])?
 
     static let shared = InsightDataCoordinator()
 
-    /// Changes whenever the training log or Health snapshot changes — cache
-    /// entries from older data die with it. Cheap: counts + latest updatedAt.
+    /// Changes whenever completed training history or the Health snapshot
+    /// changes. In-progress workouts are deliberately absent so set logging
+    /// cannot restart every saved card behind the full-screen logger.
     /// `metricsRevision` is load-bearing: sleep corrections reprocess the
     /// cached Health series WITHOUT touching `lastRefreshed`, and a corrected
     /// night must never keep serving a stale card. Exercise/routine stamps
@@ -60,7 +67,14 @@ final class InsightDataCoordinator {
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> String {
-        let latestWorkout = workouts.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
+        var completedWorkoutCount = 0
+        var latestWorkout = Date.distantPast
+        for workout in workouts where workout.endedAt != nil && workout.deletedAt == nil {
+            completedWorkoutCount += 1
+            if workout.updatedAt > latestWorkout {
+                latestWorkout = workout.updatedAt
+            }
+        }
         let latestCheckin = checkins.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         let exerciseRevision = exerciseLibraryRevision(exercises)
         let latestRoutine = routines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
@@ -69,7 +83,7 @@ final class InsightDataCoordinator {
         // Range windows and explicit zero grids move even when no model does.
         // A day anchor prevents yesterday's cached result surviving midnight.
         let dayAnchor = calendar.startOfDay(for: now).timeIntervalSinceReferenceDate
-        return "\(workouts.count)|\(latestWorkout)|\(checkins.count)|\(latestCheckin)|\(health)|\(revision)|\(exerciseRevision.fingerprintComponent)|\(routines.count)|\(latestRoutine)|\(Fmt.unit.rawValue)|\(dayAnchor)"
+        return "\(completedWorkoutCount)|\(latestWorkout.timeIntervalSinceReferenceDate)|\(checkins.count)|\(latestCheckin)|\(health)|\(revision)|\(exerciseRevision.fingerprintComponent)|\(routines.count)|\(latestRoutine)|\(Fmt.unit.rawValue)|\(dayAnchor)"
     }
 
     private func exerciseLibraryRevision(
@@ -87,7 +101,14 @@ final class InsightDataCoordinator {
         snapshotCache = nil
         sessionRowCache.removeAll()
         healthInputsCache.removeAll()
-        inFlight.values.forEach { $0.cancel() }
+        inFlight.values.forEach { $0.task.cancel() }
+        inFlight.removeAll()
+    }
+
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        isLiveWorkoutActive = isActive
+        guard isActive else { return }
+        inFlight.values.forEach { $0.task.cancel() }
         inFlight.removeAll()
     }
 
@@ -113,6 +134,7 @@ final class InsightDataCoordinator {
     private var healthInputsCache: [Int: (fingerprint: String, inputs: HealthInputs)] = [:]
 
     private func healthInputs(recipe: InsightRecipe, fingerprint: String) async -> HealthInputs {
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return HealthInputs() }
         let needsHealth = recipe.allMetricIDs.contains {
             InsightMetricCatalog.definition(for: $0)?.requiresHealth == true
         }
@@ -129,11 +151,13 @@ final class InsightDataCoordinator {
         var inputs = HealthInputs()
         inputs.bodyweight = await HealthService.shared.bodyMassSeries(days: days)
             .map { InsightObservation(timestamp: $0.date, value: $0.value, provenance: .measured) }
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return HealthInputs() }
         // The SAME integrity pipeline every other surface trusts: sleep
         // corrections + partial-wear detection, then bestHRV / bestRestingHR
         // fallback semantics — a 5am fragment must not read as a
         // flatteringly high nocturnal HRV here either.
         let daily = SleepOverrideStore.shared.process(await HealthService.shared.dailyMetrics(days: days))
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return HealthInputs() }
         inputs.health = daily.map { record in
             InsightDailyHealthSnapshot(
                 date: record.date,
@@ -155,6 +179,7 @@ final class InsightDataCoordinator {
                 exerciseMinutes: $0.exerciseMinutes, activeEnergyKcal: $0.activeEnergyKcal
             )
         }
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return HealthInputs() }
         healthInputsCache[days] = (fingerprint, inputs)
         return inputs
     }
@@ -243,7 +268,9 @@ final class InsightDataCoordinator {
                 : 0
         )
         if let cached = cache[key] { return cached }
-        if let running = inFlight[key] { return await running.value }
+        if let running = inFlight[key] {
+            return await running.task.value
+        }
 
         let snapshot = snapshots(
             fingerprint: key.fingerprint,
@@ -274,9 +301,15 @@ final class InsightDataCoordinator {
             }
             return result
         }
-        inFlight[key] = task
+        let operationID = UUID()
+        inFlight[key] = InFlightOperation(id: operationID, task: task)
+        // This result may serve several saved cards. A single card leaving the
+        // hierarchy must not cancel shared work; the live-workout gate and
+        // cache reset remain the operation owners.
         let result = await task.value
-        inFlight[key] = nil
+        if inFlight[key]?.id == operationID {
+            inFlight[key] = nil
+        }
         return result
     }
 
@@ -483,7 +516,7 @@ final class InsightDataCoordinator {
         calendar: Calendar
     ) async -> InsightResult {
         let descriptors = InsightMetricCatalog.descriptors(covering: recipe)
-        return await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             InsightQueryEngine.evaluate(
                 recipe: recipe,
                 descriptors: descriptors,
@@ -493,7 +526,11 @@ final class InsightDataCoordinator {
                 dataStart: dataStart,
                 shouldCancel: { Task.isCancelled }
             )
-        }.value
+        }
+        return await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
     }
 
     // MARK: - Filters & dimensions

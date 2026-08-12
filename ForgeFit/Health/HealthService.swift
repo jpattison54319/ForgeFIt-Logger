@@ -117,6 +117,10 @@ nonisolated enum BoundedQueryOutcome<Value> {
 /// exclusively under `lock`, and `cancelledValue` is immutable, so the gate is
 /// safe to hand to `withTaskCancellationHandler`'s `@Sendable` closures.
 nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
+    private enum Settlement {
+        case value(Value)
+    }
+
     private let lock = NSLock()
     private let cancelledValue: Value
     private var resume: ((Value) -> Void)?
@@ -124,6 +128,7 @@ nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
     private var queryStarted = false
     private var finished = false
     private var cancellationWon = false
+    private var settlementBeforeRegistration: Settlement?
 
     init(cancelledValue: Value) {
         self.cancelledValue = cancelledValue
@@ -136,15 +141,19 @@ nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
     @discardableResult
     func register(resume: @escaping (Value) -> Void, stop: @escaping () -> Void) -> Bool {
         var cancelledEarly = false
+        var earlySettlement: Settlement?
         lock.lock()
         if finished {
             cancelledEarly = true
+            earlySettlement = settlementBeforeRegistration ?? .value(cancelledValue)
         } else {
             self.resume = resume
             self.stop = stop
         }
         lock.unlock()
-        if cancelledEarly { resume(cancelledValue) }
+        if case .value(let value) = earlySettlement {
+            resume(value)
+        }
         return !cancelledEarly
     }
 
@@ -175,14 +184,30 @@ nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
 
     /// Enclosing task cancelled (any thread, any phase).
     func cancel() {
-        if let deliveredResume = settle() {
-            lock.lock()
+        cancel(returning: cancelledValue)
+    }
+
+    /// A lifecycle owner can settle with a distinct value while retaining the
+    /// exact same once-only stop semantics as ordinary task cancellation.
+    func cancel(returning value: Value) {
+        var deliveredResume: ((Value) -> Void)?
+        var shouldStop = false
+        lock.lock()
+        if !finished {
+            finished = true
+            deliveredResume = resume
+            resume = nil
+            if deliveredResume == nil {
+                settlementBeforeRegistration = .value(value)
+            }
             cancellationWon = true
-            let shouldStop = queryStarted
-            lock.unlock()
-            deliveredResume(cancelledValue)
-            if shouldStop { attemptStop() }
+            shouldStop = queryStarted
         }
+        lock.unlock()
+        if let deliveredResume {
+            deliveredResume(value)
+        }
+        if shouldStop { attemptStop() }
     }
 
     private func settle() -> ((Value) -> Void)? {
@@ -209,6 +234,75 @@ nonisolated final class InFlightHealthQuery<Value>: @unchecked Sendable {
         stopQuery?()
     }
 }
+
+#if canImport(HealthKit)
+/// Process-wide ownership for read-only HealthKit queries. A live workout can
+/// begin from the phone or Watch while any screen is still resident; this gate
+/// stops every registered background read and lets its caller transparently
+/// retry after the workout instead of publishing an empty cancellation value.
+@MainActor
+final class LiveWorkoutHealthQueryGate {
+    static let shared = LiveWorkoutHealthQueryGate()
+
+    private var isLiveWorkoutActive = false
+    private var cancellers: [UUID: @Sendable () -> Void] = [:]
+    private var idleWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            let pending = Array(cancellers.values)
+            cancellers.removeAll()
+            pending.forEach { $0() }
+        } else {
+            let waiters = Array(idleWaiters.values)
+            idleWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+        }
+    }
+
+    /// Returns nil when a workout won the race before registration.
+    func register(_ cancel: @escaping @Sendable () -> Void) -> UUID? {
+        guard !isLiveWorkoutActive else { return nil }
+        let id = UUID()
+        cancellers[id] = cancel
+        return id
+    }
+
+    func unregister(_ id: UUID) {
+        cancellers[id] = nil
+    }
+
+    func waitUntilIdle() async {
+        guard isLiveWorkoutActive else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled || !isLiveWorkoutActive {
+                    continuation.resume()
+                } else {
+                    idleWaiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                LiveWorkoutHealthQueryGate.shared.cancelWaiter(id)
+            }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        idleWaiters.removeValue(forKey: id)?.resume()
+    }
+}
+
+private enum HealthQueryRunOutcome<Value> {
+    case value(Value)
+    case liveWorkoutPause
+    case taskCancellation
+}
+#endif
 
 /// Reads and writes cardiovascular / workout data with Apple Health & Fitness
 /// (populated by Apple Watch or any connected source). Reading auto-fills cardio
@@ -714,7 +808,7 @@ nonisolated final class HealthService: @unchecked Sendable {
         var interval = DateComponents()
         interval.day = 1
 
-        return await withCheckedContinuation { continuation in
+        return await Self.runCancellableQuery(store: store, cancelledValue: [:]) { finish in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
@@ -728,9 +822,9 @@ nonisolated final class HealthService: @unchecked Sendable {
                     guard let sum = statistics.sumQuantity() else { return }
                     values[calendar.startOfDay(for: statistics.startDate)] = sum.doubleValue(for: unit)
                 }
-                continuation.resume(returning: values)
+                finish(values)
             }
-            self.store.execute(query)
+            return query
         }
     }
 
@@ -748,7 +842,7 @@ nonisolated final class HealthService: @unchecked Sendable {
         interval.minute = 15
         let elapsedToday = now.timeIntervalSince(calendar.startOfDay(for: now))
 
-        return await withCheckedContinuation { continuation in
+        return await Self.runCancellableQuery(store: store, cancelledValue: [:]) { finish in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
@@ -764,9 +858,9 @@ nonisolated final class HealthService: @unchecked Sendable {
                     guard offset <= elapsedToday, let sum = statistics.sumQuantity() else { return }
                     values[day, default: 0] += sum.doubleValue(for: unit)
                 }
-                continuation.resume(returning: values)
+                finish(values)
             }
-            self.store.execute(query)
+            return query
         }
     }
 
@@ -791,6 +885,65 @@ nonisolated final class HealthService: @unchecked Sendable {
         }
     }
 
+    /// Executes one HealthKit query with real lifecycle cancellation. Cancelling
+    /// only the surrounding Swift task is insufficient for callback-based
+    /// HealthKit APIs: without `store.stop`, the database query keeps consuming
+    /// resources behind the live logger until its callback eventually arrives.
+    ///
+    /// Internal so the automatic workout importer can use the identical
+    /// once-only continuation/stop gate for its own HealthKit reads.
+    static func runCancellableQuery<Value>(
+        store: HKHealthStore,
+        cancelledValue: Value,
+        makeQuery: (_ finish: @escaping (Value) -> Void) -> HKQuery
+    ) async -> Value {
+        while !Task.isCancelled {
+            await LiveWorkoutHealthQueryGate.shared.waitUntilIdle()
+            guard !Task.isCancelled else { return cancelledValue }
+
+            let target = InFlightQueryTarget()
+            let queryGate = InFlightHealthQuery<HealthQueryRunOutcome<Value>>(
+                cancelledValue: .taskCancellation
+            )
+            guard let registrationID = await LiveWorkoutHealthQueryGate.shared.register({
+                queryGate.cancel(returning: .liveWorkoutPause)
+            }) else {
+                continue
+            }
+
+            let outcome = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    guard queryGate.register(
+                        resume: { continuation.resume(returning: $0) },
+                        stop: {
+                            if let query = target.query { store.stop(query) }
+                        }
+                    ) else {
+                        return
+                    }
+                    let query = makeQuery { queryGate.finish(.value($0)) }
+                    target.query = query
+                    guard queryGate.beginQueryStart() else { return }
+                    store.execute(query)
+                    queryGate.markQueryStarted()
+                }
+            } onCancel: {
+                queryGate.cancel()
+            }
+            await LiveWorkoutHealthQueryGate.shared.unregister(registrationID)
+
+            switch outcome {
+            case .value(let value):
+                return value
+            case .liveWorkoutPause:
+                continue
+            case .taskCancellation:
+                return cancelledValue
+            }
+        }
+        return cancelledValue
+    }
+
     /// Runs one bounded, cancellable `HKSampleQuery`, coordinating the results
     /// handler and the enclosing task's cancellation through
     /// `InFlightHealthQuery` so the continuation resumes exactly once and the
@@ -803,38 +956,18 @@ nonisolated final class HealthService: @unchecked Sendable {
         limit: Int,
         sortDescriptors: [NSSortDescriptor]?
     ) async -> BoundedQueryOutcome<[Sample]> {
-        let target = InFlightQueryTarget()
-        let gate = InFlightHealthQuery<BoundedQueryOutcome<[Sample]>>(cancelledValue: .cancelled)
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<BoundedQueryOutcome<[Sample]>, Never>) in
-                guard gate.register(
-                    resume: { continuation.resume(returning: $0) },
-                    stop: {
-                        if let query = target.query { self.store.stop(query) }
-                    }
-                ) else {
-                    // Cancellation won before the query existed; nothing was
-                    // ever started, so there is nothing to stop.
-                    return
-                }
-                let query = HKSampleQuery(
-                    sampleType: type,
-                    predicate: predicate,
-                    limit: limit,
-                    sortDescriptors: sortDescriptors
-                ) { _, samples, _ in
-                    let typed = (samples as? [Sample]) ?? []
-                    let outcome: BoundedQueryOutcome<[Sample]> =
-                        HealthQueryBounds.isTruncated(typed.count, limit: limit) ? .truncated : .value(typed)
-                    gate.finish(outcome)
-                }
-                target.query = query
-                guard gate.beginQueryStart() else { return }
-                self.store.execute(query)
-                gate.markQueryStarted()
+        await Self.runCancellableQuery(store: store, cancelledValue: .cancelled) { finish in
+            HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: limit,
+                sortDescriptors: sortDescriptors
+            ) { _, samples, _ in
+                let typed = (samples as? [Sample]) ?? []
+                let outcome: BoundedQueryOutcome<[Sample]> =
+                    HealthQueryBounds.isTruncated(typed.count, limit: limit) ? .truncated : .value(typed)
+                finish(outcome)
             }
-        } onCancel: {
-            gate.cancel()
         }
     }
 
@@ -1028,12 +1161,11 @@ nonisolated final class HealthService: @unchecked Sendable {
     private func quantitySamples(_ id: HKQuantityTypeIdentifier, from start: Date, to end: Date) async -> [HKQuantitySample] {
         guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        return await withCheckedContinuation { cont in
-            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
-                                      sortDescriptors: nil) { _, samples, _ in
-                cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+        return await Self.runCancellableQuery(store: store, cancelledValue: []) { finish in
+            HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+                          sortDescriptors: nil) { _, samples, _ in
+                finish((samples as? [HKQuantitySample]) ?? [])
             }
-            store.execute(query)
         }
     }
 
@@ -1042,12 +1174,11 @@ nonisolated final class HealthService: @unchecked Sendable {
     private func sleepSamples(from start: Date?, to end: Date) async -> [HKCategorySample] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
-        return await withCheckedContinuation { cont in
-            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
-                                      sortDescriptors: nil) { _, samples, _ in
-                cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+        return await Self.runCancellableQuery(store: store, cancelledValue: []) { finish in
+            HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+                          sortDescriptors: nil) { _, samples, _ in
+                finish((samples as? [HKCategorySample]) ?? [])
             }
-            store.execute(query)
         }
     }
 
@@ -1105,12 +1236,14 @@ nonisolated final class HealthService: @unchecked Sendable {
               let windowStart = Calendar.current.date(byAdding: .second, value: -Int(tolerance), to: start),
               let windowEnd = Calendar.current.date(byAdding: .second, value: Int(tolerance), to: end) else { return nil }
         let predicate = HKQuery.predicateForSamples(withStart: windowStart, end: windowEnd, options: [])
-        let workouts: [HKWorkout] = await withCheckedContinuation { cont in
-            let query = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate,
-                                      limit: 10, sortDescriptors: nil) { _, samples, _ in
-                cont.resume(returning: (samples as? [HKWorkout]) ?? [])
+        let workouts: [HKWorkout] = await Self.runCancellableQuery(
+            store: store,
+            cancelledValue: []
+        ) { finish in
+            HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate,
+                          limit: 10, sortDescriptors: nil) { _, samples, _ in
+                finish((samples as? [HKWorkout]) ?? [])
             }
-            store.execute(query)
         }
         return workouts.first {
             abs($0.startDate.timeIntervalSince(start)) <= tolerance
@@ -1249,28 +1382,26 @@ nonisolated final class HealthService: @unchecked Sendable {
         guard isAvailable,
               let type = HKQuantityType.quantityType(forIdentifier: id) else { return nil }
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
-        return await withCheckedContinuation { cont in
-            let query = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
+        return await Self.runCancellableQuery(store: store, cancelledValue: nil) { finish in
+            HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, _ in
                 let value = (samples as? [HKQuantitySample])?.first?.quantity.doubleValue(for: unit)
-                cont.resume(returning: value)
+                finish(value)
             }
-            store.execute(query)
         }
     }
 
     private func stat(_ id: HKQuantityTypeIdentifier, _ option: HKStatisticsOptions, _ predicate: NSPredicate, unit: HKUnit) async -> Double? {
         guard let type = HKQuantityType.quantityType(forIdentifier: id) else { return nil }
-        return await withCheckedContinuation { cont in
-            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: option) { _, stats, _ in
+        return await Self.runCancellableQuery(store: store, cancelledValue: nil) { finish in
+            HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: option) { _, stats, _ in
                 let qty: HKQuantity?
                 switch option {
                 case .discreteAverage: qty = stats?.averageQuantity()
                 case .discreteMax: qty = stats?.maximumQuantity()
                 default: qty = stats?.sumQuantity()
                 }
-                cont.resume(returning: qty?.doubleValue(for: unit))
+                finish(qty?.doubleValue(for: unit))
             }
-            store.execute(query)
         }
     }
     #endif

@@ -281,6 +281,18 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     func stop(session: CardioSessionModel, in context: ModelContext) {
         defer { cancel() }
+        persistRecordedRoute(session: session, in: context)
+    }
+
+    /// Stages the current route inside the workout's terminal transaction but
+    /// keeps GPS ownership alive until that save commits. If persistence
+    /// fails, the logger remains live and route collection can continue; a
+    /// successful finish calls `cancel(sessionID:)` immediately afterward.
+    func stageRouteForTerminalSave(session: CardioSessionModel, in context: ModelContext) {
+        persistRecordedRoute(session: session, in: context)
+    }
+
+    private func persistRecordedRoute(session: CardioSessionModel, in context: ModelContext) {
         guard recordingSessionID == session.id, !locations.isEmpty else { return }
         CardioRouteMath.replaceRoute(for: session, locations: locations, in: context)
         session.distanceMeters = session.routePoints.count > 1
