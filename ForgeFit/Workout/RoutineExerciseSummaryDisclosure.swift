@@ -14,6 +14,10 @@ struct RoutineExerciseSummaryDisclosure: View {
     let isExpanded: Bool
     let onToggle: () -> Void
 
+    /// Leaves only enough visible space for the chevron while its full tap
+    /// target overlaps the non-interactive summary above it.
+    private let disclosureFooterHeight: CGFloat = 14
+
     private var thirdExerciseIndex: Int? {
         var exerciseCount = 0
         for (index, item) in items.enumerated() {
@@ -53,12 +57,24 @@ struct RoutineExerciseSummaryDisclosure: View {
             }
 
             if thirdExerciseIndex != nil {
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: disclosureFooterHeight)
+                    .accessibilityHidden(true)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if thirdExerciseIndex != nil {
                 Button(action: toggle) {
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(isExpanded ? theme.accent : theme.textTertiary)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
+                    ZStack(alignment: .bottom) {
+                        Color.clear
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(isExpanded ? theme.accent : theme.textTertiary)
+                            .padding(.bottom, 4)
+                    }
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(

@@ -1633,6 +1633,16 @@ private struct RoutineCard: View {
         isAlternationOwner ? alternationState?.other : nil
     }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: displayRoutine) }
+    private var hasExerciseDisclosure: Bool {
+        orderedItems.filter {
+            if case .exercise = $0 { return true }
+            return false
+        }.count >= 3
+    }
+    private var cardBottomPadding: CGFloat {
+        guard hasExerciseDisclosure, otherStartRoutine == nil else { return Space.lg }
+        return isSummaryExpanded ? Space.xs : 0
+    }
 
     private var conditioningSummary: String? {
         let json = displayRoutine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
@@ -1653,7 +1663,7 @@ private struct RoutineCard: View {
 
     var body: some View {
         NavigationLink(value: displayRoutine) {
-            Card {
+            Card(padding: 0) {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(displayRoutine.name)
@@ -1769,6 +1779,9 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("start-alternate-\(otherStartRoutine.name)")
                     }
                 }
+                .padding(.horizontal, Space.lg)
+                .padding(.top, Space.lg)
+                .padding(.bottom, cardBottomPadding)
             }
         }
         .buttonStyle(.plain)
