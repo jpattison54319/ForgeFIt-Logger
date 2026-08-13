@@ -178,6 +178,7 @@ struct HRZoneSettingsView: View {
                                 .padding(.vertical, 8).padding(.horizontal, 10)
                                 .background(theme.surfaceElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .minimumTouchTarget()
                             SecondaryButton(title: "Apply", systemImage: "sparkles") {
                                 if let age = Int(manualAge), (10...100).contains(age) {
                                     config.maxHR = HRZoneConfig.maxHR(forAge: age)
@@ -225,6 +226,7 @@ struct HRZoneSettingsView: View {
                     Image(systemName: showAdvanced ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textTertiary)
                 }
+                .minimumTouchTarget()
             }
             if showAdvanced {
                 Card {
@@ -321,6 +323,7 @@ struct HRZoneSettingsView: View {
                     .padding(.horizontal, 10)
                     .background(theme.surfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .minimumTouchTarget()
                 Text("bpm")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textTertiary)

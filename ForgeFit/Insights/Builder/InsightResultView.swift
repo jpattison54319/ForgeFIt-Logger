@@ -413,9 +413,9 @@ struct InsightResultView: View {
                         .font(.system(size: 11, weight: .bold))
                 }
                 .foregroundStyle(theme.textSecondary)
+                .minimumTouchTarget()
             }
             .buttonStyle(.plain)
-            .frame(minHeight: 44)
             .accessibilityIdentifier("insight-advanced-toggle")
 
             if advancedExpanded, let relationship = result.relationship {

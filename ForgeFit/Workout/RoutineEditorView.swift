@@ -306,8 +306,15 @@ struct RoutineEditorView: View {
             Spacer()
             Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
-            Button("Save") { saveNow(); dismiss() }
-                .font(.bodyStrong).foregroundStyle(theme.accent)
+            Button {
+                saveNow()
+                dismiss()
+            } label: {
+                Text("Save")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accent)
+                    .minimumTouchTarget()
+            }
         }
         .padding(.top, Space.sm)
     }
@@ -711,6 +718,7 @@ private struct ExerciseEditRow: View {
                                 onShowDetail(exercise.id)
                             } label: {
                                 ExerciseNameLabel(name: exercise.name)
+                                    .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                         } else {
@@ -833,6 +841,7 @@ private struct ExerciseEditRow: View {
                     Spacer()
                 }
                 .foregroundStyle(theme.accent)
+                .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("routine-yoga-flow-builder")

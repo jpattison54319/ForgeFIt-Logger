@@ -22,6 +22,7 @@ struct MetricDetailScaffold<Content: View>: View {
                 Text("Trends").tag(MetricDetailTab.trends)
             }
             .pickerStyle(.segmented)
+            .frame(minHeight: TouchTarget.minimum)
             .accessibilityIdentifier("\(title.lowercased())-detail-tabs")
 
             content()

@@ -29,6 +29,20 @@ struct Card<Content: View>: View {
 
 // MARK: - Buttons
 
+/// Apple's minimum interactive area for touch-driven iPhone controls. The
+/// modifier grows only the layout and hit-testing region; glyphs, text, and
+/// custom backgrounds keep their existing visual size.
+enum TouchTarget {
+    static let minimum: CGFloat = 44
+}
+
+extension View {
+    func minimumTouchTarget() -> some View {
+        frame(minWidth: TouchTarget.minimum, minHeight: TouchTarget.minimum)
+            .contentShape(Rectangle())
+    }
+}
+
 /// Full-width prominent action rendered with iOS 26 Liquid Glass
 /// (`.glassProminent`).
 struct PrimaryButton: View {
@@ -98,7 +112,7 @@ struct CircleIconButton: View {
             Image(systemName: systemImage)
                 .font(.bodyStrong)
                 .foregroundStyle(tint ?? theme.textPrimary)
-                .frame(width: 44, height: 44)   // HIG minimum touch target
+                .frame(width: TouchTarget.minimum, height: TouchTarget.minimum)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
@@ -122,7 +136,7 @@ struct CircleIconNavigationLink<Value: Hashable>: View {
             Image(systemName: systemImage)
                 .font(.bodyStrong)
                 .foregroundStyle(tint ?? theme.textPrimary)
-                .frame(width: 44, height: 44)
+                .frame(width: TouchTarget.minimum, height: TouchTarget.minimum)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
@@ -133,6 +147,7 @@ struct CircleIconNavigationLink<Value: Hashable>: View {
 struct PressableButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .minimumTouchTarget()
             .opacity(configuration.isPressed ? 0.7 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)

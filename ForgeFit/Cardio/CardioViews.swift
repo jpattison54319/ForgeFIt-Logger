@@ -147,9 +147,14 @@ struct CardioExerciseCard: View {
             }
             Spacer()
             if hasIntervals {
-                Button("Edit") { showIntervalEditor = true }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                Button {
+                    showIntervalEditor = true
+                } label: {
+                    Text("Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccent)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
             }
             Menu {
@@ -177,6 +182,7 @@ struct CardioExerciseCard: View {
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
+                    .minimumTouchTarget()
             }
             .accessibilityIdentifier("cardio-goal-menu")
         }
@@ -249,6 +255,7 @@ struct CardioExerciseCard: View {
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
+                    .minimumTouchTarget()
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -322,9 +329,14 @@ struct CardioExerciseCard: View {
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccent)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("cardio-history-edit")
             }
@@ -394,6 +406,7 @@ struct CardioExerciseCard: View {
             Button { withAnimation { showManual.toggle() } } label: {
                 Text(showManual ? "Hide manual entry" : "Enter manually instead")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    .minimumTouchTarget()
             }
             if showManual {
                 CardioSessionEditor(session: session, kind: kind, onChange: recompute)
@@ -419,6 +432,7 @@ struct CardioExerciseCard: View {
                     Label("Start interval guidance", systemImage: "timer")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(theme.secondaryAccent)
+                        .minimumTouchTarget()
                 }
             } else {
                 // Zone-only or open sessions can still set/adjust a zone
@@ -498,8 +512,14 @@ struct CardioExerciseCard: View {
                 Text(filled ? "Auto-filled from Apple Health" : "No Health data for this segment yet")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.secondaryAccent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccent)
+                        .minimumTouchTarget()
+                }
             }
             if let hr = session.avgHR, !showManual {
                 HRZoneBar(avgHR: hr, maxHR: session.maxHR, durationSeconds: session.durationSeconds)
@@ -567,6 +587,7 @@ struct CardioExerciseCard: View {
                         Text("Open Settings")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -687,6 +708,7 @@ struct CardioExerciseCard: View {
                         onShowExerciseDetail(exercise)
                     } label: {
                         ExerciseNameLabel(name: exercise.name, font: .system(size: 18, weight: .bold))
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -981,6 +1003,7 @@ private struct CardioSessionEditor: View {
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(theme.secondaryAccent.opacity(0.12))
                 .clipShape(Capsule())
+                .minimumTouchTarget()
             }
             .accessibilityIdentifier("swim-stroke-style")
             Spacer()
@@ -1126,6 +1149,7 @@ private struct MetricDraftField: View {
                     .font(.rowValue)
                     .foregroundStyle(theme.textPrimary)
                     .focused($focused)
+                    .minimumTouchTarget()
                     .accessibilityIdentifier("cardio-field-\(label.lowercased().replacingOccurrences(of: " ", with: "-"))")
             }
             Text(unit).font(.system(size: 11)).foregroundStyle(theme.textTertiary)
@@ -1513,7 +1537,7 @@ struct CardioZoneInsightsCard: View {
                                 .font(.system(size: 11, weight: .bold)).foregroundStyle(theme.textTertiary)
                                 .rotationEffect(.degrees(showAdaptations ? 180 : 0))
                         }
-                        .contentShape(Rectangle())
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
 

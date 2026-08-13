@@ -235,7 +235,12 @@ struct ArchiveView: View {
 
                     Spacer(minLength: Space.sm)
 
-                    Button("Restore") { restore(item) }
+                    Button {
+                        restore(item)
+                    } label: {
+                        Text("Restore")
+                            .minimumTouchTarget()
+                    }
                         .buttonStyle(.glassProminent)
                         .tint(theme.accent)
                         .controlSize(.small)
@@ -252,8 +257,7 @@ struct ArchiveView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 36, height: 44)
-                            .contentShape(Rectangle())
+                            .minimumTouchTarget()
                     }
                     .accessibilityLabel("Archive options for \(item.name)")
                 }

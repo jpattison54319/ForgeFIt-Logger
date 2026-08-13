@@ -38,6 +38,7 @@ struct MicrocycleSetupView: View {
                                     in: 1...31
                                 )
                                 .labelsHidden()
+                                .frame(minHeight: TouchTarget.minimum)
                                 Text("\(durationDays) days")
                                     .font(.bodyStrong)
                                     .foregroundStyle(theme.textPrimary)

@@ -73,6 +73,7 @@ struct ScrollSafeMenu<Label: View>: View {
 
     var body: some View {
         label()
+            .minimumTouchTarget()
             .overlay { MenuButtonOverlay(sections: sections, primaryAction: primaryAction) }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)

@@ -812,8 +812,11 @@ struct HomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: Space.sm)
-                Button(homeHealthActionTitle) {
+                Button {
                     performHomeHealthAction()
+                } label: {
+                    Text(homeHealthActionTitle)
+                        .minimumTouchTarget()
                 }
                 .font(.bodyStrong)
                 .buttonStyle(.glassProminent)
@@ -845,15 +848,23 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     // Triggers the Health permission directly — no detour
                     // through the full Settings sheet to find the right card.
-                    Button(homeHealthActionTitle) {
+                    Button {
                         performHomeHealthAction()
+                    } label: {
+                        Text(homeHealthActionTitle)
+                            .minimumTouchTarget()
                     }
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .tint(theme.accent)
                     .disabled(connectingHealth || healthAuthorization.state == .unavailable)
-                    Button("Explore programs") { showExploreLibrary = true }
-                        .font(.bodyStrong)
+                    Button {
+                        showExploreLibrary = true
+                    } label: {
+                        Text("Explore programs")
+                            .font(.bodyStrong)
+                            .minimumTouchTarget()
+                    }
                         .buttonStyle(.glass)
                 }
                 .buttonBorderShape(.capsule)
@@ -1032,6 +1043,7 @@ struct HomeView: View {
                             .padding(.vertical, 8)
                             .background(Capsule().fill(on ? theme.accent : theme.surfaceElevated))
                             .animation(Motion.tap, value: on)
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
@@ -1331,12 +1343,18 @@ struct HomeView: View {
                     .buttonStyle(PressableButtonStyle())
                 }
             }
-            Button(quickStartEditing ? "Done" : "Edit", systemImage: quickStartEditing ? "checkmark" : "pencil") {
+            Button {
                 if quickStartEditing {
                     dismissQuickStartEdit()
                 } else {
                     withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
                 }
+            } label: {
+                Label(
+                    quickStartEditing ? "Done" : "Edit",
+                    systemImage: quickStartEditing ? "checkmark" : "pencil"
+                )
+                .minimumTouchTarget()
             }
             .font(.system(size: 13, weight: .bold))
             .foregroundStyle(theme.accent)
@@ -1601,9 +1619,11 @@ private struct QuickStartTile: View {
                             .frame(width: 24, height: 24)
                             .background(theme.danger)
                             .clipShape(Circle())
+                            .padding(4)
+                            .frame(width: 44, height: 44, alignment: .topTrailing)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(4)
                     .accessibilityLabel("Remove \(title)")
                 }
             }
@@ -1797,6 +1817,7 @@ struct RecoveryHeroCard: View {
                             .foregroundStyle(theme.textSecondary)
                             .frame(width: 32, height: 32)
                             .contentShape(Circle())
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isExpanded ? "Collapse today's recommendation" : "Expand today's recommendation")

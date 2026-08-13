@@ -43,10 +43,13 @@ struct ConditioningPlanEditor: View {
                                 .font(.cardTitle)
                                 .foregroundStyle(theme.textPrimary)
                             Spacer()
-                            Menu("Conditioning options", systemImage: "ellipsis.circle") {
+                            Menu {
                                 Button("Remove Conditioning", systemImage: "trash", role: .destructive, action: removePlan)
+                            } label: {
+                                Label("Conditioning options", systemImage: "ellipsis.circle")
+                                    .labelStyle(.iconOnly)
+                                    .minimumTouchTarget()
                             }
-                            .labelStyle(.iconOnly)
                             .accessibilityIdentifier("conditioning-options")
                         }
 
@@ -285,7 +288,7 @@ struct ConditioningSectionEditor: View {
                     .onSubmit(finishRenaming)
                     .accessibilityLabel("Conditioning block name")
                     .accessibilityIdentifier("conditioning-block-name-\(section.id.uuidString)")
-                Menu("Block options", systemImage: "ellipsis") {
+                Menu {
                     Button("Rename Block", systemImage: "pencil", action: focusName)
                         .accessibilityIdentifier("rename-conditioning-block-\(section.id.uuidString)")
                     Button("Add as Preset", systemImage: "bookmark", action: beginSavingPreset)
@@ -314,10 +317,12 @@ struct ConditioningSectionEditor: View {
                     }
                     Divider()
                     Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
+                } label: {
+                    Label("Block options", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .minimumTouchTarget()
                 }
-                .labelStyle(.iconOnly)
                 .tint(theme.accent)
-                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
                 .confirmationDialog(
                     "Replace this section?",
@@ -345,6 +350,7 @@ struct ConditioningSectionEditor: View {
                 }
             }
             .pickerStyle(.menu)
+            .minimumTouchTarget()
             .onChange(of: section.format) { _, format in applyDefaults(for: format) }
 
             HStack(spacing: Space.md) {
@@ -415,6 +421,7 @@ struct ConditioningSectionEditor: View {
                     TextField("21-15-9", text: repSchemeBinding)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
+                        .minimumTouchTarget()
                     if !section.repScheme.isEmpty {
                         Text("Each round uses the next target in the scheme.")
                             .font(.label)
@@ -429,6 +436,7 @@ struct ConditioningSectionEditor: View {
                 }
             }
             .pickerStyle(.segmented)
+            .frame(minHeight: TouchTarget.minimum)
             .onChange(of: section.ordering) { _, _ in onChange() }
 
             VStack(spacing: 0) {
@@ -475,6 +483,7 @@ struct ConditioningSectionEditor: View {
             TextField(label, value: value, format: .number)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
+                .minimumTouchTarget()
                 .onChange(of: value.wrappedValue) { _, _ in onChange() }
         }
     }
@@ -580,21 +589,24 @@ private struct ConditioningMovementEditor: View {
                             .font(.label)
                     }
                     .foregroundStyle(theme.textPrimary)
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
                 .layoutPriority(1)
                 .accessibilityLabel("Replace \(exercise?.name ?? "exercise")")
                 Spacer()
-                Menu("Movement options", systemImage: "ellipsis") {
+                Menu {
                     Button("Move Up", systemImage: "arrow.up", action: onMoveUp)
                         .disabled(!canMoveUp)
                     Button("Move Down", systemImage: "arrow.down", action: onMoveDown)
                         .disabled(!canMoveDown)
                     Divider()
                     Button("Remove Movement", systemImage: "trash", role: .destructive, action: onRemove)
+                } label: {
+                    Label("Movement options", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .minimumTouchTarget()
                 }
-                .labelStyle(.iconOnly)
-                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("conditioning-movement-options-\(exercise?.name ?? movement.id.uuidString)")
             }
 
@@ -608,6 +620,7 @@ private struct ConditioningMovementEditor: View {
                     .multilineTextAlignment(.trailing)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 72)
+                    .minimumTouchTarget()
                     .onChange(of: movement.targetValue) { _, _ in onChange() }
                     .accessibilityIdentifier("conditioning-target-\(exercise?.name ?? movement.id.uuidString)")
                 Picker("Unit", selection: $movement.targetUnit) {
@@ -618,6 +631,7 @@ private struct ConditioningMovementEditor: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize(horizontal: true, vertical: false)
+                .minimumTouchTarget()
                 .onChange(of: movement.targetUnit) { _, _ in onChange() }
                 .accessibilityIdentifier("conditioning-unit-\(exercise?.name ?? movement.id.uuidString)")
             }
@@ -632,6 +646,7 @@ private struct ConditioningMovementEditor: View {
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 90)
+                        .minimumTouchTarget()
                         .onChange(of: movement.targetLoad) { _, _ in onChange() }
                     Text(exercise?.effectiveWeightUnit.suffix ?? Fmt.unit.suffix)
                         .foregroundStyle(theme.textSecondary)

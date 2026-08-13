@@ -14,6 +14,7 @@ struct SettingsAppearanceSection: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 180)
+                .frame(minHeight: TouchTarget.minimum)
             }
             .themedListRow()
         } header: {

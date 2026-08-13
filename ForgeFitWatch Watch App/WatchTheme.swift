@@ -4,6 +4,10 @@ import SwiftUI
 /// Watch-sized slice of the ForgeFit design language: same sage / mint /
 /// gold family as the phone, tuned for small OLED screens.
 enum WTheme {
+    /// Apple's minimum comfortable touch dimension, including clear padding
+    /// around compact glyphs whose visible size should stay unchanged.
+    static let minimumTouchTarget: CGFloat = 44
+
     static let accent = Color(red: 85 / 255, green: 179 / 255, blue: 116 / 255)       // 0x55B374 Active Sage
     static let teal = Color(red: 52 / 255, green: 211 / 255, blue: 153 / 255)          // 0x34D399 Fresh Mint
     static let gold = Color(red: 245 / 255, green: 185 / 255, blue: 58 / 255)          // 0xF5B93A

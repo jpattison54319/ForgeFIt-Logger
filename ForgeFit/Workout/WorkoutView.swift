@@ -197,16 +197,23 @@ struct WorkoutHomeView: View {
                 SectionHeader("Routines") {
                     HStack(spacing: Space.lg) {
                         if canOrganizeLibrary {
-                            Button("Organize") { organizingRoutines = true }
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(theme.accent)
+                            Button {
+                                organizingRoutines = true
+                            } label: {
+                                Text("Organize")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(theme.accent)
+                                    .minimumTouchTarget()
+                            }
                                 .accessibilityIdentifier("organize-routines-button")
                         }
                         Button { createFolder() } label: {
                             Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(theme.textPrimary)
+                                .minimumTouchTarget()
                         }
+                        .accessibilityLabel("New folder")
                         .accessibilityIdentifier("new-folder-button")
                     }
                 }
@@ -515,6 +522,7 @@ struct WorkoutHomeView: View {
                         .foregroundStyle(theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("routine-folder-\(folder.name)")
@@ -559,6 +567,7 @@ struct WorkoutHomeView: View {
                                     .foregroundStyle(theme.textTertiary)
                             }
                             .contentShape(Rectangle())
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         Button {
@@ -572,6 +581,7 @@ struct WorkoutHomeView: View {
                                 .foregroundStyle(theme.textTertiary)
                                 .frame(width: 32, height: 32)
                                 .contentShape(Rectangle())
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove microcycle header")
@@ -586,12 +596,15 @@ struct WorkoutHomeView: View {
 
                 if !isCollapsed {
                     if displayedItems.isEmpty && children.isEmpty {
-                        Button("Add Routine", systemImage: "plus") {
+                        Button {
                             createRoutine(folderID: folder.id)
+                        } label: {
+                            Label("Add Routine", systemImage: "plus")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                                .frame(maxWidth: .infinity)
+                                .minimumTouchTarget()
                         }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.accent)
-                        .frame(maxWidth: .infinity, minHeight: 44)
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("add-routine-to-empty-folder-\(folder.name)")
                         .padding(.leading, Space.lg)
@@ -1001,6 +1014,7 @@ private struct RoutineCard: View {
                             .font(.system(size: 14, weight: .bold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.glassProminent)
                         .tint(theme.accent)

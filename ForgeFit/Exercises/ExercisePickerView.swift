@@ -254,6 +254,7 @@ struct ExercisePickerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Create exercise")
                         .accessibilityIdentifier("create-exercise-button")
                 }
             }
@@ -576,6 +577,7 @@ private struct ExerciseRowLabel: View {
                                         .font(.system(size: 13, weight: .bold))
                                         .foregroundStyle(theme.accent)
                                 }
+                                .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Exercise details for \(exercise.name)")
@@ -675,6 +677,7 @@ struct FilterChip: View {
             active ? .regular.tint(theme.accent.opacity(0.5)).interactive() : .regular.interactive(),
             in: Capsule()
         )
+        .minimumTouchTarget()
         .animation(Motion.tap, value: active)
     }
 }
@@ -805,6 +808,7 @@ struct CreateExerciseView: View {
                         Text("Yoga").tag(Modality.yoga)
                     }
                     .pickerStyle(.segmented)
+                    .frame(minHeight: TouchTarget.minimum)
                     .accessibilityIdentifier("exercise-modality")
 
                     Card {
@@ -958,6 +962,7 @@ struct CreateExerciseView: View {
                     } label: {
                         Text(WeightModeOption.from(weightMode).label)
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -975,6 +980,7 @@ struct CreateExerciseView: View {
                     } label: {
                         Text(isUnilateral ? "Unilateral" : "Bilateral")
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -988,6 +994,7 @@ struct CreateExerciseView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 170)
+                    .frame(minHeight: TouchTarget.minimum)
                 }
             }
         }
@@ -1020,6 +1027,7 @@ struct CreateExerciseView: View {
                                 .font(.bodyStrong)
                         }
                         .foregroundStyle(theme.secondaryAccent)
+                        .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("cardio-type-picker")
                 }
@@ -1063,6 +1071,7 @@ struct CreateExerciseView: View {
                     } label: {
                         Text(Self.holdLabel(defaultHoldSeconds))
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("yoga-default-hold")
                 }
@@ -1081,6 +1090,7 @@ struct CreateExerciseView: View {
                     } label: {
                         Text(isUnilateral ? "One at a time" : "Both at once")
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -1138,6 +1148,7 @@ struct CreateExerciseView: View {
                          : "\(secondaryMuscles.count) selected")
                         .font(.bodyStrong)
                         .foregroundStyle(secondaryMuscles.isEmpty ? theme.textTertiary : theme.accent)
+                        .minimumTouchTarget()
                 }
                 .menuActionDismissBehavior(.disabled)
                 .accessibilityIdentifier("secondary-muscle-picker")
@@ -1200,6 +1211,7 @@ struct CreateExerciseView: View {
             } label: {
                 Text(MuscleTaxonomy.displayName(selection.wrappedValue))
                     .font(.bodyStrong).foregroundStyle(theme.accent)
+                    .minimumTouchTarget()
             }
             .accessibilityIdentifier("primary-muscle-picker")
         }
@@ -1214,7 +1226,10 @@ struct CreateExerciseView: View {
                     Button(opt.capitalized) { selection.wrappedValue = opt }
                 }
             } label: {
-                Text(selection.wrappedValue.capitalized).font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(selection.wrappedValue.capitalized)
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accent)
+                    .minimumTouchTarget()
             }
         }
     }

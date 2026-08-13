@@ -691,6 +691,7 @@ struct SetBlockView: View {
                     style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                 )
             )
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -712,6 +713,7 @@ struct SetBlockView: View {
             .background(style.color.opacity(0.16))
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(style.color, lineWidth: 1.5))
+            .minimumTouchTarget()
             .onChange(of: entryFocused) { _, focused in
                 // The keyboard's Log/dismiss both just end focus — the commit
                 // itself always rides the focus loss, so every exit path
@@ -789,6 +791,7 @@ struct SetBlockView: View {
                         style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                     )
                 )
+                .minimumTouchTarget()
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -892,6 +895,7 @@ struct SetBlockView: View {
                     .lineLimit(1)
             }
             .foregroundStyle(theme.textTertiary)
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
     }
@@ -1002,5 +1006,6 @@ struct SetBlockView: View {
             .frame(width: blockFieldWidth, height: blockFieldHeight)
             .background(theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .minimumTouchTarget()
     }
 }

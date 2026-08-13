@@ -13,6 +13,7 @@ struct ReminderSettingsCard: View {
     @State private var morningReadiness = NotificationScheduler.shared.morningReadinessEnabled
 
     private static let weekdaySymbols = ["S", "M", "T", "W", "T", "F", "S"] // 1...7 Sun–Sat
+    private static let weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -61,13 +62,9 @@ struct ReminderSettingsCard: View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 Text("Training days").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                // Seven equal-weight day buttons across one row: there's no
-                // width budget on smaller phones to grow these to the full
-                // 44x44 HIG target without wrapping the row. `.contentShape`
-                // adds a couple points of hit area on each side instead — the
-                // most that fits the 8pt gaps here without adjacent buttons'
-                // tap regions touching.
-                HStack(spacing: 8) {
+                // The visible circles stay 36 pt; their transparent labels
+                // occupy 44 pt so adjacent targets remain large and distinct.
+                HStack(spacing: 0) {
                     ForEach(1...7, id: \.self) { weekday in
                         let on = weekdays.contains(weekday)
                         Button {
@@ -79,9 +76,12 @@ struct ReminderSettingsCard: View {
                                 .foregroundStyle(on ? .white : theme.textSecondary)
                                 .frame(width: 36, height: 36)
                                 .background(Circle().fill(on ? theme.accent : theme.surfaceElevated))
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
-                        .contentShape(Rectangle().inset(by: -2))
+                        .accessibilityLabel(Self.weekdayNames[weekday - 1])
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                        .accessibilityIdentifier("reminder-weekday-\(weekday)")
                     }
                 }
                 DatePicker("Remind me at", selection: $time, displayedComponents: .hourAndMinute)

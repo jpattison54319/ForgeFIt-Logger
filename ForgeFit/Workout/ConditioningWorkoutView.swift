@@ -424,7 +424,10 @@ private struct ConditioningLiveHeader: View {
             )
             Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
             Spacer()
-            Button(completionContext.liveActionTitle, action: onFinish)
+            Button(action: onFinish) {
+                Text(completionContext.liveActionTitle)
+                    .minimumTouchTarget()
+            }
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)
                 .buttonBorderShape(.capsule)
@@ -680,6 +683,7 @@ private struct ConditioningScoreSheet: View {
                                         .keyboardType(.decimalPad)
                                         .multilineTextAlignment(.trailing)
                                         .frame(width: 90)
+                                        .minimumTouchTarget()
                                 }
                             }
                         }

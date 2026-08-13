@@ -22,6 +22,7 @@ struct SettingsUnitsSection: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 120)
+                .frame(minHeight: TouchTarget.minimum)
                 .onChange(of: unit) { _, newValue in
                     Fmt.unit = newValue
                     weightUnitRaw = newValue.rawValue
@@ -36,6 +37,7 @@ struct SettingsUnitsSection: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 120)
+                .frame(minHeight: TouchTarget.minimum)
                 .onChange(of: distanceUnit) { _, newValue in
                     Fmt.distanceUnit = newValue
                     distanceUnitRaw = newValue.rawValue
@@ -60,6 +62,7 @@ struct SettingsUnitsSection: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 120)
+                    .frame(minHeight: TouchTarget.minimum)
                 }
                 .themedListRow()
 

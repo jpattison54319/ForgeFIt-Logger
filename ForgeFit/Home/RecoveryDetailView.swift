@@ -234,6 +234,7 @@ private struct MorningCheckinCard: View {
                             .background(
                                 Capsule().fill(on ? theme.accent : theme.surfaceElevated)
                             )
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])

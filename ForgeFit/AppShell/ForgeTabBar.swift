@@ -175,6 +175,7 @@ struct MiniWorkoutBar: View {
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
 

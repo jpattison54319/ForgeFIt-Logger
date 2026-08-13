@@ -77,6 +77,7 @@ struct TimeChartRangePicker: View {
             .padding(.vertical, 6)
             .background(theme.surfaceElevated)
             .clipShape(Capsule())
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Chart time range")

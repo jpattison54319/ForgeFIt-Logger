@@ -147,6 +147,8 @@ private struct WatchConditioningWorkoutView: View {
                                 }
                                 Spacer(minLength: 0)
                             }
+                            .frame(minHeight: WTheme.minimumTouchTarget)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -625,6 +627,8 @@ struct WatchSetListView: View {
                                         .font(.system(size: 18))
                                         .foregroundStyle(set.completed ? WTheme.success : .secondary)
                                 }
+                                .frame(minHeight: WTheme.minimumTouchTarget)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             // Long-press stays as a shortcut — the pencil is
@@ -642,7 +646,8 @@ struct WatchSetListView: View {
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(WTheme.accent)
                                     .frame(width: 28, height: 28)
-                                    .contentShape(Circle())
+                                    .frame(minWidth: WTheme.minimumTouchTarget, minHeight: WTheme.minimumTouchTarget)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Edit load and reps")

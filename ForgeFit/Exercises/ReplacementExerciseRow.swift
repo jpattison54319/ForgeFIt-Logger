@@ -20,6 +20,7 @@ struct ReplacementExerciseRow: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("View details for \(exercise.name)")

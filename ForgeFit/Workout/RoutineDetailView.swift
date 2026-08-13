@@ -48,8 +48,12 @@ struct RoutineDetailView: View {
                 HStack {
                     Text("Workout").font(.sectionTitle).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Button("Edit Routine") { editing = true }
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                    Button { editing = true } label: {
+                        Text("Edit Routine")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
+                    }
                 }
 
                 if orderedItems.isEmpty {
@@ -364,6 +368,7 @@ private struct RoutineExerciseSummary: View {
                         if let exercise {
                             NavigationLink(value: exercise.id) {
                                 ExerciseNameLabel(name: exercise.name)
+                                    .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                         } else {

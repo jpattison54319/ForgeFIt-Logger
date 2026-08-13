@@ -270,8 +270,11 @@ struct SleepIntegrityCard: View {
             }
 
             HStack(spacing: Space.sm) {
-                Button("Cancel") { cancelEditing() }
-                    .font(.bodyStrong)
+                Button(action: cancelEditing) {
+                    Text("Cancel")
+                        .font(.bodyStrong)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.capsule)
                 Spacer()
@@ -282,6 +285,7 @@ struct SleepIntegrityCard: View {
                         .font(.system(size: 15, weight: .bold))
                         .padding(.horizontal, Space.md)
                         .padding(.vertical, 4)
+                        .minimumTouchTarget()
                 }
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)

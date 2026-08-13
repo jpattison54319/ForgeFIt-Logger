@@ -161,6 +161,7 @@ struct CoachAdjustmentReviewView: View {
                     Toggle("", isOn: row.included)
                         .labelsHidden()
                         .tint(theme.accent)
+                        .minimumTouchTarget()
                         .accessibilityLabel("\(row.wrappedValue.exerciseName) included in coach adjustment")
                 }
                 if row.wrappedValue.included, row.wrappedValue.maxSetsToDrop > 0 {

@@ -605,6 +605,7 @@ private struct ExperimentManageSheet: View {
                                     .foregroundStyle(theme.textSecondary)
                                 TextField("Experiment name", text: $name)
                                     .textFieldStyle(.roundedBorder)
+                                    .minimumTouchTarget()
                                     .accessibilityIdentifier("experiment-edit-name")
                             }
                             VStack(alignment: .leading, spacing: Space.xs) {
@@ -617,6 +618,7 @@ private struct ExperimentManageSheet: View {
                                     axis: .vertical
                                 )
                                 .textFieldStyle(.roundedBorder)
+                                .minimumTouchTarget()
                             }
                             VStack(alignment: .leading, spacing: Space.xs) {
                                 Text("Question")
@@ -628,6 +630,7 @@ private struct ExperimentManageSheet: View {
                                     axis: .vertical
                                 )
                                 .textFieldStyle(.roundedBorder)
+                                .minimumTouchTarget()
                             }
                         }
                     }

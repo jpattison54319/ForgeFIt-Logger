@@ -127,6 +127,7 @@ struct YogaFlowBuilderView: View {
                         Text(style.title).font(.bodyStrong)
                     }
                     .foregroundStyle(theme.accent)
+                    .minimumTouchTarget()
                 }
             }
             .listRowBackground(theme.surface)
@@ -314,6 +315,7 @@ private struct PoseStepRow: View {
                                 Text(sideLabel)
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(theme.accent)
+                                    .minimumTouchTarget()
                             }
                         }
                     }
@@ -329,6 +331,7 @@ private struct PoseStepRow: View {
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(needsMoreTime ? theme.warmup.opacity(0.12) : theme.accentSoft)
                             .clipShape(Capsule())
+                            .minimumTouchTarget()
                     }
                     // The row opens the pose's detail page — say so. Sage chevron
                     // per the design rule: white names, accent disclosure only.

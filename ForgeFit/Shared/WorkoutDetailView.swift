@@ -634,6 +634,7 @@ struct WorkoutDetailView: View {
                 if let exercise {
                     NavigationLink(value: exercise.id) {
                         ExerciseNameLabel(name: name)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -719,10 +720,22 @@ struct WorkoutDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: Space.sm)
-            Button("Edit") { editingSplits = EditSplitsTarget(session: cardio) }
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.secondaryAccent)
-            Button("Revert") { CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext) }
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.danger)
+            Button {
+                editingSplits = EditSplitsTarget(session: cardio)
+            } label: {
+                Text("Edit")
+                    .font(.system(size: 13, weight: .semibold))
+                    .minimumTouchTarget()
+            }
+            .foregroundStyle(theme.secondaryAccent)
+            Button {
+                CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext)
+            } label: {
+                Text("Revert")
+                    .font(.system(size: 13, weight: .semibold))
+                    .minimumTouchTarget()
+            }
+            .foregroundStyle(theme.danger)
         }
         .padding(10)
         .background(theme.secondaryAccent.opacity(0.10))
@@ -795,6 +808,7 @@ struct WorkoutDetailView: View {
                         if let exercise {
                             NavigationLink(value: exercise.id) {
                                 ExerciseNameLabel(name: name)
+                                    .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                         } else {

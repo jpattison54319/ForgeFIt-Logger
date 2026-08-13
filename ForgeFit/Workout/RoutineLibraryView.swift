@@ -260,6 +260,7 @@ struct RoutineLibraryView: View {
                             // disclosure chevron is sage — via the shared label.
                             ExerciseNameLabel(name: exercise.name, font: .system(size: 15, weight: .semibold))
                                 .lineLimit(2)
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     } else {

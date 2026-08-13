@@ -76,6 +76,7 @@ struct YogaFlowGeneratorSheet: View {
                         Text("Advanced").tag(YogaFlowGenerator.Difficulty.advanced)
                     }
                     .pickerStyle(.segmented)
+                    .frame(minHeight: TouchTarget.minimum)
                 }
                 .listRowBackground(theme.surface)
 

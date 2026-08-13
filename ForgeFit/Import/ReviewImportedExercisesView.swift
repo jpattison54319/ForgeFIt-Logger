@@ -250,6 +250,7 @@ private struct ReviewImportedExerciseRow: View {
                     Button(action: onConfirm) {
                         Label("Confirm", systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.accent)
@@ -257,12 +258,14 @@ private struct ReviewImportedExerciseRow: View {
                     Button(action: onEdit) {
                         Label("Edit", systemImage: "slider.horizontal.3")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.bordered)
 
                     Button(action: onMerge) {
                         Label("Merge", systemImage: "arrow.triangle.merge")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.bordered)
                 }

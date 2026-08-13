@@ -93,6 +93,7 @@ struct PlateCalculatorView: View {
                     } label: {
                         Text("\(inventory.barWeight.formatted(.number.precision(.fractionLength(0...1)))) \(displayUnit.suffix)")
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                 }
             }
@@ -199,6 +200,7 @@ struct PlateInventoryEditor: View {
                     } label: {
                         Text("\(inventory.barWeight.formatted(.number.precision(.fractionLength(0...1)))) \(unit.suffix)")
                             .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -216,9 +218,12 @@ struct PlateInventoryEditor: View {
                         .onChange(of: plate.pairs) { PlateInventoryStore.save(inventory) }
                     }
                 }
-                Button("Reset to standard") {
+                Button {
                     inventory = .standard(unit: unit)
                     PlateInventoryStore.save(inventory)
+                } label: {
+                    Text("Reset to standard")
+                        .minimumTouchTarget()
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)

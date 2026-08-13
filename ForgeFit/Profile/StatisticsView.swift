@@ -50,6 +50,7 @@ private struct CollapsibleStatCard<Content: View>: View {
                             .rotationEffect(.degrees(isExpanded ? 0 : -90))
                     }
                     .contentShape(Rectangle())
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("stats-section-\(title)")
@@ -315,6 +316,7 @@ struct StatisticsView: View {
                             }
                             .frame(height: 6)
                         }
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -419,6 +421,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 15, weight: .bold))
                                     .foregroundStyle(theme.recoveryHigh)
                             }
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     }
@@ -863,6 +866,7 @@ struct StatisticsView: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(theme.textSecondary)
                             }
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     }

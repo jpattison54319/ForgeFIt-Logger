@@ -223,6 +223,7 @@ struct RoutineAlternationSheet: View {
                     .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(routine.name), \(isNext ? "next" : "alternate")")

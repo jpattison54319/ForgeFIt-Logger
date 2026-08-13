@@ -187,6 +187,7 @@ struct YogaBlockCard: View {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -249,9 +250,12 @@ struct YogaBlockCard: View {
                     .foregroundStyle(theme.textSecondary)
             }
             Spacer()
-            Button("Edit", action: onEdit)
-                .font(.bodyStrong)
-                .foregroundStyle(theme.accent)
+            Button(action: onEdit) {
+                Text("Edit")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accent)
+                    .minimumTouchTarget()
+            }
                 .disabled(hasStarted)
         }
         .padding(Space.sm)

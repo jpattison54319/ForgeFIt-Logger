@@ -291,6 +291,7 @@ struct IntervalPlanBuilderView: View {
                     ForEach(GoalMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("cardio-goal-mode")
                 Text(mode.blurb)
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
@@ -314,6 +315,7 @@ struct IntervalPlanBuilderView: View {
                     Text("Climb").tag(IntervalPlan.SessionGoal.Kind.elevation)
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("cardio-goal-kind")
 
                 switch goalKind {
@@ -391,6 +393,7 @@ struct IntervalPlanBuilderView: View {
                                 .padding(.vertical, 10)
                                 .background(selected ? theme.zoneColor(z) : theme.surfaceElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("zone-lock-\(z)")
@@ -446,6 +449,7 @@ struct IntervalPlanBuilderView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 150)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("work-length-type")
             }
             if workByDistance {
@@ -498,6 +502,7 @@ struct IntervalPlanBuilderView: View {
                     Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).opacity(0.6)
                 }
                 .foregroundStyle(theme.secondaryAccent)
+                .minimumTouchTarget()
             }
             .accessibilityIdentifier("customize-steps")
         }
@@ -538,6 +543,7 @@ struct IntervalPlanBuilderView: View {
                     }
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.secondaryAccent)
+                    .minimumTouchTarget()
                 }
                 .accessibilityIdentifier("edit-custom-steps")
             }
@@ -571,12 +577,15 @@ struct IntervalPlanBuilderView: View {
                 HStack {
                     Text("Presets").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Button("Save current") {
+                    Button {
                         presetName = ""
                         showSavePrompt = true
+                    } label: {
+                        Text("Save current")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(plan.isMeaningful ? theme.secondaryAccent : theme.textTertiary)
+                            .minimumTouchTarget()
                     }
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(plan.isMeaningful ? theme.secondaryAccent : theme.textTertiary)
                     .disabled(!plan.isMeaningful)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -596,9 +605,14 @@ struct IntervalPlanBuilderView: View {
                     }
                 }
                 if !activeIntervalPresets.isEmpty {
-                    Button("Manage saved presets") { showManageSheet = true }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
+                    Button {
+                        showManageSheet = true
+                    } label: {
+                        Text("Manage saved presets")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .minimumTouchTarget()
+                    }
                 }
             }
         }
@@ -671,6 +685,7 @@ struct IntervalPlanBuilderView: View {
             }
             .pickerStyle(.menu)
             .tint(selection.wrappedValue == 0 ? theme.textTertiary : theme.zoneColor(selection.wrappedValue))
+            .minimumTouchTarget()
         }
     }
 
@@ -741,6 +756,7 @@ struct PaceEntryField: View {
             .frame(width: 64, height: 40)
             .background(theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .minimumTouchTarget()
             .focused($isFocused)
             .onAppear { draft = Self.text(for: secondsPerKm) }
             .onChange(of: draft) { _, newDraft in
@@ -972,6 +988,7 @@ struct StepDetailEditor: View {
                     Text("Distance").tag(true)
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .listRowBackground(theme.surfaceElevated)
                 .accessibilityIdentifier("step-length-type")
 
@@ -1007,6 +1024,7 @@ struct StepDetailEditor: View {
                     ForEach(1...5, id: \.self) { Text("Z\($0)").tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .listRowBackground(theme.surfaceElevated)
             }
 

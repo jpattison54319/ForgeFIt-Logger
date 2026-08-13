@@ -382,6 +382,7 @@ struct CoachCornerView: View {
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
+                .minimumTouchTarget()
         }
         .accessibilityLabel("Manage plan")
         .accessibilityIdentifier("coach-corner-manage-plan")
@@ -471,6 +472,7 @@ struct CoachCornerView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(theme.success)
+                        .minimumTouchTarget()
                 }
                 .accessibilityLabel("Accept \(title)")
                 .accessibilityIdentifier("coach-corner-weekly-accept-\(override.id)")
@@ -482,6 +484,7 @@ struct CoachCornerView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(theme.textTertiary)
+                        .minimumTouchTarget()
                 }
                 .accessibilityLabel("Dismiss \(title)")
                 .accessibilityIdentifier("coach-corner-weekly-dismiss-\(override.id)")
@@ -503,11 +506,14 @@ struct CoachCornerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: Space.sm)
-            Button("Cancel") {
+            Button {
                 CoachWeeklyReview.cancel(override, in: modelContext)
                 refreshWeeklyReview()
+            } label: {
+                Text("Cancel")
+                    .font(.system(size: 13, weight: .semibold))
+                    .minimumTouchTarget()
             }
-            .font(.system(size: 13, weight: .semibold))
             .buttonStyle(.bordered)
             .controlSize(.small)
             .accessibilityLabel("Cancel \(title)")
@@ -587,6 +593,7 @@ struct CoachCornerView: View {
                         .foregroundStyle(theme.textPrimary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.glass)
                     .controlSize(.large)

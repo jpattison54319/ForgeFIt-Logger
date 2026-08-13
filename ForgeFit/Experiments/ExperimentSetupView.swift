@@ -653,7 +653,9 @@ struct ExperimentTrackerEditor: View {
                     } else if tracker.kind == .rating {
                         HStack(spacing: Space.md) {
                             TextField("1 means…", text: $tracker.lowLabel)
+                                .minimumTouchTarget()
                             TextField("5 means…", text: $tracker.highLabel)
+                                .minimumTouchTarget()
                         }
                         .textFieldStyle(.roundedBorder)
                     } else if tracker.kind == .choice {

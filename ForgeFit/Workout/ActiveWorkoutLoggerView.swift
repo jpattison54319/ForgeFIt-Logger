@@ -628,6 +628,7 @@ struct ActiveWorkoutLoggerView: View {
                         .font(.system(size: 15, weight: .bold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
+                        .minimumTouchTarget()
                 }
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)
@@ -1835,14 +1836,22 @@ private struct PostWorkoutSummaryView: View {
                     }
                 }
                 HStack(spacing: Space.md) {
-                    Button("Enable notifications") {
+                    Button {
                         notificationPrimeShown = true
                         Task { await NotificationScheduler.shared.requestPermission() }
+                    } label: {
+                        Text("Enable notifications")
+                            .minimumTouchTarget()
                     }
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .tint(theme.accent)
-                    Button("Not now") { notificationPrimeShown = true }
+                    Button {
+                        notificationPrimeShown = true
+                    } label: {
+                        Text("Not now")
+                            .minimumTouchTarget()
+                    }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                 }
@@ -2575,6 +2584,7 @@ private struct ExerciseLogCard: View {
                         ExerciseThumbnail(exercise: exercise, size: 38)
                         ExerciseNameLabel(name: exercise.name, font: .system(size: 18, weight: .bold))
                     }
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
             } else {
@@ -2698,6 +2708,7 @@ private struct ExerciseLogCard: View {
                             .font(.system(size: 9, weight: .bold))
                     }
                     .frame(width: grid.weight)
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(theme.accent)
@@ -2832,6 +2843,7 @@ private struct ExerciseLogCard: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(theme.textTertiary)
                     .frame(width: 28, height: 28)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss suggestion and keep last session's values")
@@ -3464,9 +3476,14 @@ private struct SetRow: View {
                     .font(.tag)
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button("Stop") { RestTimerController.shared.skip() }
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(style.color)
+                Button {
+                    RestTimerController.shared.skip()
+                } label: {
+                    Text("Stop")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(style.color)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Stop AMRAP timer early")
             } else {
@@ -3606,6 +3623,7 @@ private struct SetRow: View {
                     // stays readable even when the RPE column is showing.
                     .minimumScaleFactor(0.75)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .disabled(previousSet == nil)

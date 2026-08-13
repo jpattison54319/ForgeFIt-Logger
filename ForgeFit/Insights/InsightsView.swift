@@ -54,8 +54,10 @@ struct InsightsView: View {
                     SectionHeader("Weekly volume by muscle") {
                         Button { infoTopic = .muscleVolume } label: {
                             Image(systemName: "info.circle")
+                                .minimumTouchTarget()
                         }
                         .foregroundStyle(theme.textSecondary)
+                        .accessibilityLabel("About weekly muscle volume")
                     }
                     Card { MuscleVolumeBars(rows: muscleRows) }
                 }
@@ -247,6 +249,7 @@ private struct RecordRow: View {
                             Image(systemName: "info.circle")
                                 .font(.tag)
                                 .foregroundStyle(theme.textTertiary)
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     }
@@ -604,6 +607,7 @@ struct ExerciseDetailView: View {
                             .foregroundStyle(theme.accent)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -650,6 +654,7 @@ struct ExerciseDetailView: View {
                             .foregroundStyle(theme.accent)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -745,6 +750,7 @@ private struct ExerciseUnitSettingsCard: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 170)
+                .frame(minHeight: TouchTarget.minimum)
             }
         }
     }

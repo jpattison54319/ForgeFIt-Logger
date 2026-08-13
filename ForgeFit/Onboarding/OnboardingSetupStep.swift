@@ -56,6 +56,7 @@ struct OnboardingSetupStep: View {
                                 Text("kg").tag(WeightUnit.kg)
                             }
                             .pickerStyle(.segmented)
+                            .frame(minHeight: TouchTarget.minimum)
                         }
                     }
                 }

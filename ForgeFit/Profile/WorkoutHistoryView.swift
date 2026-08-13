@@ -176,6 +176,7 @@ struct WorkoutHistoryView: View {
                     suggestionLabel(suggestion)
                         .padding(.horizontal, Space.md)
                         .padding(.vertical, 10)
+                        .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
                 if suggestion.id != suggestions.last?.id {

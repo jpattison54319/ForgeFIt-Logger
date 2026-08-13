@@ -83,8 +83,11 @@ struct WorkoutCalendarView: View {
                     .foregroundStyle(theme.textPrimary)
                     .contentTransition(.numericText())
                 if !calendar.isDate(displayedMonth, equalTo: Date(), toGranularity: .month) {
-                    Button("Today") { jumpToToday() }
-                        .font(.system(size: 12, weight: .semibold))
+                    Button(action: jumpToToday) {
+                        Text("Today")
+                            .font(.system(size: 12, weight: .semibold))
+                            .minimumTouchTarget()
+                    }
                         .foregroundStyle(theme.accent)
                 }
             }
@@ -292,10 +295,13 @@ struct WorkoutCalendarView: View {
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Button("Remove", role: .destructive) {
+                    Button(role: .destructive) {
                         removeRestDay(selectedRestDay)
+                    } label: {
+                        Text("Remove")
+                            .font(.subheadline.weight(.semibold))
+                            .minimumTouchTarget()
                     }
-                    .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("calendar-remove-rest-day")
                 }
             }

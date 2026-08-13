@@ -183,6 +183,7 @@ struct YogaExerciseCard: View {
             Button { withAnimation { showManual.toggle() } } label: {
                 Text(showManual ? "Hide manual entry" : "Log without guide")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    .minimumTouchTarget()
             }
             if showManual {
                 YogaManualEditor(session: session, onChange: persist)
@@ -204,6 +205,7 @@ struct YogaExerciseCard: View {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -250,8 +252,14 @@ struct YogaExerciseCard: View {
                 Text(filled ? "Auto-filled from Apple Health" : "No Health data for this session")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.accent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
+                }
             }
             if showManual {
                 YogaManualEditor(session: session, onChange: persist)
@@ -278,12 +286,17 @@ struct YogaExerciseCard: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button("Edit") { showFlowBuilder = true }
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(theme.accent)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(theme.accentSoft)
-                .clipShape(Capsule())
+            Button {
+                showFlowBuilder = true
+            } label: {
+                Text("Edit")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(theme.accentSoft)
+                    .clipShape(Capsule())
+                    .minimumTouchTarget()
+            }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("yoga-flow-menu")
         }
@@ -341,6 +354,7 @@ struct YogaExerciseCard: View {
                         onShowExerciseDetail(exercise)
                     } label: {
                         ExerciseNameLabel(name: headerTitle, font: .system(size: 18, weight: .bold))
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -541,6 +555,7 @@ struct YogaManualEditor: View {
                 } label: {
                     Text(Fmt.durationShort(session.durationSeconds))
                         .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                 }
             }
             Divider().overlay(theme.separator)
@@ -560,6 +575,7 @@ struct YogaManualEditor: View {
                 } label: {
                     Text(session.resolvedYogaStyle.title)
                         .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                 }
             }
         }
@@ -615,6 +631,7 @@ struct YogaRunnerStrip: View {
                                     .foregroundStyle(theme.textSecondary)
                             }
                         }
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     Spacer()

@@ -42,6 +42,32 @@ final class ForgeFitUITests: XCTestCase {
         element.tap()
     }
 
+    private func assertMinimumTouchTarget(
+        _ element: XCUIElement,
+        named name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard element.exists else {
+            XCTFail("Expected \(name).", file: file, line: line)
+            return
+        }
+        XCTAssertGreaterThanOrEqual(
+            element.frame.width,
+            44,
+            "\(name) should be at least 44 points wide.",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            element.frame.height,
+            44,
+            "\(name) should be at least 44 points high.",
+            file: file,
+            line: line
+        )
+    }
+
     /// Scrolls `element` into view when it's off the initial viewport in
     /// either axis — e.g. Home's quick-start row is a horizontal ScrollView
     /// nested inside the screen's vertical one, and XCUITest's built-in
@@ -1528,10 +1554,15 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(addYoga.frame.height, 44)
         tapWhenReady(addConditioning)
 
+        let conditioningOptions = app.buttons["conditioning-options"].firstMatch
+        XCTAssertTrue(conditioningOptions.waitForExistence(timeout: 2))
+        assertMinimumTouchTarget(conditioningOptions, named: "Conditioning options")
+
         let presets = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH 'conditioning-section-preset-'")
         ).firstMatch
         XCTAssertTrue(presets.waitForExistence(timeout: 2), "Expected a preset menu inside the section.")
+        assertMinimumTouchTarget(presets, named: "Conditioning section options")
         tapWhenReady(presets)
         tapWhenReady(app.buttons["Cindy · 20 min AMRAP"].firstMatch)
 
@@ -1544,19 +1575,32 @@ final class ForgeFitUITests: XCTestCase {
         for (exercise, reps) in [("Pullups", 5.0), ("Pushups", 10.0), ("Bodyweight Squat", 15.0)] {
             let target = app.textFields["conditioning-target-\(exercise)"].firstMatch
             XCTAssertTrue(target.waitForExistence(timeout: 5), "Expected an editable target for \(exercise).")
+            assertMinimumTouchTarget(target, named: "\(exercise) conditioning target")
             XCTAssertTrue(waitForNumericValue(reps, in: target), "Expected \(Int(reps)) reps for \(exercise).")
+            let unit = app.buttons["conditioning-unit-\(exercise)"].firstMatch
+            XCTAssertTrue(unit.waitForExistence(timeout: 2), "Expected a target unit picker for \(exercise).")
+            assertMinimumTouchTarget(unit, named: "\(exercise) conditioning target unit")
         }
         XCTAssertFalse(app.staticTexts["Movements"].exists, "Movement editing must stay inside its section.")
-        XCTAssertTrue(
-            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'add-conditioning-movement-'")).firstMatch.exists,
-            "Expected the section to own its Add Movement action."
-        )
-        XCTAssertTrue(app.buttons["Replace Pullups"].exists, "Expected a visible in-section replacement action.")
+        let addMovement = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'add-conditioning-movement-'")
+        ).firstMatch
+        XCTAssertTrue(addMovement.exists, "Expected the section to own its Add Movement action.")
+        assertMinimumTouchTarget(addMovement, named: "Add conditioning movement")
+        let replacePullups = app.buttons["Replace Pullups"].firstMatch
+        XCTAssertTrue(replacePullups.exists, "Expected a visible in-section replacement action.")
+        assertMinimumTouchTarget(replacePullups, named: "Replace conditioning movement")
+        let movementOptions = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'conditioning-movement-options-'")
+        ).firstMatch
+        XCTAssertTrue(movementOptions.exists, "Expected options for each conditioning movement.")
+        assertMinimumTouchTarget(movementOptions, named: "Conditioning movement options")
 
         let blockName = app.textFields.matching(
             NSPredicate(format: "identifier BEGINSWITH 'conditioning-block-name-'")
         ).firstMatch
         XCTAssertTrue(blockName.waitForExistence(timeout: 2), "Expected an editable conditioning block name.")
+        assertMinimumTouchTarget(blockName, named: "Conditioning block name")
         tapWhenReady(blockName)
         if let currentName = blockName.value as? String {
             blockName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
@@ -1629,6 +1673,44 @@ final class ForgeFitUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(pullups.exists, "Expanded conditioning should reveal each movement and target.")
         attachScreenshot(app, name: "routine-conditioning-expanded-detail")
+    }
+
+    @MainActor
+    func testCompactSettingsControlsMeetMinimumTouchTargets() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "-didOnboard", "YES", "-initialTab", "profile", "-weightUnitRaw", "kg",
+            "-forgefit.warmupRampConfig", "",
+        ]
+        app.launch()
+
+        let settings = app.buttons["Settings"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 8))
+        tapWhenReady(settings)
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+
+        let warmupRamp = app.staticTexts["Warm-up ramp"].firstMatch
+        scrollUntilHittable(warmupRamp, in: app)
+        tapWhenReady(warmupRamp)
+        XCTAssertTrue(app.navigationBars["Warm-up ramp"].waitForExistence(timeout: 3))
+
+        let addStage = app.buttons["add-warmup-stage"].firstMatch
+        let removeStages = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'remove-warmup-stage-'")
+        )
+
+        // --reset-store intentionally preserves preferences. The launch-domain
+        // override above makes this test independent of the simulator's saved
+        // one- or six-stage boundary without mutating the user's preference.
+        scrollUntilHittable(addStage, in: app)
+        assertMinimumTouchTarget(addStage, named: "Add warm-up set")
+        XCTAssertGreaterThan(removeStages.count, 0)
+        for index in 0..<removeStages.count {
+            assertMinimumTouchTarget(
+                removeStages.element(boundBy: index),
+                named: "Remove warm-up set \(index + 1)"
+            )
+        }
     }
 
     /// Regression: the keyboard accessory's Complete button used to stop

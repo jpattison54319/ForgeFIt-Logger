@@ -126,6 +126,7 @@ struct MyoRepActiveSetView: View {
                                 Text("Side 2").tag(2)
                             }
                             .pickerStyle(.segmented)
+                            .frame(minHeight: TouchTarget.minimum)
                             .accessibilityIdentifier("myo-side-picker")
                         }
 

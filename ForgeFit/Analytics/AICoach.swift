@@ -494,6 +494,7 @@ struct AICoachChatView: View {
                             .padding(.vertical, 8)
                             .background(theme.surfaceElevated)
                             .clipShape(Capsule())
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .disabled(isAnswering)
@@ -514,6 +515,7 @@ struct AICoachChatView: View {
                 .padding(.vertical, 11)
                 .background(theme.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .minimumTouchTarget()
 
             Button { send() } label: {
                 Image(systemName: "arrow.up")

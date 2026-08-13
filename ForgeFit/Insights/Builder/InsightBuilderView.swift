@@ -236,6 +236,7 @@ struct InsightBuilderView: View {
                         )
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("insight-add-comparison")
@@ -535,6 +536,7 @@ struct InsightBuilderView: View {
                     in: (availableLags.map(\.count).min() ?? 0)...(availableLags.map(\.count).max() ?? 0)
                 )
                 .labelsHidden()
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityLabel("Timing offset")
                 .accessibilityValue(lagDescription)
             }

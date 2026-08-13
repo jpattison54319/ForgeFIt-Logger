@@ -125,6 +125,7 @@ struct WorkoutHistoryImportView: View {
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                             }
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     }
@@ -187,6 +188,7 @@ struct WorkoutHistoryImportView: View {
                     Label(preview == nil ? "Choose File" : "Choose Different File", systemImage: "doc.badge.plus")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.accent)
+                        .minimumTouchTarget()
                 }
                 .disabled(loading)
             }
