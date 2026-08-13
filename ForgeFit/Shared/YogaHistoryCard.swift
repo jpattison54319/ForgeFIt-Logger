@@ -28,6 +28,18 @@ struct YogaHistoryCard: View {
         return "\(style.title) Yoga"
     }
     private var durationSeconds: Int { session?.durationSeconds ?? plan?.totalSeconds ?? 0 }
+    private var heartRateSummary: CardioBlockSupport.HeartRateSummary? {
+        guard let session,
+              let window = CardioBlockSupport.blockWindow(
+                  startedAt: session.startedAt,
+                  liveStartedAt: session.liveStartedAt,
+                  endedAt: session.endedAt,
+                  durationSeconds: session.durationSeconds
+              ) else { return nil }
+        return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
+    }
+    private var displayAverageHR: Int? { heartRateSummary?.averageBPM ?? session?.avgHR }
+    private var displayMaximumHR: Int? { heartRateSummary?.maximumBPM ?? session?.maxHR }
 
     var body: some View {
         Card(padding: Space.md) {
@@ -70,7 +82,11 @@ struct YogaHistoryCard: View {
                 Text(title).font(.bodyStrong).foregroundStyle(theme.accent)
                 Text(session.map {
                     collapsible
-                        ? YogaHistoryPresentation.compactSummary(session: $0, plan: plan)
+                        ? YogaHistoryPresentation.compactSummary(
+                            session: $0,
+                            plan: plan,
+                            averageHeartRate: displayAverageHR
+                        )
                         : "Completed"
                 } ?? "Skipped")
                     .font(.system(size: 12))
@@ -106,7 +122,7 @@ struct YogaHistoryCard: View {
             HStack {
                 StatColumn(label: "Duration", value: Fmt.durationShort(durationSeconds), valueColor: theme.accent)
                 StatColumn(label: "Poses", value: poses.isEmpty ? "—" : "\(poses.count)")
-                StatColumn(label: "Avg HR", value: session?.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
+                StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
                 StatColumn(label: "Energy", value: session?.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
         }
@@ -153,10 +169,10 @@ struct YogaHistoryCard: View {
             }
         }
 
-        if collapsible, let session, let avgHR = session.avgHR {
+        if collapsible, let session, let avgHR = displayAverageHR {
             HRZoneBar(
                 avgHR: avgHR,
-                maxHR: session.maxHR,
+                maxHR: displayMaximumHR,
                 durationSeconds: session.durationSeconds,
                 zoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
                 source: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? .measured : .estimated

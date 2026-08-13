@@ -29,6 +29,24 @@ struct ConditioningPresetTests {
         }
     }
 
+    @Test func includedPresetDetailResolvesTheLiveCatalogInPresetOrder() throws {
+        let catalog = ConditioningPreset.hundredsChipper.movements.reversed().map {
+            ExerciseLibraryModel(name: $0.catalogName, defaultWeightMode: $0.weightMode)
+        }
+
+        let section = try #require(
+            ConditioningPresetSelection.builtIn(.hundredsChipper)
+                .resolvedSection(in: catalog)
+        )
+        let catalogByName = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0.id) })
+
+        #expect(section.name == "100s Chipper")
+        #expect(section.presetReferenceID == "built-in-hundredsChipper")
+        #expect(section.movements.map(\.exerciseID) == ConditioningPreset.hundredsChipper.movements.compactMap {
+            catalogByName[$0.catalogName]
+        })
+    }
+
     @Test func hundredsChipperDefaultsToTenRoundsOfTen() throws {
         let preset = ConditioningPreset.hundredsChipper
         let section = try #require(
@@ -179,8 +197,167 @@ struct ConditioningPresetTests {
             return
         }
         #expect(storedSection.name == "Garage Cindy")
+        #expect(storedSection.presetReferenceID == "saved-\(stored.id.uuidString)")
         #expect(storedSection.format == .amrap)
         #expect(storedSection.movements.map(\.exerciseID) == [exerciseID])
+    }
+
+    @Test func updatingCustomPresetPersistsItsNewNameOnTheExistingRecord() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+        let section = ConditioningSection(
+            name: "100s Chipper",
+            format: .forTime,
+            rounds: 10,
+            movements: [ConditioningMovement(exerciseID: UUID(), targetValue: 10)]
+        )
+        let record = try ConditioningPresetStore.save(section, named: section.name, in: context)
+        let originalID = record.id
+
+        try ConditioningPresetStore.update(record, with: section, named: "  AX400  ", in: context)
+
+        let fetched = try #require(context.fetch(FetchDescriptor<IntervalPresetModel>()).first)
+        #expect(fetched.id == originalID)
+        #expect(fetched.name == "AX400")
+        guard case .section(let storedSection) = fetched.storedConditioningPreset else {
+            Issue.record("Expected the updated conditioning preset payload.")
+            return
+        }
+        #expect(storedSection.name == "AX400")
+        #expect(storedSection.presetReferenceID == "saved-\(originalID.uuidString)")
+    }
+
+    @Test func legacyPresetOrderStillReconcilesToRenamedSavedPreset() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+        let catalog = ConditioningPreset.hundredsChipper.movements.map {
+            ExerciseLibraryModel(name: $0.catalogName, defaultWeightMode: $0.weightMode)
+        }
+        catalog.forEach(context.insert)
+        let current = try #require(
+            ConditioningPresetSelection.builtIn(.hundredsChipper).resolvedSection(in: catalog)
+        )
+        var legacy = current
+        legacy.presetReferenceID = nil
+        legacy.movements = [
+            current.movements[1],
+            current.movements[2],
+            current.movements[0],
+            current.movements[3]
+        ]
+        #expect(ConditioningPrescriptionSignature.key(for: legacy) != ConditioningPrescriptionSignature.key(for: current))
+        #expect(ConditioningPresetLineageSignature.key(for: legacy) == ConditioningPresetLineageSignature.key(for: current))
+
+        let saved = try ConditioningPresetStore.save(current, named: "AX400", in: context)
+        var records = try context.fetch(FetchDescriptor<IntervalPresetModel>())
+        try ConditioningPresetStore.hide(.hundredsChipper, records: records, in: context)
+        records = try context.fetch(FetchDescriptor<IntervalPresetModel>())
+
+        let result = ConditioningSectionResult(
+            id: legacy.id,
+            format: legacy.format,
+            scoreKind: legacy.scoreKind,
+            elapsedSeconds: 1_184,
+            fullRounds: 10,
+            completed: true
+        )
+        let block = WorkoutBlockModel(
+            userID: ForgeFitDemo.userID,
+            kind: .conditioning,
+            planSnapshotJSON: ConditioningPlan(sections: [legacy]).encodedJSON(),
+            resultJSON: ConditioningResult(sectionResults: [result]).encodedJSON()
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "100s Chipper",
+            startedAt: Date(timeIntervalSince1970: 1_786_633_200),
+            endedAt: Date(timeIntervalSince1970: 1_786_634_384),
+            blocks: [block]
+        )
+        context.insert(workout)
+        try context.save()
+
+        let updated = try ConditioningPresetHistoryReconciler.reconcile(
+            records: records,
+            workouts: [workout],
+            exercises: catalog,
+            context: context
+        )
+
+        let migrated = try #require(
+            ConditioningPlan.decode(from: block.planSnapshotJSON)?.sections.first
+        )
+        #expect(updated == 1)
+        #expect(migrated.name == "AX400")
+        #expect(migrated.presetReferenceID == "saved-\(saved.id.uuidString)")
+        #expect(workout.title == "AX400")
+        let selection = try #require(ConditioningPresetResolver.selection(
+            for: migrated,
+            records: records,
+            exercises: catalog
+        ))
+        #expect(selection.id == "saved-\(saved.id.uuidString)")
+        #expect(selection.title == "AX400")
+        #expect(ConditioningPresetStats.entries(for: current, in: [workout]).count == 1)
+    }
+
+    @Test func renamingPresetUpdatesMatchingLegacyAndBlockHistoryOnly() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+        let exerciseID = UUID()
+        let source = ConditioningSection(
+            name: "100s Chipper",
+            format: .forTime,
+            rounds: 10,
+            movements: [ConditioningMovement(exerciseID: exerciseID, targetValue: 10)]
+        )
+        let matchingLegacy = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: source.name,
+            endedAt: .now,
+            conditioningPlanSnapshotJSON: ConditioningPlan(sections: [source]).encodedJSON()
+        )
+        let matchingBlock = WorkoutBlockModel(
+            userID: ForgeFitDemo.userID,
+            kind: .conditioning,
+            planSnapshotJSON: ConditioningPlan(sections: [source]).encodedJSON()
+        )
+        let matchingBlockWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: source.name,
+            endedAt: .now,
+            blocks: [matchingBlock]
+        )
+        var differentPrescription = source
+        differentPrescription.rounds = 8
+        let unrelated = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: source.name,
+            endedAt: .now,
+            conditioningPlanSnapshotJSON: ConditioningPlan(sections: [differentPrescription]).encodedJSON()
+        )
+        context.insert(matchingLegacy)
+        context.insert(matchingBlockWorkout)
+        context.insert(unrelated)
+        try context.save()
+
+        try ConditioningPresetHistoryRenamer.renameMatchingHistory(
+            from: source,
+            to: "AX400",
+            presetReferenceID: "saved-\(UUID().uuidString)",
+            in: [matchingLegacy, matchingBlockWorkout, unrelated],
+            context: context
+        )
+
+        let legacyPlan = try #require(ConditioningPlan.decode(from: matchingLegacy.conditioningPlanSnapshotJSON))
+        let blockPlan = try #require(ConditioningPlan.decode(from: matchingBlock.planSnapshotJSON))
+        let unrelatedPlan = try #require(ConditioningPlan.decode(from: unrelated.conditioningPlanSnapshotJSON))
+        #expect(legacyPlan.sections.first?.name == "AX400")
+        #expect(blockPlan.sections.first?.name == "AX400")
+        #expect(matchingLegacy.title == "AX400")
+        #expect(matchingBlockWorkout.title == "AX400")
+        #expect(unrelatedPlan.sections.first?.name == "100s Chipper")
+        #expect(unrelated.title == "100s Chipper")
     }
 
     @Test func applyingCustomPresetRenamesOnlyTheTargetSectionAndRefreshesMovementIdentity() throws {

@@ -165,7 +165,12 @@ struct InsightsView: View {
                     TimeChartRangePicker(selection: $range)
                 }
                 if series.contains(where: { $0.value > 0 }) {
-                    BarTrendChart(points: series)
+                    BarTrendChart(
+                        points: series,
+                        valueFormatter: { metric.formatted($0) },
+                        axisValueFormatter: { metric.axisValue($0) },
+                        yAxisLabel: metric.axisLabel
+                    )
                 } else {
                     Text("Complete a few workouts to see your trends.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
@@ -182,6 +187,12 @@ private enum InsightsRoute: Hashable {
     case myInsights
     case experiments
     case experimentResults(UUID)
+}
+
+/// A distinct route type keeps completed-workout navigation from colliding
+/// with the UUID route used for exercise details in surrounding stacks.
+private struct ExerciseHistoryRoute: Hashable {
+    let workoutID: UUID
 }
 
 private enum InsightsInfoTopic: Identifiable {
@@ -310,7 +321,8 @@ private struct RecordsListView: View {
     }
 }
 
-/// Per-exercise progression detail (e1RM over time).
+/// Per-exercise progression detail with modality-specific metrics and links
+/// back to every completed workout in which the exercise was performed.
 struct ExerciseDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
@@ -319,14 +331,16 @@ struct ExerciseDetailView: View {
     let exercises: [ExerciseLibraryModel]
 
     @State private var range: TimeChartRange = .all
+    @State private var strengthMetric: StrengthExerciseStats.Metric = .estimatedOneRepMax
+    @State private var selectedCardioMetric: CardioExerciseStats.TrendMetric?
     @State private var showFullHistory = false
     @State private var showingEdit = false
     @State private var seriesMemo = Memo<String, [MetricPoint]>()
     @State private var bestsMemo = Memo<String, [PersonalRecords.AllTimeBest]>()
     @State private var sessionsMemo = Memo<String, [(workout: WorkoutModel, sets: [SetModel])]>()
     @State private var cardioEntriesMemo = Memo<String, [CardioExerciseStats.SessionEntry]>()
+    @State private var cardioSeriesMemo = Memo<String, [MetricPoint]>()
 
-    private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var exercise: ExerciseLibraryModel? { exercises.first { $0.id == exerciseID } }
     private var name: String { exercise?.name ?? "Exercise" }
     private var unit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
@@ -338,9 +352,18 @@ struct ExerciseDetailView: View {
     private var detailFingerprint: String {
         "\(AnalyticsFingerprint.of(workouts))|\(exerciseID.uuidString)"
     }
+    private var strengthMetrics: [StrengthExerciseStats.Metric] {
+        StrengthExerciseStats.Metric.allCases.filter { !strengthSeries(for: $0).isEmpty }
+    }
+    private var activeStrengthMetric: StrengthExerciseStats.Metric {
+        strengthMetrics.contains(strengthMetric) ? strengthMetric : (strengthMetrics.first ?? .estimatedOneRepMax)
+    }
     private var series: [MetricPoint] {
-        seriesMemo("\(detailFingerprint)|\(range.rawValue)") {
-            range.filtered(analytics.e1rmSeries(for: exerciseID))
+        range.filtered(strengthSeries(for: activeStrengthMetric))
+    }
+    private func strengthSeries(for metric: StrengthExerciseStats.Metric) -> [MetricPoint] {
+        seriesMemo("\(detailFingerprint)|strength|\(metric.rawValue)") {
+            StrengthExerciseStats.series(metric, exerciseID: exerciseID, workouts: workouts)
         }
     }
 
@@ -358,6 +381,24 @@ struct ExerciseDetailView: View {
                points: CardioExerciseStats.series(.duration, entries: sessionEntries))
             : CardioExerciseStats.trend(for: cardioKind, entries: sessionEntries)
         return (all.metric, range.filtered(all.points))
+    }
+    private var cardioMetrics: [CardioExerciseStats.TrendMetric] {
+        CardioExerciseStats.trendCandidates(for: cardioKind)
+            .filter { !cardioSeries(for: $0).isEmpty }
+    }
+    private var activeCardioMetric: CardioExerciseStats.TrendMetric {
+        if let selectedCardioMetric, cardioMetrics.contains(selectedCardioMetric) {
+            return selectedCardioMetric
+        }
+        return cardioTrend.metric
+    }
+    private var selectedCardioSeries: [MetricPoint] {
+        range.filtered(cardioSeries(for: activeCardioMetric))
+    }
+    private func cardioSeries(for metric: CardioExerciseStats.TrendMetric) -> [MetricPoint] {
+        cardioSeriesMemo("\(detailFingerprint)|cardio|\(metric.id)") {
+            CardioExerciseStats.series(metric, entries: sessionEntries)
+        }
     }
     private var cardioRecords: [CardioExerciseStats.Record] {
         if isYoga { return CardioExerciseStats.yogaRecords(entries: sessionEntries) }
@@ -455,6 +496,13 @@ struct ExerciseDetailView: View {
                 CreateExerciseView(editing: exercise) { _ in }
             }
         }
+        .navigationDestination(for: ExerciseHistoryRoute.self) { route in
+            if let selectedWorkout = workouts.first(where: { $0.id == route.workoutID }) {
+                WorkoutDetailView(workout: selectedWorkout, exercises: exercises, history: workouts)
+            } else {
+                ContentUnavailableView("Workout unavailable", systemImage: "clock.badge.exclamationmark")
+            }
+        }
     }
 
     // MARK: - Trend cards
@@ -463,57 +511,158 @@ struct ExerciseDetailView: View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Estimated 1RM").font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                    strengthMetricMenu
                     Spacer()
                     TimeChartRangePicker(selection: $range)
                 }
                 if let last = series.last {
-                    Text(Fmt.loadUnit(last.value, unit: unit)).font(.metricValue).foregroundStyle(theme.textPrimary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(activeStrengthMetric.format(last.value, unit: unit))
+                            .font(.metricValue)
+                            .foregroundStyle(theme.textPrimary)
+                        Text("last session")
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
                 if series.count >= 2 {
-                    LineTrendChart(points: series)
+                    InteractiveLineTrendChart(
+                        points: series,
+                        metricName: activeStrengthMetric.rawValue,
+                        valueFormatter: { value in
+                            activeStrengthMetric.format(value, unit: unit)
+                        },
+                        axisValueFormatter: { value in
+                            activeStrengthMetric.axisValue(value, unit: unit)
+                        },
+                        yAxisLabel: activeStrengthMetric.axisLabel(unit: unit)
+                    )
                 } else {
-                    Text("Log this exercise across multiple sessions to chart strength progress.")
+                    Text("Log this exercise across multiple sessions to chart this metric.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
                 }
+                Text(activeStrengthMetric.interpretation)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var strengthMetricMenu: some View {
+        Menu {
+            ForEach(strengthMetrics) { metric in
+                Button {
+                    strengthMetric = metric
+                } label: {
+                    if metric == activeStrengthMetric {
+                        Label(metric.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(metric.rawValue)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(activeStrengthMetric.rawValue)
+                    .font(.bodyStrong)
+                if strengthMetrics.count > 1 {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+            }
+            .foregroundStyle(theme.textSecondary)
+            .minimumTouchTarget()
+        }
+        .buttonStyle(.plain)
+        .disabled(strengthMetrics.count < 2)
+        .accessibilityLabel("Strength progress metric")
+        .accessibilityValue(activeStrengthMetric.rawValue)
     }
 
     /// Modality-aware progression: pace for runs, /500m splits for the erg,
     /// power for the bike, floors for the stair machine, practice time for
     /// yoga — never a rep-max estimate on an exercise without reps.
     private var cardioTrendCard: some View {
-        let trend = cardioTrend
+        let metric = isYoga ? cardioTrend.metric : activeCardioMetric
+        let points = isYoga ? cardioTrend.points : selectedCardioSeries
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(isYoga ? "Practice Time" : trend.metric.title)
-                        .font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                    if isYoga {
+                        Text("Practice Time")
+                            .font(.bodyStrong).foregroundStyle(theme.textSecondary)
+                    } else {
+                        cardioMetricMenu
+                    }
                     Spacer()
                     TimeChartRangePicker(selection: $range)
                 }
-                if let last = trend.points.last {
+                if let last = points.last {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(trend.metric.format(last.value, distanceUnit: Fmt.distanceUnit))
+                        Text(metric.format(last.value, distanceUnit: Fmt.distanceUnit))
                             .font(.metricValue).foregroundStyle(theme.textPrimary)
-                        Text("last session").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
+                        Text(metric == .aerobicEfficiency ? "last aerobic session" : "last session")
+                            .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
                     }
                 }
-                if trend.points.count >= 2 {
-                    LineTrendChart(points: trend.points)
-                    if trend.metric.lowerIsBetter {
-                        Text("Lower is faster.")
-                            .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
-                    }
+                if points.count >= 2 {
+                    InteractiveLineTrendChart(
+                        points: points,
+                        metricName: metric.title,
+                        valueFormatter: { value in
+                            metric.format(value, distanceUnit: Fmt.distanceUnit)
+                        },
+                        axisValueFormatter: { value in
+                            metric.axisValue(value, distanceUnit: Fmt.distanceUnit)
+                        },
+                        yAxisLabel: metric.axisLabel(distanceUnit: Fmt.distanceUnit)
+                    )
                 } else {
                     Text(isYoga
                          ? "Practice this flow across multiple sessions to chart your time on the mat."
                          : "Log this exercise across multiple sessions to chart your progress.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
                 }
+                if let interpretation = metric.interpretation {
+                    Text(interpretation)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+    }
+
+    private var cardioMetricMenu: some View {
+        Menu {
+            ForEach(cardioMetrics) { metric in
+                Button {
+                    selectedCardioMetric = metric
+                } label: {
+                    if metric == activeCardioMetric {
+                        Label(metric.title, systemImage: "checkmark")
+                    } else {
+                        Text(metric.title)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(activeCardioMetric.title)
+                    .font(.bodyStrong)
+                if cardioMetrics.count > 1 {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+            }
+            .foregroundStyle(theme.textSecondary)
+            .minimumTouchTarget()
+        }
+        .buttonStyle(.plain)
+        .disabled(cardioMetrics.count < 2)
+        .accessibilityLabel("Cardio progress metric")
+        .accessibilityValue(activeCardioMetric.title)
     }
 
     // MARK: - Records
@@ -595,7 +744,13 @@ struct ExerciseDetailView: View {
                     if index > 0 {
                         Divider().overlay(theme.separator)
                     }
-                    sessionBlock(session.workout, sets: session.sets)
+                    NavigationLink(value: ExerciseHistoryRoute(workoutID: session.workout.id)) {
+                        sessionBlock(session.workout, sets: session.sets)
+                            .contentShape(Rectangle())
+                            .minimumTouchTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("exercise-history-workout-\(session.workout.id.uuidString)")
                 }
 
                 if sessions.count > Self.recentSessionCount {
@@ -629,20 +784,32 @@ struct ExerciseDetailView: View {
                     if index > 0 {
                         Divider().overlay(theme.separator)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.date.formatted(date: .abbreviated, time: .omitted))
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                        Text(isYoga
-                             ? CardioExerciseStats.yogaSummary(for: entry)
-                             : CardioExerciseStats.summary(
-                                for: entry,
-                                kind: cardioKind,
-                                distanceUnit: Fmt.distanceUnit
-                             ))
-                            .font(.system(size: 14))
-                            .foregroundStyle(theme.textSecondary)
+                    NavigationLink(value: ExerciseHistoryRoute(workoutID: entry.workout.id)) {
+                        HStack(spacing: Space.md) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.date.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(theme.textPrimary)
+                                Text(isYoga
+                                     ? CardioExerciseStats.yogaSummary(for: entry)
+                                     : CardioExerciseStats.summary(
+                                        for: entry,
+                                        kind: cardioKind,
+                                        distanceUnit: Fmt.distanceUnit
+                                     ))
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            Spacer(minLength: Space.sm)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(theme.accent)
+                        }
+                        .contentShape(Rectangle())
+                        .minimumTouchTarget()
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("exercise-history-workout-\(entry.workout.id.uuidString)")
                 }
 
                 if sessionEntries.count > Self.recentSessionCount {
@@ -675,6 +842,9 @@ struct ExerciseDetailView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                 }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.accent)
             }
             ForEach(sets, id: \.id) { set in
                 setHistoryRow(set)

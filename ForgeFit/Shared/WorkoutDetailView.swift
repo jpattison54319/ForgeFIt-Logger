@@ -130,6 +130,10 @@ struct WorkoutDetailView: View {
     private var awardEntries: [WorkoutAward] {
         WorkoutAwards.all(for: workout, history: history, exercises: exercises)
     }
+    private var detailHistory: [WorkoutModel] {
+        guard !history.isEmpty else { return [workout] }
+        return history.contains(where: { $0.id == workout.id }) ? history : history + [workout]
+    }
 
     /// A single-modality workout remains open as its source of truth. Any
     /// combination of strength, cardio, conditioning, and yoga uses compact
@@ -231,6 +235,7 @@ struct WorkoutDetailView: View {
                                 $0.workoutBlockID == nil && $0.workoutExerciseID == nil && $0.isConditioningSession
                             },
                             exercises: exercises,
+                            workouts: detailHistory,
                             hrSamples: hrSamples,
                             collapsible: isMixedWorkout
                         )
@@ -250,6 +255,7 @@ struct WorkoutDetailView: View {
                                 result: nil,
                                 session: session,
                                 exercises: exercises,
+                                workouts: detailHistory,
                                 hrSamples: hrSamples,
                                 collapsible: isMixedWorkout
                             )
@@ -609,6 +615,7 @@ struct WorkoutDetailView: View {
                 result: result,
                 session: session?.endedAt == nil ? nil : session,
                 exercises: exercises,
+                workouts: detailHistory,
                 hrSamples: hrSamples,
                 collapsible: isMixedWorkout
             )
@@ -837,7 +844,8 @@ struct WorkoutDetailView: View {
     /// "18min Run", a one-line metric summary, and a rotating chevron. The
     /// whole row toggles the inline detail.
     private func cardioBlockHeader(_ cardio: CardioSessionModel, kind: CardioKind, name: String, isExpanded: Bool) -> some View {
-        Button {
+        let blockAverageHR = cardioHeartRateSummary(for: cardio)?.averageBPM ?? cardio.avgHR
+        return Button {
             withAnimation(.spring(duration: 0.25)) {
                 if isExpanded {
                     expandedModalityIDs.remove(cardio.id)
@@ -855,7 +863,7 @@ struct WorkoutDetailView: View {
                         .foregroundStyle(theme.secondaryAccent)
                     if let subtitle = CardioBlockSupport.compactSubtitle(
                         distance: cardio.distanceMeters.map { Fmt.cardioDistance($0, kind: kind) },
-                        avgHR: cardio.avgHR,
+                        avgHR: blockAverageHR,
                         calories: cardio.activeEnergyKcal,
                         effort: cardio.effort
                     ) {
@@ -905,6 +913,9 @@ struct WorkoutDetailView: View {
     /// at the workout level).
     @ViewBuilder
     private func cardioDetailContent(_ cardio: CardioSessionModel, kind: CardioKind, showPerBlockHR: Bool) -> some View {
+        let blockHRSummary = showPerBlockHR ? cardioHeartRateSummary(for: cardio) : nil
+        let displayAverageHR = blockHRSummary?.averageBPM ?? cardio.avgHR
+
         // Primary Strava-style read-outs
         HStack {
             metric(kind.usesPace ? "Pace" : "Speed",
@@ -918,7 +929,7 @@ struct WorkoutDetailView: View {
 
         // Secondary metrics
         HStack {
-            if let hr = cardio.avgHR { metric("Avg HR", "\(hr)") }
+            if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
             if let cal = cardio.activeEnergyKcal { metric("Calories", "\(Int(cal))") }
             if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
             if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
@@ -953,10 +964,10 @@ struct WorkoutDetailView: View {
         // fall back to the stored distribution, then estimate from average HR.
         let measuredZones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: cardio.sampleSeriesJSON)
         let storedZones = cardio.hrZoneSeconds.contains(where: { $0 > 0 }) ? cardio.hrZoneSeconds : nil
-        if let hr = cardio.avgHR {
+        if let hr = displayAverageHR {
             HRZoneBar(
                 avgHR: hr,
-                maxHR: cardio.maxHR,
+                maxHR: blockHRSummary?.maximumBPM ?? cardio.maxHR,
                 durationSeconds: cardio.durationSeconds,
                 zoneSeconds: measuredZones ?? storedZones,
                 source: measuredZones == nil ? .estimated : .measured
@@ -985,6 +996,16 @@ struct WorkoutDetailView: View {
         }
 
         MuscleChips(muscles: kind.musclesWorked)
+    }
+
+    private func cardioHeartRateSummary(for cardio: CardioSessionModel) -> CardioBlockSupport.HeartRateSummary? {
+        guard let window = CardioBlockSupport.blockWindow(
+            startedAt: cardio.startedAt,
+            liveStartedAt: cardio.liveStartedAt,
+            endedAt: cardio.endedAt,
+            durationSeconds: cardio.durationSeconds
+        ) else { return nil }
+        return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
     }
 
     // MARK: - Best efforts (T4-3)

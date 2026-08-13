@@ -147,7 +147,13 @@ struct RoutineDetailView: View {
                     // `.id(metric)` swaps the chart identity per metric so the
                     // change reads as a crossfade, not a path morph between
                     // unrelated series.
-                    LineTrendChart(points: series)
+                    LineTrendChart(
+                        points: series,
+                        yLabel: metric.rawValue,
+                        valueFormatter: { metric.formatted($0) },
+                        axisValueFormatter: { metric.axisValue($0) },
+                        yAxisUnitLabel: metric.axisLabel
+                    )
                         .id(metric)
                         .transition(.opacity)
                 } else {

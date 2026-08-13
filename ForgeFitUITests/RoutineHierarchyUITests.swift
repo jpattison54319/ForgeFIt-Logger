@@ -106,6 +106,25 @@ final class RoutineHierarchyUITests: XCTestCase {
     }
 
     @MainActor
+    func testCrossGroupAlternationKeepsEachRoutineInItsOwnAccessibleCard() {
+        let app = launch(with: "--seed-routine-hierarchy-alternating-cross-group")
+
+        let ax400 = card("Ax400", in: app)
+        let cindy = card("Cindy", in: app)
+        XCTAssertTrue(ax400.waitForExistence(timeout: 8))
+        XCTAssertTrue(cindy.exists)
+        XCTAssertTrue(app.buttons["start-routine-Ax400"].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "start-routine-Cindy").count, 1)
+
+        let ax400Title = ax400.staticTexts["Ax400"].firstMatch
+        XCTAssertTrue(ax400Title.exists)
+        ax400Title.tap()
+
+        XCTAssertTrue(app.buttons["Edit Routine"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Ax400"].firstMatch.exists)
+    }
+
+    @MainActor
     private func launch(with fixture: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [

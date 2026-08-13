@@ -16,6 +16,8 @@ struct YogaFlowBuilderView: View {
     private var savedFlows: [YogaFlowModel]
 
     let onSave: (String?) -> Void
+    let navigationTitle: String
+    let showsTemplates: Bool
 
     @State private var style: YogaStyle
     @State private var steps: [YogaFlowPlan.PoseStep]
@@ -25,8 +27,15 @@ struct YogaFlowBuilderView: View {
     @State private var newFlowName = ""
     @State private var detailExercise: ExerciseLibraryModel?
 
-    init(planJSON: String?, onSave: @escaping (String?) -> Void) {
+    init(
+        planJSON: String?,
+        navigationTitle: String = "Yoga Flow",
+        showsTemplates: Bool = true,
+        onSave: @escaping (String?) -> Void
+    ) {
         self.onSave = onSave
+        self.navigationTitle = navigationTitle
+        self.showsTemplates = showsTemplates
         let plan = YogaFlowPlan.decode(from: planJSON)
         _style = State(initialValue: plan?.style ?? .hatha)
         _steps = State(initialValue: plan?.steps ?? [])
@@ -56,11 +65,11 @@ struct YogaFlowBuilderView: View {
             List {
                 styleSection
                 stepsSection
-                loadSection
+                if showsTemplates { loadSection }
             }
             .scrollContentBackground(.hidden)
             .background(theme.background)
-            .navigationTitle("Yoga Flow")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

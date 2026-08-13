@@ -59,16 +59,23 @@ nonisolated enum CardioExerciseStats {
     /// The metric the progression chart plots. Point values stay in the
     /// metric's canonical unit (sec/km, sec/500m, watts…); `format` renders
     /// them in the user's display units.
-    enum TrendMetric: Equatable {
+    enum TrendMetric: Equatable, Identifiable {
         case pace          // sec per km, land pace in the user's km/mi unit
         case split500      // sec per 500 m (rower)
         case swimPace100   // sec per 100 m (pool contract — fixed meters)
         case speed         // km/h
         case power         // watts
+        case averageHeartRate
+        case aerobicEfficiency // meters/minute per average heartbeat
+        case cadence
+        case strokeRate
+        case elevationGain
         case floors        // floors per session
         case jumps         // jumps per session
         case distance      // meters per session
         case duration      // seconds per session
+
+        var id: String { title }
 
         var title: String {
             switch self {
@@ -77,6 +84,11 @@ nonisolated enum CardioExerciseStats {
             case .swimPace100: "Pace /100m"
             case .speed: "Speed"
             case .power: "Avg Power"
+            case .averageHeartRate: "Average Heart Rate"
+            case .aerobicEfficiency: "Aerobic Efficiency"
+            case .cadence: "Avg Cadence"
+            case .strokeRate: "Stroke Rate"
+            case .elevationGain: "Elevation Gain"
             case .floors: "Floors"
             case .jumps: "Jumps"
             case .distance: "Distance"
@@ -107,6 +119,16 @@ nonisolated enum CardioExerciseStats {
                 return "\(converted.formatted(.number.precision(.fractionLength(1)))) \(distanceUnit.speedSuffix)"
             case .power:
                 return "\(Int(value.rounded())) W"
+            case .averageHeartRate:
+                return "\(Int(value.rounded())) bpm"
+            case .aerobicEfficiency:
+                return "\(value.formatted(.number.precision(.fractionLength(2)))) m/min/bpm"
+            case .cadence:
+                return "\(Int(value.rounded())) rpm"
+            case .strokeRate:
+                return "\(Int(value.rounded())) spm"
+            case .elevationGain:
+                return Fmt.distance(value, unit: distanceUnit)
             case .floors:
                 return "\(Int(value)) floors"
             case .jumps:
@@ -117,22 +139,96 @@ nonisolated enum CardioExerciseStats {
                 return Fmt.durationShort(Int(value))
             }
         }
+
+        func axisValue(_ value: Double, distanceUnit: DistanceUnit) -> String {
+            switch self {
+            case .pace:
+                let seconds = Int((value * (distanceUnit.metersPerUnit / 1000)).rounded())
+                return String(format: "%d:%02d", seconds / 60, seconds % 60)
+            case .split500, .swimPace100, .duration:
+                let seconds = Int(value.rounded())
+                return String(format: "%d:%02d", seconds / 60, seconds % 60)
+            case .speed:
+                let converted = distanceUnit == .km
+                    ? value
+                    : value / (DistanceUnit.mi.metersPerUnit / 1000)
+                return converted.formatted(.number.precision(.fractionLength(0...1)))
+            case .power, .averageHeartRate, .cadence, .strokeRate, .floors, .jumps:
+                return Int(value.rounded()).formatted()
+            case .aerobicEfficiency:
+                return value.formatted(.number.precision(.fractionLength(0...2)))
+            case .elevationGain, .distance:
+                return distanceUnit.distance(fromMeters: value)
+                    .formatted(.number.precision(.fractionLength(0...1)))
+            }
+        }
+
+        func axisLabel(distanceUnit: DistanceUnit) -> String {
+            switch self {
+            case .pace: "Pace (min\(distanceUnit.paceSuffix))"
+            case .split500: "Pace (min/500m)"
+            case .swimPace100: "Pace (min/100m)"
+            case .speed: "Speed (\(distanceUnit.speedSuffix))"
+            case .power: "Power (W)"
+            case .averageHeartRate: "Heart rate (bpm)"
+            case .aerobicEfficiency: "Efficiency (m/min/bpm)"
+            case .cadence: "Cadence (rpm)"
+            case .strokeRate: "Stroke rate (spm)"
+            case .elevationGain: "Elevation (\(distanceUnit.abbreviation))"
+            case .floors: "Floors"
+            case .jumps: "Jumps"
+            case .distance: "Distance (\(distanceUnit.abbreviation))"
+            case .duration: "Time (min:sec)"
+            }
+        }
+
+        var interpretation: String? {
+            switch self {
+            case .pace, .split500, .swimPace100:
+                "Lower is faster."
+            case .aerobicEfficiency:
+                "Sustained Zone 1–3 sessions only. Higher means more distance per minute for each heartbeat."
+            case .averageHeartRate:
+                "Compare this with pace and session conditions; heart rate alone does not measure fitness."
+            case .distance:
+                "Distance completed per session."
+            case .duration:
+                "Time completed per session."
+            default:
+                nil
+            }
+        }
     }
 
     /// Preference order per modality; the chart takes the first metric with
     /// enough data. Duration closes every chain so a sparse log still trends.
     static func trendCandidates(for kind: CardioKind) -> [TrendMetric] {
         switch kind {
-        case .run, .trailRun, .walk: [.pace, .duration]
-        case .row: [.split500, .duration]
-        case .cycle: [.power, .speed, .duration]
-        case .swim: [.swimPace100, .duration]
-        case .stair: [.floors, .duration]
-        case .jumpRope: [.jumps, .duration]
-        case .elliptical: [.distance, .duration]
-        case .skate: [.speed, .duration]
-        case .other: [.duration]
+        case .run, .trailRun, .walk:
+            [.pace, .aerobicEfficiency, .averageHeartRate, .distance, .duration, .elevationGain]
+        case .row:
+            [.split500, .averageHeartRate, .strokeRate, .distance, .duration]
+        case .cycle:
+            [.power, .speed, .averageHeartRate, .cadence, .distance, .duration, .elevationGain]
+        case .swim:
+            [.swimPace100, .averageHeartRate, .strokeRate, .distance, .duration]
+        case .stair:
+            [.floors, .averageHeartRate, .duration]
+        case .jumpRope:
+            [.jumps, .averageHeartRate, .duration]
+        case .elliptical:
+            [.distance, .averageHeartRate, .duration]
+        case .skate:
+            [.speed, .averageHeartRate, .distance, .duration, .elevationGain]
+        case .other:
+            [.averageHeartRate, .duration]
         }
+    }
+
+    /// Metrics this exercise has actually recorded, in modality-priority order.
+    /// Sparse imported/manual logs simply omit measures they do not contain.
+    static func availableMetrics(for kind: CardioKind, entries: [SessionEntry]) -> [TrendMetric] {
+        trendCandidates(for: kind).filter { !series($0, entries: entries).isEmpty }
     }
 
     /// First candidate that can chart (2+ points), else the first with any
@@ -180,6 +276,27 @@ nonisolated enum CardioExerciseStats {
         case .power:
             guard let watts = session?.avgPowerWatts, watts > 0 else { return nil }
             return watts
+        case .averageHeartRate:
+            guard let bpm = session?.avgHR, bpm > 0 else { return nil }
+            return Double(bpm)
+        case .aerobicEfficiency:
+            guard let session,
+                  let bpm = session.avgHR, bpm > 0,
+                  let meters = session.distanceMeters, meters > 1_000,
+                  let seconds = session.durationSeconds, seconds >= 600,
+                  HRZoneConfigStore.load().zone(for: bpm) <= 3 else { return nil }
+            let metersPerMinute = meters / (Double(seconds) / 60)
+            let efficiency = metersPerMinute / Double(bpm)
+            return efficiency.isFinite && efficiency > 0 ? efficiency : nil
+        case .cadence:
+            guard let cadence = session?.avgCadence, cadence > 0 else { return nil }
+            return Double(cadence)
+        case .strokeRate:
+            guard let rate = session?.strokeRate, rate > 0 else { return nil }
+            return Double(rate)
+        case .elevationGain:
+            guard let meters = session?.elevationGainMeters, meters > 0 else { return nil }
+            return meters
         case .floors:
             guard let floors = session?.floorsClimbed, floors > 0 else { return nil }
             return Double(floors)

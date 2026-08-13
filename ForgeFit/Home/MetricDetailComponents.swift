@@ -40,6 +40,30 @@ struct MetricBaselineBandChart: View {
     let tint: Color
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
+
+    private var selectedPoint: MetricTrendSeries.Point? {
+        guard let selectedDate else { return nil }
+        return trend.points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
+
+    private var unitLabel: String {
+        switch metricName.lowercased() {
+        case "hrv": "ms"
+        case "heart rate": "bpm"
+        case "respiratory rate": "br/min"
+        case "blood oxygen": "%"
+        case "sleep hours": "hours"
+        default: ""
+        }
+    }
+
+    private func formatted(_ value: Double) -> String {
+        let number = value.formatted(.number.precision(.fractionLength(0...1)))
+        return unitLabel.isEmpty ? number : "\(number) \(unitLabel)"
+    }
 
     var body: some View {
         Chart {
@@ -62,28 +86,49 @@ struct MetricBaselineBandChart: View {
                 .interpolationMethod(.catmullRom)
                 .foregroundStyle(tint)
                 .lineStyle(StrokeStyle(lineWidth: 2))
-            }
-            if let latest = trend.latest {
                 PointMark(
-                    x: .value("Date", latest.date),
-                    y: .value(metricName, latest.value)
+                    x: .value("Date", point.date),
+                    y: .value(metricName, point.value)
                 )
                 .foregroundStyle(tint)
-                .symbolSize(80)
+                .symbolSize(24)
+                .accessibilityLabel(point.date.formatted(date: .abbreviated, time: .omitted))
+                .accessibilityValue(formatted(point.value))
+            }
+            if let selectedPoint {
+                RuleMark(x: .value("Selected date", selectedPoint.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [(metricName, formatted(selectedPoint.value))]
+                        )
+                    }
+                PointMark(x: .value("Selected date", selectedPoint.date), y: .value(metricName, selectedPoint.value))
+                    .foregroundStyle(tint)
+                    .symbolSize(90)
+                    .accessibilityHidden(true)
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .foregroundStyle(theme.textTertiary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text(unitLabel.isEmpty ? metricName : "\(metricName) (\(unitLabel))")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 170)
         .accessibilityLabel("\(metricName) trend against your usual observed band")
         .accessibilityValue(chartAccessibilityValue)

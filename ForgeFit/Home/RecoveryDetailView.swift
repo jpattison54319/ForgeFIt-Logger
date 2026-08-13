@@ -143,8 +143,15 @@ struct RecoveryDetailView: View {
 private struct FitnessFatigueCard: View {
     @Environment(\.theme) private var theme
     let points: [FitnessFatigue.Point]
+    @State private var selectedDate: Date?
 
     private var latest: FitnessFatigue.Point? { points.last }
+    private var selectedPoint: FitnessFatigue.Point? {
+        guard let selectedDate else { return nil }
+        return points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
 
     var body: some View {
         Card {
@@ -156,26 +163,56 @@ private struct FitnessFatigueCard: View {
                         legendValue("Balance", value: latest.tsb, color: theme.textSecondary, signed: true)
                     }
                 }
-                Chart(points, id: \.date) { point in
-                    LineMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl), series: .value("Metric", "Long-term"))
-                        .foregroundStyle(theme.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                    LineMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl), series: .value("Metric", "Short-term"))
-                        .foregroundStyle(theme.secondaryAccent)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                Chart {
+                    ForEach(points, id: \.date) { point in
+                        LineMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl), series: .value("Metric", "Long-term"))
+                            .foregroundStyle(theme.accent)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                        LineMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl), series: .value("Metric", "Short-term"))
+                            .foregroundStyle(theme.secondaryAccent)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        PointMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl))
+                            .foregroundStyle(theme.accent)
+                            .symbolSize(20)
+                        PointMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl))
+                            .foregroundStyle(theme.secondaryAccent)
+                            .symbolSize(20)
+                    }
+                    if let selectedPoint {
+                        RuleMark(x: .value("Selected day", selectedPoint.date))
+                            .foregroundStyle(theme.textTertiary)
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                                ChartSelectionCallout(
+                                    title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                                    lines: [
+                                        ("Long-term", "\(Int(selectedPoint.ctl.rounded())) AU"),
+                                        ("Short-term", "\(Int(selectedPoint.atl.rounded())) AU"),
+                                        ("Balance", "\(Int(selectedPoint.tsb.rounded())) AU"),
+                                    ]
+                                )
+                            }
+                    }
                 }
                 .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                         AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                         AxisValueLabel().foregroundStyle(theme.textTertiary)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                             .foregroundStyle(theme.textTertiary)
                     }
                 }
+                .chartYAxisLabel(position: .top, alignment: .leading) {
+                    Text("Load (AU)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .pressHoldChartXSelection(value: $selectedDate)
                 .frame(height: 150)
                 Text(balanceLine)
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)

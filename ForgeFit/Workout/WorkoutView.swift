@@ -124,27 +124,6 @@ struct WorkoutHomeView: View {
             )
         ).canOrganize
     }
-    private func visibleRoutineRows(_ source: [RoutineModel]) -> [RoutineModel] {
-        let sourceIDs = Set(source.map(\.id))
-        let states = RoutineAlternationService.states(
-            alternations: alternations,
-            routines: activeRoutines,
-            workouts: workouts
-        )
-        let pairedStates = states.filter {
-            sourceIDs.contains($0.owner.id) && sourceIDs.contains($0.partner.id)
-        }
-        var statesByOwner: [UUID: RoutineAlternationService.State] = [:]
-        for state in pairedStates where statesByOwner[state.owner.id] == nil {
-            statesByOwner[state.owner.id] = state
-        }
-        let suppressedPartners = Set(pairedStates.map(\.partner.id))
-
-        return source.compactMap { routine in
-            if suppressedPartners.contains(routine.id) { return nil }
-            return statesByOwner[routine.id]?.owner ?? routine
-        }
-    }
     private var activeTracking: MicrocycleTrackingModel? {
         MicrocycleTrackingService.activeTracking(microcycleTrackings)
     }
@@ -235,7 +214,7 @@ struct WorkoutHomeView: View {
                     )
                 }
 
-                let ungroupedRows = visibleRoutineRows(ungrouped)
+                let ungroupedRows = ungrouped
                 if ungroupedRows.isEmpty {
                     Color.clear
                         .frame(maxWidth: .infinity, minHeight: Space.lg)
@@ -465,7 +444,7 @@ struct WorkoutHomeView: View {
 
     private func folderSection(_ folder: RoutineFolderModel) -> AnyView {
         let isCollapsed = collapsed.contains(folder.id)
-        let displayedItems = visibleRoutineRows(routines(in: folder))
+        let displayedItems = routines(in: folder)
         let children = childFolders(of: folder)
         // Parent folders are mesocycles; leaf folders holding routines are
         // microcycles. Routines themselves are workout sessions.
@@ -767,7 +746,6 @@ struct WorkoutHomeView: View {
             exercises: exercises,
             isSummaryExpanded: expandedRoutineSummaries.contains(routine.id),
             alternationState: state,
-            isAlternationOwner: state?.owner.id == routine.id,
             hasConfiguredAlternation: hasConfiguredAlternation,
             onStart: start,
             onEdit: { edit(routine) },
@@ -943,7 +921,6 @@ private struct RoutineCard: View {
     let exercises: [ExerciseLibraryModel]
     let isSummaryExpanded: Bool
     let alternationState: RoutineAlternationService.State?
-    let isAlternationOwner: Bool
     let hasConfiguredAlternation: Bool
     let onStart: (RoutineModel) -> Void
     let onEdit: () -> Void
@@ -953,19 +930,16 @@ private struct RoutineCard: View {
     let onArchive: () -> Void
     var onToggleSummary: () -> Void = {}
 
-    private var displayRoutine: RoutineModel {
-        isAlternationOwner ? (alternationState?.due ?? routine) : routine
-    }
     private var pairedRoutine: RoutineModel? {
         guard let alternationState else { return nil }
         return alternationState.owner.id == routine.id
             ? alternationState.partner
             : alternationState.owner
     }
-    private var otherStartRoutine: RoutineModel? {
-        isAlternationOwner ? alternationState?.other : nil
+    private var isNext: Bool {
+        alternationState?.due.id == routine.id
     }
-    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: displayRoutine) }
+    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
     private var hasExerciseDisclosure: Bool {
         orderedItems.filter {
             if case .exercise = $0 { return true }
@@ -973,13 +947,13 @@ private struct RoutineCard: View {
         }.count >= 3
     }
     private var cardBottomPadding: CGFloat {
-        guard hasExerciseDisclosure, otherStartRoutine == nil else { return Space.lg }
+        guard hasExerciseDisclosure else { return Space.lg }
         return isSummaryExpanded ? Space.xs : 0
     }
 
     private var conditioningSummary: String? {
-        let json = displayRoutine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
-            ?? displayRoutine.conditioningPlanJSON
+        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
+            ?? routine.conditioningPlanJSON
         guard let plan = ConditioningPlan.decode(from: json),
               let first = plan.sections.first else { return nil }
         switch first.format {
@@ -995,17 +969,17 @@ private struct RoutineCard: View {
     }
 
     var body: some View {
-        NavigationLink(value: displayRoutine) {
+        NavigationLink(value: routine) {
             Card(padding: 0) {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(displayRoutine.name)
+                        Text(routine.name)
                             .font(.cardTitle)
                             .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: Space.sm)
                         Button {
-                            onStart(displayRoutine)
+                            onStart(routine)
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "play.fill")
@@ -1023,8 +997,8 @@ private struct RoutineCard: View {
                         // An empty routine has nothing to start — starting it
                         // would just open a blank freestyle session.
                         .disabled(orderedItems.isEmpty)
-                        .accessibilityLabel("Start \(displayRoutine.name)")
-                        .accessibilityIdentifier("start-routine-\(displayRoutine.name)")
+                        .accessibilityLabel("Start \(routine.name)")
+                        .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
                             Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
                             Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
@@ -1049,9 +1023,9 @@ private struct RoutineCard: View {
 
                     if let pairedRoutine {
                         Label(
-                            isAlternationOwner
-                                ? "Next · alternates with \(otherStartRoutine?.name ?? pairedRoutine.name)"
-                                : ((alternationState?.due.id == routine.id ? "Next · " : "") + "Alternates with \(pairedRoutine.name)"),
+                            isNext
+                                ? "Next · alternates with \(pairedRoutine.name)"
+                                : "Next: \(pairedRoutine.name) · alternating pair",
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 13, weight: .semibold))
@@ -1064,30 +1038,18 @@ private struct RoutineCard: View {
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
-                        if displayRoutine.blocks.isEmpty, let conditioningSummary {
+                        if routine.blocks.isEmpty, let conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
                                 .foregroundStyle(theme.accent)
                         }
                         RoutineExerciseSummaryDisclosure(
-                            routineName: displayRoutine.name,
+                            routineName: routine.name,
                             items: orderedItems,
                             exercises: exercises,
                             isExpanded: isSummaryExpanded,
                             onToggle: onToggleSummary
                         )
-                    }
-
-                    if let otherStartRoutine {
-                        Button("Start \(otherStartRoutine.name) instead") {
-                            onStart(otherStartRoutine)
-                        }
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.capsule)
-                        .disabled(OrderedRoutineItem.ordered(in: otherStartRoutine).isEmpty)
-                        .accessibilityIdentifier("start-alternate-\(otherStartRoutine.name)")
                     }
                 }
                 .padding(.horizontal, Space.lg)

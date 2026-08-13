@@ -44,13 +44,20 @@ enum ConditioningPresetStore {
         guard !trimmedName.isEmpty else { throw ConditioningPresetStoreError.emptyName }
         guard !section.movements.isEmpty else { throw ConditioningPresetStoreError.emptySection }
 
+        let recordID = UUID()
         var storedSection = section
         storedSection.name = trimmedName
+        storedSection.presetReferenceID = "saved-\(recordID.uuidString)"
         guard let json = StoredConditioningPreset.section(storedSection).encodedJSON() else {
             throw ConditioningPresetStoreError.encodingFailed
         }
 
-        let record = IntervalPresetModel(userID: userID, name: trimmedName, planJSON: json)
+        let record = IntervalPresetModel(
+            id: recordID,
+            userID: userID,
+            name: trimmedName,
+            planJSON: json
+        )
         context.insert(record)
         do {
             try context.save()
@@ -93,6 +100,40 @@ enum ConditioningPresetStore {
             try context.save()
         } catch {
             record.deletedAt = previousDeletedAt
+            record.updatedAt = previousUpdatedAt
+            throw error
+        }
+    }
+
+    static func update(
+        _ record: IntervalPresetModel,
+        with section: ConditioningSection,
+        named name: String,
+        in context: ModelContext
+    ) throws {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { throw ConditioningPresetStoreError.emptyName }
+        guard !section.movements.isEmpty else { throw ConditioningPresetStoreError.emptySection }
+
+        var storedSection = section
+        storedSection.name = trimmedName
+        storedSection.presetReferenceID = "saved-\(record.id.uuidString)"
+        guard let json = StoredConditioningPreset.section(storedSection).encodedJSON() else {
+            throw ConditioningPresetStoreError.encodingFailed
+        }
+
+        let previousName = record.name
+        let previousJSON = record.planJSON
+        let previousUpdatedAt = record.updatedAt
+        record.name = trimmedName
+        record.planJSON = json
+        record.updatedAt = .now
+
+        do {
+            try context.save()
+        } catch {
+            record.name = previousName
+            record.planJSON = previousJSON
             record.updatedAt = previousUpdatedAt
             throw error
         }

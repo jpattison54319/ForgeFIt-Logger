@@ -9,6 +9,12 @@ struct ConditioningRoundPaceChart: View {
     let averageSeconds: Int
 
     @Environment(\.theme) private var theme
+    @State private var selectedRound: Int?
+
+    private var selectedSplit: ConditioningPerformanceAnalysis.RoundSplit? {
+        guard let selectedRound else { return nil }
+        return splits.min { abs($0.round - selectedRound) < abs($1.round - selectedRound) }
+    }
 
     var body: some View {
         Chart {
@@ -32,6 +38,17 @@ struct ConditioningRoundPaceChart: View {
                 .foregroundStyle(theme.warmup)
                 .symbolSize(48)
             }
+            if let selectedSplit {
+                RuleMark(x: .value("Selected round", selectedSplit.round))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: "Round \(selectedSplit.round)",
+                            lines: [("Time", Fmt.elapsed(selectedSplit.durationSeconds))]
+                        )
+                    }
+            }
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: min(6, splits.count))) { value in
@@ -42,7 +59,7 @@ struct ConditioningRoundPaceChart: View {
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                 if let seconds = value.as(Double.self) {
                     AxisValueLabel {
@@ -52,8 +69,14 @@ struct ConditioningRoundPaceChart: View {
                 }
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text("Time (min:sec)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedRound)
         .frame(height: 150)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Round pace")
         .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("conditioning-round-pace-chart")

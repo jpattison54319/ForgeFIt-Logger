@@ -57,6 +57,7 @@ struct ConditioningPlanEditor: View {
                             ConditioningSectionEditor(
                                 section: $section,
                                 exercises: exercises,
+                                workouts: workouts,
                                 onChange: persist,
                                 onApplyPreset: { apply($0, to: section.id) },
                                 onAddMovement: {
@@ -252,6 +253,7 @@ struct ConditioningSectionEditor: View {
     @Environment(\.theme) private var theme
     @Binding var section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
+    let workouts: [WorkoutModel]
     let onChange: () -> Void
     let onApplyPreset: (ConditioningPresetSelection) -> Void
     let onAddMovement: () -> Void
@@ -259,6 +261,7 @@ struct ConditioningSectionEditor: View {
     let onRemoveMovement: (ConditioningMovement) -> Void
     let onMoveMovement: (ConditioningMovement, Int) -> Void
     let onDelete: () -> Void
+    var showsPresetActions = true
 
     @Query(sort: \IntervalPresetModel.createdAt, order: .reverse)
     private var presetRecords: [IntervalPresetModel]
@@ -288,59 +291,61 @@ struct ConditioningSectionEditor: View {
                     .onSubmit(finishRenaming)
                     .accessibilityLabel("Conditioning block name")
                     .accessibilityIdentifier("conditioning-block-name-\(section.id.uuidString)")
-                Menu {
-                    Button("Rename Block", systemImage: "pencil", action: focusName)
-                        .accessibilityIdentifier("rename-conditioning-block-\(section.id.uuidString)")
-                    Button("Add as Preset", systemImage: "bookmark", action: beginSavingPreset)
-                        .disabled(section.movements.isEmpty)
-                        .accessibilityIdentifier("add-conditioning-as-preset-\(section.id.uuidString)")
-                    Button("Manage Presets", systemImage: "slider.horizontal.3") {
-                        showPresetManager = true
-                    }
-                    .accessibilityIdentifier("manage-conditioning-presets")
-                    if !savedPresets.isEmpty || !includedPresets.isEmpty {
+                if showsPresetActions {
+                    Menu {
+                        Button("Rename Block", systemImage: "pencil", action: focusName)
+                            .accessibilityIdentifier("rename-conditioning-block-\(section.id.uuidString)")
+                        Button("Add as Preset", systemImage: "bookmark", action: beginSavingPreset)
+                            .disabled(section.movements.isEmpty)
+                            .accessibilityIdentifier("add-conditioning-as-preset-\(section.id.uuidString)")
+                        Button("Manage Presets", systemImage: "slider.horizontal.3") {
+                            showPresetManager = true
+                        }
+                        .accessibilityIdentifier("manage-conditioning-presets")
+                        if !savedPresets.isEmpty || !includedPresets.isEmpty {
+                            Divider()
+                            if !savedPresets.isEmpty {
+                                Section("Saved") {
+                                    ForEach(savedPresets) { preset in
+                                        Button(preset.menuTitle) { choose(preset) }
+                                    }
+                                }
+                            }
+                            if !includedPresets.isEmpty {
+                                Section("Included") {
+                                    ForEach(includedPresets) { preset in
+                                        Button(preset.menuTitle) { choose(.builtIn(preset)) }
+                                    }
+                                }
+                            }
+                        }
                         Divider()
-                        if !savedPresets.isEmpty {
-                            Section("Saved") {
-                                ForEach(savedPresets) { preset in
-                                    Button(preset.menuTitle) { choose(preset) }
-                                }
-                            }
-                        }
-                        if !includedPresets.isEmpty {
-                            Section("Included") {
-                                ForEach(includedPresets) { preset in
-                                    Button(preset.menuTitle) { choose(.builtIn(preset)) }
-                                }
-                            }
-                        }
+                        Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
+                    } label: {
+                        Label("Block options", systemImage: "ellipsis")
+                            .labelStyle(.iconOnly)
+                            .minimumTouchTarget()
                     }
-                    Divider()
-                    Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
-                } label: {
-                    Label("Block options", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                        .minimumTouchTarget()
-                }
-                .tint(theme.accent)
-                .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
-                .confirmationDialog(
-                    "Replace this section?",
-                    isPresented: $showPresetConfirmation,
-                    presenting: pendingPreset
-                ) { preset in
-                    Button("Use \(preset.title)", role: .destructive) { onApplyPreset(preset) }
-                    Button("Cancel", role: .cancel) {}
-                } message: { preset in
-                    Text("\(preset.title) replaces only this section's format, movements, and targets.")
-                }
-                .alert("Add as Preset", isPresented: $showAddPresetPrompt) {
-                    TextField("Preset name", text: $presetName)
-                    Button("Cancel", role: .cancel) { presetName = "" }
-                    Button("Add", action: saveAsPreset)
-                        .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } message: {
-                    Text("Saves this block's format, movements, and targets for reuse.")
+                    .tint(theme.accent)
+                    .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
+                    .confirmationDialog(
+                        "Replace this section?",
+                        isPresented: $showPresetConfirmation,
+                        presenting: pendingPreset
+                    ) { preset in
+                        Button("Use \(preset.title)", role: .destructive) { onApplyPreset(preset) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: { preset in
+                        Text("\(preset.title) replaces only this section's format, movements, and targets.")
+                    }
+                    .alert("Add as Preset", isPresented: $showAddPresetPrompt) {
+                        TextField("Preset name", text: $presetName)
+                        Button("Cancel", role: .cancel) { presetName = "" }
+                        Button("Add", action: saveAsPreset)
+                            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } message: {
+                        Text("Saves this block's format, movements, and targets for reuse.")
+                    }
                 }
             }
 
@@ -466,7 +471,7 @@ struct ConditioningSectionEditor: View {
         .background(theme.surfaceHighlight)
         .clipShape(.rect(cornerRadius: Radius.control))
         .sheet(isPresented: $showPresetManager) {
-            ConditioningPresetManagerView()
+            ConditioningPresetManagerView(workouts: workouts, exercises: exercises)
         }
         .alert("Couldn't Save Preset", isPresented: $showStoreError) {
         } message: {

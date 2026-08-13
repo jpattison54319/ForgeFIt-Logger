@@ -1399,7 +1399,13 @@ struct CardioSummaryCard: View {
                         TimeChartRangePicker(selection: $range)
                     }
                     if weekly.contains(where: { $0.value > 0 }) {
-                        BarTrendChart(points: weekly, color: theme.secondaryAccent)
+                        BarTrendChart(
+                            points: weekly,
+                            color: theme.secondaryAccent,
+                            valueFormatter: { "\($0.formatted(.number.precision(.fractionLength(0...1)))) min" },
+                            axisValueFormatter: { $0.formatted(.number.precision(.fractionLength(0...1))) },
+                            yAxisLabel: "Time (min/week)"
+                        )
                     } else {
                         Text("Start a run, ride, or Zone 2 session to see cardio trends.")
                             .font(.system(size: 14)).foregroundStyle(theme.textSecondary)

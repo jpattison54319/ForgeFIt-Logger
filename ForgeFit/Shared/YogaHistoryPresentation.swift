@@ -74,11 +74,15 @@ enum YogaHistoryPresentation {
         return "\(session.resolvedYogaStyle.title) Yoga"
     }
 
-    static func compactSummary(session: CardioSessionModel, plan: YogaFlowPlan?) -> String {
+    static func compactSummary(
+        session: CardioSessionModel,
+        plan: YogaFlowPlan?,
+        averageHeartRate: Int? = nil
+    ) -> String {
         var parts = [Fmt.durationShort(session.durationSeconds)]
         let count = poseCount(session: session, plan: plan)
         if count > 0 { parts.append("\(count) pose\(count == 1 ? "" : "s")") }
-        if let hr = session.avgHR { parts.append("\(hr) bpm") }
+        if let hr = averageHeartRate ?? session.avgHR { parts.append("\(hr) bpm") }
         return parts.joined(separator: " · ")
     }
 

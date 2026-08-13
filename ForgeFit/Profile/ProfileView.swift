@@ -4,12 +4,11 @@ import SwiftData
 import SwiftUI
 
 private struct ProfileStats {
-    var importedHealthWorkouts: Int
     var lifetimeHours: Int
 }
 
-/// Hevy-style profile: identity + lifetime stats, a weekly activity chart with a
-/// metric toggle, a dashboard grid, and the workout feed.
+/// Hevy-style profile: identity + lifetime stats, a dashboard grid, and the
+/// workout feed. Training trends live in Insights so analytics have one home.
 struct ProfileView: View {
     @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.modelContext) private var modelContext
@@ -22,14 +21,10 @@ struct ProfileView: View {
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
 
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
-    @State private var metric: TrainingAnalytics.Metric = .duration
-    @State private var activityRange: TimeChartRange = .twelveWeeks
     @State private var showSettings = false
     @State private var showProfileEditor = false
     @State private var completedMemo = Memo<String, [WorkoutModel]>()
     @State private var statsMemo = Memo<String, ProfileStats>()
-    @State private var activitySeriesMemo = Memo<String, [MetricPoint]>()
-    @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var profileKey: String { AnalyticsFingerprint.of(workouts) }
@@ -41,7 +36,6 @@ struct ProfileView: View {
             let completed = analytics.completed
             let totalSeconds = completed.reduce(0) { $0 + analytics.summary(for: $1).durationSeconds }
             return ProfileStats(
-                importedHealthWorkouts: completed.filter { $0.sourceDevice?.hasPrefix("healthkit") == true }.count,
                 lifetimeHours: totalSeconds / 3600
             )
         }
@@ -75,7 +69,6 @@ struct ProfileView: View {
                     importedExerciseReviewCard
                         .transition(Motion.scaleIn(0.98, reduceMotion: reduceMotion))
                 }
-                activityCard
 
                 SectionHeader("Dashboard")
                 dashboardGrid
@@ -92,6 +85,7 @@ struct ProfileView: View {
                             WorkoutFeedRow(workout: workout, analytics: analytics)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("profile-workout-\(workout.title ?? "Workout")")
                     }
                     if completed.count > 10 {
                         NavigationLink(value: ProfileRoute.history) {
@@ -163,22 +157,6 @@ struct ProfileView: View {
                     }
                 }
                 XPProgressBar(progress: xpProgress)
-                if completed.count > 0 {
-                    Divider().overlay(theme.separator)
-                    HStack(spacing: Space.md) {
-                        Image(systemName: "heart")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 36, height: 36)
-                            .background(theme.surfaceElevated)
-                            .clipShape(RoundedRectangle(cornerRadius: Radius.tag))
-                            .accessibilityHidden(true)
-                        Text(historyScopeText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
             }
         }
     }
@@ -228,45 +206,6 @@ struct ProfileView: View {
         let parts = displayName.split(separator: " ")
         let initials = parts.prefix(2).compactMap(\.first).map(String.init).joined()
         return initials.isEmpty ? "You" : initials.uppercased()
-    }
-
-    private var historyScopeText: String {
-        if profileStats.importedHealthWorkouts > 0 {
-            "Includes \(profileStats.importedHealthWorkouts) Apple Health imports from the last 60 days, plus workouts logged in ForgeFit."
-        } else {
-            "Completed workouts logged in ForgeFit."
-        }
-    }
-
-    private var activityCard: some View {
-        let series = activitySeriesMemo("\(profileKey)|\(metric.rawValue)|\(activityRange.rawValue)") {
-            analytics.weeklySeries(metric, weeks: activityRange.weekCount)
-        }
-        let week = weekMemo(profileKey) { analytics.thisWeek() }
-        let headline: String = switch metric {
-        case .duration: Fmt.durationShort(week.durationSeconds)
-        case .volume: Fmt.volume(week.volume)
-        case .reps: "\(week.reps) reps"
-        }
-        return Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(alignment: .top) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(headline).font(.metricValue).foregroundStyle(theme.textPrimary)
-                        Text("this week").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
-                    }
-                    Spacer(minLength: Space.md)
-                    TimeChartRangePicker(selection: $activityRange)
-                }
-                if series.contains(where: { $0.value > 0 }) {
-                    BarTrendChart(points: series)
-                } else {
-                    Text("Train this week to fill in your activity chart.")
-                        .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
-                }
-                SegmentedPills(options: TrainingAnalytics.Metric.allCases, title: { $0.rawValue }, selection: $metric)
-            }
-        }
     }
 
     private var importedExerciseReviewCard: some View {
@@ -483,6 +422,8 @@ struct ExercisesListView: View {
     @State private var equipment: String?
     @State private var customOnly = false
     @State private var showCreate = false
+    @State private var showConditioningPresets = false
+    @State private var showYogaFlows = false
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
 
     private var filtered: [ExerciseLibraryModel] {
@@ -523,6 +464,24 @@ struct ExercisesListView: View {
             }
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
+
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    libraryAction(
+                        title: "Conditioning Presets",
+                        systemImage: "stopwatch",
+                        color: theme.warmup
+                    ) { showConditioningPresets = true }
+                    Divider().overlay(theme.separator)
+                    libraryAction(
+                        title: "Yoga Flows",
+                        systemImage: "figure.yoga",
+                        color: theme.secondaryAccent
+                    ) { showYogaFlows = true }
+                }
+            }
+            .padding(.horizontal, Space.lg)
+            .padding(.top, Space.md)
 
             DarkTextField(text: $query, placeholder: "Search exercises")
                 .padding(.horizontal, Space.lg)
@@ -607,9 +566,41 @@ struct ExercisesListView: View {
         .sheet(isPresented: $showCreate) {
             CreateExerciseView { _ in }
         }
+        .sheet(isPresented: $showConditioningPresets) {
+            ConditioningPresetManagerView(workouts: workouts, exercises: exercises)
+        }
+        .sheet(isPresented: $showYogaFlows) {
+            YogaFlowManagerView()
+        }
         .navigationDestination(for: UUID.self) { id in
             ExerciseDetailView(exerciseID: id, workouts: workouts, exercises: exercises)
         }
+    }
+
+    private func libraryAction(
+        title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: Space.md) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(color)
+                    .frame(width: 28)
+                Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, Space.md)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(title == "Conditioning Presets" ? "manage-conditioning-presets" : "manage-yoga-flows")
     }
 }
 
@@ -661,7 +652,16 @@ struct MeasuresView: View {
                         Text("Updated \(latest.date.formatted(.relative(presentation: .named)))")
                             .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                         if chartSeries.count >= 2 {
-                            LineTrendChart(points: chartSeries)
+                            LineTrendChart(
+                                points: chartSeries,
+                                yLabel: "Bodyweight",
+                                valueFormatter: { Fmt.load($0) },
+                                axisValueFormatter: {
+                                    Fmt.unit.displayValue(fromKilograms: $0)
+                                        .formatted(.number.precision(.fractionLength(0...1)))
+                                },
+                                yAxisUnitLabel: "Bodyweight (\(Fmt.unit.shortSuffix))"
+                            )
                         }
                     }
                 }

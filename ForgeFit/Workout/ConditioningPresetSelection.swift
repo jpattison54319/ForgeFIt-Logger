@@ -1,4 +1,5 @@
 import ForgeCore
+import ForgeData
 import Foundation
 
 enum ConditioningPresetSelection: Identifiable, Equatable {
@@ -32,6 +33,28 @@ enum ConditioningPresetSelection: Identifiable, Equatable {
         switch self {
         case .builtIn(let preset): preset.summary
         case .saved(_, _, let section): section.presetSummary
+        }
+    }
+
+    /// Resolves an included preset through the live exercise catalog while a
+    /// saved preset already carries its frozen prescription.
+    func resolvedSection(in catalog: [ExerciseLibraryModel]) -> ConditioningSection? {
+        switch self {
+        case .saved(_, _, var section):
+            section.presetReferenceID = id
+            return section
+        case .builtIn(let preset):
+            let catalogByName = Dictionary(
+                catalog.lazy
+                    .filter { $0.deletedAt == nil }
+                    .map { ($0.name.lowercased(), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let resolvedIDs = preset.movements.compactMap {
+                catalogByName[$0.catalogName.lowercased()]?.id
+            }
+            guard resolvedIDs.count == preset.movements.count else { return nil }
+            return preset.makeSection(exerciseIDs: resolvedIDs)
         }
     }
 }

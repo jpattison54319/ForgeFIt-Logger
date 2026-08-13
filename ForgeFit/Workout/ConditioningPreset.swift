@@ -103,7 +103,7 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
             )
         }
 
-        return switch self {
+        var section = switch self {
         case .cindy:
             ConditioningSection(id: id, name: title, format: .amrap, durationSeconds: 1_200, movements: resolvedMovements)
         case .hundredsChipper:
@@ -135,6 +135,8 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
         case .maxLoad:
             ConditioningSection(id: id, name: title, format: .maxLoad, timeCapSeconds: 600, rounds: 5, movements: resolvedMovements)
         }
+        section.presetReferenceID = "built-in-\(self.id)"
+        return section
     }
 
     func makePlan(exerciseIDs: [UUID]) -> ConditioningPlan {
@@ -205,6 +207,7 @@ enum ConditioningPlanCoordinator {
 
             var replacement = savedSection
             replacement.id = sectionID
+            replacement.presetReferenceID = selection.id
             replacement.movements = savedSection.movements.map { movement in
                 var copy = movement
                 copy.id = UUID()

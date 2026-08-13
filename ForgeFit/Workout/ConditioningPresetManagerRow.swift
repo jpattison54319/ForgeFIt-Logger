@@ -1,14 +1,19 @@
+import ForgeData
 import SwiftUI
 
 struct ConditioningPresetManagerRow: View {
     @Environment(\.theme) private var theme
 
-    let name: String
-    let detail: String
+    let selection: ConditioningPresetSelection
+    let workouts: [WorkoutModel]
+    let exercises: [ExerciseLibraryModel]
     let deleteMessage: String
     let onDelete: () -> Void
 
     @State private var isConfirmingDelete = false
+
+    private var name: String { selection.title }
+    private var detail: String { selection.detail }
 
     var body: some View {
         Group {
@@ -37,15 +42,33 @@ struct ConditioningPresetManagerRow: View {
                 }
             } else {
                 HStack(spacing: Space.sm) {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        Text(name)
-                            .font(.bodyStrong)
-                            .foregroundStyle(theme.textPrimary)
-                        Text(detail)
-                            .font(.label)
-                            .foregroundStyle(theme.textSecondary)
+                    NavigationLink {
+                        ConditioningPresetDetailDestination(
+                            selection: selection,
+                            workouts: workouts,
+                            exercises: exercises
+                        )
+                    } label: {
+                        HStack(spacing: Space.sm) {
+                            VStack(alignment: .leading, spacing: Space.xs) {
+                                Text(name)
+                                    .font(.bodyStrong)
+                                    .foregroundStyle(theme.textPrimary)
+                                Text(detail)
+                                    .font(.label)
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            Spacer(minLength: Space.sm)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                        .frame(minHeight: 44)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Spacer(minLength: Space.sm)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("View \(name) performance")
+                    .accessibilityHint("Opens this conditioning preset's performance history")
+
                     Button("Delete \(name)", systemImage: "trash", role: .destructive) {
                         withAnimation { isConfirmingDelete = true }
                     }

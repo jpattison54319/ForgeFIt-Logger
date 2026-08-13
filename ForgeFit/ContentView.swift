@@ -87,6 +87,7 @@ struct ContentView: View {
     @Query(sort: \ExperimentModel.startedAt, order: .reverse) private var experiments: [ExperimentModel]
     @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse) private var microcycleTrackings: [MicrocycleTrackingModel]
     @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse) private var microcycleWindows: [MicrocycleWindowModel]
+    @Query(sort: \IntervalPresetModel.updatedAt, order: .reverse) private var conditioningPresetRecords: [IntervalPresetModel]
 
     @State private var appState = AppState()
     @State private var social = SocialService.make()
@@ -220,6 +221,12 @@ struct ContentView: View {
         return "\(routines.count)|\(Set(routines.map(\.id)).count)|\(latestRoutine)|"
             + "\(routineFolders.count)|\(Set(routineFolders.map(\.id)).count)|\(latestFolder)|"
             + "\(routineAlternations.count)|\(latestAlternation)"
+    }
+
+    private var conditioningPresetRevision: String {
+        conditioningPresetRecords.map {
+            "\($0.id.uuidString)|\($0.name)|\($0.updatedAt.timeIntervalSince1970)|\($0.deletedAt?.timeIntervalSince1970 ?? 0)"
+        }.joined(separator: ";")
     }
 
     private var todayCheckinTags: [String] {
@@ -478,6 +485,10 @@ struct ContentView: View {
                 schedulePlanDeduplication()
             }
             .onChange(of: exercises.count) { schedulePlanDeduplication() }
+            .onChange(of: conditioningPresetRevision) {
+                guard didFinishLaunchTasks, activeWorkout == nil else { return }
+                reconcileConditioningPresetHistory()
+            }
             .onChange(of: todayCheckinTags) { _, _ in handleTodayCheckinChange() }
             .onChange(of: restTimer.endsAt) { _, endsAt in handleRestTimerChange(endsAt) }
             // Interval step transitions repaint the watch + Live Activity.
@@ -1140,6 +1151,7 @@ struct ContentView: View {
             microcycleTransitionTask?.cancel()
             microcycleTransitionTask = nil
         } else if scenePhase == .active {
+            reconcileConditioningPresetHistory()
             reconcileExperimentLifecycle()
             reconcileMicrocycleLifecycle()
             NotificationScheduler.shared.refreshStatus()
@@ -1180,6 +1192,23 @@ struct ContentView: View {
         if UserDefaults.standard.object(forKey: "liveSyncEnabled") == nil
             || UserDefaults.standard.bool(forKey: "liveSyncEnabled") {
             HealthService.shared.startWatchApp(cardioKind: watchCardioKind(for: workout))
+        }
+    }
+
+    private func reconcileConditioningPresetHistory() {
+        guard activeWorkout == nil else { return }
+        do {
+            let updatedWorkouts = try ConditioningPresetHistoryReconciler.reconcile(
+                records: conditioningPresetRecords,
+                workouts: workouts,
+                exercises: exercises,
+                context: modelContext
+            )
+            if updatedWorkouts > 0 {
+                BackupScheduler.shared.noteLogDataChanged()
+            }
+        } catch {
+            assertionFailure("Conditioning preset history reconciliation failed: \(error)")
         }
     }
 
@@ -1256,6 +1285,7 @@ struct ContentView: View {
 
         await launchTasks()
         didFinishLaunchTasks = true
+        reconcileConditioningPresetHistory()
         scheduleLaunchPlanMaintenanceIfNeeded()
         // Links queued while onboarding was up and dismissed before launch
         // finished are only safe to route now.
@@ -1707,6 +1737,9 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-block-prefill-history") {
                 try BlockPrefillUITestFixture.seed(in: modelContext)
             }
+            if ProcessInfo.processInfo.arguments.contains("--seed-conditioning-preset-rename") {
+                try ConditioningPresetUITestFixture.seed(in: modelContext)
+            }
             if ProcessInfo.processInfo.arguments.contains("--seed-experiment-demo") {
                 try ExperimentDemoSeed.seed(in: modelContext)
             }
@@ -1798,6 +1831,7 @@ struct ContentView: View {
                     startedAt: start,
                     endedAt: start.addingTimeInterval(2_100),
                     durationSeconds: 1_800 + (i % 4) * 300,
+                    distanceMeters: isYoga ? nil : 4_800 + Double((120 - i) / 8) * 40,
                     avgHR: isYoga ? nil : 148 + (i % 20),
                     yogaStyleRaw: isYoga ? "vinyasa" : nil
                 )

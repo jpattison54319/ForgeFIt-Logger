@@ -78,6 +78,9 @@ public struct ConditioningMovement: Codable, Equatable, Identifiable, Sendable {
 
 public struct ConditioningSection: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
+    /// Stable preset lineage frozen into routines and workouts. Optional so
+    /// plans written before preset identity existed continue to decode.
+    public var presetReferenceID: String?
     public var name: String
     public var format: ConditioningFormat
     public var ordering: ConditioningOrdering
@@ -96,6 +99,7 @@ public struct ConditioningSection: Codable, Equatable, Identifiable, Sendable {
 
     public init(
         id: UUID = UUID(),
+        presetReferenceID: String? = nil,
         name: String,
         format: ConditioningFormat,
         ordering: ConditioningOrdering = .inOrder,
@@ -113,6 +117,7 @@ public struct ConditioningSection: Codable, Equatable, Identifiable, Sendable {
         movements: [ConditioningMovement] = []
     ) {
         self.id = id
+        self.presetReferenceID = presetReferenceID
         self.name = name
         self.format = format
         self.ordering = ordering

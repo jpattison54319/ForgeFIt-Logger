@@ -234,7 +234,7 @@ enum WorkoutAwards {
                 guard let result else { return nil }
                 let title = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 return ConditioningActivity(
-                    key: conditioningKey(section),
+                    key: ConditioningPrescriptionSignature.key(for: section),
                     title: title.isEmpty ? section.format.title : title,
                     section: section,
                     result: result
@@ -280,35 +280,6 @@ enum WorkoutAwards {
             return YogaFlowPlan.decode(from: exercise.yogaFlowJSON)
         }
         return nil
-    }
-
-    private static func conditioningKey(_ section: ConditioningSection) -> String {
-        let movements = section.movements.map { movement in
-            [
-                movement.exerciseID.uuidString,
-                String(movement.targetValue.bitPattern),
-                movement.targetUnit.rawValue,
-                movement.targetLoad.map { String($0.bitPattern) } ?? "nil",
-                movement.weightMode.rawValue
-            ].joined(separator: ":")
-        }.joined(separator: ";")
-        let components: [String] = [
-            section.format.rawValue,
-            section.ordering.rawValue,
-            section.scoreKind.rawValue,
-            section.durationSeconds.map(String.init) ?? "nil",
-            section.timeCapSeconds.map(String.init) ?? "nil",
-            section.rounds.map(String.init) ?? "nil",
-            section.intervalSeconds.map(String.init) ?? "nil",
-            section.workSeconds.map(String.init) ?? "nil",
-            section.restSeconds.map(String.init) ?? "nil",
-            section.repScheme.map(String.init).joined(separator: ","),
-            section.ladderStep.map(String.init) ?? "nil",
-            String(section.endsOnFailure),
-            String(section.restartEachInterval),
-            movements
-        ]
-        return components.joined(separator: "|")
     }
 
     private static func scoreMetric(_ result: ConditioningSectionResult) -> Double? {

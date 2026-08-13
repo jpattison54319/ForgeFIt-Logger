@@ -1,3 +1,4 @@
+import ForgeCore
 import ForgeData
 import SwiftData
 import SwiftUI
@@ -7,6 +8,9 @@ struct ConditioningPresetManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
 
+    let workouts: [WorkoutModel]
+    let exercises: [ExerciseLibraryModel]
+
     // Keep soft-deleted rows available so visibility and restore state are
     // derived from the complete persisted history. The local ID sets below
     // make successful deletes disappear immediately while SwiftData refreshes.
@@ -15,6 +19,7 @@ struct ConditioningPresetManagerView: View {
 
     @State private var errorMessage = ""
     @State private var showError = false
+    @State private var showCreatePreset = false
     @State private var locallyDeletedSavedPresetIDs: Set<UUID> = []
     @State private var locallyHiddenBuiltInIDs: Set<String> = []
 
@@ -48,8 +53,9 @@ struct ConditioningPresetManagerView: View {
                             Section("Included") {
                                 ForEach(includedPresets) { preset in
                                     ConditioningPresetManagerRow(
-                                        name: preset.title,
-                                        detail: preset.detail,
+                                        selection: preset,
+                                        workouts: workouts,
+                                        exercises: exercises,
                                         deleteMessage: "Removes it from the preset menu. Existing blocks stay unchanged.",
                                         onDelete: { delete(preset) }
                                     )
@@ -61,8 +67,9 @@ struct ConditioningPresetManagerView: View {
                             Section("Saved") {
                                 ForEach(savedPresets) { preset in
                                     ConditioningPresetManagerRow(
-                                        name: preset.title,
-                                        detail: preset.detail,
+                                        selection: preset,
+                                        workouts: workouts,
+                                        exercises: exercises,
                                         deleteMessage: "Removes this saved preset. Existing blocks stay unchanged.",
                                         onDelete: { delete(preset) }
                                     )
@@ -83,9 +90,30 @@ struct ConditioningPresetManagerView: View {
             .navigationTitle("Conditioning Presets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("New preset", systemImage: "plus") {
+                        showCreatePreset = true
+                    }
+                    .accessibilityIdentifier("new-conditioning-preset")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: dismiss.callAsFunction)
                 }
+            }
+        }
+        .sheet(isPresented: $showCreatePreset) {
+            ConditioningBlockBuilderView(
+                planJSON: nil,
+                exercises: exercises,
+                workouts: workouts,
+                navigationTitle: "New Preset",
+                allowsMultipleSections: false,
+                showsPresetActions: false
+            ) { json in
+                guard let section = ConditioningPlan.decode(from: json)?.sections.first else {
+                    throw ConditioningPresetStoreError.encodingFailed
+                }
+                try ConditioningPresetStore.save(section, named: section.name, in: modelContext)
             }
         }
         .alert("Couldn't Update Presets", isPresented: $showError) {
