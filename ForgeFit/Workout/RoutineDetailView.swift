@@ -222,7 +222,7 @@ private struct RoutineBlockSummary: View {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .accessibilityLabel("Conditioning details")
+                    .accessibilityLabel("\(title) details")
                     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                     .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
                     .accessibilityIdentifier("routine-conditioning-details")
@@ -251,7 +251,7 @@ private struct RoutineBlockSummary: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(block.kind.title)
+                Text(title)
                     .font(.cardTitle)
                     .foregroundStyle(theme.textPrimary)
                 Text(summary)
@@ -326,6 +326,10 @@ private struct RoutineBlockSummary: View {
             }
         }
         .accessibilityIdentifier("routine-conditioning-plan")
+    }
+
+    private var title: String {
+        RoutineBlockPresentation.title(for: block)
     }
 
     private func exercise(for id: UUID) -> ExerciseLibraryModel? {

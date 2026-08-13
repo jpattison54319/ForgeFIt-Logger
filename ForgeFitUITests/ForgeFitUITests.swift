@@ -1887,6 +1887,7 @@ final class ForgeFitUITests: XCTestCase {
 
         let details = app.buttons["routine-conditioning-details"].firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 5), "Conditioning must have a visible details affordance.")
+        XCTAssertEqual(details.label, "Garage Cindy details", "The collapsed disclosure should use the conditioning block's actual name.")
         XCTAssertEqual(details.value as? String, "Collapsed")
         tapWhenReady(details)
 

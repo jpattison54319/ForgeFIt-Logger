@@ -735,8 +735,12 @@ struct WorkoutHomeView: View {
         }
     }
 
-    private func routineCard(_ routine: RoutineModel) -> some View {
-        let state = alternationState(for: routine)
+    private func routineCard(_ slot: RoutineModel) -> some View {
+        let state = alternationState(for: slot)
+        let routine = AlternatingRoutineSlotResolver.presentedRoutine(
+            for: slot,
+            state: state
+        )
         let hasConfiguredAlternation = RoutineAlternationService.alternation(
             containing: routine.id,
             in: alternations
@@ -1000,6 +1004,17 @@ private struct RoutineCard: View {
                         .accessibilityLabel("Start \(routine.name)")
                         .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
+                            if let pairedRoutine {
+                                Button(
+                                    "Start \(pairedRoutine.name) Instead",
+                                    systemImage: "play.fill"
+                                ) {
+                                    onStart(pairedRoutine)
+                                }
+                                .disabled(OrderedRoutineItem.ordered(in: pairedRoutine).isEmpty)
+                                .accessibilityIdentifier("start-alternate-\(pairedRoutine.name)")
+                                Divider()
+                            }
                             Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
                             Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
                             Button(
@@ -1024,8 +1039,8 @@ private struct RoutineCard: View {
                     if let pairedRoutine {
                         Label(
                             isNext
-                                ? "Next · alternates with \(pairedRoutine.name)"
-                                : "Next: \(pairedRoutine.name) · alternating pair",
+                                ? "Next up · Alternating with \(pairedRoutine.name)"
+                                : "Alternating with \(pairedRoutine.name)",
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 13, weight: .semibold))

@@ -108,7 +108,7 @@ struct RoutineExerciseSummaryDisclosure: View {
         case .exercise(let exercise):
             exercises.first { $0.id == exercise.exerciseID }?.name ?? "Exercise"
         case .block(let block):
-            block.kind.title
+            RoutineBlockPresentation.title(for: block)
         }
     }
 

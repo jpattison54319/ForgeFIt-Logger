@@ -5,9 +5,13 @@ import Foundation
 import SwiftData
 
 /// Deterministic libraries covering each hierarchy presentation used by the
-/// Workout-tab UI tests. The alternation fixture includes one completed
-/// routine link to advance the pair; none of these fixtures contain Health data.
+/// Workout-tab UI tests. Alternation fixtures cover both due states and both
+/// same-folder/cross-folder placement; none contain Health data.
 enum RoutineHierarchyUITestFixture {
+    private enum CompletedAlternatingMember: Equatable {
+        case owner
+    }
+
     private enum State: String, CaseIterable {
         case flat = "--seed-routine-hierarchy-flat"
         case single = "--seed-routine-hierarchy-single"
@@ -15,7 +19,9 @@ enum RoutineHierarchyUITestFixture {
         case mixed = "--seed-routine-hierarchy-mixed"
         case manyExercises = "--seed-routine-hierarchy-many-exercises"
         case ungroupedDisclosure = "--seed-routine-hierarchy-ungrouped-disclosure"
-        case alternatingCrossGroup = "--seed-routine-hierarchy-alternating-cross-group"
+        case alternatingCrossGroupOwnerDue = "--seed-routine-hierarchy-alternating-cross-group-owner-due"
+        case alternatingCrossGroupPartnerDue = "--seed-routine-hierarchy-alternating-cross-group"
+        case alternatingSameGroupPartnerDue = "--seed-routine-hierarchy-alternating-same-group"
     }
 
     static func seedIfRequested(arguments: [String], in context: ModelContext) throws {
@@ -83,37 +89,32 @@ enum RoutineHierarchyUITestFixture {
             _ = insertFolder("Plans", position: 0, into: context)
             insertRoutine("Full Body A", folderID: nil, position: 0, into: context)
 
-        case .alternatingCrossGroup:
+        case .alternatingCrossGroupOwnerDue:
             let folder = insertFolder("AX Plans", position: 0, into: context)
-            let owner = insertRoutine(
-                "Ax400",
-                folderID: folder.id,
-                position: 0,
-                exerciseIDs: [GlobalExerciseLibrary.machineChestPressID],
+            insertAlternatingPair(
+                ownerFolderID: folder.id,
+                partnerFolderID: nil,
+                completedMember: nil,
                 into: context
             )
-            let partner = insertRoutine(
-                "Cindy",
-                folderID: nil,
-                position: 0,
-                exerciseIDs: [GlobalExerciseLibrary.smithMachineSquatID],
+
+        case .alternatingCrossGroupPartnerDue:
+            let folder = insertFolder("AX Plans", position: 0, into: context)
+            insertAlternatingPair(
+                ownerFolderID: folder.id,
+                partnerFolderID: nil,
+                completedMember: .owner,
                 into: context
             )
-            let now = Date()
-            context.insert(RoutineAlternationModel(
-                userID: ForgeFitDemo.userID,
-                ownerRoutineID: owner.id,
-                partnerRoutineID: partner.id,
-                createdAt: now.addingTimeInterval(-7_200),
-                updatedAt: now.addingTimeInterval(-7_200)
-            ))
-            context.insert(WorkoutModel(
-                userID: ForgeFitDemo.userID,
-                routineID: owner.id,
-                title: owner.name,
-                startedAt: now.addingTimeInterval(-3_600),
-                endedAt: now.addingTimeInterval(-1_800)
-            ))
+
+        case .alternatingSameGroupPartnerDue:
+            let folder = insertFolder("Same Plan", position: 0, into: context)
+            insertAlternatingPair(
+                ownerFolderID: folder.id,
+                partnerFolderID: folder.id,
+                completedMember: .owner,
+                into: context
+            )
         }
 
         try context.save()
@@ -142,6 +143,7 @@ enum RoutineHierarchyUITestFixture {
         folderID: UUID?,
         position: Int,
         exerciseIDs: [UUID] = [],
+        includesTargetSet: Bool = false,
         into context: ModelContext
     ) -> RoutineModel {
         let routine = RoutineModel(
@@ -153,12 +155,61 @@ enum RoutineHierarchyUITestFixture {
                 RoutineExerciseModel(
                     userID: ForgeFitDemo.userID,
                     exerciseID: exerciseID,
-                    position: index
+                    position: index,
+                    sets: includesTargetSet
+                        ? [RoutineSetModel(
+                            userID: ForgeFitDemo.userID,
+                            position: 0,
+                            targetRepsLow: 10,
+                            targetWeight: 50
+                        )]
+                        : []
                 )
             }
         )
         context.insert(routine)
         return routine
+    }
+
+    private static func insertAlternatingPair(
+        ownerFolderID: UUID?,
+        partnerFolderID: UUID?,
+        completedMember: CompletedAlternatingMember?,
+        into context: ModelContext
+    ) {
+        let owner = insertRoutine(
+            "Ax400",
+            folderID: ownerFolderID,
+            position: 0,
+            exerciseIDs: [GlobalExerciseLibrary.machineChestPressID],
+            includesTargetSet: true,
+            into: context
+        )
+        let partner = insertRoutine(
+            "Cindy",
+            folderID: partnerFolderID,
+            position: ownerFolderID == partnerFolderID ? 1 : 0,
+            exerciseIDs: [GlobalExerciseLibrary.smithMachineSquatID],
+            includesTargetSet: true,
+            into: context
+        )
+        let now = Date()
+        context.insert(RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id,
+            createdAt: now.addingTimeInterval(-7_200),
+            updatedAt: now.addingTimeInterval(-7_200)
+        ))
+        if completedMember == .owner {
+            context.insert(WorkoutModel(
+                userID: ForgeFitDemo.userID,
+                routineID: owner.id,
+                title: owner.name,
+                startedAt: now.addingTimeInterval(-3_600),
+                endedAt: now.addingTimeInterval(-1_800)
+            ))
+        }
     }
 }
 #endif

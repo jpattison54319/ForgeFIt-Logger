@@ -13,11 +13,13 @@ struct RoutineAlternationServiceTests {
     }
 
     private func workout(
+        id: UUID = UUID(),
         routineID: UUID,
         completedAt: Date?,
         deletedAt: Date? = nil
     ) -> WorkoutModel {
         WorkoutModel(
+            id: id,
             userID: userID,
             routineID: routineID,
             startedAt: completedAt?.addingTimeInterval(-1_800) ?? base,
@@ -71,6 +73,65 @@ struct RoutineAlternationServiceTests {
         ) == owner.id)
     }
 
+    @Test func unrelatedAndPartnerFirstCompletionsKeepTheOwnerDue() {
+        let owner = routine("AX400")
+        let partner = routine("Cindy")
+        let unrelated = routine("Push")
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id,
+            createdAt: base.addingTimeInterval(-1)
+        )
+        let unrelatedCompletion = workout(
+            routineID: unrelated.id,
+            completedAt: base.addingTimeInterval(10)
+        )
+        let partnerCompletion = workout(
+            routineID: partner.id,
+            completedAt: base.addingTimeInterval(20)
+        )
+
+        #expect(RoutineAlternationService.dueRoutineID(
+            for: alternation,
+            workouts: [unrelatedCompletion]
+        ) == owner.id)
+        #expect(RoutineAlternationService.dueRoutineID(
+            for: alternation,
+            workouts: [unrelatedCompletion, partnerCompletion]
+        ) == owner.id)
+    }
+
+    @Test func equalCompletionTimesResolveDeterministicallyRegardlessOfFetchOrder() throws {
+        let owner = routine("AX400")
+        let partner = routine("Cindy")
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: partner.id,
+            createdAt: base.addingTimeInterval(-1)
+        )
+        let ownerCompletion = workout(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001")),
+            routineID: owner.id,
+            completedAt: base
+        )
+        let partnerCompletion = workout(
+            id: try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002")),
+            routineID: partner.id,
+            completedAt: base
+        )
+
+        #expect(RoutineAlternationService.dueRoutineID(
+            for: alternation,
+            workouts: [ownerCompletion, partnerCompletion]
+        ) == owner.id)
+        #expect(RoutineAlternationService.dueRoutineID(
+            for: alternation,
+            workouts: [partnerCompletion, ownerCompletion]
+        ) == owner.id)
+    }
+
     @Test func stateRequiresBothMembersToBeLive() throws {
         let owner = routine("AX400")
         let partner = routine("Cindy")
@@ -88,6 +149,14 @@ struct RoutineAlternationServiceTests {
         )?.due.id == owner.id)
 
         partner.archivedAt = base
+        #expect(RoutineAlternationService.state(
+            for: alternation,
+            routines: [owner, partner],
+            workouts: []
+        ) == nil)
+
+        partner.archivedAt = nil
+        alternation.deletedAt = base
         #expect(RoutineAlternationService.state(
             for: alternation,
             routines: [owner, partner],
