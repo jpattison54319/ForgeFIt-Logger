@@ -166,7 +166,7 @@ struct ConditioningPlanEditor: View {
         persist()
     }
 
-    private func apply(_ preset: ConditioningPreset, to sectionID: UUID) {
+    private func apply(_ preset: ConditioningPresetSelection, to sectionID: UUID) {
         do {
             try ConditioningPlanCoordinator.apply(
                 preset,
@@ -245,35 +245,79 @@ struct ConditioningPlanEditor: View {
 }
 
 struct ConditioningSectionEditor: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Binding var section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
     let onChange: () -> Void
-    let onApplyPreset: (ConditioningPreset) -> Void
+    let onApplyPreset: (ConditioningPresetSelection) -> Void
     let onAddMovement: () -> Void
     let onReplaceMovement: (ConditioningMovement) -> Void
     let onRemoveMovement: (ConditioningMovement) -> Void
     let onMoveMovement: (ConditioningMovement, Int) -> Void
     let onDelete: () -> Void
 
-    @State private var pendingPreset: ConditioningPreset?
+    @Query(sort: \IntervalPresetModel.createdAt, order: .reverse)
+    private var presetRecords: [IntervalPresetModel]
+
+    @FocusState private var nameIsFocused: Bool
+    @State private var pendingPreset: ConditioningPresetSelection?
     @State private var showPresetConfirmation = false
+    @State private var showAddPresetPrompt = false
+    @State private var showPresetManager = false
+    @State private var presetName = ""
+    @State private var storeError = ""
+    @State private var showStoreError = false
 
     var body: some View {
+        let savedPresets = ConditioningPresetStore.savedPresets(from: presetRecords)
+        let includedPresets = ConditioningPresetStore.visibleBuiltIns(from: presetRecords)
+
         VStack(alignment: .leading, spacing: Space.md) {
             HStack {
-                TextField("Section name", text: $section.name)
+                TextField("Block name", text: $section.name)
                     .font(.bodyStrong)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($nameIsFocused)
+                    .submitLabel(.done)
+                    .frame(minHeight: 44)
                     .onChange(of: section.name) { _, _ in onChange() }
-                Menu("Preset", systemImage: "square.grid.2x2") {
-                    ForEach(ConditioningPreset.allCases) { preset in
-                        Button(preset.menuTitle) { choose(preset) }
+                    .onSubmit(finishRenaming)
+                    .accessibilityLabel("Conditioning block name")
+                    .accessibilityIdentifier("conditioning-block-name-\(section.id.uuidString)")
+                Menu("Block options", systemImage: "ellipsis") {
+                    Button("Rename Block", systemImage: "pencil", action: focusName)
+                        .accessibilityIdentifier("rename-conditioning-block-\(section.id.uuidString)")
+                    Button("Add as Preset", systemImage: "bookmark", action: beginSavingPreset)
+                        .disabled(section.movements.isEmpty)
+                        .accessibilityIdentifier("add-conditioning-as-preset-\(section.id.uuidString)")
+                    Button("Manage Presets", systemImage: "slider.horizontal.3") {
+                        showPresetManager = true
                     }
+                    .accessibilityIdentifier("manage-conditioning-presets")
+                    if !savedPresets.isEmpty || !includedPresets.isEmpty {
+                        Divider()
+                        if !savedPresets.isEmpty {
+                            Section("Saved") {
+                                ForEach(savedPresets) { preset in
+                                    Button(preset.menuTitle) { choose(preset) }
+                                }
+                            }
+                        }
+                        if !includedPresets.isEmpty {
+                            Section("Included") {
+                                ForEach(includedPresets) { preset in
+                                    Button(preset.menuTitle) { choose(.builtIn(preset)) }
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
+                .labelStyle(.iconOnly)
                 .tint(theme.accent)
+                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
                 .confirmationDialog(
                     "Replace this section?",
@@ -285,11 +329,14 @@ struct ConditioningSectionEditor: View {
                 } message: { preset in
                     Text("\(preset.title) replaces only this section's format, movements, and targets.")
                 }
-                Menu("Section options", systemImage: "ellipsis") {
-                    Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
+                .alert("Add as Preset", isPresented: $showAddPresetPrompt) {
+                    TextField("Preset name", text: $presetName)
+                    Button("Cancel", role: .cancel) { presetName = "" }
+                    Button("Add", action: saveAsPreset)
+                        .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } message: {
+                    Text("Saves this block's format, movements, and targets for reuse.")
                 }
-                .labelStyle(.iconOnly)
-                .accessibilityIdentifier("conditioning-section-options")
             }
 
             Picker("Format", selection: $section.format) {
@@ -410,6 +457,16 @@ struct ConditioningSectionEditor: View {
         .padding(Space.md)
         .background(theme.surfaceHighlight)
         .clipShape(.rect(cornerRadius: Radius.control))
+        .sheet(isPresented: $showPresetManager) {
+            ConditioningPresetManagerView()
+        }
+        .alert("Couldn't Save Preset", isPresented: $showStoreError) {
+        } message: {
+            Text(storeError)
+        }
+        .onChange(of: nameIsFocused) { _, isFocused in
+            if !isFocused { finishRenaming() }
+        }
     }
 
     private func numericField(_ label: String, value: Binding<Int>) -> some View {
@@ -461,7 +518,34 @@ struct ConditioningSectionEditor: View {
         section.durationSeconds = (section.rounds ?? 8) * ((section.workSeconds ?? 20) + (section.restSeconds ?? 10))
     }
 
-    private func choose(_ preset: ConditioningPreset) {
+    private func focusName() {
+        nameIsFocused = true
+    }
+
+    private func finishRenaming() {
+        let trimmedName = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? section.format.title : trimmedName
+        guard section.name != finalName else { return }
+        section.name = finalName
+    }
+
+    private func beginSavingPreset() {
+        let trimmedName = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        presetName = trimmedName.isEmpty ? section.format.title : trimmedName
+        showAddPresetPrompt = true
+    }
+
+    private func saveAsPreset() {
+        do {
+            try ConditioningPresetStore.save(section, named: presetName, in: modelContext)
+            presetName = ""
+        } catch {
+            storeError = error.localizedDescription
+            showStoreError = true
+        }
+    }
+
+    private func choose(_ preset: ConditioningPresetSelection) {
         if section.movements.isEmpty {
             onApplyPreset(preset)
         } else {

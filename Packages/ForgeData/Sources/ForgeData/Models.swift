@@ -1598,18 +1598,17 @@ public final class WrappedReportModel {
     public var isMonthly: Bool { reportTypeRaw == "monthly" }
 }
 
-/// A user-saved cardio interval template, named for one-tap reuse in the plan
-/// builder alongside the built-in presets. The structure is frozen into
-/// `planJSON` (a JSON-encoded `IntervalPlan`, the same shape stored on
-/// `RoutineExerciseModel.intervalPlanJSON`); loading a preset decodes it back
-/// into the editor's steppers, which stay editable after. Soft-deleted via
-/// `deletedAt` so the management list can remove one without a hard delete.
+/// A user-saved plan preset, named for one-tap reuse. The persisted type name
+/// predates conditioning presets: legacy cardio rows store a raw `IntervalPlan`
+/// in `planJSON`, while newer preset families use tagged JSON payloads. Keeping
+/// the existing model preserves the production CloudKit schema. Soft-deleted
+/// via `deletedAt` so a preset can be removed without a hard delete.
 @Model
 public final class IntervalPresetModel {
     public var id: UUID = UUID()
     public var userID: UUID = UUID()
     public var name: String = ""
-    /// JSON-encoded `IntervalPlan` — the frozen structure this preset restores.
+    /// JSON-encoded frozen preset structure; readers discriminate its payload.
     public var planJSON: String = "{}"
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()

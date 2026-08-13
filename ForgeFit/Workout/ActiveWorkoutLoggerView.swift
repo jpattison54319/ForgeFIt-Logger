@@ -1548,18 +1548,11 @@ private struct PostWorkoutSummaryView: View {
     private var completedSets: [SetModel] {
         workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
     }
-    private var effectiveSetTotal: Double {
-        completedSets.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
-    }
     private var duration: Int {
         max(0, Int(finishRequestedAt.timeIntervalSince(workout.startedAt)))
     }
     private var volume: Double {
         completedSets.reduce(0) { $0 + ($1.totalVolume ?? 0) }
-    }
-    private var cardioDistance: Double? {
-        let value = workout.cardioSessions.compactMap(\.distanceMeters).reduce(0, +)
-        return value > 0 ? value : nil
     }
     private var previousComparable: WorkoutModel? {
         history
@@ -1578,38 +1571,14 @@ private struct PostWorkoutSummaryView: View {
         guard abs(delta) > 0.1 else { return "Volume matched last time" }
         return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
     }
-    private var totalReps: Int {
-        completedSets.reduce(0) {
-            $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +)
-                + ($1.side2Reps ?? 0) + $1.side2MiniReps.reduce(0, +)
-        }
-    }
-    private var bestLift: Double? {
-        completedSets.compactMap(\.effectiveLoad).filter { $0 > 0 }.max()
-    }
-
-    private struct AwardEntry: Identifiable {
-        let id: String
-        let exerciseName: String
-        let kind: RecordKind
-        let valueText: String
-    }
-    /// Final records of the session: per exercise, the best set per kind that
-    /// beat the historical baseline. Same engine as the in-logger trophies.
-    private var awardEntries: [AwardEntry] {
-        let baselines = PersonalRecords.baselines(history: history, before: workout)
-        return workout.exercises.sorted { $0.position < $1.position }.flatMap { we -> [AwardEntry] in
-            let exercise = exercises.first { $0.id == we.exerciseID }
-            let unit = exercise?.effectiveWeightUnit ?? Fmt.unit
-            return PersonalRecords.summaryAwards(for: we, baseline: baselines[we.exerciseID]).map { kind, set in
-                AwardEntry(
-                    id: "\(we.id)-\(kind.rawValue)",
-                    exerciseName: exercise?.name ?? "Exercise",
-                    kind: kind,
-                    valueText: kind.valueText(for: set, unit: unit)
-                )
-            }
-        }
+    /// Final records and milestones use one derivation path across the
+    /// completion sheet, history, search, and generated share images.
+    private var awardEntries: [WorkoutAward] {
+        WorkoutAwards.all(
+            for: workout,
+            history: history,
+            exercises: exercises
+        )
     }
     private var xpAward: XPService.Award {
         XPService.previewAward(for: workout, requireEnded: false)
@@ -1639,26 +1608,12 @@ private struct PostWorkoutSummaryView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
 
-                    Card {
-                        VStack(spacing: Space.lg) {
-                            HStack {
-                                StatColumn(label: "Time", value: Fmt.durationShort(duration))
-                                if let cardioDistance {
-                                    StatColumn(label: "Distance", value: Fmt.distance(cardioDistance), valueColor: theme.secondaryAccent)
-                                } else {
-                                    StatColumn(label: "Volume", value: Fmt.volume(volume))
-                                }
-                                StatColumn(label: "Sets", value: Fmt.sets(effectiveSetTotal))
-                            }
-                            if !completedSets.isEmpty {
-                                HStack {
-                                    StatColumn(label: "Reps", value: "\(totalReps)")
-                                    StatColumn(label: "Best Lift", value: bestLift.map { Fmt.loadUnit($0) } ?? "—")
-                                    StatColumn(label: "Awards", value: "\(awardEntries.count)", valueColor: awardEntries.isEmpty ? theme.textPrimary : theme.warmup)
-                                }
-                            }
-                        }
-                    }
+                    PostWorkoutSummaryStatsCard(
+                        workout: workout,
+                        exercises: exercises,
+                        durationSeconds: duration,
+                        awardCount: awardEntries.count
+                    )
                     .modifier(SummaryCardReveal(index: 0, revealed: cardsRevealed))
 
                     SessionRPECard(selection: $sessionRPE)
@@ -1683,7 +1638,7 @@ private struct PostWorkoutSummaryView: View {
                     }
 
                     if !awardEntries.isEmpty {
-                        awardsCard
+                        WorkoutAwardsCard(awards: awardEntries)
                             .modifier(SummaryCardReveal(index: 3, revealed: cardsRevealed))
                     }
 
@@ -1748,7 +1703,8 @@ private struct PostWorkoutSummaryView: View {
             theme: theme,
             hrSamples: [],
             recoveryPoints: [],
-            routeMaps: [:]
+            routeMaps: [:],
+            awards: awardEntries
         )
         showShareSheet = shareImage != nil
     }
@@ -1938,40 +1894,6 @@ private struct PostWorkoutSummaryView: View {
             guard !xpRevealed else { return }
             try? await Task.sleep(for: .milliseconds(400))
             withAnimation(Motion.reward) { xpRevealed = true }
-        }
-    }
-
-    /// Every record earned this session, grouped visually by exercise.
-    private var awardsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                Label("Awards", systemImage: "trophy.fill")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.warmup)
-                ForEach(awardEntries) { entry in
-                    HStack(spacing: Space.md) {
-                        Image(systemName: entry.kind.icon)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.warmup)
-                            .frame(width: 28, height: 28)
-                            .background(theme.warmup.opacity(0.15))
-                            .clipShape(Circle())
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.exerciseName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.textPrimary)
-                                .lineLimit(1)
-                            Text(entry.kind.label)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                        Spacer()
-                        Text(entry.valueText)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(theme.warmup)
-                    }
-                }
-            }
         }
     }
 

@@ -23,7 +23,7 @@ struct MicrocycleDayTimelineTests {
         ))!
     }
 
-    @Test func nextDayIsReadyImmediatelyAfterTodaysWorkoutCompletes() throws {
+    @Test func todayStaysCurrentAfterItsWorkoutCompletes() throws {
         let routineID = UUID()
         let window = makeWindow(index: 0, routineID: routineID, startDay: 1)
         let workout = WorkoutModel(
@@ -44,9 +44,34 @@ struct MicrocycleDayTimelineTests {
         #expect(days[0].status == .trained)
         #expect(days[0].routineMarkers == ["A"])
         #expect(days[0].isToday)
-        #expect(days[1].status == .ready)
+        #expect(days[1].status == .empty)
         #expect(!days[1].isToday)
-        #expect(days.dropFirst(2).allSatisfy { $0.status == .empty })
+        #expect(days.dropFirst().allSatisfy { $0.status == .empty })
+    }
+
+    @Test func skippedDaysStayUnloggedWhileCurrentDayFollowsTheCalendar() throws {
+        let routineID = UUID()
+        let window = makeWindow(index: 0, routineID: routineID, startDay: 1)
+        let firstDayWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: routineID,
+            startedAt: date(1),
+            endedAt: date(1, 13)
+        )
+
+        let days = MicrocycleDayTimeline.days(
+            in: window,
+            workouts: [firstDayWorkout],
+            restDays: [],
+            now: date(3)
+        )
+
+        #expect(days[0].status == .trained)
+        #expect(days[1].status == .empty)
+        #expect(!days[1].isToday)
+        #expect(days[2].status == .empty)
+        #expect(days[2].isToday)
+        #expect(days.count(where: \.isToday) == 1)
     }
 
     @Test func completedDayShowsTheLetterOfTheRoutinePerformed() throws {
@@ -84,7 +109,7 @@ struct MicrocycleDayTimelineTests {
 
         #expect(days[0].status == .trained)
         #expect(days[0].routineMarkers == ["C"])
-        #expect(days[1].status == .ready)
+        #expect(days[1].status == .empty)
         #expect(days[1].routineMarkers.isEmpty)
     }
 
@@ -124,8 +149,9 @@ struct MicrocycleDayTimelineTests {
         )
 
         #expect(completedDays[9].status == .trained)
-        #expect(!completedDays.contains { $0.status == .ready })
-        #expect(nextDays[0].status == .ready)
+        #expect(completedDays[9].isToday)
+        #expect(nextDays[0].status == .empty)
+        #expect(nextDays[0].isToday)
         #expect(nextDays.dropFirst().allSatisfy { $0.status == .empty })
     }
 

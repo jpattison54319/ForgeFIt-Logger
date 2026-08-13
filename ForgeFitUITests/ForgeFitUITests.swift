@@ -1552,6 +1552,51 @@ final class ForgeFitUITests: XCTestCase {
             "Expected the section to own its Add Movement action."
         )
         XCTAssertTrue(app.buttons["Replace Pullups"].exists, "Expected a visible in-section replacement action.")
+
+        let blockName = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'conditioning-block-name-'")
+        ).firstMatch
+        XCTAssertTrue(blockName.waitForExistence(timeout: 2), "Expected an editable conditioning block name.")
+        tapWhenReady(blockName)
+        if let currentName = blockName.value as? String {
+            blockName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
+        }
+        blockName.typeText("Garage Cindy")
+        tapWhenReady(app.buttons["Done"].firstMatch)
+        XCTAssertEqual(blockName.value as? String, "Garage Cindy")
+
+        tapWhenReady(presets)
+        tapWhenReady(app.buttons["Add as Preset"].firstMatch)
+        let presetName = app.textFields["Preset name"].firstMatch
+        XCTAssertTrue(presetName.waitForExistence(timeout: 2), "Expected the preset name prompt.")
+        XCTAssertEqual(presetName.value as? String, "Garage Cindy")
+        tapWhenReady(app.buttons["Add"].firstMatch)
+
+        tapWhenReady(presets)
+        XCTAssertTrue(
+            app.buttons["Garage Cindy · 20 min AMRAP · 3 movements"].waitForExistence(timeout: 2),
+            "Expected the custom conditioning preset in the same menu as included presets."
+        )
+        tapWhenReady(app.buttons["Manage Presets"].firstMatch)
+        XCTAssertTrue(app.navigationBars["Conditioning Presets"].waitForExistence(timeout: 2))
+
+        let deleteSavedPreset = app.buttons["Delete Garage Cindy"].firstMatch
+        let savedPresetLabel = app.staticTexts["Garage Cindy"].firstMatch
+        XCTAssertTrue(deleteSavedPreset.waitForExistence(timeout: 2))
+        XCTAssertTrue(savedPresetLabel.exists)
+        tapWhenReady(deleteSavedPreset)
+        tapWhenReady(app.buttons["Delete"].firstMatch)
+        XCTAssertTrue(savedPresetLabel.waitForNonExistence(timeout: 3), "Expected the custom preset to be deleted.")
+
+        let deleteIncludedPreset = app.buttons["Delete Cindy"].firstMatch
+        let includedPresetLabel = app.staticTexts["Cindy"].firstMatch
+        XCTAssertTrue(deleteIncludedPreset.waitForExistence(timeout: 2))
+        XCTAssertTrue(includedPresetLabel.exists)
+        tapWhenReady(deleteIncludedPreset)
+        tapWhenReady(app.buttons["Delete"].firstMatch)
+        XCTAssertTrue(includedPresetLabel.waitForNonExistence(timeout: 3), "Expected the included preset to be removed.")
+        tapWhenReady(app.buttons["Done"].firstMatch)
+
         attachScreenshot(app, name: "conditioning-cindy-plan")
 
         tapWhenReady(app.buttons["Save"].firstMatch)
@@ -1578,7 +1623,7 @@ final class ForgeFitUITests: XCTestCase {
 
         XCTAssertEqual(details.value as? String, "Expanded")
         XCTAssertTrue(app.descendants(matching: .any)["routine-conditioning-plan"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Cindy"].exists)
+        XCTAssertTrue(app.staticTexts["Garage Cindy"].exists, "Expected the renamed block title to persist.")
         let pullups = app.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS 'Pullups' AND label CONTAINS '5 reps'")
         ).firstMatch

@@ -11,9 +11,9 @@ struct MicrocycleDayPresentation: Identifiable, Equatable {
     var id: Date { date }
 }
 
-/// Builds the calendar-day strip and advances its single ready marker as soon
-/// as a workout or rest day completes. The marker is intentionally independent
-/// of the wall-clock date: solid days are done; the outlined green day is next.
+/// Builds each calendar day's logged state while keeping today's identity
+/// independent from completion. Skipped days stay visibly unlogged as the
+/// current-day marker advances with the window's calendar.
 @MainActor
 enum MicrocycleDayTimeline {
     static func days(
@@ -36,7 +36,7 @@ enum MicrocycleDayTimeline {
             ) else { return nil }
             return (date, index)
         }
-        let base = dates.map { day -> MicrocycleDayPresentation in
+        return dates.map { day -> MicrocycleDayPresentation in
             let dayWorkouts = MicrocycleDayAssignmentService.dayWorkouts(
                 on: day.date,
                 in: window,
@@ -62,22 +62,6 @@ enum MicrocycleDayTimeline {
                 status: status,
                 routineMarkers: routineMarkers,
                 isToday: calendar.isDate(day.date, inSameDayAs: now)
-            )
-        }
-
-        let latestCompletedIndex = base.last {
-            $0.status == .trained || $0.status == .rest
-        }?.index
-        let readyIndex = latestCompletedIndex.map { $0 + 1 } ?? 0
-
-        return base.map { day in
-            guard day.index == readyIndex, day.status == .empty else { return day }
-            return MicrocycleDayPresentation(
-                date: day.date,
-                index: day.index,
-                status: .ready,
-                routineMarkers: day.routineMarkers,
-                isToday: day.isToday
             )
         }
     }

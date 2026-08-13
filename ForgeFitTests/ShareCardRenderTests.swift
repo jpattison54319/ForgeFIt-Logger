@@ -92,6 +92,61 @@ struct ShareCardRenderTests {
             exercise: library.first { $0.id == pullUpID }
         ).contains("assisted"))
 
+        let cindyResult = ConditioningResult(sectionResults: [
+            ConditioningSectionResult(
+                id: cindy.id,
+                format: .amrap,
+                scoreKind: .roundsAndReps,
+                elapsedSeconds: 1_200,
+                fullRounds: 5,
+                totalReps: 150,
+                roundCompletionElapsedSeconds: [190, 400, 630, 890, 1_180],
+                completed: true
+            )
+        ])
+        let conditioningStart = Date(timeIntervalSince1970: 1_799_000_000)
+        let conditioningWorkout = WorkoutModel(
+            userID: userID,
+            title: "Cindy",
+            startedAt: conditioningStart,
+            endedAt: conditioningStart.addingTimeInterval(1_200),
+            conditioningPlanSnapshotJSON: ConditioningPlan(sections: [cindy]).encodedJSON(),
+            conditioningResultJSON: cindyResult.encodedJSON()
+        )
+        let conditioningAwards = [WorkoutAward(
+            id: "cindy-best-score",
+            title: "Cindy",
+            kind: .conditioningBestScore,
+            valueText: "5 rounds"
+        )]
+        let conditioningFull = WorkoutShareRenderer.image(
+            for: conditioningWorkout,
+            exercises: library,
+            theme: .sage,
+            awards: conditioningAwards
+        )
+        let conditioningTrainingLog = ShareRenderer.image(
+            WorkoutShareCardTrainingLog(
+                workout: conditioningWorkout,
+                exercises: library,
+                theme: .sage,
+                awards: conditioningAwards
+            ),
+            theme: .sage
+        )
+        let conditioningMinimal = ShareRenderer.image(
+            WorkoutShareCardMinimal(
+                workout: conditioningWorkout,
+                exercises: library,
+                theme: .sage,
+                awards: conditioningAwards
+            ),
+            theme: .sage
+        )
+        #expect(conditioningFull != nil)
+        #expect(conditioningTrainingLog?.size == WorkoutShareCardTrainingLog.size)
+        #expect(conditioningMinimal?.size == WorkoutShareCardMinimal.size)
+
         let mixedMovements = [
             ConditioningMovement(exerciseID: benchID, targetValue: 8, targetLoad: 100),
             ConditioningMovement(exerciseID: runID, targetValue: 400, targetUnit: .meters),

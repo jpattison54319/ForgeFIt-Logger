@@ -1,15 +1,11 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Root-level routines are a lightweight disclosure, not a synthetic folder.
-/// The wrapper remains a drop target while collapsed so moving a routine to
-/// Ungrouped never depends on the current presentation preference.
 struct UngroupedRoutineSection<Content: View>: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var isCollapsed: Bool
     let count: Int
-    let onDrop: ([NSItemProvider]) -> Bool
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -44,7 +40,6 @@ struct UngroupedRoutineSection<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onDrop(of: [UTType.plainText], isTargeted: nil, perform: onDrop)
     }
 
     private func toggle() {

@@ -153,4 +153,98 @@ struct ConditioningPresetTests {
         #expect(rowByExercise[squatID] == cindyRows[squatID])
         #expect(routine.exercises.count == 4)
     }
+
+    @Test func customPresetRoundTripsItsNameAndFrozenSectionThroughTheSyncedStore() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+        let exerciseID = UUID()
+        let section = ConditioningSection(
+            name: "Cindy",
+            format: .amrap,
+            durationSeconds: 1_200,
+            movements: [ConditioningMovement(exerciseID: exerciseID, targetValue: 10)]
+        )
+
+        let stored = try ConditioningPresetStore.save(
+            section,
+            named: "  Garage Cindy  ",
+            in: context
+        )
+
+        #expect(stored.name == "Garage Cindy")
+        #expect(stored.storedIntervalPlan == nil)
+        let decoded = try #require(stored.storedConditioningPreset)
+        guard case .section(let storedSection) = decoded else {
+            Issue.record("Expected a saved conditioning section payload.")
+            return
+        }
+        #expect(storedSection.name == "Garage Cindy")
+        #expect(storedSection.format == .amrap)
+        #expect(storedSection.movements.map(\.exerciseID) == [exerciseID])
+    }
+
+    @Test func applyingCustomPresetRenamesOnlyTheTargetSectionAndRefreshesMovementIdentity() throws {
+        let exercise = ExerciseLibraryModel(name: "Pullups", defaultWeightMode: .bodyweight)
+        let untouched = ConditioningSection(name: "Warmup", format: .forTime, rounds: 2)
+        let target = ConditioningSection(name: "Finisher", format: .amrap, durationSeconds: 600)
+        let savedMovement = ConditioningMovement(
+            exerciseID: exercise.id,
+            targetValue: 5,
+            weightMode: .bodyweight
+        )
+        let savedSection = ConditioningSection(
+            name: "Renamed Cindy",
+            format: .amrap,
+            durationSeconds: 1_200,
+            movements: [savedMovement]
+        )
+        var plan = ConditioningPlan(sections: [untouched, target])
+
+        try ConditioningPlanCoordinator.apply(
+            .saved(id: UUID(), name: "Renamed Cindy", section: savedSection),
+            to: target.id,
+            in: &plan,
+            catalog: [exercise]
+        )
+
+        #expect(plan.sections[0] == untouched)
+        #expect(plan.sections[1].id == target.id)
+        #expect(plan.sections[1].name == "Renamed Cindy")
+        #expect(plan.sections[1].movements.map(\.exerciseID) == [exercise.id])
+        #expect(plan.sections[1].movements.first?.id != savedMovement.id)
+    }
+
+    @Test func deletingSavedPresetRemovesItFromTheActiveCatalog() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+        let section = ConditioningSection(
+            name: "Garage Cindy",
+            format: .amrap,
+            durationSeconds: 1_200,
+            movements: [ConditioningMovement(exerciseID: UUID(), targetValue: 5)]
+        )
+        let record = try ConditioningPresetStore.save(section, named: section.name, in: context)
+
+        try ConditioningPresetStore.delete(record, in: context)
+
+        let records = try context.fetch(FetchDescriptor<IntervalPresetModel>())
+        #expect(record.deletedAt != nil)
+        #expect(ConditioningPresetStore.savedPresets(from: records).isEmpty)
+    }
+
+    @Test func deletingAndRestoringAnIncludedPresetChangesTheVisibleCatalog() throws {
+        let (container, context) = try TestStore.make()
+        defer { withExtendedLifetime(container) {} }
+
+        try ConditioningPresetStore.hide(.cindy, records: [], in: context)
+        let activeDescriptor = FetchDescriptor<IntervalPresetModel>(
+            predicate: #Predicate { $0.deletedAt == nil }
+        )
+        let recordsAfterDelete = try context.fetch(activeDescriptor)
+        #expect(!ConditioningPresetStore.visibleBuiltIns(from: recordsAfterDelete).contains(.cindy))
+
+        try ConditioningPresetStore.restoreIncludedPresets(records: recordsAfterDelete, in: context)
+        let recordsAfterRestore = try context.fetch(activeDescriptor)
+        #expect(ConditioningPresetStore.visibleBuiltIns(from: recordsAfterRestore).contains(.cindy))
+    }
 }

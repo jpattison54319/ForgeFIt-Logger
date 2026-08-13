@@ -68,7 +68,9 @@ enum MicrocycleDayAssignmentService {
         }
     }
 
-    /// Only completed workouts for routines still due in this window appear.
+    /// Completed workouts from any routine in this window can be placed, even
+    /// when that routine has already satisfied its slot. Repeats remain honest
+    /// workout history and never substitute for a different required routine.
     /// Workouts already credited in any window of this tracking run are hidden,
     /// which keeps one real session from satisfying two microcycles.
     static func eligibleWorkouts(
@@ -87,15 +89,10 @@ enum MicrocycleDayAssignmentService {
         let relevantWindows = windows.filter {
             $0.trackingID == window.trackingID && $0.deletedAt == nil
         }
-        let currentProgress = MicrocycleTrackingService.progress(
-            for: window,
-            windows: relevantWindows,
-            workouts: workouts
-        )
-        let remainingRoutineIDs = Set(
-            currentProgress.routines.lazy.filter { !$0.isCompleted }.map(\.routine.id)
-        )
-        guard !remainingRoutineIDs.isEmpty else { return [] }
+        let trackedRoutineIDs = window.routines.reduce(into: Set<UUID>()) { result, routine in
+            result.formUnion(routine.memberIDs)
+        }
+        guard !trackedRoutineIDs.isEmpty else { return [] }
 
         let alreadyAssignedIDs = Set(relevantWindows.flatMap(\.dayAssignments).map(\.workoutID))
         let alreadyCreditedIDs = Set(relevantWindows.flatMap { candidateWindow in
@@ -112,7 +109,7 @@ enum MicrocycleDayAssignmentService {
                       workout.deletedAt == nil,
                       workout.startedAt <= now,
                       let routineID = workout.routineID else { return false }
-                return remainingRoutineIDs.contains(routineID)
+                return trackedRoutineIDs.contains(routineID)
                     && !alreadyAssignedIDs.contains(workout.id)
                     && !alreadyCreditedIDs.contains(workout.id)
             }

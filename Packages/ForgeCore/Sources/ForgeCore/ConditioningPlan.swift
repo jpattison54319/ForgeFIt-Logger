@@ -184,6 +184,10 @@ public struct ConditioningProgress: Codable, Equatable, Sendable {
     public var pausedAt: Date?
     public var accumulatedPauseSeconds: TimeInterval
     public var sectionAccumulatedPauseSeconds: TimeInterval?
+    /// Active seconds from the start of the current section at each completed
+    /// round. Optional so progress saved by older builds still decodes; `nil`
+    /// means round-level pacing was not captured reliably.
+    public var roundCompletionElapsedSeconds: [Int]?
     public var completedAt: Date?
     public var status: Status
     public var sectionResults: [ConditioningSectionResult]
@@ -201,6 +205,7 @@ public struct ConditioningProgress: Codable, Equatable, Sendable {
         pausedAt: Date? = nil,
         accumulatedPauseSeconds: TimeInterval = 0,
         sectionAccumulatedPauseSeconds: TimeInterval? = nil,
+        roundCompletionElapsedSeconds: [Int]? = nil,
         completedAt: Date? = nil,
         status: Status = .ready,
         sectionResults: [ConditioningSectionResult] = []
@@ -217,6 +222,7 @@ public struct ConditioningProgress: Codable, Equatable, Sendable {
         self.pausedAt = pausedAt
         self.accumulatedPauseSeconds = accumulatedPauseSeconds
         self.sectionAccumulatedPauseSeconds = sectionAccumulatedPauseSeconds
+        self.roundCompletionElapsedSeconds = roundCompletionElapsedSeconds
         self.completedAt = completedAt
         self.status = status
         self.sectionResults = sectionResults
@@ -266,6 +272,10 @@ public struct ConditioningSectionResult: Codable, Equatable, Identifiable, Senda
     public var totalReps: Int?
     public var completedIntervals: Int?
     public var load: Double?
+    /// Active seconds from section start at each logged round completion.
+    /// Missing on workouts recorded before round pacing was introduced or when
+    /// the final score was entered manually.
+    public var roundCompletionElapsedSeconds: [Int]?
     public var completed: Bool
 
     public init(
@@ -279,6 +289,7 @@ public struct ConditioningSectionResult: Codable, Equatable, Identifiable, Senda
         totalReps: Int? = nil,
         completedIntervals: Int? = nil,
         load: Double? = nil,
+        roundCompletionElapsedSeconds: [Int]? = nil,
         completed: Bool
     ) {
         self.id = id
@@ -291,6 +302,7 @@ public struct ConditioningSectionResult: Codable, Equatable, Identifiable, Senda
         self.totalReps = totalReps
         self.completedIntervals = completedIntervals
         self.load = load
+        self.roundCompletionElapsedSeconds = roundCompletionElapsedSeconds
         self.completed = completed
     }
 }
@@ -357,6 +369,7 @@ public enum ConditioningProgressEngine {
             next.partialValues.removeAll()
             next.startedAt = event.timestamp
             next.sectionStartedAt = event.timestamp
+            next.roundCompletionElapsedSeconds = []
             next.status = .active
         case .toggleMovement(let movementID):
             guard next.status == .active,
@@ -384,6 +397,7 @@ public enum ConditioningProgressEngine {
             next.partialValues.removeAll()
         case .setScore(let rounds, _, _, let load):
             let completedRounds = max(0, rounds)
+            let loggedRounds = next.fullRounds
             next.round = completedRounds + 1
             next.completedMovementIDs.removeAll()
             next.movementTotals = next.movementTotals.filter { total in
@@ -396,6 +410,13 @@ public enum ConditioningProgressEngine {
             }
             next.partialValues.removeAll()
             next.recordedLoad = load.map { max(0, $0) }
+            if completedRounds != loggedRounds {
+                next.roundCompletionElapsedSeconds = nil
+            }
+            // Timed sections capture a provisional result when their clock
+            // expires. Rebuild it from the confirmed score so edits made in the
+            // finish sheet (and pacing invalidation above) are actually saved.
+            next.sectionResults.removeAll { $0.id == section.id }
         case .pause:
             guard next.status == .active else { return next }
             next.pausedAt = event.timestamp
@@ -418,6 +439,7 @@ public enum ConditioningProgressEngine {
                 next.recordedLoad = nil
                 next.sectionStartedAt = event.timestamp
                 next.sectionAccumulatedPauseSeconds = 0
+                next.roundCompletionElapsedSeconds = []
                 next.pausedAt = nil
                 next.status = .active
             } else {
@@ -450,6 +472,8 @@ public enum ConditioningProgressEngine {
             let totals = isCurrent ? section.movements.reduce(0.0) {
                 $0 + (progress.movementTotals[$1.id] ?? 0)
             } : 0
+            let completedByClock = progress.status == .expired
+                && (section.format == .amrap || section.format == .intervals)
             results.append(ConditioningSectionResult(
                 id: section.id,
                 format: section.format,
@@ -461,7 +485,9 @@ public enum ConditioningProgressEngine {
                 totalReps: section.movements.allSatisfy { $0.targetUnit == .reps } ? Int(totals) : nil,
                 completedIntervals: section.format == .emom && isCurrent ? progress.fullRounds : nil,
                 load: section.scoreKind == .load && isCurrent ? progress.recordedLoad : nil,
-                completed: index < progress.sectionIndex || (isCurrent && progress.status == .completed)
+                roundCompletionElapsedSeconds: isCurrent ? progress.roundCompletionElapsedSeconds : nil,
+                completed: index < progress.sectionIndex
+                    || (isCurrent && (progress.status == .completed || completedByClock))
             ))
         }
         return ConditioningResult(sectionResults: results, modified: modified)
@@ -472,6 +498,7 @@ public enum ConditioningProgressEngine {
         section: ConditioningSection,
         at date: Date
     ) {
+        recordRoundCompletion(&progress, at: date)
         progress.round += 1
         progress.completedMovementIDs.removeAll()
         progress.partialValues.removeAll()
@@ -496,6 +523,7 @@ public enum ConditioningProgressEngine {
         progress.recordedLoad = nil
         progress.sectionStartedAt = date
         progress.sectionAccumulatedPauseSeconds = 0
+        progress.roundCompletionElapsedSeconds = []
         progress.completedAt = nil
         progress.status = .active
     }
@@ -523,8 +551,24 @@ public enum ConditioningProgressEngine {
             totalReps: section.movements.allSatisfy { $0.targetUnit == .reps } ? Int(total) : nil,
             completedIntervals: section.format == .emom ? progress.fullRounds : nil,
             load: section.scoreKind == .load ? progress.recordedLoad : nil,
+            roundCompletionElapsedSeconds: progress.roundCompletionElapsedSeconds,
             completed: completed
         ))
+    }
+
+    private static func recordRoundCompletion(
+        _ progress: inout ConditioningProgress,
+        at date: Date
+    ) {
+        guard let start = progress.sectionStartedAt ?? progress.startedAt else { return }
+        // If this is an in-flight workout saved by a build that did not capture
+        // prior rounds, do not relabel a later split as round one.
+        guard progress.roundCompletionElapsedSeconds?.count == progress.fullRounds else { return }
+        let paused = progress.sectionAccumulatedPauseSeconds ?? 0
+        let measured = Int(max(0, date.timeIntervalSince(start) - paused).rounded())
+        var completions = progress.roundCompletionElapsedSeconds ?? []
+        completions.append(max((completions.last ?? 0) + 1, measured))
+        progress.roundCompletionElapsedSeconds = completions
     }
 }
 

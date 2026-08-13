@@ -127,6 +127,9 @@ struct WorkoutDetailView: View {
         .of(workout: workout, summary: analytics.summary(for: workout))
     }
     private var presentationPlan: WorkoutPresentationPlan { .make(for: workout) }
+    private var awardEntries: [WorkoutAward] {
+        WorkoutAwards.all(for: workout, history: history, exercises: exercises)
+    }
 
     /// A single-modality workout remains open as its source of truth. Any
     /// combination of strength, cardio, conditioning, and yoga uses compact
@@ -162,6 +165,10 @@ struct WorkoutDetailView: View {
 
                 let s = analytics.summary(for: workout)
                 overallStatsCard(s)
+
+                if !awardEntries.isEmpty {
+                    WorkoutAwardsCard(awards: awardEntries)
+                }
 
                 if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
                     sessionMetricsCard
@@ -266,6 +273,7 @@ struct WorkoutDetailView: View {
             WorkoutSharePreviewSheet(
                 workout: workout,
                 exercises: exercises,
+                history: history,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints
             )

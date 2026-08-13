@@ -107,7 +107,7 @@ struct MicrocycleDayAssignmentServiceTests {
         ).completedCount == 0)
     }
 
-    @Test func pickerOffersOnlyUncreditedCompletedWorkoutsForDueRoutines() throws {
+    @Test func pickerOffersOnlyUncreditedCompletedWorkoutsForTrackedRoutines() throws {
         let routineID = UUID()
         let trackingID = UUID()
         let firstWindow = makeWindow(
@@ -162,6 +162,80 @@ struct MicrocycleDayAssignmentServiceTests {
         )
 
         #expect(candidates.map(\.id) == [available.id])
+    }
+
+    @Test func pickerAllowsRepeatingACompletedRoutineWithoutSatisfyingTheNextRoutine() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let firstRoutineID = UUID()
+        let secondRoutineID = UUID()
+        let window = MicrocycleWindowModel(
+            userID: ForgeFitDemo.userID,
+            trackingID: UUID(),
+            folderID: UUID(),
+            folderName: "Upper Lower",
+            index: 0,
+            startsAt: date(2026, 8, 1, 0),
+            endsAt: date(2026, 8, 11, 0),
+            timeZoneIdentifier: timeZone.identifier,
+            routines: [
+                .init(id: firstRoutineID, name: "Upper", position: 0),
+                .init(id: secondRoutineID, name: "Lower", position: 1),
+            ]
+        )
+        let creditedWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: firstRoutineID,
+            title: "Upper",
+            startedAt: date(2026, 8, 2),
+            endedAt: date(2026, 8, 2, 13)
+        )
+        let repeatedWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: firstRoutineID,
+            title: "Upper",
+            startedAt: date(2026, 7, 29),
+            endedAt: date(2026, 7, 29, 13)
+        )
+        context.insert(window)
+        context.insert(creditedWorkout)
+        context.insert(repeatedWorkout)
+        try context.save()
+
+        let candidates = MicrocycleDayAssignmentService.eligibleWorkouts(
+            for: date(2026, 8, 3),
+            in: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout],
+            now: date(2026, 8, 8)
+        )
+
+        #expect(candidates.map(\.id) == [repeatedWorkout.id])
+
+        try MicrocycleDayAssignmentService.assign(
+            repeatedWorkout,
+            to: date(2026, 8, 3),
+            in: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout],
+            restDays: [],
+            context: context,
+            now: date(2026, 8, 8)
+        )
+
+        let progress = MicrocycleTrackingService.progress(
+            for: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout]
+        )
+        #expect(progress.completedCount == 1)
+        #expect(progress.routines[0].isCompleted)
+        #expect(!progress.routines[1].isCompleted)
+        #expect(MicrocycleDayAssignmentService.dayWorkouts(
+            on: date(2026, 8, 3),
+            in: window,
+            workouts: [creditedWorkout, repeatedWorkout]
+        ).map(\.id) == [repeatedWorkout.id])
     }
 
     @Test func futureDaysCannotBeBackfilled() throws {

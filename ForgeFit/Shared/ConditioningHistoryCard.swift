@@ -134,8 +134,25 @@ struct ConditioningHistoryCard: View {
                 exercises: exercises,
                 theme: theme,
                 showsResult: false,
+                showsPerformance: false,
                 showsSectionName: false
             )
+
+            ForEach(plan.sections) { section in
+                if let sectionResult = result?.sectionResults.first(where: { $0.id == section.id }),
+                   !ConditioningSharePresentation.performanceFacts(
+                       section: section,
+                       result: sectionResult
+                   ).isEmpty {
+                    ConditioningPerformanceView(
+                        section: section,
+                        result: sectionResult,
+                        sectionName: plan.sections.count > 1
+                            ? (section.name.isEmpty ? section.format.title : section.name)
+                            : nil
+                    )
+                }
+            }
         }
 
         if collapsible, let session, session.endedAt != nil {

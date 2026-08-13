@@ -50,7 +50,7 @@ struct WorkoutHistoryEntry: Identifiable, Equatable, Sendable {
     let facts: [Fact]
     let avgHR: Int?
     let isImported: Bool
-    let prCount: Int              // exercises that set an all-time e1RM PR here
+    let prCount: Int              // strength PRs plus conditioning/yoga awards
     let exerciseIDs: Set<UUID>
     let muscles: Set<String>      // folded primary muscles
     let searchText: String        // folded haystack (see indexer)
@@ -122,6 +122,7 @@ enum WorkoutHistoryIndexer {
         // list layout (same defense as ExercisesListView).
         var seenIDs = Set<UUID>()
         var bestE1RM: [UUID: Double] = [:]
+        var modalityAwardTracker = WorkoutAwards.Tracker(calendar: calendar)
         var exerciseCounts: [UUID: Int] = [:]
         var muscleCounts: [String: Int] = [:]
         var monthCounts: [String: (interval: DateInterval, count: Int)] = [:]
@@ -153,6 +154,12 @@ enum WorkoutHistoryIndexer {
             var entryExerciseIDs: Set<UUID> = []
             var entryMuscles: Set<String> = []
             var prCount = 0
+            let modalityAwards = modalityAwardTracker.awards(for: workout)
+            prCount += modalityAwards.count
+            for award in modalityAwards {
+                haystack.append(award.kind.label)
+                haystack.append(award.title)
+            }
 
             func indexExercise(_ exerciseID: UUID) {
                 entryExerciseIDs.insert(exerciseID)

@@ -17,6 +17,7 @@ struct WorkoutSharePreviewSheet: View {
 
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
+    var history: [WorkoutModel] = []
     var hrSamples: [(date: Date, bpm: Int)] = []
     var recoveryPoints: [SetRecoveryPoint] = []
 
@@ -118,6 +119,11 @@ struct WorkoutSharePreviewSheet: View {
     /// renders so the carousel stays responsive. Route maps are snapshotted
     /// once up front (MapKit can't be rasterized by ImageRenderer).
     private func renderPages() async {
+        let awards = WorkoutAwards.all(
+            for: workout,
+            history: history,
+            exercises: exercises
+        )
         var routeMaps: [UUID: UIImage] = [:]
         for session in workout.cardioSessions where session.deletedAt == nil {
             let coordinates = session.routePoints
@@ -130,17 +136,27 @@ struct WorkoutSharePreviewSheet: View {
         }
         let ordered = [selection] + styles.filter { $0 != selection }
         for style in ordered where pages[style] == nil {
-            pages[style] = render(style, routeMaps: routeMaps)
+            pages[style] = render(style, routeMaps: routeMaps, awards: awards)
             await Task.yield()
         }
     }
 
     @MainActor
-    private func render(_ style: ShareCardStyle, routeMaps: [UUID: UIImage]) -> UIImage? {
+    private func render(
+        _ style: ShareCardStyle,
+        routeMaps: [UUID: UIImage],
+        awards: [WorkoutAward]
+    ) -> UIImage? {
         switch style {
         case .trainingLog:
             return ShareRenderer.image(
-                WorkoutShareCardTrainingLog(workout: workout, exercises: exercises, theme: theme, routeMaps: routeMaps),
+                WorkoutShareCardTrainingLog(
+                    workout: workout,
+                    exercises: exercises,
+                    theme: theme,
+                    routeMaps: routeMaps,
+                    awards: awards
+                ),
                 theme: theme
             )
         case .metrics:
@@ -150,13 +166,19 @@ struct WorkoutSharePreviewSheet: View {
                     exercises: exercises,
                     theme: theme,
                     hrSamples: hrSamples,
-                    recoveryPoints: recoveryPoints
+                    recoveryPoints: recoveryPoints,
+                    awards: awards
                 ),
                 theme: theme
             )
         case .minimal:
             return ShareRenderer.image(
-                WorkoutShareCardMinimal(workout: workout, exercises: exercises, theme: theme),
+                WorkoutShareCardMinimal(
+                    workout: workout,
+                    exercises: exercises,
+                    theme: theme,
+                    awards: awards
+                ),
                 theme: theme
             )
         case .full:
@@ -166,7 +188,8 @@ struct WorkoutSharePreviewSheet: View {
                 theme: theme,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints,
-                routeMaps: routeMaps
+                routeMaps: routeMaps,
+                awards: awards
             )
         }
     }

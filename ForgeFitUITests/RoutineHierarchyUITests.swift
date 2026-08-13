@@ -20,7 +20,7 @@ final class RoutineHierarchyUITests: XCTestCase {
         let app = launch(with: "--seed-routine-hierarchy-single")
 
         XCTAssertTrue(folder("Hybrid Athlete", in: app).waitForExistence(timeout: 8))
-        XCTAssertTrue(folderHandle("Hybrid Athlete", in: app).exists)
+        XCTAssertFalse(folderHandle("Hybrid Athlete", in: app).exists)
         XCTAssertTrue(card("Single Push", in: app).exists)
         XCTAssertFalse(app.buttons["ungrouped-routines-disclosure"].exists)
     }
@@ -31,47 +31,68 @@ final class RoutineHierarchyUITests: XCTestCase {
 
         XCTAssertTrue(folder("Macro 1", in: app).waitForExistence(timeout: 8))
         XCTAssertTrue(folder("Hybrid Athlete", in: app).exists)
-        XCTAssertTrue(folderHandle("Macro 1", in: app).exists)
-        XCTAssertTrue(folderHandle("Hybrid Athlete", in: app).exists)
+        XCTAssertFalse(folderHandle("Macro 1", in: app).exists)
+        XCTAssertFalse(folderHandle("Hybrid Athlete", in: app).exists)
         XCTAssertTrue(card("Nested Push", in: app).exists)
     }
 
     @MainActor
-    func testDraggingChildAboveParentUnnestsInDroppedOrder() {
+    func testNestedCycleOpensInUnifiedOrganizer() {
         let app = launch(with: "--seed-routine-hierarchy-nested")
-        let parent = folder("Macro 1", in: app)
-        let child = folder("Hybrid Athlete", in: app)
-        let childHandle = folderHandle("Hybrid Athlete", in: app)
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        organize.tap()
+        XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Macro 1"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Hybrid Athlete"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Nested Push"].firstMatch.exists)
+    }
 
-        XCTAssertTrue(parent.waitForExistence(timeout: 8))
-        XCTAssertTrue(childHandle.exists && childHandle.isHittable)
-        XCTAssertGreaterThan(child.frame.minY, parent.frame.minY)
+    @MainActor
+    func testOrganizerCanMoveSubfolderBackToTopLevel() {
+        let app = launch(with: "--seed-routine-hierarchy-nested")
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        organize.tap()
 
-        let source = childHandle.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
-        )
-        let insertionSlot = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: parent.frame.midX, dy: parent.frame.minY - 30)
-        )
-        source.press(
-            forDuration: 0.8,
-            thenDragTo: insertionSlot,
-            withVelocity: .slow,
-            thenHoldForDuration: 0.8
-        )
+        let moveChild = app.buttons["Placement options for folder Hybrid Athlete"].firstMatch
+        XCTAssertTrue(moveChild.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(moveChild.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(moveChild.frame.height, 44)
+        moveChild.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+        let topLevel = app.buttons["Top Level"].firstMatch
+        XCTAssertTrue(topLevel.waitForExistence(timeout: 2))
+        topLevel.tap()
+        app.buttons["save-routine-organization"].firstMatch.tap()
 
-        let childMovedAboveParent = NSPredicate { _, _ in
-            child.exists && parent.exists && child.frame.minY < parent.frame.minY
+        XCTAssertTrue(organize.waitForExistence(timeout: 3))
+        organize.tap()
+        XCTAssertTrue(moveChild.waitForExistence(timeout: 3))
+        moveChild.tap()
+        XCTAssertFalse(app.buttons["Top Level"].firstMatch.waitForExistence(timeout: 1))
+    }
+
+    @MainActor
+    func testOrganizerDragCanMoveSubfolderBackToTopLevel() {
+        let app = launch(with: "--seed-routine-hierarchy-nested")
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        organize.tap()
+
+        let childHandle = app.buttons["Reorder Hybrid Athlete"].firstMatch
+        let parentHandle = app.buttons["Reorder Macro 1"].firstMatch
+        XCTAssertTrue(childHandle.waitForExistence(timeout: 3))
+        XCTAssertTrue(parentHandle.exists)
+        childHandle.press(forDuration: 0.5, thenDragTo: parentHandle)
+
+        let cells = app.cells.allElementsBoundByIndex
+        let childIndex = cells.firstIndex { $0.staticTexts["Hybrid Athlete"].exists }
+        let parentIndex = cells.firstIndex { $0.staticTexts["Macro 1"].exists }
+        XCTAssertNotNil(childIndex)
+        XCTAssertNotNil(parentIndex)
+        if let childIndex, let parentIndex {
+            XCTAssertLessThan(childIndex, parentIndex)
         }
-        let expectation = XCTNSPredicateExpectation(
-            predicate: childMovedAboveParent,
-            object: app
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [expectation], timeout: 5),
-            .completed,
-            "Expected the child folder to become a root folder above its former parent."
-        )
     }
 
     @MainActor

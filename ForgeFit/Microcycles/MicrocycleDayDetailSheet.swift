@@ -88,10 +88,16 @@ struct MicrocycleDayDetailSheet: View {
                             )
                         } else {
                             EmptyStateCard(
-                                title: "No workout on this day",
-                                message: "Choose a completed workout below if it belongs in this microcycle.",
+                                title: "Nothing logged on this day",
+                                message: "No workout or rest day is recorded.",
                                 systemImage: "calendar.badge.plus"
                             )
+                            SecondaryButton(
+                                title: "Log Rest Day",
+                                systemImage: "moon.zzz.fill",
+                                action: logRestDay
+                            )
+                            .accessibilityIdentifier("microcycle-log-rest-day")
                         }
 
                         if selectedDay <= today {
@@ -99,14 +105,14 @@ struct MicrocycleDayDetailSheet: View {
                                 Text(restDay == nil ? "Add a Logged Workout" : "Replace with a Workout")
                                     .font(.sectionTitle)
                                     .foregroundStyle(theme.textPrimary)
-                                Text("Only uncounted workouts from routines still due in this cycle are shown.")
+                                Text("Any uncounted workout from a routine in this microcycle can be added.")
                                     .font(.subheadline)
                                     .foregroundStyle(theme.textSecondary)
 
                                 if eligibleWorkouts.isEmpty {
                                     EmptyStateCard(
-                                        title: "No eligible workouts",
-                                        message: "Complete another due routine or choose a workout that has not already counted in this tracking run.",
+                                        title: "No available workouts",
+                                        message: "There are no uncounted completed workouts from this microcycle.",
                                         systemImage: "checklist"
                                     )
                                 } else {
@@ -173,6 +179,20 @@ struct MicrocycleDayDetailSheet: View {
                 restDays: restDays,
                 context: modelContext
             )
+        } catch {
+            show(error)
+        }
+    }
+
+    private func logRestDay() {
+        do {
+            _ = try RestDayService.log(
+                date: selectedDay,
+                workouts: workouts,
+                in: modelContext,
+                timeZone: calendar.timeZone
+            )
+            dismiss()
         } catch {
             show(error)
         }

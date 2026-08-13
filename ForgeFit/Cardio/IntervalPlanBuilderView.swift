@@ -53,6 +53,10 @@ struct IntervalPlanBuilderView: View {
         sort: \IntervalPresetModel.createdAt, order: .reverse
     ) private var userPresets: [IntervalPresetModel]
 
+    private var activeIntervalPresets: [IntervalPresetModel] {
+        userPresets.filter { $0.storedIntervalPlan != nil }
+    }
+
     private let onSave: (String?) -> Void
 
     @State private var warmup: Int
@@ -582,8 +586,8 @@ struct IntervalPlanBuilderView: View {
                                 apply(preset.plan)
                             }
                         }
-                        ForEach(userPresets) { preset in
-                            if let plan = IntervalPlan.decode(from: preset.planJSON) {
+                        ForEach(activeIntervalPresets) { preset in
+                            if let plan = preset.storedIntervalPlan {
                                 presetChip(name: preset.name, plan: plan, isUser: true) {
                                     apply(plan)
                                 }
@@ -591,7 +595,7 @@ struct IntervalPlanBuilderView: View {
                         }
                     }
                 }
-                if !userPresets.isEmpty {
+                if !activeIntervalPresets.isEmpty {
                     Button("Manage saved presets") { showManageSheet = true }
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(theme.textSecondary)
@@ -1106,10 +1110,14 @@ private struct IntervalPresetManagerView: View {
         sort: \IntervalPresetModel.createdAt, order: .reverse
     ) private var presets: [IntervalPresetModel]
 
+    private var intervalPresets: [IntervalPresetModel] {
+        presets.filter { $0.storedIntervalPlan != nil }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
-                if presets.isEmpty {
+                if intervalPresets.isEmpty {
                     ContentUnavailableView {
                         Label("No saved presets", systemImage: "bookmark")
                     } description: {
@@ -1121,10 +1129,10 @@ private struct IntervalPresetManagerView: View {
                     }
                 } else {
                     List {
-                        ForEach(presets) { preset in
+                        ForEach(intervalPresets) { preset in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(preset.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                if let plan = IntervalPlan.decode(from: preset.planJSON) {
+                                if let plan = preset.storedIntervalPlan {
                                     Text(plan.structureSummary)
                                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                                 }
@@ -1148,7 +1156,7 @@ private struct IntervalPresetManagerView: View {
     private func delete(_ offsets: IndexSet) {
         let now = Date()
         for index in offsets {
-            let preset = presets[index]
+            let preset = intervalPresets[index]
             preset.deletedAt = now
             preset.updatedAt = now
         }

@@ -18,6 +18,7 @@ struct WorkoutShareCardTrainingLog: View {
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
     var routeMaps: [UUID: UIImage] = [:]
+    var awards: [WorkoutAward] = []
 
     static let size = CGSize(width: 360, height: 450)
 
@@ -42,6 +43,9 @@ struct WorkoutShareCardTrainingLog: View {
                 systemImage: shape.systemImage
             )
             ShareHeroRow(workout: workout, exercises: exercises, summary: summary, shape: shape, theme: theme)
+            if !awards.isEmpty {
+                WorkoutAwardShareStrip(awards: awards, theme: theme, compact: true)
+            }
             if shape == .conditioning,
                conditioningContexts.count == 1,
                let context = conditioningContexts.first,
@@ -53,7 +57,9 @@ struct WorkoutShareCardTrainingLog: View {
                     theme: theme,
                     compact: true,
                     showsResult: false,
-                    showsModalityHeader: true
+                    showsModalityHeader: true,
+                    compactSectionLimit: awards.isEmpty ? 2 : 1,
+                    compactMovementLimit: awards.isEmpty ? 4 : 3
                 )
             } else if shape == .conditioning,
                       conditioningContexts.isEmpty,
@@ -105,8 +111,9 @@ struct WorkoutShareCardTrainingLog: View {
 
     private var orderedBlockWork: some View {
         let items = presentationPlan.items
+        let limit = awards.isEmpty ? 7 : 5
         return chrome.surfaceBlock {
-            ForEach(Array(items.prefix(7).enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(items.prefix(limit).enumerated()), id: \.element.id) { index, item in
                 HStack(spacing: 7) {
                     Text("\(index + 1)")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -127,8 +134,8 @@ struct WorkoutShareCardTrainingLog: View {
                         .lineLimit(1)
                 }
             }
-            if items.count > 7 {
-                Text("+\(items.count - 7) more")
+            if items.count > limit {
+                Text("+\(items.count - limit) more")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(theme.textSecondary)
             }
@@ -248,8 +255,10 @@ struct WorkoutShareCardTrainingLog: View {
     ) -> String {
         guard result != nil else { return "Skipped" }
         guard let section = plan.sections.first else { return "No work recorded" }
+        let sectionResult = result?.sectionResults.first { $0.id == section.id }
+            ?? result?.sectionResults.first
         let score: String?
-        if let sectionResult = result?.sectionResults.first {
+        if let sectionResult {
             score = ConditioningSharePresentation.score(sectionResult)
         } else if let session {
             score = Fmt.durationShort(session.durationSeconds)
@@ -259,7 +268,12 @@ struct WorkoutShareCardTrainingLog: View {
         let context = ConditioningSharePresentation.Context(plan: plan, result: result)
         let completion = ConditioningSharePresentation.completionStatus(for: context)
         let status = completion == .completed ? nil : completion.label
-        return [status, score, ConditioningSharePresentation.prescription(section)]
+        let performance = sectionResult.flatMap {
+            ConditioningSharePresentation.performanceFacts(section: section, result: $0).first
+        }
+        let detail = performance.map { "\($0.value) \($0.label.lowercased())" }
+            ?? ConditioningSharePresentation.prescription(section)
+        return [status, score, detail]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
@@ -267,11 +281,15 @@ struct WorkoutShareCardTrainingLog: View {
     // MARK: Strength / hybrid
 
     private var strengthWork: some View {
+        let awardLineCost = awards.isEmpty ? 0 : 2
         let plan = ShareTrainingLogPlan.make(
             workout: workout,
             exercises: exercises,
             // Hybrid gives up set lines to the cardio rows below.
-            lineBudget: shape == .hybrid ? 12 - 2 * min(sessions.count, 2) : 14
+            lineBudget: max(
+                6,
+                (shape == .hybrid ? 12 - 2 * min(sessions.count, 2) : 14) - awardLineCost
+            )
         )
         return chrome.surfaceBlock {
             ForEach(Array(plan.entries.enumerated()), id: \.offset) { _, entry in
@@ -394,7 +412,8 @@ struct WorkoutShareCardTrainingLog: View {
     @ViewBuilder
     private func splitsTable(_ session: CardioSessionModel) -> some View {
         let allSplits = session.splits.sorted { $0.index < $1.index }
-        let splits = allSplits.prefix(routeMaps[session.id] != nil ? 5 : 8)
+        let limit = routeMaps[session.id] != nil ? 5 : (awards.isEmpty ? 8 : 6)
+        let splits = allSplits.prefix(limit)
         if splits.isEmpty {
             // No laps recorded — the zone bar stands in as the effort story.
             if session.hrZoneSeconds.contains(where: { $0 > 0 }) {
@@ -439,9 +458,11 @@ struct WorkoutShareCardTrainingLog: View {
         let session = sessions.first { $0.isYogaSession && $0.endedAt != nil }
         let plan = session.flatMap(yogaPlan)
         let poses = YogaHistoryPresentation.poses(session: session, plan: plan)
+        let poseLimit = awards.isEmpty ? 6 : 4
+        let exposureLimit = awards.isEmpty ? 5 : 3
         let exposure = FlexibilityAnalytics.decodeExposure(session?.flexibilityExposureJSON)
             .sorted { $0.value > $1.value }
-            .prefix(5)
+            .prefix(exposureLimit)
         let maxSeconds = exposure.map(\.value).max() ?? 1
         return chrome.surfaceBlock {
             HStack(spacing: 8) {
@@ -454,7 +475,7 @@ struct WorkoutShareCardTrainingLog: View {
                 Spacer(minLength: 0)
             }
             if !poses.isEmpty {
-                ForEach(Array(poses.prefix(6))) { pose in
+                ForEach(Array(poses.prefix(poseLimit))) { pose in
                     HStack(spacing: 8) {
                         Text(pose.name)
                             .font(.system(size: 12, weight: .semibold))
@@ -471,8 +492,8 @@ struct WorkoutShareCardTrainingLog: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
-                if poses.count > 6 {
-                    Text("+\(poses.count - 6) more poses")
+                if poses.count > poseLimit {
+                    Text("+\(poses.count - poseLimit) more poses")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(theme.textSecondary)
                 }
@@ -527,6 +548,7 @@ struct WorkoutShareCardMetrics: View {
     let theme: AppTheme
     var hrSamples: [(date: Date, bpm: Int)] = []
     var recoveryPoints: [SetRecoveryPoint] = []
+    var awards: [WorkoutAward] = []
 
     static let size = CGSize(width: 360, height: 450)
 
@@ -566,6 +588,9 @@ struct WorkoutShareCardMetrics: View {
                 theme: theme,
                 compact: true
             )
+            if !awards.isEmpty {
+                WorkoutAwardShareStrip(awards: awards, theme: theme, compact: true)
+            }
             chrome.surfaceBlock {
                 if !hrSamples.isEmpty {
                     chrome.blockTitle("Heart rate", systemImage: "waveform.path.ecg", color: theme.danger) {
@@ -577,7 +602,7 @@ struct WorkoutShareCardMetrics: View {
                     HeartRateTrendChart(
                         samples: hrSamples,
                         bands: HeartRateTrendChart.cardioBands(for: workout),
-                        height: 96
+                        height: awards.isEmpty ? 96 : 72
                     )
                     .environment(\.theme, theme)
                 }
@@ -629,6 +654,7 @@ struct WorkoutShareCardMinimal: View {
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
+    var awards: [WorkoutAward] = []
 
     static let size = CGSize(width: 360, height: 360)
 
@@ -643,6 +669,9 @@ struct WorkoutShareCardMinimal: View {
             exercises: exercises,
             durationSeconds: summary.durationSeconds
         ).facts.map { ($0.label, $0.value) }
+        if tiles.count < 4, let award = awards.first {
+            tiles.append((award.kind.label, award.valueText))
+        }
         if tiles.count < 4, let kcal = workout.activeEnergyKcal {
             tiles.append(("Energy", "\(Int(kcal)) kcal"))
         }

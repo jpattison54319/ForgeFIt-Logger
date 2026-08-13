@@ -92,6 +92,7 @@ struct WorkoutShareCard: View {
     /// Pre-rendered GPS route map per cardio session id (MapKit can't be
     /// rasterized off-screen, so the map is snapshotted before rendering).
     var routeMaps: [UUID: UIImage] = [:]
+    var awards: [WorkoutAward] = []
 
     /// Point size of the embedded route map — the cardio block's content width
     /// (card 430 − 28·2 padding − 16·2 block padding) at a 16:9-ish ratio.
@@ -136,6 +137,9 @@ struct WorkoutShareCard: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             statBlock
+            if !awards.isEmpty {
+                WorkoutAwardShareStrip(awards: awards, theme: theme)
+            }
             if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
                 sessionMetricsBlock
             }
@@ -776,7 +780,8 @@ enum WorkoutShareRenderer {
         theme: AppTheme,
         hrSamples: [(date: Date, bpm: Int)] = [],
         recoveryPoints: [SetRecoveryPoint] = [],
-        routeMaps: [UUID: UIImage] = [:]
+        routeMaps: [UUID: UIImage] = [:],
+        awards: [WorkoutAward] = []
     ) -> UIImage? {
         ShareRenderer.image(
             WorkoutShareCard(
@@ -785,7 +790,8 @@ enum WorkoutShareRenderer {
                 theme: theme,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints,
-                routeMaps: routeMaps
+                routeMaps: routeMaps,
+                awards: awards
             ),
             theme: theme
         )

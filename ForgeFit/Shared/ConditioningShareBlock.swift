@@ -147,32 +147,60 @@ enum ConditioningSharePresentation {
         let result = context.result?.sectionResults.first { $0.id == section.id }
             ?? context.result?.sectionResults.first
         var facts: [Fact]
-        if let result, result.scoreKind == .elapsedTime {
+        if let result {
             let status = completionStatus(section: section, result: result)
-            facts = status == .completed
-                ? [
-                    Fact(label: "Time", value: score(result)),
-                    workFact(section: section, result: result),
-                    Fact(label: "Format", value: formatName(section))
-                ]
-                : [
-                    Fact(label: "Time", value: score(result)),
+            let performance = performanceFacts(section: section, result: result)
+            let performanceFact: (String) -> Fact? = { label in
+                performance.first { $0.label == label }
+            }
+            if status != .completed {
+                facts = [
+                    Fact(
+                        label: result.scoreKind == .elapsedTime ? "Time" : "Score",
+                        value: score(result)
+                    ),
                     Fact(label: "Status", value: status.label),
-                    workFact(section: section, result: result)
+                    performanceFact("Rounds")
+                        ?? performanceFact("Intervals")
+                        ?? performanceFact("Steps")
+                        ?? performanceFact("Avg round")
+                        ?? workFact(section: section, result: result)
                 ]
-        } else if let result {
-            let status = completionStatus(section: section, result: result)
-            facts = status == .completed
-                ? [
-                    Fact(label: "Duration", value: Fmt.durationShort(durationSeconds)),
-                    Fact(label: "Score", value: score(result)),
-                    workFact(section: section, result: result)
-                ]
-                : [
-                    Fact(label: "Duration", value: Fmt.durationShort(durationSeconds)),
-                    Fact(label: "Score", value: score(result)),
-                    Fact(label: "Status", value: status.label)
-                ]
+            } else {
+                switch result.scoreKind {
+                case .elapsedTime:
+                    if let average = performanceFact("Avg round") {
+                        facts = [
+                            Fact(label: "Time", value: score(result)),
+                            average,
+                            performanceFact("2nd half")
+                                ?? performanceFact("Rep rate")
+                                ?? workFact(section: section, result: result)
+                        ]
+                    } else {
+                        facts = [
+                            Fact(label: "Time", value: score(result)),
+                            workFact(section: section, result: result),
+                            performanceFact("Rep rate")
+                                ?? Fact(label: "Format", value: formatName(section))
+                        ]
+                    }
+                case .roundsAndReps:
+                    facts = [
+                        Fact(label: "Duration", value: Fmt.durationShort(durationSeconds)),
+                        Fact(label: "Score", value: score(result)),
+                        performanceFact("Avg round")
+                            ?? performanceFact("Rep rate")
+                            ?? workFact(section: section, result: result)
+                    ]
+                case .totalReps, .completedIntervals, .load:
+                    facts = [
+                        Fact(label: "Duration", value: Fmt.durationShort(durationSeconds)),
+                        Fact(label: "Score", value: score(result)),
+                        performance.first ?? workFact(section: section, result: result)
+                    ]
+                }
+            }
         } else {
             facts = [
                 Fact(label: "Duration", value: Fmt.durationShort(durationSeconds)),
@@ -190,6 +218,65 @@ enum ConditioningSharePresentation {
             )
         }
         return facts
+    }
+
+    /// Metrics that describe conditioning execution rather than restating its
+    /// score. Ordering reflects the most useful signals for the workout format
+    /// and is shared by history plus every workout-image layout.
+    static func performanceFacts(
+        section: ConditioningSection,
+        result: ConditioningSectionResult
+    ) -> [Fact] {
+        let analysis = ConditioningPerformanceAnalysis(section: section, result: result)
+        var facts: [Fact] = []
+
+        switch section.format {
+        case .amrap, .forTime:
+            if let average = analysis.averageRoundSeconds {
+                facts.append(Fact(label: "Avg round", value: Fmt.elapsed(average)))
+            }
+            if let change = analysis.secondHalfPaceChangePercent {
+                facts.append(Fact(label: "2nd half", value: paceChange(change)))
+            }
+            if analysis.roundSplits.count >= 2, let fastest = analysis.fastestRoundSeconds {
+                facts.append(Fact(label: "Fastest", value: Fmt.elapsed(fastest)))
+            }
+            if let rate = analysis.repsPerMinute {
+                facts.append(Fact(label: "Rep rate", value: "\(decimal(rate))/min"))
+            }
+            appendRoundProgress(to: &facts, section: section, analysis: analysis)
+        case .emom:
+            appendRoundProgress(to: &facts, section: section, analysis: analysis)
+            if let missed = analysis.missedRounds, missed > 0 {
+                facts.append(Fact(label: "Missed", value: "\(missed)"))
+            }
+            if let rate = analysis.repsPerMinute {
+                facts.append(Fact(label: "Rep rate", value: "\(decimal(rate))/min"))
+            }
+        case .intervals:
+            appendRoundProgress(to: &facts, section: section, analysis: analysis)
+            if let reps = analysis.repsPerRound {
+                facts.append(Fact(label: "Avg / interval", value: decimal(reps)))
+            }
+            if let rate = analysis.repsPerMinute {
+                facts.append(Fact(label: "Rep rate", value: "\(decimal(rate))/min"))
+            }
+        case .ladder:
+            if let rate = analysis.repsPerMinute {
+                facts.append(Fact(label: "Rep rate", value: "\(decimal(rate))/min"))
+            }
+            appendRoundProgress(to: &facts, section: section, analysis: analysis)
+        case .maxLoad:
+            if analysis.completedRounds > 0 {
+                facts.append(Fact(label: "Attempts", value: "\(analysis.completedRounds)"))
+            }
+            if let elapsed = result.elapsedSeconds, elapsed > 0 {
+                facts.append(Fact(label: "Time", value: Fmt.elapsed(elapsed)))
+            }
+        }
+
+        var seen: Set<String> = []
+        return facts.filter { seen.insert($0.label).inserted }
     }
 
     static func score(_ result: ConditioningSectionResult?) -> String {
@@ -316,6 +403,30 @@ enum ConditioningSharePresentation {
             facts.append(Fact(label: "Movements", value: "\(movementCount)"))
         }
     }
+
+    private static func appendRoundProgress(
+        to facts: inout [Fact],
+        section: ConditioningSection,
+        analysis: ConditioningPerformanceAnalysis
+    ) {
+        guard let prescribed = analysis.prescribedRounds else { return }
+        let label: String = switch section.format {
+        case .emom, .intervals: "Intervals"
+        case .ladder: "Steps"
+        case .amrap, .forTime, .maxLoad: "Rounds"
+        }
+        facts.append(Fact(label: label, value: "\(analysis.completedRounds) / \(prescribed)"))
+    }
+
+    private static func paceChange(_ percent: Double) -> String {
+        guard abs(percent) >= 3 else { return "Even" }
+        let value = abs(percent).formatted(.number.precision(.fractionLength(0)))
+        return percent > 0 ? "\(value)% slower" : "\(value)% faster"
+    }
+
+    private static func decimal(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)))
+    }
 }
 
 struct ConditioningShareBlock: View {
@@ -326,6 +437,9 @@ struct ConditioningShareBlock: View {
     var compact = false
     var showsResult = true
     var showsModalityHeader = false
+    var showsPerformance = true
+    var compactSectionLimit = 2
+    var compactMovementLimit = 4
     /// Share-card headers already carry the routine or workout name. Section
     /// names come from the selected template, so sharing hides them by default.
     var showsSectionName = false
@@ -386,7 +500,19 @@ struct ConditioningShareBlock: View {
                             }
                         }
                     }
-                    ForEach(Array(section.movements.prefix(compact ? 4 : section.movements.count))) { movement in
+                    if showsPerformance,
+                       let sectionResult = result?.sectionResults.first(where: { $0.id == section.id }) {
+                        let facts = ConditioningSharePresentation.performanceFacts(
+                            section: section,
+                            result: sectionResult
+                        )
+                        if !facts.isEmpty {
+                            ConditioningShareMetricsRow(facts: facts, theme: theme, compact: compact)
+                        }
+                    }
+                    ForEach(Array(section.movements.prefix(
+                        compact ? compactMovementLimit : section.movements.count
+                    ))) { movement in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(exercise(movement.exerciseID)?.name ?? "Exercise")
                                 .font(.system(size: compact ? 12 : 13, weight: .semibold))
@@ -403,8 +529,8 @@ struct ConditioningShareBlock: View {
                             .lineLimit(1)
                         }
                     }
-                    if compact, section.movements.count > 4 {
-                        Text("+\(section.movements.count - 4) movements")
+                    if compact, section.movements.count > compactMovementLimit {
+                        Text("+\(section.movements.count - compactMovementLimit) movements")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(theme.textTertiary)
                     }
@@ -426,6 +552,6 @@ struct ConditioningShareBlock: View {
     }
 
     private var visibleSections: [ConditioningSection] {
-        compact ? Array(plan.sections.prefix(2)) : plan.sections
+        compact ? Array(plan.sections.prefix(compactSectionLimit)) : plan.sections
     }
 }

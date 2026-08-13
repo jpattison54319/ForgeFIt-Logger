@@ -143,7 +143,7 @@ struct ConditioningBlockBuilderView: View {
         if plan.sections.isEmpty { addSection() }
     }
 
-    private func apply(_ preset: ConditioningPreset, to sectionID: UUID) {
+    private func apply(_ preset: ConditioningPresetSelection, to sectionID: UUID) {
         do {
             try ConditioningPlanCoordinator.apply(
                 preset,
