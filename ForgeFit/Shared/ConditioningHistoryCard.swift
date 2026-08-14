@@ -13,6 +13,7 @@ struct ConditioningHistoryCard: View {
     let exercises: [ExerciseLibraryModel]
     let workouts: [WorkoutModel]
     let hrSamples: [(date: Date, bpm: Int)]
+    var heartRateMetrics: WorkoutHeartRateResolution.Metrics? = nil
     let collapsible: Bool
 
     @Environment(\.theme) private var theme
@@ -42,8 +43,23 @@ struct ConditioningHistoryCard: View {
         return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
     }
 
-    private var displayAverageHR: Int? { heartRateSummary?.averageBPM ?? session?.avgHR }
-    private var displayMaximumHR: Int? { heartRateSummary?.maximumBPM ?? session?.maxHR }
+    private var displayAverageHR: Int? {
+        heartRateMetrics?.averageBPM ?? heartRateSummary?.averageBPM ?? session?.avgHR
+    }
+    private var displayMaximumHR: Int? {
+        heartRateMetrics?.maximumBPM ?? heartRateSummary?.maximumBPM ?? session?.maxHR
+    }
+    private var displayEnergyKcal: Double? {
+        heartRateMetrics?.activeEnergyKcal ?? session?.activeEnergyKcal
+    }
+    private var displayZoneSeconds: [Int]? {
+        if let zones = heartRateMetrics?.zoneSeconds {
+            return zones
+        }
+        guard let zones = session?.hrZoneSeconds,
+              zones.contains(where: { $0 > 0 }) else { return nil }
+        return zones
+    }
 
     private var subtitle: String {
         guard collapsible else { return completionStatus.label }
@@ -62,7 +78,7 @@ struct ConditioningHistoryCard: View {
         guard let session else { return "No work recorded" }
         var parts = [Fmt.durationShort(session.durationSeconds)]
         if let avgHR = displayAverageHR { parts.append("\(avgHR) bpm") }
-        if let energy = session.activeEnergyKcal { parts.append("\(Int(energy)) kcal") }
+        if let energy = displayEnergyKcal { parts.append("\(Int(energy)) kcal") }
         return parts.joined(separator: " · ")
     }
 
@@ -182,15 +198,15 @@ struct ConditioningHistoryCard: View {
             HStack {
                 StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
                 StatColumn(label: "Max HR", value: displayMaximumHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Energy", value: session.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
+                StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
             if let avgHR = displayAverageHR {
                 HRZoneBar(
                     avgHR: avgHR,
                     maxHR: displayMaximumHR,
                     durationSeconds: session.durationSeconds,
-                    zoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
-                    source: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? .measured : .estimated
+                    zoneSeconds: displayZoneSeconds,
+                    source: displayZoneSeconds == nil ? .estimated : .measured
                 )
             }
             if let window = CardioBlockSupport.blockWindow(

@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import ForgeData
 import SwiftUI
 
@@ -199,8 +200,8 @@ struct AICoachContext {
         let cardio = recovery.recovery.cardio
         let cardioLine: String = {
             if let value = cardio.state.value {
-                let domain = cardio.dominantDomain.map { " Last effort \($0.rawValue.lowercased())." } ?? ""
-                return "Cardio freshness index: \(Int((value * 100).rounded())).\(domain) \(cardio.guidance)"
+                let evidence = cardio.evidence.map { " Based on \($0.coachDescription)." } ?? ""
+                return "Cardio freshness index: \(Int((value * 100).rounded())).\(evidence) This is modeled recent cardiovascular load, not percent recovered."
             }
             if case .building(let need) = cardio.state { return "Cardio freshness: still building — \(need)." }
             return "Cardio freshness: not available yet."
@@ -208,13 +209,14 @@ struct AICoachContext {
 
         // Recent modeled exposure by muscle. Never translate this into a
         // measured recovery state or a time-to-ready promise.
+        let freshnessRegions = Set(MuscleTaxonomy.freshnessGroups.map(\.name))
         let ranked = recovery.recovery.muscles
-            .filter { $0.state.value != nil }
+            .filter { freshnessRegions.contains($0.muscle) && $0.state.value != nil }
             .sorted { ($0.state.value ?? 1) < ($1.state.value ?? 1) }
         let stillRecovering = ranked
             .filter { ($0.state.value ?? 1) < 0.75 }
             .prefix(4)
-            .map { "\($0.muscle.capitalized) \($0.statusLabel.lowercased())" }
+            .map { "\(MuscleTaxonomy.freshnessDisplayName($0.muscle)) \($0.statusLabel.lowercased())" }
         let muscleRecoveryLine = stillRecovering.isEmpty
             ? "Muscle freshness: no high recent exposure is modeled."
             : "Muscle recent exposure: \(stillRecovering.joined(separator: ", "))."

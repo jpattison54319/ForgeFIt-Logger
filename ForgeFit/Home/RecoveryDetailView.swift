@@ -622,17 +622,36 @@ private struct MuscleRecoveryCard: View {
     @Environment(\.theme) private var theme
     let muscles: [RecoveryEngine.MuscleRecoveryScore]
     let onInfo: (RecoveryInfoTopic) -> Void
-    @State private var backExpanded = false
+    @State private var expandedGroups: Set<String> = []
 
-    private var topLevelMuscles: [RecoveryEngine.MuscleRecoveryScore] {
-        let children = Set(MuscleTaxonomy.children["back"] ?? [])
-        return muscles.filter { !children.contains($0.muscle) }
+    private var musclesByName: [String: RecoveryEngine.MuscleRecoveryScore] {
+        Dictionary(muscles.map { ($0.muscle, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
-    private var backChildren: [RecoveryEngine.MuscleRecoveryScore] {
-        let order = MuscleTaxonomy.children["back"] ?? []
-        let byName = Dictionary(muscles.map { ($0.muscle, $0) }, uniquingKeysWith: { first, _ in first })
-        return order.compactMap { byName[$0] }
+    private func toggle(_ group: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedGroups.contains(group) {
+                expandedGroups.remove(group)
+            } else {
+                expandedGroups.insert(group)
+            }
+        }
+    }
+
+    private func accessibilityValue(
+        for muscle: RecoveryEngine.MuscleRecoveryScore,
+        expanded: Bool
+    ) -> String {
+        var parts = [expanded ? "Expanded" : "Collapsed"]
+        if let score = muscle.state.value {
+            parts.append("\(Int((score * 100).rounded())), \(muscle.statusLabel)")
+        } else {
+            parts.append("No sets yet")
+        }
+        if let days = muscle.lastTrainedDaysAgo {
+            parts.append(days == 0 ? "Trained today" : (days == 1 ? "Trained yesterday" : "Trained \(days) days ago"))
+        }
+        return parts.joined(separator: ", ")
     }
 
     var body: some View {
@@ -646,45 +665,46 @@ private struct MuscleRecoveryCard: View {
                     Spacer()
                 }
 
-                if muscles.allSatisfy({ $0.state.value == nil }) {
-                    Text("Log strength workouts to build recency-weighted exposure estimates for each muscle.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                } else {
-                    VStack(spacing: Space.md) {
-                        ForEach(topLevelMuscles) { muscle in
-                            if muscle.muscle == "back" {
+                VStack(spacing: Space.md) {
+                    ForEach(MuscleTaxonomy.freshnessGroups) { group in
+                        if let muscle = musclesByName[group.name] {
+                            if group.children.isEmpty {
+                                MuscleRecoveryRow(muscle: muscle)
+                            } else {
+                                let expanded = expandedGroups.contains(group.name)
                                 Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        backExpanded.toggle()
-                                    }
+                                    toggle(group.name)
                                 } label: {
                                     HStack(spacing: Space.sm) {
                                         MuscleRecoveryRow(muscle: muscle)
                                         Image(systemName: "chevron.right")
                                             .font(.system(size: 12, weight: .bold))
                                             .foregroundStyle(theme.textTertiary)
-                                            .rotationEffect(.degrees(backExpanded ? 90 : 0))
+                                            .rotationEffect(.degrees(expanded ? 90 : 0))
                                             .frame(width: 18, height: 44)
                                     }
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Back freshness")
-                                .accessibilityValue(backExpanded ? "Expanded" : "Collapsed")
-                                .accessibilityHint(backExpanded ? "Collapses back muscle details" : "Shows lats, upper back, middle back, lower back, and traps")
+                                .accessibilityLabel("\(MuscleTaxonomy.freshnessDisplayName(group.name)) freshness")
+                                .accessibilityValue(accessibilityValue(for: muscle, expanded: expanded))
+                                .accessibilityHint(expanded
+                                    ? "Collapses muscle details"
+                                    : "Shows \(group.children.map(MuscleTaxonomy.freshnessDisplayName).joined(separator: ", "))")
+                                .accessibilityInputLabels([MuscleTaxonomy.freshnessDisplayName(group.name)])
+                                .accessibilityIdentifier("muscle-freshness-toggle-\(group.name)")
 
-                                if backExpanded {
+                                if expanded {
                                     VStack(spacing: Space.md) {
-                                        ForEach(backChildren) { child in
-                                            MuscleRecoveryRow(muscle: child)
+                                        ForEach(group.children, id: \.self) { childName in
+                                            if let child = musclesByName[childName] {
+                                                MuscleRecoveryRow(muscle: child)
+                                            }
                                         }
                                     }
                                     .padding(.leading, Space.md)
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
-                            } else {
-                                MuscleRecoveryRow(muscle: muscle)
                             }
                         }
                     }
@@ -701,17 +721,12 @@ private struct MuscleRecoveryRow: View {
     var body: some View {
         HStack(spacing: Space.md) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(muscle.muscle.capitalized)
+                Text(MuscleTaxonomy.freshnessDisplayName(muscle.muscle))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(theme.textTertiary)
-                if muscle.isProvisional {
-                    Text("Provisional")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(theme.warmup)
-                }
             }
             .frame(width: 104, alignment: .leading)
 
@@ -772,28 +787,19 @@ private struct CardioRecoveryCard: View {
                 }
 
                 if let lastSessionText = cardio.lastSessionText {
-                    Text("Last session: \(lastSessionText)")
+                    Text("Last load: \(lastSessionText)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textTertiary)
                 }
 
-                if let method = cardio.methodLabel {
-                    Text("\(method)\(cardio.isProvisional ? " · provisional" : "")")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(cardio.isProvisional ? theme.warmup : theme.textTertiary)
+                if case .building(let needed) = cardio.state {
+                    Text(needed)
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Text(guidanceText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    private var guidanceText: String {
-        if case .building(let needed) = cardio.state { return needed }
-        return cardio.guidance
     }
 }
 
@@ -960,9 +966,9 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .systemicScore:
             return "A seven-day view of available HRV, heart-rate, and sleep trends. It uses source-consistent personal baselines and appears only when enough recent observations are available."
         case .muscleScore:
-            return "A recency-weighted estimate of logged training exposure. Primary and secondary muscle work use consistent weights, and recent high-effort sets add modestly more exposure. The decay setting is a display model, not a biological recovery clock."
+            return "A recency-weighted estimate of completed working sets, normalized to your typical dose for each muscle or body region. Set type, primary or secondary role, and logged RPE or RIR shape the estimate; it is not a biological recovery clock."
         case .cardioScore:
-            return "A recency-weighted cardio-exposure estimate using one locked load method: preferably duration × whole-session CR10, otherwise genuinely measured zone-duration load. Methods are never mixed."
+            return "A recency-weighted cardiovascular-load estimate normalized to your typical session. Measured heart-rate zones can contribute from any workout, including strength circuits; cardio and conditioning effort is used only when measured zones are unavailable."
         case .confidence:
             return "Shows comparable data availability and baseline maturity. It is not a statistical confidence interval. Missing data shrinks the score toward 50 and can withhold it entirely."
         }
@@ -977,7 +983,7 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .muscleScore:
             return "Lower freshness means more recent modeled exposure, not incomplete biological recovery."
         case .cardioScore:
-            return "A score of 50 means modeled remaining exposure equals one typical same-method session; it does not mean 50% recovered."
+            return "A score of 50 means one typical session's modeled exposure remains; it does not mean 50% recovered."
         case .confidence:
             return "Low coverage means the score should be interpreted less strongly or withheld."
         }

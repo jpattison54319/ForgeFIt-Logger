@@ -11,6 +11,7 @@ struct YogaHistoryCard: View {
     let workoutExercise: WorkoutExerciseModel?
     let exercise: ExerciseLibraryModel?
     let hrSamples: [(date: Date, bpm: Int)]
+    var heartRateMetrics: WorkoutHeartRateResolution.Metrics? = nil
     let collapsible: Bool
 
     @Environment(\.theme) private var theme
@@ -38,8 +39,23 @@ struct YogaHistoryCard: View {
               ) else { return nil }
         return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
     }
-    private var displayAverageHR: Int? { heartRateSummary?.averageBPM ?? session?.avgHR }
-    private var displayMaximumHR: Int? { heartRateSummary?.maximumBPM ?? session?.maxHR }
+    private var displayAverageHR: Int? {
+        heartRateMetrics?.averageBPM ?? heartRateSummary?.averageBPM ?? session?.avgHR
+    }
+    private var displayMaximumHR: Int? {
+        heartRateMetrics?.maximumBPM ?? heartRateSummary?.maximumBPM ?? session?.maxHR
+    }
+    private var displayEnergyKcal: Double? {
+        heartRateMetrics?.activeEnergyKcal ?? session?.activeEnergyKcal
+    }
+    private var displayZoneSeconds: [Int]? {
+        if let zones = heartRateMetrics?.zoneSeconds {
+            return zones
+        }
+        guard let zones = session?.hrZoneSeconds,
+              zones.contains(where: { $0 > 0 }) else { return nil }
+        return zones
+    }
 
     var body: some View {
         Card(padding: Space.md) {
@@ -123,7 +139,7 @@ struct YogaHistoryCard: View {
                 StatColumn(label: "Duration", value: Fmt.durationShort(durationSeconds), valueColor: theme.accent)
                 StatColumn(label: "Poses", value: poses.isEmpty ? "—" : "\(poses.count)")
                 StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Energy", value: session?.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
+                StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
         }
 
@@ -174,8 +190,8 @@ struct YogaHistoryCard: View {
                 avgHR: avgHR,
                 maxHR: displayMaximumHR,
                 durationSeconds: session.durationSeconds,
-                zoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
-                source: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? .measured : .estimated
+                zoneSeconds: displayZoneSeconds,
+                source: displayZoneSeconds == nil ? .estimated : .measured
             )
         }
         if collapsible,

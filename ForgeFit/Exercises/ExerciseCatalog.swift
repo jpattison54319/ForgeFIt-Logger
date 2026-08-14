@@ -216,7 +216,7 @@ enum ExerciseCatalog {
     static let muscleGroups = [
         "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "back", "lats",
         "middle back", "upper back", "lower back", "traps", "quadriceps", "hamstrings",
-        "glutes", "calves", "forearms", "abductors", "adductors", "neck",
+        "glutes", "calves", "forearms", "abductors", "adductors", "obliques", "neck",
         // Pseudo-regions for yoga/mobility work, following the
         // `cardiovascular` precedent: broad stretch targets the strict muscle
         // list can't express.

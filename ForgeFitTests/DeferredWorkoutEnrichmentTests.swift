@@ -7,6 +7,62 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct DeferredWorkoutEnrichmentTests {
+    @Test func soleTimedSessionKeepsTheWholeWorkoutMetrics() async throws {
+        let (container, context) = try TestStore.make()
+        let start = Date.now.addingTimeInterval(-660)
+        let session = CardioSessionModel(
+            userID: ForgeFitDemo.userID,
+            modality: CardioKind.run.rawValue,
+            startedAt: start,
+            liveStartedAt: start,
+            endedAt: start.addingTimeInterval(660),
+            durationSeconds: 660,
+            activeEnergyKcal: 0,
+            avgHR: 95,
+            maxHR: 100
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(660),
+            avgHR: 157,
+            maxHR: 173,
+            activeEnergyKcal: 139,
+            hrZoneSeconds: [60, 49, 108, 360, 120],
+            cardioSessions: [session]
+        )
+        context.insert(workout)
+        try context.save()
+
+        await DeferredWorkoutEnrichmentCoordinator.shared.enrichSession(
+            .init(
+                sessionID: session.id,
+                start: start,
+                end: start.addingTimeInterval(660),
+                modality: .run,
+                fallbackAvgHR: nil,
+                fallbackMaxHR: nil,
+                importsDistance: false,
+                providesGPSDistance: false,
+                hadManualIntervalPlan: true
+            ),
+            container: container,
+            snapshot: {
+                CardioSnapshot(avgHR: 95, maxHR: 100, activeEnergyKcal: 0)
+            }
+        )
+
+        let fresh = ModelContext(container)
+        let id = session.id
+        let restored = try #require(fresh.fetch(
+            FetchDescriptor<CardioSessionModel>(predicate: #Predicate { $0.id == id })
+        ).first)
+        #expect(restored.avgHR == 157)
+        #expect(restored.maxHR == 173)
+        #expect(restored.activeEnergyKcal == 139)
+        #expect(restored.hrZoneSeconds == [60, 49, 108, 360, 120])
+    }
+
     @Test func importedDistanceIsMarkedAsHealthKitProvenance() async throws {
         let (container, context) = try TestStore.make()
         let start = Date.now.addingTimeInterval(-600)

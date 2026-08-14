@@ -170,9 +170,15 @@ final class DeferredWorkoutEnrichmentCoordinator {
               session.deletedAt == nil,
               session.endedAt != nil else { return }
 
-        if let hr = values.avgHR ?? request.fallbackAvgHR { session.avgHR = hr }
-        if let maxHR = values.maxHR ?? request.fallbackMaxHR { session.maxHR = maxHR }
-        if let energy = values.activeEnergyKcal { session.activeEnergyKcal = energy }
+        let wholeWorkoutMetricsApply = session.workout.map {
+            WorkoutHeartRateResolution.isSoleTimedModality(session, in: $0)
+        } ?? false
+        let wholeWorkoutAverage = wholeWorkoutMetricsApply ? session.workout?.avgHR : nil
+        let wholeWorkoutMaximum = wholeWorkoutMetricsApply ? session.workout?.maxHR : nil
+        let wholeWorkoutEnergy = wholeWorkoutMetricsApply ? session.workout?.activeEnergyKcal : nil
+        if let hr = wholeWorkoutAverage ?? values.avgHR ?? request.fallbackAvgHR { session.avgHR = hr }
+        if let maxHR = wholeWorkoutMaximum ?? values.maxHR ?? request.fallbackMaxHR { session.maxHR = maxHR }
+        if let energy = wholeWorkoutEnergy ?? values.activeEnergyKcal { session.activeEnergyKcal = energy }
         if request.importsDistance,
            let distance = values.distanceMeters,
            !(request.providesGPSDistance && session.routePoints.count >= 2) {
@@ -183,6 +189,11 @@ final class DeferredWorkoutEnrichmentCoordinator {
             avgHR: session.avgHR,
             durationSeconds: session.durationSeconds
         )
+        if wholeWorkoutMetricsApply,
+           let zones = session.workout?.hrZoneSeconds,
+           zones.contains(where: { $0 > 0 }) {
+            session.hrZoneSeconds = zones
+        }
         let updatedAt = Date()
         session.updatedAt = updatedAt
         session.workout?.updatedAt = updatedAt
@@ -226,6 +237,17 @@ final class DeferredWorkoutEnrichmentCoordinator {
         if workout.maxHR == nil, let maxHR = values.maxHR { workout.maxHR = maxHR }
         if workout.activeEnergyKcal == nil, let energy = values.activeEnergyKcal {
             workout.activeEnergyKcal = energy
+        }
+        if let session = workout.cardioSessions.first(where: {
+            $0.deletedAt == nil && $0.endedAt != nil
+                && WorkoutHeartRateResolution.isSoleTimedModality($0, in: workout)
+        }) {
+            if let average = workout.avgHR { session.avgHR = average }
+            if let maximum = workout.maxHR { session.maxHR = maximum }
+            if let energy = workout.activeEnergyKcal { session.activeEnergyKcal = energy }
+            if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
+                session.hrZoneSeconds = workout.hrZoneSeconds
+            }
         }
         guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         try? context.save()

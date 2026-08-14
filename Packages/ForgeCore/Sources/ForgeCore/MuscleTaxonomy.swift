@@ -10,11 +10,35 @@ import Foundation
 /// ("shoulders") or a child ("rear delts") are both valid forever, and
 /// analytics roll variants together through `canonical(_:)`.
 public enum MuscleTaxonomy {
+    public struct FreshnessGroup: Identifiable, Equatable, Sendable {
+        public var id: String { name }
+        public let name: String
+        public let children: [String]
+
+        public init(name: String, children: [String]) {
+            self.name = name
+            self.children = children
+        }
+    }
+
     /// Parent → ordered children, canonical lowercase names.
     public static let children: [String: [String]] = [
         "shoulders": ["front delts", "side delts", "rear delts"],
         "back": ["lats", "upper back", "middle back", "lower back", "traps"],
         "chest": ["upper chest", "mid chest", "lower chest"],
+    ]
+
+    /// Ordered, display-only body regions for muscle freshness. This is kept
+    /// separate from `children` because making Arms, Legs, or Core taxonomy
+    /// parents would silently change exercise filters and historical rollups.
+    public static let freshnessGroups: [FreshnessGroup] = [
+        FreshnessGroup(name: "chest", children: ["upper chest", "mid chest", "lower chest"]),
+        FreshnessGroup(name: "back", children: ["lats", "upper back", "middle back", "lower back", "traps"]),
+        FreshnessGroup(name: "shoulders", children: ["front delts", "side delts", "rear delts"]),
+        FreshnessGroup(name: "arms", children: ["biceps", "triceps", "forearms"]),
+        FreshnessGroup(name: "legs", children: ["quadriceps", "hamstrings", "glutes", "calves", "abductors", "adductors"]),
+        FreshnessGroup(name: "core", children: ["abdominals", "obliques"]),
+        FreshnessGroup(name: "neck", children: []),
     ]
 
     /// Child → parent, derived from `children`.
@@ -79,5 +103,11 @@ public enum MuscleTaxonomy {
     /// "front delts" → "Front Delts", "upper back" → "Upper Back".
     public static func displayName(_ muscle: String) -> String {
         canonical(muscle).split(separator: " ").map(\.capitalized).joined(separator: " ")
+    }
+
+    /// Compact labels used by the freshness card without changing exercise
+    /// taxonomy names or exported muscle strings.
+    public static func freshnessDisplayName(_ muscle: String) -> String {
+        canonical(muscle) == "abdominals" ? "Abs" : displayName(muscle)
     }
 }
