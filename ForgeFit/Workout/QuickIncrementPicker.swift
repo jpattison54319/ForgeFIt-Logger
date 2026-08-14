@@ -14,6 +14,35 @@ import UIKit
 /// inside clipped cards.
 @Observable
 final class QuickIncrementController {
+    struct Metrics: Equatable {
+        let bandHeight: CGFloat
+        let bandWidth: CGFloat
+        let fieldGap: CGFloat
+        /// The capsule is this much shorter than its band. Because adjacent
+        /// bands touch, this is also the visible gap between fan options.
+        let visualHeightInset: CGFloat
+        let labelFontSize: CGFloat
+        let usesGlobalCoordinateSpace: Bool
+
+        static let compact = Metrics(
+            bandHeight: 44,
+            bandWidth: 92,
+            fieldGap: 6,
+            visualHeightInset: 8,
+            labelFontSize: 16,
+            usesGlobalCoordinateSpace: false
+        )
+
+        static let guidedMyoRep = Metrics(
+            bandHeight: 56,
+            bandWidth: 120,
+            fieldGap: 8,
+            visualHeightInset: 8,
+            labelFontSize: 20,
+            usesGlobalCoordinateSpace: true
+        )
+    }
+
     struct Option: Equatable {
         /// Reps: whole reps. Weight: display-unit delta (already
         /// step-multiplied, e.g. +5 for the second band of a 2.5 lb step).
@@ -23,7 +52,9 @@ final class QuickIncrementController {
 
     struct Fan {
         let transactionID: UUID
-        let fieldFrame: CGRect          // in `spaceName` coordinates
+        /// In the controller's selected coordinate space: the named logger
+        /// space for compact fields, or global space for guided Myo-Reps.
+        let fieldFrame: CGRect
         let options: [Option]           // +max first … −max last
         /// Frozen when the hold recognizes. Keyboard dismissal, row updates,
         /// and unit changes must not move the hit map under an active finger.
@@ -36,20 +67,21 @@ final class QuickIncrementController {
     }
 
     static let spaceName = "quick-increment-space"
-    /// Forty-four points leaves an eight-point visual gap between the 36-point
-    /// capsules while preserving full-width drag targets.
-    static let bandHeight: CGFloat = 44
-    static let bandWidth: CGFloat = 92
-    static let fieldGap: CGFloat = 6
+
+    let metrics: Metrics
 
     private(set) var fan: Fan?
-    /// The overlay reports its bounds (same named space) so hover mapping and
-    /// drawing share one clamped layout.
+    /// The overlay reports its bounds in the controller's selected coordinate
+    /// space so hover mapping and drawing share one clamped layout.
     var overlayBounds: CGRect = .zero
     private(set) var hoverTick = 0
     private(set) var openTick = 0
 
     var isActive: Bool { fan != nil }
+
+    init(metrics: Metrics = .compact) {
+        self.metrics = metrics
+    }
 
     @discardableResult
     func begin(
@@ -71,7 +103,8 @@ final class QuickIncrementController {
               let slots = Self.makeLayout(
                 fieldFrame: fieldFrame,
                 options: options,
-                overlayBounds: overlayBounds
+                overlayBounds: overlayBounds,
+                metrics: metrics
               ) else { return nil }
 
         let transactionID = UUID()
@@ -143,14 +176,23 @@ final class QuickIncrementController {
         fan?.slots
     }
 
+    /// Global rectangles need to be translated into the overlay's local space
+    /// before SwiftUI can position them. The compact logger retains its named-
+    /// space behavior unchanged.
+    func overlayLocalRect(for rect: CGRect) -> CGRect {
+        guard metrics.usesGlobalCoordinateSpace else { return rect }
+        return rect.offsetBy(dx: -overlayBounds.minX, dy: -overlayBounds.minY)
+    }
+
     private static func makeLayout(
         fieldFrame: CGRect,
         options: [Option],
-        overlayBounds: CGRect
+        overlayBounds: CGRect,
+        metrics: Metrics
     ) -> [Slot]? {
         guard overlayBounds.width > 0, overlayBounds.height > 0 else { return nil }
         let half = options.count / 2
-        let width = Self.bandWidth
+        let width = metrics.bandWidth
         let x = min(max(fieldFrame.midX, overlayBounds.minX + width / 2 + 8),
                     overlayBounds.maxX - width / 2 - 8)
 
@@ -160,12 +202,12 @@ final class QuickIncrementController {
             if index < half {
                 // Positives: index 0 is the largest (+3), sitting furthest up.
                 let stepsAbove = CGFloat(half - index)
-                let top = fieldFrame.minY - Self.fieldGap - stepsAbove * Self.bandHeight
-                rect = CGRect(x: x - width / 2, y: top, width: width, height: Self.bandHeight)
+                let top = fieldFrame.minY - metrics.fieldGap - stepsAbove * metrics.bandHeight
+                rect = CGRect(x: x - width / 2, y: top, width: width, height: metrics.bandHeight)
             } else {
                 let stepsBelow = CGFloat(index - half)
-                let top = fieldFrame.maxY + Self.fieldGap + stepsBelow * Self.bandHeight
-                rect = CGRect(x: x - width / 2, y: top, width: width, height: Self.bandHeight)
+                let top = fieldFrame.maxY + metrics.fieldGap + stepsBelow * metrics.bandHeight
+                rect = CGRect(x: x - width / 2, y: top, width: width, height: metrics.bandHeight)
             }
             slots.append(Slot(option: option, rect: rect, isPositive: index < half))
         }
@@ -255,6 +297,7 @@ private final class FrameBox {
 /// focusing the TextField on release.
 private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
     let isEnabled: Bool
+    let usesGlobalCoordinateSpace: Bool
     let onBegan: (CGPoint) -> Void
     let onChanged: (CGPoint) -> Void
     let onEnded: (CGPoint) -> Void
@@ -312,7 +355,9 @@ private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
         _ recognizer: UILongPressGestureRecognizer,
         context: Context
     ) {
-        let location = context.converter.location(in: .named(QuickIncrementController.spaceName))
+        let location = usesGlobalCoordinateSpace
+            ? context.converter.location(in: .global)
+            : context.converter.location(in: .named(QuickIncrementController.spaceName))
         switch recognizer.state {
         case .began:
             context.coordinator.onBegan(location)
@@ -348,7 +393,9 @@ private struct QuickIncrementable: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .named(QuickIncrementController.spaceName))
+                controller?.metrics.usesGlobalCoordinateSpace == true
+                    ? proxy.frame(in: .global)
+                    : proxy.frame(in: .named(QuickIncrementController.spaceName))
             } action: { frameBox.rect = $0 }
             .gesture(fanGesture)
             .accessibilityAdjustableAction { direction in
@@ -366,6 +413,7 @@ private struct QuickIncrementable: ViewModifier {
     private var fanGesture: QuickIncrementPressGesture {
         QuickIncrementPressGesture(
             isEnabled: isEnabled && controller != nil,
+            usesGlobalCoordinateSpace: controller?.metrics.usesGlobalCoordinateSpace == true,
             onBegan: { location in
                 beginIfNeeded(at: location)
             },
@@ -449,14 +497,15 @@ struct QuickIncrementOverlay: View {
                 slots: presentedSlots,
                 hoveredIndex: presentedHover,
                 isPresented: fanPresented,
-                presentationTick: presentationTick
+                presentationTick: presentationTick,
+                metrics: controller?.metrics ?? .compact
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .onAppear {
-                updateOverlayBounds(proxy.frame(in: .named(QuickIncrementController.spaceName)))
+                updateOverlayBounds(frame(for: proxy))
             }
             .onGeometryChange(for: CGRect.self) { proxy in
-                proxy.frame(in: .named(QuickIncrementController.spaceName))
+                frame(for: proxy)
             } action: { updateOverlayBounds($0) }
             .onChange(of: controller?.openTick, initial: true) { _, _ in
                 capturePresentation()
@@ -482,10 +531,22 @@ struct QuickIncrementOverlay: View {
         controller?.overlayBounds = bounds
     }
 
+    private func frame(for proxy: GeometryProxy) -> CGRect {
+        controller?.metrics.usesGlobalCoordinateSpace == true
+            ? proxy.frame(in: .global)
+            : proxy.frame(in: .named(QuickIncrementController.spaceName))
+    }
+
     private func capturePresentation() {
         guard let controller, let fan = controller.fan, let slots = controller.layout() else { return }
-        presentedFieldFrame = fan.fieldFrame
-        presentedSlots = slots
+        presentedFieldFrame = controller.overlayLocalRect(for: fan.fieldFrame)
+        presentedSlots = slots.map {
+            QuickIncrementController.Slot(
+                option: $0.option,
+                rect: controller.overlayLocalRect(for: $0.rect),
+                isPositive: $0.isPositive
+            )
+        }
         presentedHover = fan.hoveredIndex
         presentationTick &+= 1
         fanPresented = true

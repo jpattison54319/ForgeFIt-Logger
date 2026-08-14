@@ -1039,6 +1039,14 @@ final class ForgeFitUITests: XCTestCase {
             app.staticTexts["Pigeon Pose"].firstMatch.waitForExistence(timeout: 5),
             "Profile exercise browsing must include individual yoga poses."
         )
+
+        let queryLength = (search.value as? String)?.count ?? 11
+        search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: queryLength))
+        search.typeText("Tricep push")
+        XCTAssertTrue(
+            app.staticTexts["Triceps Pushdown"].firstMatch.waitForExistence(timeout: 5),
+            "Profile search should tolerate a missing trailing s in triceps."
+        )
     }
 
     /// A renamed preset remains the canonical destination for legacy workout

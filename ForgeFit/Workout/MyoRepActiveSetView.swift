@@ -29,7 +29,7 @@ struct MyoRepActiveSetView: View {
     @State private var miniRepsDraft: Int
     @State private var editingActivation = false
     @State private var miniSetEdit: MyoRepMiniSetEdit?
-    @State private var quickIncrement = QuickIncrementController()
+    @State private var quickIncrement = QuickIncrementController(metrics: .guidedMyoRep)
     @State private var completionHapticTrigger = 0
     @FocusState private var focusedInput: MyoRepInputFocus?
 
@@ -140,19 +140,23 @@ struct MyoRepActiveSetView: View {
                                     .foregroundStyle(theme.textPrimary)
                             }
                             Spacer()
-                            RestDurationMenu(
-                                options: [10, 15, 20, 30, 45, 60],
-                                allowsOff: false,
-                                selected: microRest,
-                                onPick: updateMicroRest
-                            ) {
-                                Label("\(microRest)s", systemImage: "timer")
-                                    .font(.bodyStrong)
-                                    .foregroundStyle(theme.accent)
-                                    .padding(.horizontal, Space.md)
-                                    .frame(minHeight: 44)
-                                    .background(theme.surfaceElevated)
-                                    .clipShape(.capsule)
+                            HStack(spacing: Space.sm) {
+                                LiveWorkoutHeartRateChip()
+
+                                RestDurationMenu(
+                                    options: [10, 15, 20, 30, 45, 60],
+                                    allowsOff: false,
+                                    selected: microRest,
+                                    onPick: updateMicroRest
+                                ) {
+                                    Label("\(microRest)s", systemImage: "timer")
+                                        .font(.bodyStrong)
+                                        .foregroundStyle(theme.accent)
+                                        .padding(.horizontal, Space.md)
+                                        .frame(minHeight: TouchTarget.minimum)
+                                        .background(theme.surfaceElevated)
+                                        .clipShape(.capsule)
+                                }
                             }
                         }
 

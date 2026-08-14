@@ -60,15 +60,22 @@ final class MyoActivationUITests: XCTestCase {
         XCTAssertTrue(addExercise.waitForExistence(timeout: 8))
         tapWhenHittable(addExercise)
 
+        let search = app.searchFields.firstMatch.exists
+            ? app.searchFields.firstMatch
+            : app.textFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        search.tap()
+        search.typeText("Tricep push")
+        XCTAssertTrue(
+            element(app, "exercise-row-Triceps Pushdown").waitForExistence(timeout: 3),
+            "Live-workout search should tolerate a missing trailing s in triceps."
+        )
+        let searchLength = (search.value as? String)?.count ?? 12
+        search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: searchLength))
+        search.typeText("Machine Chest")
+
         let exerciseRow = element(app, "exercise-row-Machine Chest Press")
-        if !exerciseRow.waitForExistence(timeout: 2) {
-            let search = app.searchFields.firstMatch.exists
-                ? app.searchFields.firstMatch
-                : app.textFields.firstMatch
-            search.tap()
-            search.typeText("Machine Chest")
-            XCTAssertTrue(exerciseRow.waitForExistence(timeout: 3))
-        }
+        XCTAssertTrue(exerciseRow.waitForExistence(timeout: 3))
         exerciseRow.tap()
 
         let confirm = app.buttons.matching(
@@ -127,6 +134,33 @@ final class MyoActivationUITests: XCTestCase {
         )
         let activationRepsField = element(app, "myo-activation-reps-1")
         XCTAssertTrue(activationRepsField.exists)
+        XCTAssertTrue(
+            element(app, "guided-myo-live-heart-rate").exists,
+            "The focused Myo-rep runner should keep live heart rate visible beside the rest duration."
+        )
+
+        let increaseActivationReps = app.buttons["Increase Activation reps"].firstMatch
+        for _ in 0..<3 { tapWhenHittable(increaseActivationReps) }
+        XCTAssertEqual(activationRepsField.value as? String, "4")
+
+        let fanStart = activationRepsField.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
+        )
+        fanStart.press(
+            forDuration: 0.55,
+            thenDragTo: fanStart.withOffset(CGVector(dx: 0, dy: 64)),
+            withVelocity: .fast,
+            thenHoldForDuration: 0
+        )
+        XCTAssertEqual(
+            activationRepsField.value as? String,
+            "3",
+            "Dragging down to the guided Myo-rep fan's nearest band should decrement reps."
+        )
+        let decreaseActivationReps = app.buttons["Decrease Activation reps"].firstMatch
+        tapWhenHittable(decreaseActivationReps)
+        tapWhenHittable(decreaseActivationReps)
+        XCTAssertEqual(activationRepsField.value as? String, "1")
 
         activationRepsField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.7)

@@ -11,6 +11,17 @@ final class ExerciseLibraryTests: XCTestCase {
         XCTAssertEqual(typoAlias.exercise.id, GlobalExerciseLibrary.bayesianCableCurlID)
     }
 
+    func testMultiwordSearchMatchesEachExerciseTokenByPrefix() throws {
+        let pushdown = ExerciseInfo(name: "Triceps Pushdown")
+        let press = ExerciseInfo(name: "Triceps Press")
+        let snapshot = ExerciseLibrarySnapshot(exercises: [press, pushdown])
+
+        let result = try XCTUnwrap(snapshot.search("tricep push").first)
+
+        XCTAssertEqual(result.exercise.id, pushdown.id)
+        XCTAssertEqual(result.score, 82)
+    }
+
     func testSeedIncludesRequestedMachineAndCableVariants() {
         let names = Set(GlobalExerciseLibrary.snapshot.exercises.map(\.name))
         XCTAssertTrue(names.contains("Bayesian Cable Curl"))

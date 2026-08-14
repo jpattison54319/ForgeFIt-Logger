@@ -425,6 +425,7 @@ struct ExercisesListView: View {
     @State private var showConditioningPresets = false
     @State private var showYogaFlows = false
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
+    @State private var searchSnapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
 
     private var filtered: [ExerciseLibraryModel] {
         var count = 0
@@ -433,23 +434,36 @@ struct ExercisesListView: View {
             count += 1
             latest = max(latest, exercise.updatedAt)
         }
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let key = "\(count)|\(latest.timeIntervalSince1970)|\(normalizedQuery)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filterKey = "\(count)|\(latest.timeIntervalSince1970)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
+        let key = "\(filterKey)|\(trimmedQuery.lowercased())"
         return filteredMemo(key) {
             // Dedupe by id: CloudKit duplicates would corrupt ForEach layout.
             var seen = Set<UUID>()
             // Profile is the complete library browser. Do not apply the yoga
             // exclusions used by routine and live-workout pickers here.
-            return exercises
+            let base = exercises
                 .filter { ex in
                     guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
-                    if !normalizedQuery.isEmpty, !ex.name.lowercased().contains(normalizedQuery) { return false }
                     if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                     if let equipment, ex.equipment != equipment { return false }
                     if customOnly, ex.ownerID == nil { return false }
                     return true
                 }
-                .sorted { $0.name < $1.name }
+            guard !trimmedQuery.isEmpty else {
+                return base.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            }
+
+            let snapshot = searchSnapshotMemo(filterKey) {
+                ExerciseLibrarySnapshot(
+                    exercises: base.map(\.domainInfo),
+                    aliases: GlobalExerciseLibrary.snapshot.aliases
+                )
+            }
+            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            return snapshot.search(trimmedQuery, limit: base.count).compactMap {
+                byID[$0.exercise.id]
+            }
         }
     }
 

@@ -13,7 +13,7 @@ struct MyoRepSetEditorView: View {
 
     @State private var draft: MyoRepEditDraft
     @State private var miniSetEdit: MyoRepMiniSetEdit?
-    @State private var quickIncrement = QuickIncrementController()
+    @State private var quickIncrement = QuickIncrementController(metrics: .guidedMyoRep)
     @FocusState private var focusedInput: MyoRepInputFocus?
 
     init(

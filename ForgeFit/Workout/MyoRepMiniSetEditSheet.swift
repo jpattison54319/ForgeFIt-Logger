@@ -8,7 +8,7 @@ struct MyoRepMiniSetEditSheet: View {
     let onRemove: () -> Void
 
     @State private var reps: Int
-    @State private var quickIncrement = QuickIncrementController()
+    @State private var quickIncrement = QuickIncrementController(metrics: .guidedMyoRep)
     @FocusState private var focusedInput: MyoRepInputFocus?
 
     init(
