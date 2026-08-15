@@ -150,6 +150,8 @@ struct WorkoutDetailView: View {
     }
 
     var body: some View {
+        let plan = presentationPlan
+        let usesUnifiedCardioDetail = plan.usesUnifiedCardioDetail
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 header
@@ -177,17 +179,19 @@ struct WorkoutDetailView: View {
                 #endif
 
                 let s = analytics.summary(for: workout)
-                overallStatsCard(s)
+                if !usesUnifiedCardioDetail {
+                    overallStatsCard(s)
+                }
 
                 if !awardEntries.isEmpty {
                     WorkoutAwardsCard(awards: awardEntries)
                 }
 
-                if showsSessionMetrics {
+                if showsSessionMetrics, !usesUnifiedCardioDetail {
                     sessionMetricsCard
                 }
 
-                if hrLoaded, !hrSamples.isEmpty {
+                if hrLoaded, !hrSamples.isEmpty, !usesUnifiedCardioDetail {
                     heartRateCard
                 }
 
@@ -196,17 +200,17 @@ struct WorkoutDetailView: View {
                     betweenSetRecoveryCard
                 }
 
-                if presentationPlan.modalities.contains(.strength) {
+                if plan.modalities.contains(.strength) {
                     let muscleRows = analytics.muscleVolume(
                         for: workout,
-                        exerciseRows: presentationPlan.strengthExercises
+                        exerciseRows: plan.strengthExercises
                     )
                     if !muscleRows.isEmpty {
                         muscleWorkedCard(muscleRows)
                     }
                 }
 
-                ForEach(presentationPlan.items) { item in
+                ForEach(plan.items) { item in
                     switch item {
                     case .exercise(let workoutExercise):
                         if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
@@ -822,6 +826,7 @@ struct WorkoutDetailView: View {
     ) -> some View {
         let kind = CardioKind.from(modality: cardio.modality)
         let name = exercise?.name ?? kind.title
+        let integratesWorkoutSummary = presentationPlan.unifiedCardioSessionID == cardio.id
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 if isMixedWorkout {
@@ -834,23 +839,30 @@ struct WorkoutDetailView: View {
                         if let note = nonemptyNote(workoutExercise?.notes) {
                             LoggedNoteView(title: "Exercise note", text: note)
                         }
-                        cardioDetailContent(cardio, kind: kind, showPerBlockHR: true)
+                        cardioDetailContent(
+                            cardio,
+                            kind: kind,
+                            showPerBlockHR: true,
+                            integratesWorkoutSummary: false
+                        )
                         if let exercise {
                             cardioLibraryLink(exercise, name: name)
                         }
                     }
                 } else {
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
-                            .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
-                        if let exercise {
-                            NavigationLink(value: exercise.id) {
-                                ExerciseNameLabel(name: name)
-                                    .minimumTouchTarget()
+                    if !integratesWorkoutSummary {
+                        HStack(spacing: Space.sm) {
+                            Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                                .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
+                            if let exercise {
+                                NavigationLink(value: exercise.id) {
+                                    ExerciseNameLabel(name: name)
+                                        .minimumTouchTarget()
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             }
-                            .buttonStyle(.plain)
-                        } else {
-                            Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         }
                     }
 
@@ -858,7 +870,15 @@ struct WorkoutDetailView: View {
                         LoggedNoteView(title: "Exercise note", text: note)
                     }
 
-                    cardioDetailContent(cardio, kind: kind, showPerBlockHR: false)
+                    cardioDetailContent(
+                        cardio,
+                        kind: kind,
+                        showPerBlockHR: false,
+                        integratesWorkoutSummary: integratesWorkoutSummary
+                    )
+                    if integratesWorkoutSummary, let exercise {
+                        cardioLibraryLink(exercise, name: name)
+                    }
                 }
             }
         }
@@ -938,12 +958,16 @@ struct WorkoutDetailView: View {
         .buttonStyle(.plain)
     }
 
-    /// The full cardio detail experience — identical for cardio-only workouts
-    /// and expanded mixed blocks. `showPerBlockHR` adds this block's slice of
-    /// the workout HR series (mixed only; cardio-only workouts already show it
-    /// at the workout level).
+    /// The full cardio detail experience. A sole cardio activity also owns the
+    /// workout-level health context because both scopes cover the same event;
+    /// mixed blocks retain their independently time-boxed heart-rate view.
     @ViewBuilder
-    private func cardioDetailContent(_ cardio: CardioSessionModel, kind: CardioKind, showPerBlockHR: Bool) -> some View {
+    private func cardioDetailContent(
+        _ cardio: CardioSessionModel,
+        kind: CardioKind,
+        showPerBlockHR: Bool,
+        integratesWorkoutSummary: Bool
+    ) -> some View {
         let heartRateMetrics = resolvedHeartRateMetrics(for: cardio)
         let displayAverageHR = heartRateMetrics?.averageBPM
 
@@ -958,18 +982,53 @@ struct WorkoutDetailView: View {
             metric("Time", Fmt.durationShort(cardio.durationSeconds))
         }
 
-        // Secondary metrics
-        HStack {
-            if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
-            if let cal = heartRateMetrics?.activeEnergyKcal ?? cardio.activeEnergyKcal {
-                metric("Calories", "\(Int(cal))")
+        if integratesWorkoutSummary {
+            // The generic workout and session cards are intentionally absent in
+            // this one-to-one shape, so retain each unique health fact here once.
+            if heartRateMetrics?.hasData == true || heartRateMetrics?.activeEnergyKcal != nil {
+                HStack {
+                    if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
+                    if let maxHR = heartRateMetrics?.maximumBPM { metric("Max HR", "\(maxHR)") }
+                    if let energy = heartRateMetrics?.activeEnergyKcal { metric("Calories", "\(Int(energy))") }
+                }
             }
-            if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
-            if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
-            if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+            if cardio.elevationGainMeters != nil || cardio.avgPowerWatts != nil || cardio.effort != nil {
+                HStack {
+                    if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
+                    if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
+                    if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+                }
+            }
+            if let readiness = workout.readinessAtStart {
+                Label("Started at \(readiness)% ready", systemImage: "bolt.heart.fill")
+                    .font(.tag)
+                    .foregroundStyle(theme.readinessColor(Double(readiness) / 100))
+            }
+        } else {
+            // Secondary activity metrics when a distinct workout-level summary
+            // remains visible above this card.
+            HStack {
+                if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
+                if let cal = heartRateMetrics?.activeEnergyKcal ?? cardio.activeEnergyKcal {
+                    metric("Calories", "\(Int(cal))")
+                }
+                if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
+                if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
+                if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+            }
         }
 
         efficiencyRow(for: cardio)
+
+        if integratesWorkoutSummary, hrLoaded, hrSamples.count >= 2 {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("Heart rate").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                HeartRateTrendChart(
+                    samples: hrSamples,
+                    bands: HeartRateTrendChart.cardioBands(for: workout)
+                )
+            }
+        }
 
         if cardio.intervalsAutoApplied {
             autoIntervalBanner(cardio)
@@ -1004,7 +1063,8 @@ struct WorkoutDetailView: View {
                 maxHR: heartRateMetrics?.maximumBPM,
                 durationSeconds: cardio.durationSeconds,
                 zoneSeconds: measuredZones ?? storedZones,
-                source: measuredZones == nil ? .estimated : .measured
+                source: measuredZones == nil ? .estimated : .measured,
+                showsAverageInHeader: !integratesWorkoutSummary
             )
         }
 
@@ -1426,8 +1486,8 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     .modelContainer(container)
 }
 
-/// Cardio-only session — must render exactly like production today: full
-/// detail, no chevron, no collapse.
+/// Cardio-only session — one unified detail card owns workout and activity
+/// metrics because their scopes are identical.
 #Preview("Cardio only") {
     let container = previewContainer()
     let userID = UUID()

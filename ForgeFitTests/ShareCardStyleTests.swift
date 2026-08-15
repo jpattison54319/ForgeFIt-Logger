@@ -86,6 +86,41 @@ struct ShareCardStyleTests {
         #expect(!WorkoutShareShape.yoga.supportsBetweenSetRecovery)
     }
 
+    @Test func soleCardioActivityUsesOneUnifiedWorkoutDetailScope() {
+        let exercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
+        let session = cardioSession(linkedTo: exercise)
+        let workout = WorkoutModel(
+            userID: userID,
+            exercises: [exercise],
+            cardioSessions: [session]
+        )
+
+        let presentation = WorkoutPresentationPlan.make(for: workout)
+
+        #expect(presentation.modalities == [.cardio])
+        #expect(presentation.items.count == 1)
+        #expect(presentation.unifiedCardioSessionID == session.id)
+        #expect(presentation.usesUnifiedCardioDetail)
+    }
+
+    @Test func distinctWorkoutAndActivityScopesRemainSeparate() {
+        let first = cardioSession()
+        let second = cardioSession()
+        let multipleCardio = WorkoutModel(userID: userID, cardioSessions: [first, second])
+        #expect(!WorkoutPresentationPlan.make(for: multipleCardio).usesUnifiedCardioDetail)
+
+        let strength = strengthExercise()
+        let mixed = WorkoutModel(
+            userID: userID,
+            exercises: [strength],
+            cardioSessions: [cardioSession()]
+        )
+        #expect(!WorkoutPresentationPlan.make(for: mixed).usesUnifiedCardioDetail)
+
+        let yoga = WorkoutModel(userID: userID, cardioSessions: [cardioSession(yoga: true)])
+        #expect(!WorkoutPresentationPlan.make(for: yoga).usesUnifiedCardioDetail)
+    }
+
     @Test func legacyConditioningRowsCollapseIntoOneMixedTimelineBlock() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }

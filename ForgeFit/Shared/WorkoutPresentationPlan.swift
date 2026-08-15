@@ -50,8 +50,14 @@ struct WorkoutPresentationPlan {
     let modalities: Set<Modality>
     let visibleExercises: [WorkoutExerciseModel]
     let strengthExercises: [WorkoutExerciseModel]
+    /// A workout with exactly one cardio activity has no meaningful distinction
+    /// between its workout-level and activity-level history scopes. Its detail
+    /// view therefore presents one unified cardio story instead of repeating
+    /// the same title, metrics, zones, and heart-rate series in separate cards.
+    let unifiedCardioSessionID: UUID?
 
     var isMixed: Bool { modalities.count > 1 }
+    var usesUnifiedCardioDetail: Bool { unifiedCardioSessionID != nil }
 
     var hasModalityBlocks: Bool {
         items.contains {
@@ -142,11 +148,15 @@ struct WorkoutPresentationPlan {
             sessionByExerciseID[exercise.id] == nil
                 && YogaFlowPlan.decode(from: exercise.yogaFlowJSON) == nil
         }
+        let unifiedCardioSessionID = modalities == [.cardio] && sessions.count == 1
+            ? sessions.first?.id
+            : nil
         return Self(
             items: items,
             modalities: modalities,
             visibleExercises: visibleExercises,
-            strengthExercises: strengthExercises
+            strengthExercises: strengthExercises,
+            unifiedCardioSessionID: unifiedCardioSessionID
         )
     }
 }

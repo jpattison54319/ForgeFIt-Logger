@@ -1186,6 +1186,10 @@ struct HRZoneBar: View {
     let durationSeconds: Int?
     var zoneSeconds: [Int]? = nil
     var source: ZoneDataSource = .estimated
+    /// The surrounding summary may already own the exact average. In that
+    /// context the zone bar labels only the interpreted zone instead of
+    /// repeating the same BPM value a second time.
+    var showsAverageInHeader = true
 
     private var distribution: [(zone: Int, seconds: Int)] {
         if let zoneSeconds, zoneSeconds.contains(where: { $0 > 0 }) {
@@ -1202,7 +1206,9 @@ struct HRZoneBar: View {
             HStack {
                 Text("Heart-rate zones").font(.tag).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Text("\(avgHR) bpm avg · \(HRZone.label(zone))")
+                Text(showsAverageInHeader
+                     ? "\(avgHR) bpm avg · \(HRZone.label(zone))"
+                     : HRZone.label(zone))
                     .font(.tag).foregroundStyle(theme.zoneColor(zone))
             }
             let total = distribution.reduce(0) { $0 + $1.seconds }
