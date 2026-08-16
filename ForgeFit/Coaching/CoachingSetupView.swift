@@ -410,8 +410,12 @@ struct CoachingSetupView: View {
                 }
             }
             PrimaryButton(title: "Set my target", systemImage: "checkmark.circle.fill") {
-                CoachPlanService.confirmYogaPlan(answers: currentAnswers(), sessionsPerWeek: sessionsPerWeek, in: modelContext)
-                didConfirm = true
+                CoachPlanService.confirmYogaPlan(
+                    answers: currentAnswers(),
+                    sessionsPerWeek: sessionsPerWeek,
+                    in: modelContext,
+                    onCommit: { didConfirm = true }
+                )
             }
         }
     }
@@ -440,8 +444,12 @@ struct CoachingSetupView: View {
     }
 
     private func confirm(candidate: ProgramCandidate) {
-        CoachPlanService.confirmPlan(candidate: candidate, answers: currentAnswers(), in: modelContext)
-        didConfirm = true
+        CoachPlanService.confirmPlan(
+            candidate: candidate,
+            answers: currentAnswers(),
+            in: modelContext,
+            onCommit: { didConfirm = true }
+        )
     }
 
     // MARK: - Confirmed

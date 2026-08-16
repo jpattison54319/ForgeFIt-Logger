@@ -359,7 +359,7 @@ struct ActiveWorkoutLoggerView: View {
                     SecondaryButton(title: "Add Workout Note", systemImage: "note.text") {
                         workout.notes = ""
                         workout.updatedAt = .now
-                        try? modelContext.save()
+                        modelContext.saveUserChanges()
                     }
                     .accessibilityIdentifier("add-workout-note")
                 }
@@ -437,7 +437,7 @@ struct ActiveWorkoutLoggerView: View {
             for (index, row) in reorderSession.rows.enumerated() {
                 itemsByID[row.id]?.position = index
             }
-            try? modelContext.save()
+            modelContext.saveUserChanges()
             publishWorkoutChange()
         }
         withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
@@ -451,7 +451,7 @@ struct ActiveWorkoutLoggerView: View {
         guard target != index else { return }
         rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
         for (index, item) in rows.enumerated() { item.position = index }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
     }
 
@@ -914,7 +914,7 @@ struct ActiveWorkoutLoggerView: View {
             set.reps = nil
             set.recomputeDerivedMetrics()
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
     }
 
@@ -1029,7 +1029,7 @@ struct ActiveWorkoutLoggerView: View {
             }
         }
         refreshLiveStats()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
@@ -1092,7 +1092,7 @@ struct ActiveWorkoutLoggerView: View {
             workout.blocks.append(block)
             workout.cardioSessions.append(session)
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         computeModalityFlags()
         publishWorkoutChange()
     }
@@ -1110,7 +1110,7 @@ struct ActiveWorkoutLoggerView: View {
             session?.yogaStyleRaw = plan.styleRaw
             workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }?.yogaFlowJSON = planJSON
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
     }
 
@@ -1134,7 +1134,7 @@ struct ActiveWorkoutLoggerView: View {
         modelContext.delete(block)
         normalizeOrderedPositions()
         workout.recomputeTotalVolume()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         computeModalityFlags()
         publishWorkoutChange()
         Task { await refreshReferenceCaches() }
@@ -1281,7 +1281,7 @@ struct ActiveWorkoutLoggerView: View {
         }
         workout.recomputeTotalVolume()
         refreshLiveStats()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
@@ -1294,7 +1294,7 @@ struct ActiveWorkoutLoggerView: View {
             workout.recomputeTotalVolume()
             refreshLiveStats()
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
     }
 
@@ -1314,7 +1314,7 @@ struct ActiveWorkoutLoggerView: View {
         we.supersetGroup = group
         we.updatedAt = Date()
         compactSupersetPositions()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState()
     }
 
@@ -1324,7 +1324,7 @@ struct ActiveWorkoutLoggerView: View {
             exercise.updatedAt = Date()
         }
         compactSupersetPositions()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState()
     }
 
@@ -1431,7 +1431,7 @@ struct ActiveWorkoutLoggerView: View {
         guard !isHistoricalEdit, !showRPEInLogger else { return }
         guard WorkoutEffortPolicy.removeEffort(from: workout) else { return }
         workout.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         publishWorkoutChange()
     }
 
@@ -1476,10 +1476,10 @@ struct ActiveWorkoutLoggerView: View {
     private func saveHistoricalEdit() {
         workout.recomputeTotalVolume()
         workout.updatedAt = .now
-        if (try? modelContext.save()) != nil {
+        modelContext.saveUserChanges {
             BackupScheduler.shared.noteLogDataChanged()
+            dismiss()
         }
-        dismiss()
     }
 }
 
@@ -1942,8 +1942,11 @@ private struct PostWorkoutSummaryView: View {
            let routineID = workout.routineID,
            let routine = fetchRoutine(id: routineID) {
             RoutineChangeSync.apply(plan, to: routine, from: workout, in: modelContext)
-            try? modelContext.save()
         }
+        // WorkoutFinisher's terminal save commits the routine update and the
+        // completed workout together. Keeping one durability boundary avoids
+        // reporting a stale first-save error if that same context succeeds a
+        // moment later while finishing the workout.
         commitSaveUnderGate()
     }
 
@@ -2665,7 +2668,7 @@ private struct ExerciseLogCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                try? modelContext.save()
+                modelContext.saveUserChanges()
             })
         }
         actions.append(ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) })
@@ -2929,7 +2932,7 @@ private struct ExerciseLogCard: View {
         // changing their global unit.
         exercise.preferredWeightUnit = next == Fmt.unit ? nil : next
         exercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     /// Warm-up ramp: the user's configured ramp (default 40/60/80% × 10/6/3,
@@ -3219,7 +3222,7 @@ private struct ExerciseLogCard: View {
     }
 
     private func saveNow() {
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         onWorkoutChanged()
     }
 }

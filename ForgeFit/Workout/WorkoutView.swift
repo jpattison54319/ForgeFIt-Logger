@@ -155,12 +155,14 @@ struct WorkoutHomeView: View {
         showsOnHome: Bool? = nil,
         showsFolderHeader: Bool? = nil
     ) {
-        try? MicrocycleTrackingService.setPresentation(
-            tracking,
-            showsOnHome: showsOnHome,
-            showsFolderHeader: showsFolderHeader,
-            in: modelContext
-        )
+        PersistentChangeSaveCenter.shared.perform {
+            try MicrocycleTrackingService.setPresentation(
+                tracking,
+                showsOnHome: showsOnHome,
+                showsFolderHeader: showsFolderHeader,
+                in: modelContext
+            )
+        }
     }
 
     var body: some View {
@@ -869,10 +871,17 @@ struct WorkoutHomeView: View {
 
     private func delete(_ routine: RoutineModel) {
         let now = Date()
-        try? RoutineAlternationService.removeAll(containing: routine.id, in: modelContext, now: now)
-        routine.updatedAt = now
-        routine.deletedAt = now
-        save()
+        PersistentChangeSaveCenter.shared.perform {
+            try RoutineAlternationService.removeAll(
+                containing: routine.id,
+                in: modelContext,
+                now: now,
+                saveChanges: false
+            )
+            routine.updatedAt = now
+            routine.deletedAt = now
+            try modelContext.save()
+        }
     }
 
     private func duplicate(_ source: RoutineModel) {
@@ -881,7 +890,7 @@ struct WorkoutHomeView: View {
     }
 
     private func save() {
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     // MARK: - Archive
@@ -894,9 +903,10 @@ struct WorkoutHomeView: View {
     }
 
     private func archiveFolder(_ folder: RoutineFolderModel) {
-        try? RoutineArchiver.archive(folder, in: modelContext)
-        clearActivePrefsIfArchived()
-        save()
+        PersistentChangeSaveCenter.shared.perform({
+            try RoutineArchiver.archive(folder, in: modelContext)
+            try modelContext.save()
+        }, onSuccess: clearActivePrefsIfArchived)
     }
 
     /// Archiving a mesocycle cascades to its microcycles, so either active

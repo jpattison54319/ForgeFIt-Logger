@@ -46,7 +46,10 @@ private struct IntervalSplitsEditor: View {
                         HStack(spacing: Space.md) {
                             TextField("Label", text: Binding(
                                 get: { split.label ?? "" },
-                                set: { split.label = $0.isEmpty ? nil : $0 }
+                                set: {
+                                    split.label = $0.isEmpty ? nil : $0
+                                    session.updatedAt = .now
+                                }
                             ))
                             .font(.system(size: 15, weight: .semibold))
                             Spacer()
@@ -72,11 +75,7 @@ private struct IntervalSplitsEditor: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        if let failure = modelContext.saveReportingFailure() {
-                            saveError = failure
-                        } else {
-                            dismiss()
-                        }
+                        modelContext.saveUserChanges(onSuccess: dismiss.callAsFunction)
                     }
                     .font(.bodyStrong)
                 }
@@ -88,6 +87,11 @@ private struct IntervalSplitsEditor: View {
                 Button("OK", role: .cancel) { saveError = nil }
             } message: {
                 Text(saveError ?? "")
+            }
+            // A sheet swipe is still a navigation exit. Commit label edits
+            // there too instead of relying on SwiftData's eventual autosave.
+            .onDisappear {
+                if modelContext.hasChanges { modelContext.saveUserChanges() }
             }
         }
     }

@@ -24,8 +24,8 @@ final class CardioHistoryEditUITests: XCTestCase {
         ]
         app.launch()
 
-        // Profile → History. "See all workouts" sits at the bottom of a lazy
-        // list — off-screen rows aren't in the hierarchy until scrolled to.
+        // Profile → History. "See all" sits in the Workouts section header,
+        // which remains off-screen until the lazy profile content is scrolled.
         // `--reset-store --seed-history` deliberately rebuilds the complete
         // exercise catalog plus 120 sessions before applying `initialTab`.
         // When a preceding UI run leaves a live workout in the store, Home
@@ -36,7 +36,7 @@ final class CardioHistoryEditUITests: XCTestCase {
             app.staticTexts["Profile"].firstMatch.waitForExistence(timeout: 45),
             "Expected the seeded profile after launch reset completed."
         )
-        let seeAll = app.staticTexts["See all workouts"].firstMatch
+        let seeAll = element(app, "profile-see-all-workouts")
         var swipes = 0
         while !(seeAll.exists && seeAll.isHittable), swipes < 14 {
             app.swipeUp()

@@ -216,7 +216,7 @@ struct ConditioningWorkoutView: View {
             workout.conditioningResultJSON = resultJSON
         }
         workout.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState(policy: .immediate)
         WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
     }
@@ -330,7 +330,7 @@ struct ConditioningWorkoutView: View {
             block.updatedAt = .now
             completeBlockSession(block)
             workout.updatedAt = .now
-            try? modelContext.save()
+            modelContext.saveUserChanges()
             showScore = false
             onBlockCompleted?()
             return

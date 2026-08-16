@@ -326,7 +326,7 @@ struct YogaBlockCard: View {
             linkedSession.durationSeconds = plan.flatMap { $0.totalSeconds > 0 ? $0.totalSeconds : nil }
             linkedSession.yogaStyleRaw = plan?.styleRaw
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         workoutExercise = anchor
         session = linkedSession
     }
@@ -347,7 +347,7 @@ struct YogaBlockCard: View {
             session.startedAt = now
         }
         block.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
         showPlayer = true
         WatchLink.shared.publishState()

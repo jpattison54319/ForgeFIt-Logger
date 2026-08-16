@@ -170,11 +170,12 @@ nonisolated enum WrappedReportService {
 
     /// Opening the report (any page) counts as viewed — the Home card keys
     /// off this; the report stays permanently reachable from Profile.
+    @MainActor
     static func markViewed(_ report: WrappedReportModel, in context: ModelContext, now: Date = Date()) {
         guard report.viewedAt == nil else { return }
         report.viewedAt = now
         report.updatedAt = now
-        try? context.save()
+        context.saveUserChanges()
     }
 
     /// Human title like "June Wrapped" / "2026 Wrapped".

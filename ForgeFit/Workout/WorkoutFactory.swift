@@ -49,7 +49,7 @@ enum WorkoutFactory {
             sourceDevice: "iphone"
         )
         context.insert(workout)
-        try? context.save()
+        context.saveUserChanges()
         return workout
     }
 
@@ -242,7 +242,7 @@ enum WorkoutFactory {
             to: workout, routine: routine, exercises: exercises, in: context,
             heldExerciseIDs: holds.ids, holdReasons: holds.reasons
         )
-        try? context.save()
+        context.saveUserChanges()
         return workout
     }
 
@@ -295,7 +295,7 @@ enum WorkoutFactory {
             blocks: [block]
         )
         context.insert(workout)
-        try? context.save()
+        context.saveUserChanges()
         return workout
     }
 
@@ -322,7 +322,7 @@ enum WorkoutFactory {
             cardioSessions: [cardioSession]
         )
         context.insert(workout)
-        try? context.save()
+        context.saveUserChanges()
         return workout
     }
 }

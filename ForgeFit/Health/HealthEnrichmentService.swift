@@ -105,7 +105,7 @@ final class HealthEnrichmentService {
             workout.recomputeTotalVolume()
         }
 
-        try? context.save()
+        context.saveUserChanges()
         return summary
     }
 }

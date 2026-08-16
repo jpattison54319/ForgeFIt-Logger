@@ -269,7 +269,7 @@ struct YogaFlowBuilderView: View {
             planJSON: json,
             position: (savedFlows.map(\.position).max() ?? -1) + 1
         ))
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         newFlowName = ""
     }
 

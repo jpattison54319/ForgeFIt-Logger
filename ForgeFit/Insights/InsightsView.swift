@@ -899,7 +899,7 @@ private struct ExerciseUnitSettingsCard: View {
             set: { newValue in
                 exercise.preferredWeightUnit = newValue
                 exercise.updatedAt = Date()
-                try? modelContext.save()
+                modelContext.saveUserChanges()
             }
         )
     }

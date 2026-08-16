@@ -23,6 +23,7 @@ struct RoutineSnapshot: Equatable {
         let plannedMiniSetCount: Int?
         let plannedMiniRepsJSON: String?
 
+        @MainActor
         init(of set: RoutineSetModel) {
             id = set.id
             position = set.position
@@ -53,6 +54,7 @@ struct RoutineSnapshot: Equatable {
         let yogaFlowJSON: String?
         let sets: [SetSnapshot]
 
+        @MainActor
         init(of exercise: RoutineExerciseModel) {
             id = exercise.id
             exerciseID = exercise.exerciseID
@@ -72,6 +74,7 @@ struct RoutineSnapshot: Equatable {
         let planJSON: String?
         let createdAt: Date
 
+        @MainActor
         init(of block: RoutineBlockModel) {
             id = block.id
             kindRaw = block.kindRaw
@@ -87,6 +90,7 @@ struct RoutineSnapshot: Equatable {
     let exercises: [ExerciseSnapshot]
     let blocks: [BlockSnapshot]
 
+    @MainActor
     init(of routine: RoutineModel) {
         name = routine.name
         notes = routine.notes
@@ -99,7 +103,12 @@ struct RoutineSnapshot: Equatable {
     /// place (keyed by id), recreates deleted ones with their original ids, and
     /// deletes anything added since the snapshot.
     @MainActor
-    func restore(onto routine: RoutineModel, in context: ModelContext) {
+    @discardableResult
+    func restore(
+        onto routine: RoutineModel,
+        in context: ModelContext,
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
         routine.name = name
         routine.notes = notes
         routine.conditioningPlanJSON = conditioningPlanJSON
@@ -159,7 +168,7 @@ struct RoutineSnapshot: Equatable {
         }
         routine.blocks = restoredBlocks
         routine.updatedAt = Date()
-        try? context.save()
+        return context.saveUserChanges(onSuccess: onCommit)
     }
 
     @MainActor

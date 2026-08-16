@@ -11,7 +11,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
     }
 
     /// Today already produced a render → reopening paints real numbers
-    /// immediately: no "Loading" tiles, recommendation intact. Workout history
+    /// immediately: no "Loading" tiles, recommendation cache intact. Workout history
     /// is seeded deliberately: with workouts present the PRE-refresh strain
     /// engine returns a real 0.0 (zero training load, no movement data yet)
     /// rather than nil, and an ungated recording pass would stomp the day's
@@ -26,6 +26,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
             "--seed-home-dashboard-cache",
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
+            "-home_daily_recommendation", "YES",
         ]
         app.launch()
 

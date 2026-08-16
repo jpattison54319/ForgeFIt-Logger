@@ -89,7 +89,9 @@ struct RoutineEditorView: View {
             if phase != .active { flushPendingSave() }
         }
         .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
-            Button("Save Changes") { saveNow(); dismiss() }
+            Button("Save Changes") {
+                saveNow(onCommit: dismiss.callAsFunction)
+            }
             Button("Discard Changes", role: .destructive) {
                 // A queued debounced save must not fire after the restore and
                 // persist the very edits being thrown away.
@@ -100,8 +102,11 @@ struct RoutineEditorView: View {
                     // discarding means it shouldn't exist at all.
                     discardNewRoutine()
                 } else {
-                    if let entrySnapshot { entrySnapshot.restore(onto: routine, in: modelContext) }
-                    dismiss()
+                    entrySnapshot?.restore(
+                        onto: routine,
+                        in: modelContext,
+                        onCommit: dismiss.callAsFunction
+                    )
                 }
             }
             Button("Keep Editing", role: .cancel) {}
@@ -185,11 +190,13 @@ struct RoutineEditorView: View {
                     VStack(alignment: .leading, spacing: Space.md) {
                         FieldLabel("Routine name")
                         DarkTextField(text: $routine.name, placeholder: "Routine name")
+                            .onChange(of: routine.name) { _, _ in save() }
                         FieldLabel("Notes")
                         DarkTextField(text: Binding(
                             get: { routine.notes ?? "" },
                             set: { routine.notes = $0.isEmpty ? nil : $0 }
                         ), placeholder: "Add notes", axis: .vertical)
+                            .onChange(of: routine.notes) { _, _ in save() }
                     }
                 }
 
@@ -307,8 +314,7 @@ struct RoutineEditorView: View {
             Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
             Button {
-                saveNow()
-                dismiss()
+                saveNow(onCommit: dismiss.callAsFunction)
             } label: {
                 Text("Save")
                     .font(.bodyStrong)
@@ -517,7 +523,7 @@ struct RoutineEditorView: View {
         }
         for (index, item) in orderedItems.enumerated() { item.position = index }
         routine.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     /// Debounced, matching the live logger's save discipline: a synchronous
@@ -551,9 +557,12 @@ struct RoutineEditorView: View {
         saveNow()
     }
 
-    private func saveNow() {
+    @discardableResult
+    private func saveNow(
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
         routine.updatedAt = Date()
-        try? modelContext.save()
+        return modelContext.saveUserChanges(onSuccess: onCommit)
     }
 
     /// A brand-new routine the user backs out of is junk — soft-delete it
@@ -563,8 +572,7 @@ struct RoutineEditorView: View {
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
-        _ = modelContext.saveReportingFailure()
-        dismiss()
+        modelContext.saveUserChanges(onSuccess: dismiss.callAsFunction)
     }
 
     private func nextSupersetGroup() -> Int {
@@ -946,7 +954,7 @@ private struct ExerciseEditRow: View {
     }
 
     private func saveNow() {
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func addDropSet(below set: RoutineSetModel, index: Int) {

@@ -399,7 +399,7 @@ enum ExperimentUIStore {
         guard experiment.resultsViewedAt == nil else { return }
         experiment.resultsViewedAt = now
         experiment.updatedAt = now
-        try? context.save()
+        context.saveUserChanges()
     }
 
     static func headlineSelections(for experiment: ExperimentModel) -> [ExperimentMetricSelection] {

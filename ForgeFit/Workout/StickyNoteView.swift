@@ -77,7 +77,7 @@ struct StickyNoteView: View {
                         workoutExercise.notes = $0
                         workoutExercise.updatedAt = .now
                         syncPinnedIfNeeded()
-                        try? modelContext.save()
+                        modelContext.saveUserChanges()
                     }
                 ), axis: .vertical)
                 .font(.system(size: 15, weight: .medium))
@@ -129,7 +129,7 @@ struct StickyNoteView: View {
             onPinnedNoteChanged(nil)
         }
         workoutExercise.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func syncPinnedIfNeeded() {
@@ -193,7 +193,7 @@ struct StickyNoteView: View {
         }
         workoutExercise.notePinned = false
         workoutExercise.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

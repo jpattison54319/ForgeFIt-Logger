@@ -177,7 +177,8 @@ public enum RoutineAlternationService {
     public static func removeAll(
         containing routineID: UUID,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        saveChanges: Bool = true
     ) throws {
         let matches = live(try context.fetch(FetchDescriptor<RoutineAlternationModel>()))
             .filter { $0.ownerRoutineID == routineID || $0.partnerRoutineID == routineID }
@@ -185,7 +186,7 @@ public enum RoutineAlternationService {
             alternation.deletedAt = now
             alternation.updatedAt = now
         }
-        if !matches.isEmpty { try context.save() }
+        if saveChanges, !matches.isEmpty { try context.save() }
     }
 
     private static func liveRoutine(id: UUID, in routines: [RoutineModel]) -> RoutineModel? {

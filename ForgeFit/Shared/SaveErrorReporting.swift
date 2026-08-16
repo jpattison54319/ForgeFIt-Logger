@@ -2,6 +2,20 @@ import Foundation
 import SwiftData
 
 extension ModelContext {
+    /// Commit a user-authored change and surface a retryable app-wide error if
+    /// the store write fails. Pending edits are deliberately retained: a
+    /// shared-context rollback can also erase unrelated edits from another
+    /// keep-resident tab or sheet.
+    @MainActor
+    @discardableResult
+    func saveUserChanges(
+        onSuccess: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        PersistentChangeSaveCenter.shared.perform({ [self] in
+            try save()
+        }, onSuccess: onSuccess)
+    }
+
     /// Commit a user-initiated edit, reporting failure instead of swallowing
     /// it. On failure the context is rolled back so half-applied in-memory
     /// mutations can't ride along silently with a later unrelated save — the

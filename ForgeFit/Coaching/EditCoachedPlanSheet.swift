@@ -100,9 +100,9 @@ struct EditCoachedPlanSheet: View {
                             program,
                             weeks: isOpenEnded ? 0 : weeks,
                             weeklySessionTarget: sessionsPerWeek,
-                            in: modelContext
+                            in: modelContext,
+                            onCommit: dismiss.callAsFunction
                         )
-                        dismiss()
                     }
                     .accessibilityIdentifier("coach-edit-plan-save")
                 }

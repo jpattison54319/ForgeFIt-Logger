@@ -511,7 +511,7 @@ final class YogaFlowRunner {
             )
         }
         session.posesCompleted = plan.steps.count
-        try? context.save()
+        context.saveUserChanges()
         let completion = YogaGuidancePlanner.completionClip(
             sessionSeed: guidanceSeed,
             excludedClipIDs: YogaGuidanceHistory.recentClipIDs.union(plannedGuidanceIDs)
@@ -585,7 +585,7 @@ final class YogaFlowRunner {
         split.cardioSession = session
         context.insert(split)
         session.splits.append(split)
-        if persist { try? context.save() }
+        if persist { context.saveUserChanges() }
     }
 
     /// Distinct patterns: light tap for switching sides of the same pose,

@@ -76,7 +76,22 @@ struct ProfileView: View {
                 SectionHeader("Trophy case")
                 TrophyCaseCard(trophies: trophies)
 
-                SectionHeader("Workouts")
+                SectionHeader("Workouts") {
+                    if completed.count > 10 {
+                        NavigationLink(value: ProfileRoute.history) {
+                            HStack(spacing: Space.xs) {
+                                Text("See all")
+                                Image(systemName: "chevron.right")
+                            }
+                            .minimumTouchTarget()
+                        }
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("See all workouts")
+                        .accessibilityIdentifier("profile-see-all-workouts")
+                    }
+                }
                 if completed.isEmpty {
                     EmptyStateCard(title: "No workouts yet", message: "Your completed sessions will show up here.", systemImage: "dumbbell")
                 } else {
@@ -86,18 +101,6 @@ struct ProfileView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("profile-workout-\(workout.title ?? "Workout")")
-                    }
-                    if completed.count > 10 {
-                        NavigationLink(value: ProfileRoute.history) {
-                            Card(padding: Space.md) {
-                                HStack {
-                                    Text("See all workouts").font(.bodyStrong).foregroundStyle(theme.accent)
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }

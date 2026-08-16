@@ -355,7 +355,7 @@ final class AppStoreCaptureUITests: XCTestCase {
 
         guard tap(app, "tab-profile") else { return }
         settle(2.5)
-        guard scrollToAndTapText(app, "See all workouts", maxSwipes: 14) else {
+        guard scrollToAndTap(app, "profile-see-all-workouts", maxSwipes: 14) else {
             shoot("dbg-profile-no-see-all")
             dumpTree(app, "profile-bottom")
             return
@@ -459,13 +459,13 @@ final class AppStoreCaptureUITests: XCTestCase {
         let app = launchDemoApp(resetStore: false)
         settle(2)
 
-        // History first, charts last: reaching "See all workouts" costs a
+        // History first, charts last: reaching the Workouts header costs a
         // dozen swipes down the Profile screen, and putting that at the front
         // keeps the expensive navigation outside the 30-second window that
         // actually ships.
         _ = tap(app, "tab-profile")
         settle(1.5)
-        _ = scrollToAndTapText(app, "See all workouts", maxSwipes: 14)
+        _ = scrollToAndTap(app, "profile-see-all-workouts", maxSwipes: 14)
         settle(3.5)
         slowScroll(app, distance: 0.4)
         settle(3)

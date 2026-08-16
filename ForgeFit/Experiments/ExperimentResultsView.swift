@@ -1029,7 +1029,7 @@ struct ExperimentResultsView: View {
         }
         experiment.savedComparisonJSON = json
         experiment.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

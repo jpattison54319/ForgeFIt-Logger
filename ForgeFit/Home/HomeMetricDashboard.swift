@@ -683,12 +683,22 @@ struct TrainingLoadGauge: View {
             }
             .frame(height: 6)
 
-            Text(detail)
-                .font(.system(size: 10))
-                .foregroundStyle(theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            if comparison.state != .ready || FeatureFlags.trainingLoadMethodDetail {
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("home-training-load-detail")
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Training load, \(label). \(detail)")
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        if comparison.state == .ready, !FeatureFlags.trainingLoadMethodDetail {
+            return "Training load, \(label)."
+        }
+        return "Training load, \(label). \(detail)"
     }
 }

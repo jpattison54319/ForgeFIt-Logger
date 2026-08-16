@@ -672,7 +672,7 @@ struct IntervalPlanBuilderView: View {
         guard !trimmed.isEmpty, plan.isMeaningful, let json = plan.encodedJSON() else { return }
         let preset = IntervalPresetModel(userID: ForgeFitDemo.userID, name: trimmed, planJSON: json)
         modelContext.insert(preset)
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func stepZoneRow(_ label: String, selection: Binding<Int>) -> some View {
@@ -1178,6 +1178,6 @@ private struct IntervalPresetManagerView: View {
             preset.deletedAt = now
             preset.updatedAt = now
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }

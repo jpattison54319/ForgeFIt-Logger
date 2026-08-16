@@ -122,7 +122,7 @@ struct CardioExerciseCard: View {
         plan.hrZoneTarget = zone
         workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
         workoutExercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState()
     }
 
@@ -193,7 +193,7 @@ struct CardioExerciseCard: View {
             IntervalPlanBuilderView(planJSON: workoutExercise.intervalPlanJSON) { json in
                 workoutExercise.intervalPlanJSON = json
                 workoutExercise.updatedAt = Date()
-                try? modelContext.save()
+                modelContext.saveUserChanges()
                 WatchLink.shared.publishState()
             }
         }
@@ -216,7 +216,7 @@ struct CardioExerciseCard: View {
     private func setGoalOpen() {
         workoutExercise.intervalPlanJSON = nil
         workoutExercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState()
     }
 
@@ -226,7 +226,7 @@ struct CardioExerciseCard: View {
         // lock on top of steps.
         workoutExercise.intervalPlanJSON = IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON()
         workoutExercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         WatchLink.shared.publishState()
     }
 
@@ -631,7 +631,7 @@ struct CardioExerciseCard: View {
         if providesGPSDistance {
             CardioRouteRecorder.shared.start(session: session)
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         // Structured session: begin the step engine with the segment. The
         // runner drives the zone guard per step (work Z4, recover Z3...).
         if let planJSON = workoutExercise.intervalPlanJSON {
@@ -668,7 +668,7 @@ struct CardioExerciseCard: View {
             at: end
         )
         CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
@@ -756,7 +756,7 @@ struct CardioExerciseCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                try? modelContext.save()
+                modelContext.saveUserChanges()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -792,7 +792,7 @@ struct CardioExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         session = new
     }
 
@@ -846,7 +846,7 @@ struct CardioExerciseCard: View {
         }
         workoutExercise.updatedAt = Date()
         workout.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

@@ -43,4 +43,33 @@ enum FeatureFlags {
     nonisolated static var coachDoseReview: Bool {
         UserDefaults.standard.bool(forKey: "coach_dose_review")
     }
+
+    /// Home's expandable daily recommendation. Held OFF while ForgeFit moves
+    /// away from recommendation-led presentation. Recovery data and the
+    /// recommendation engine remain intact for the metric tiles, detail views,
+    /// notifications, widgets, and a possible future return of this card.
+    nonisolated static var homeDailyRecommendation: Bool {
+        UserDefaults.standard.bool(forKey: "home_daily_recommendation")
+    }
+
+    /// The large suggested-routine card above Home's quick-launch tiles. Held
+    /// OFF so the workout entry point is the neutral "Quick start" collection.
+    /// The suggestion and launch path remain intact behind this one gate.
+    nonisolated static var homeSuggestedWorkout: Bool {
+        UserDefaults.standard.bool(forKey: "home_suggested_workout")
+    }
+
+    /// The explanatory sentence beneath the green action on Recovery Today.
+    /// The action remains visible; only the supporting recommendation copy is
+    /// held back.
+    nonisolated static var recoveryActionDetail: Bool {
+        UserDefaults.standard.bool(forKey: "recovery_action_detail")
+    }
+
+    /// The CR10 methodology line under a ready weekly-load comparison. Empty
+    /// and building states keep their explanations because those communicate
+    /// why a comparison is unavailable.
+    nonisolated static var trainingLoadMethodDetail: Bool {
+        UserDefaults.standard.bool(forKey: "training_load_method_detail")
+    }
 }

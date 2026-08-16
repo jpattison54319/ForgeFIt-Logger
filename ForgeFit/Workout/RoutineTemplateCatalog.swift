@@ -129,7 +129,8 @@ enum RoutineTemplateCatalog {
         _ template: RoutineTemplate,
         folderID: UUID?,
         existingRoutines: [RoutineModel],
-        in context: ModelContext
+        in context: ModelContext,
+        saveChanges: Bool = true
     ) -> RoutineModel {
         let name = uniqueName(template.name, existingRoutines: existingRoutines)
         let routine = RoutineModel(
@@ -159,7 +160,7 @@ enum RoutineTemplateCatalog {
             return exercise
         }
         context.insert(routine)
-        try? context.save()
+        if saveChanges { context.saveUserChanges() }
         return routine
     }
 
@@ -170,7 +171,8 @@ enum RoutineTemplateCatalog {
     static func importProgram(
         _ program: RoutineProgramTemplate,
         templates: [RoutineTemplate],
-        in context: ModelContext
+        in context: ModelContext,
+        saveChanges: Bool = true
     ) -> RoutineFolderModel? {
         let days = program.routines(from: templates)
         guard !days.isEmpty else { return nil }
@@ -187,10 +189,16 @@ enum RoutineTemplateCatalog {
 
         var existingRoutines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
         for day in days {
-            let routine = importTemplate(day, folderID: folder.id, existingRoutines: existingRoutines, in: context)
+            let routine = importTemplate(
+                day,
+                folderID: folder.id,
+                existingRoutines: existingRoutines,
+                in: context,
+                saveChanges: false
+            )
             existingRoutines.append(routine)
         }
-        try? context.save()
+        if saveChanges { context.saveUserChanges() }
         return folder
     }
 

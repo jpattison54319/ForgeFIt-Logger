@@ -13,33 +13,31 @@ struct MicrocycleDayStrip: View {
 
     var body: some View {
         if isCompact {
-            GeometryReader { proxy in
-                let markerWidth = compactMarkerWidth(availableWidth: proxy.size.width)
-                let targetWidth = max(TouchTarget.minimum, markerWidth)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: compactTargetSpacing(availableWidth: proxy.size.width, targetWidth: targetWidth)) {
-                        ForEach(days, id: \.date) { day in
-                            Button {
-                                onSelectDay(day.date)
-                            } label: {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(fill(for: day))
-                                    .strokeBorder(
-                                        day.isToday ? theme.accent : stroke(for: day.status),
-                                        lineWidth: day.isToday ? 2 : 1
-                                    )
-                                    .frame(width: markerWidth, height: day.isToday ? 10 : 8)
-                                    .frame(width: targetWidth, height: TouchTarget.minimum)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(accessibilityLabel(for: day))
-                            .accessibilityHint(accessibilityHint(for: day.status))
-                        }
+            MicrocycleCompactDayLayout {
+                ForEach(days, id: \.date) { day in
+                    Button {
+                        onSelectDay(day.date)
+                    } label: {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(fill(for: day))
+                            .strokeBorder(
+                                day.isToday ? theme.accent : stroke(for: day.status),
+                                lineWidth: day.isToday ? 2 : 1
+                            )
+                            .frame(height: day.isToday ? 10 : 8)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: TouchTarget.minimum,
+                                maxHeight: TouchTarget.minimum
+                            )
+                            .padding(.horizontal, 2)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(for: day))
+                    .accessibilityHint(accessibilityHint(for: day.status))
                 }
             }
-            .frame(height: TouchTarget.minimum)
             .accessibilityElement(children: .contain)
         } else {
             LazyVGrid(
@@ -68,20 +66,6 @@ struct MicrocycleDayStrip: View {
             restDays: restDays,
             now: now
         )
-    }
-
-    /// Keep the existing compact markers visually the same size. When a long
-    /// cycle would squeeze their separate hit regions below 44 points, only
-    /// the clear spacing grows and the strip scrolls horizontally.
-    private func compactMarkerWidth(availableWidth: CGFloat) -> CGFloat {
-        let count = max(days.count, 1)
-        let spacing: CGFloat = days.count > 14 ? 2 : Space.xs
-        return max(2, (availableWidth - spacing * CGFloat(count - 1)) / CGFloat(count))
-    }
-
-    private func compactTargetSpacing(availableWidth: CGFloat, targetWidth: CGFloat) -> CGFloat {
-        guard days.count > 1 else { return 0 }
-        return max(0, (availableWidth - targetWidth * CGFloat(days.count)) / CGFloat(days.count - 1))
     }
 
     private func dayCell(_ day: MicrocycleDayPresentation) -> some View {

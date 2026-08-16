@@ -144,16 +144,23 @@ struct CoachCornerView: View {
             titleVisibility: .visible
         ) {
             Button("Stop Coaching", role: .destructive) {
-                CoachPlanService.stopCoaching(in: modelContext)
-                refreshWeeklyReview()
+                CoachPlanService.stopCoaching(
+                    in: modelContext,
+                    onCommit: refreshWeeklyReview
+                )
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The coach stops tracking your weekly target. Your routines and history stay.")
         }
         .sheet(item: $attachFolderTarget) { folder in
-            AttachPlanSheet(folder: folder) { sessionsPerWeek in
-                CoachPlanService.attachPlan(folder: folder, sessionsPerWeek: sessionsPerWeek, in: modelContext)
+            AttachPlanSheet(folder: folder) { sessionsPerWeek, onCommit in
+                CoachPlanService.attachPlan(
+                    folder: folder,
+                    sessionsPerWeek: sessionsPerWeek,
+                    in: modelContext,
+                    onCommit: onCommit
+                )
             }
         }
         .sheet(item: $reviewRequest) { request in
@@ -668,7 +675,7 @@ private struct AttachPlanSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     let folder: RoutineFolderModel
-    let onConfirm: (Int) -> Void
+    let onConfirm: (Int, @escaping () -> Void) -> Void
 
     @State private var sessionsPerWeek = 3
 
@@ -691,8 +698,7 @@ private struct AttachPlanSheet: View {
                 }
                 Spacer()
                 PrimaryButton(title: "Start Coaching This Plan", systemImage: "checkmark.circle.fill") {
-                    onConfirm(sessionsPerWeek)
-                    dismiss()
+                    onConfirm(sessionsPerWeek, dismiss.callAsFunction)
                 }
                 .accessibilityIdentifier("coach-corner-attach-confirm")
             }

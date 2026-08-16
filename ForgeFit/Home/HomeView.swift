@@ -96,7 +96,7 @@ struct HomeView: View {
     @State private var dashboardIsComputing = false
     @State private var dashboardMaintenanceTask: Task<Void, Never>?
     @State private var targetRecoveryMemo = Memo<String, RoutineDoseContext>()
-    @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
+    @State private var weekMemo = Memo<Int, HomeWeekMetrics.Summary>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var todayCheckin: DailyCheckinModel? {
@@ -418,17 +418,19 @@ struct HomeView: View {
                         connectHealthPrompt
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
-                        if hasReadinessSignal {
-                            RecoveryHeroCard(
-                                report: recovery,
-                                source: dashboardSource,
-                                isRefreshing: dashboardIsRefreshing
-                            )
-                            .accessibilityIdentifier("home-guidance")
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                        } else {
-                            readinessEmptyState
+                        if FeatureFlags.homeDailyRecommendation {
+                            if hasReadinessSignal {
+                                RecoveryHeroCard(
+                                    report: recovery,
+                                    source: dashboardSource,
+                                    isRefreshing: dashboardIsRefreshing
+                                )
+                                .accessibilityIdentifier("home-guidance")
                                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            } else {
+                                readinessEmptyState
+                                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            }
                         }
 
                         HomeMetricGrid(
@@ -519,7 +521,20 @@ struct HomeView: View {
                     }
 
                     if !recentCompleted.isEmpty {
-                        SectionHeader("Recent")
+                        SectionHeader("Recent") {
+                            NavigationLink(value: HomeRoute.history) {
+                                HStack(spacing: Space.xs) {
+                                    Text("See all")
+                                    Image(systemName: "chevron.right")
+                                }
+                                .minimumTouchTarget()
+                            }
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("See all workouts")
+                            .accessibilityIdentifier("home-see-all-workouts")
+                        }
                         ForEach(recentCompleted) { workout in
                             NavigationLink(value: workout) {
                                 WorkoutFeedRow(workout: workout, analytics: analytics)
@@ -551,6 +566,7 @@ struct HomeView: View {
                 case .strain: StrainDetailView(report: dailyStrain)
                 case .health: HealthDetailView(report: recovery, metrics: healthMetrics.metrics)
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .microcycle(let trackingID):
                     MicrocycleDetailView(trackingID: trackingID)
                 }
@@ -723,11 +739,13 @@ struct HomeView: View {
         _ tracking: MicrocycleTrackingModel,
         showsOnHome: Bool
     ) {
-        try? MicrocycleTrackingService.setPresentation(
-            tracking,
-            showsOnHome: showsOnHome,
-            in: modelContext
-        )
+        PersistentChangeSaveCenter.shared.perform {
+            try MicrocycleTrackingService.setPresentation(
+                tracking,
+                showsOnHome: showsOnHome,
+                in: modelContext
+            )
+        }
     }
 
     /// Shown in place of "Up next" when no routine exists yet — the way into
@@ -763,27 +781,29 @@ struct HomeView: View {
         healthConnected || !healthMetrics.metrics.isEmpty || todayDashboardCache != nil
     }
 
-    /// The workout entry point: what to do next, then the quick-start tiles.
+    /// The workout entry point: quick-launch tiles, with the existing suggested
+    /// workout retained behind a presentation flag for a possible return.
     /// Rendered near the top when the recovery dashboard is suppressed, in its
     /// usual place below the week card otherwise.
     @ViewBuilder
     private var trainingSurface: some View {
-        // "Jump back in" only when there is something to jump back
-        // into — a brand-new user gets "Get started" and a route
-        // into the program library instead of a dangling header.
-        SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
-        if let suggestion {
-            suggestionCard(
-                suggestion.routine,
-                reason: suggestion.reason,
-                alternatingWith: suggestion.alternatingWith
-            )
+        SectionHeader("Quick start") {
+            quickStartEditButton
+        }
+        if FeatureFlags.homeSuggestedWorkout {
+            if let suggestion {
+                suggestionCard(
+                    suggestion.routine,
+                    reason: suggestion.reason,
+                    alternatingWith: suggestion.alternatingWith
+                )
                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                 .transition(.opacity)
-        } else {
-            explorePromptCard
-                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                .transition(.opacity)
+            } else {
+                explorePromptCard
+                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    .transition(.opacity)
+            }
         }
         quickStart
     }
@@ -931,9 +951,16 @@ struct HomeView: View {
 
     private var weekCard: some View {
         let now = Date()
-        let interval = TrainingWeekSupport.interval(containing: now)
-        let week = weekMemo("\(AnalyticsFingerprint.of(workouts))|\(interval.start.timeIntervalSinceReferenceDate)") {
-            analytics.thisWeek()
+        let week = weekMemo(HomeWeekMetrics.fingerprint(
+            workouts: workouts,
+            exercises: exercises,
+            containing: now
+        )) {
+            HomeWeekMetrics.summary(
+                workouts: workouts,
+                exercises: exercises,
+                containing: now
+            )
         }
         let days = TrainingWeekSupport.days(workouts: workouts, containing: now)
         return Card {
@@ -956,10 +983,15 @@ struct HomeView: View {
                 TrainingLoadGauge(comparison: recovery.trainingLoad)
 
                 HStack {
-                    StatColumn(label: "Workouts", value: "\(week.workoutCount)")
-                    StatColumn(label: "Time", value: Fmt.durationShort(week.durationSeconds))
-                    StatColumn(label: "Volume", value: Fmt.volume(week.volume))
-                    StatColumn(label: "Sets", value: Fmt.sets(week.sets))
+                    ForEach(week.metrics) { metric in
+                        StatColumn(
+                            label: metric.label,
+                            value: metric.formatted(
+                                weightUnit: Fmt.unit,
+                                distanceUnit: Fmt.distanceUnit
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -1102,7 +1134,7 @@ struct HomeView: View {
         }
         model.tags = tags
         model.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         // Draft is cleared by the todayCheckinTags onChange once the write is
         // reflected, so the capsule never flickers back mid-commit.
     }
@@ -1271,96 +1303,96 @@ struct HomeView: View {
     }
 
     private var quickStart: some View {
-        VStack(spacing: Space.md) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: Space.md) {
-                    // Fixed leading tile, not part of the customizable/
-                    // reorderable quick-start actions (it's a fundamental
-                    // capability, not a preference) — folded in here instead
-                    // of its own full-width button so it stops competing
-                    // with the "Up next" suggestion's Start button above.
-                    QuickStartTile(
-                        title: "Empty",
-                        systemImage: "square.and.pencil",
-                        accessibilityIdentifier: "start-empty-workout",
-                        isEditing: false,
-                        isDragging: false,
-                        onTap: {
-                            appState.requestStart {
-                                _ = WorkoutFactory.startEmpty(in: modelContext)
-                                appState.showingLogger = true
-                            }
-                        },
-                        onLongPress: {},
-                        onRemove: {}
-                    )
-
-                    ForEach(quickStartActions) { action in
-                        QuickStartTile(
-                            title: title(for: action),
-                            systemImage: systemImage(for: action),
-                            accessibilityIdentifier: accessibilityIdentifier(for: action),
-                            isEditing: quickStartEditing,
-                            isDragging: draggedQuickStartAction == action,
-                            onTap: { start(action) },
-                            onLongPress: { withAnimation(.spring(duration: 0.28)) { quickStartEditing = true } },
-                            onRemove: { removeQuickStartAction(action) }
-                        )
-                        .onDrag {
-                            withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
-                            draggedQuickStartAction = action
-                            return NSItemProvider(object: action.id as NSString)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: Space.md) {
+                // Fixed leading tile, not part of the customizable/
+                // reorderable quick-start actions (it's a fundamental
+                // capability, not a preference) — folded in here instead
+                // of its own full-width button so it stops competing
+                // with the "Up next" suggestion's Start button above.
+                QuickStartTile(
+                    title: "Empty",
+                    systemImage: "square.and.pencil",
+                    accessibilityIdentifier: "start-empty-workout",
+                    isEditing: false,
+                    isDragging: false,
+                    onTap: {
+                        appState.requestStart {
+                            _ = WorkoutFactory.startEmpty(in: modelContext)
+                            appState.showingLogger = true
                         }
-                        .onDrop(
-                            of: [UTType.plainText],
-                            delegate: QuickStartReorderDropDelegate(
-                                target: action,
-                                draggedAction: $draggedQuickStartAction,
-                                moveAction: reorderQuickStartAction
-                            )
-                        )
-                    }
-
-                    Button {
-                        showQuickStartAdd = true
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 19, weight: .bold))
-                            Text("Add")
-                                .font(.tag)
-                        }
-                        .foregroundStyle(theme.textSecondary)
-                        .frame(width: 104, height: 76)
-                        .background(theme.surface.opacity(0.34))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                                .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
-                                .foregroundStyle(theme.separator)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-                    }
-                    .buttonStyle(PressableButtonStyle())
-                }
-            }
-            Button {
-                if quickStartEditing {
-                    dismissQuickStartEdit()
-                } else {
-                    withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
-                }
-            } label: {
-                Label(
-                    quickStartEditing ? "Done" : "Edit",
-                    systemImage: quickStartEditing ? "checkmark" : "pencil"
+                    },
+                    onLongPress: {},
+                    onRemove: {}
                 )
-                .minimumTouchTarget()
+
+                ForEach(quickStartActions) { action in
+                    QuickStartTile(
+                        title: title(for: action),
+                        systemImage: systemImage(for: action),
+                        accessibilityIdentifier: accessibilityIdentifier(for: action),
+                        isEditing: quickStartEditing,
+                        isDragging: draggedQuickStartAction == action,
+                        onTap: { start(action) },
+                        onLongPress: { withAnimation(.spring(duration: 0.28)) { quickStartEditing = true } },
+                        onRemove: { removeQuickStartAction(action) }
+                    )
+                    .onDrag {
+                        withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
+                        draggedQuickStartAction = action
+                        return NSItemProvider(object: action.id as NSString)
+                    }
+                    .onDrop(
+                        of: [UTType.plainText],
+                        delegate: QuickStartReorderDropDelegate(
+                            target: action,
+                            draggedAction: $draggedQuickStartAction,
+                            moveAction: reorderQuickStartAction
+                        )
+                    )
+                }
+
+                Button {
+                    showQuickStartAdd = true
+                } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 19, weight: .bold))
+                        Text("Add")
+                            .font(.tag)
+                    }
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 104, height: 76)
+                    .background(theme.surface.opacity(0.34))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                            .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
+                            .foregroundStyle(theme.separator)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                }
+                .buttonStyle(PressableButtonStyle())
             }
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(theme.accent)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityIdentifier("home-quick-start-edit")
         }
+    }
+
+    private var quickStartEditButton: some View {
+        Button {
+            if quickStartEditing {
+                dismissQuickStartEdit()
+            } else {
+                withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
+            }
+        } label: {
+            Label(
+                quickStartEditing ? "Done" : "Edit",
+                systemImage: quickStartEditing ? "checkmark" : "pencil"
+            )
+            .minimumTouchTarget()
+        }
+        .font(.system(size: 13, weight: .bold))
+        .foregroundStyle(theme.accent)
+        .accessibilityIdentifier("home-quick-start-edit")
     }
 
     private var quickStartActions: [HomeQuickStartAction] {
@@ -1457,7 +1489,7 @@ struct HomeView: View {
     private func createRoutine() -> RoutineModel {
         let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "New Routine", position: routines.count)
         modelContext.insert(routine)
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         addQuickStartAction(.routine(routine.id))
         return routine
     }
@@ -1469,6 +1501,7 @@ enum HomeRoute: Hashable {
     case strain
     case health
     case calendar
+    case history
     case microcycle(UUID)
 }
 

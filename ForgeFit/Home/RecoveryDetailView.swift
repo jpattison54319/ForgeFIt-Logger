@@ -52,7 +52,7 @@ struct RecoveryDetailView: View {
         }
         model.tags = tags
         model.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     /// Daily HRV over the last ~45 days with a source-pure 10th–90th
@@ -431,10 +431,13 @@ private struct RecoverySummaryCard: View {
                         }
                         .foregroundStyle(report.action.tint(in: theme))
 
-                        Text(report.preWorkoutAdjustment)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if FeatureFlags.recoveryActionDetail {
+                            Text(report.preWorkoutAdjustment)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("recovery-action-detail")
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

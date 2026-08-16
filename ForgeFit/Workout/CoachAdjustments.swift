@@ -252,7 +252,7 @@ enum CoachAdjustments {
             : "Coach-adjusted (\(draft.plan.action.title.lowercased())): \(draft.plan.summary)"
         workout.notes = [workout.notes, stamp].compactMap(\.self).filter { !$0.isEmpty }.joined(separator: "\n")
         workout.updatedAt = Date()
-        try? context.save()
+        context.saveUserChanges()
     }
 
     /// Short human summary of what an edited draft actually did, for the

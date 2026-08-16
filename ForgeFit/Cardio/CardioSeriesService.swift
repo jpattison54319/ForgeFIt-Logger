@@ -240,6 +240,6 @@ enum CardioSeriesService {
         if session.routePoints.count >= 2 {
             CardioRouteMath.replaceSplits(for: session, in: context)
         }
-        try? context.save()
+        context.saveUserChanges()
     }
 }

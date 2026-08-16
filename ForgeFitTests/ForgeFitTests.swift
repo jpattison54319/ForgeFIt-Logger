@@ -240,7 +240,14 @@ struct ForgeFitTests {
         ]
         let report = RecoveryEngine(workouts: workouts, exercises: [squat, curl, pushdown], now: now).report()
 
-        #expect(report.recovery.muscles.filter { $0.state.value != nil }.count == 3)
+        let scoredMuscles = Set(
+            report.recovery.muscles.compactMap { muscle in
+                muscle.state.value == nil ? nil : muscle.muscle
+            }
+        )
+        // Exact muscles remain represented even when the recovery model also
+        // adds their parent-region rollups (for example, arms and legs).
+        #expect(scoredMuscles.isSuperset(of: ["quadriceps", "biceps", "triceps"]))
         #expect(!report.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("fresh") })
 
         // Mixed picture: biceps trained yesterday → the named-muscle chip is

@@ -936,7 +936,7 @@ struct CreateExerciseView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Save" : "Create") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
                 }
             }
         }
@@ -1248,17 +1248,20 @@ struct CreateExerciseView: View {
             editing.classificationConfidence = 1.0
             editing.updatedAt = Date()
             upsertSanskritAlias(for: editing)
-            try? modelContext.save()
-            onCreate(editing)
+            modelContext.saveUserChanges {
+                onCreate(editing)
+                dismiss()
+            }
         } else {
             let exercise = ExerciseLibraryModel(ownerID: ForgeFitDemo.userID, name: name)
             apply(to: exercise)
             modelContext.insert(exercise)
             upsertSanskritAlias(for: exercise)
-            try? modelContext.save()
-            onCreate(exercise)
+            modelContext.saveUserChanges {
+                onCreate(exercise)
+                dismiss()
+            }
         }
-        dismiss()
     }
 
     /// Write the current form state onto an exercise model. Shared by the create

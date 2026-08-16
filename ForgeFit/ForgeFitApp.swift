@@ -4,6 +4,7 @@ import SwiftData
 
 @main
 struct ForgeFitApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var themeManager = ThemeManager()
     @State private var persistenceState: PersistenceLaunchState
 
@@ -49,6 +50,15 @@ struct ForgeFitApp: App {
                 case let .ready(container):
                     ContentView()
                         .modelContainer(container)
+                        // A last-resort durability boundary for any direct
+                        // model binding an editor forgot to commit itself.
+                        // Inactive arrives before iOS can suspend or replace
+                        // the process during an over-install.
+                        .onChange(of: scenePhase) { _, phase in
+                            guard phase != .active,
+                                  container.mainContext.hasChanges else { return }
+                            container.mainContext.saveUserChanges()
+                        }
                 case let .blocked(failure):
                     PersistenceRecoveryView(failure: failure) {
                         persistenceState = PersistenceBootstrap.makeContainer()
@@ -56,6 +66,7 @@ struct ForgeFitApp: App {
                 }
             }
             .environmentObject(themeManager)
+            .persistentChangeSaveAlert()
             // Dynamic Type is token-anchored (Theme.swift type ramp); the
             // ceiling keeps dense fixed-frame surfaces — the set-entry grid,
             // tab bar, and 44 pt headers usable at the largest audited size.

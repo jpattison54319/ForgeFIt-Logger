@@ -333,11 +333,13 @@ struct ArchiveView: View {
     // MARK: - Actions
 
     private func restore(_ item: ArchiveItem) {
-        switch item {
-        case .folder(let folder): try? RoutineArchiver.restore(folder, in: modelContext)
-        case .routine(let routine): try? RoutineArchiver.restore(routine, in: modelContext)
+        PersistentChangeSaveCenter.shared.perform {
+            switch item {
+            case .folder(let folder): try RoutineArchiver.restore(folder, in: modelContext)
+            case .routine(let routine): try RoutineArchiver.restore(routine, in: modelContext)
+            }
+            try modelContext.save()
         }
-        try? modelContext.save()
     }
 
     /// Same soft-delete semantics as the Workout tab: a hard delete would
@@ -346,7 +348,7 @@ struct ArchiveView: View {
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func delete(_ folder: RoutineFolderModel) {
@@ -361,7 +363,7 @@ struct ArchiveView: View {
         }
         folder.updatedAt = now
         folder.deletedAt = now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

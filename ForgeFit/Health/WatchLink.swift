@@ -430,7 +430,7 @@ final class WatchLink: NSObject {
             if completed, let workoutExercise = set.workoutExercise {
                 startRestIfNeeded(after: set, in: workoutExercise, active: active)
             }
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .updateSet(let setID, let weightKg, let reps):
@@ -441,7 +441,7 @@ final class WatchLink: NSObject {
             if let reps { set.reps = reps }
             set.recomputeDerivedMetrics()
             active?.recomputeTotalVolume()
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .updateStructuredSet(let setID, let update):
@@ -475,7 +475,7 @@ final class WatchLink: NSObject {
                     workoutExercise: workoutExercise
                 )
             }
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .startSetTimer(let setID, let durationSeconds, let endsAt):
@@ -497,7 +497,7 @@ final class WatchLink: NSObject {
                     }
                 )
             }
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .stopSetTimer(let setID, let elapsedSeconds):
@@ -506,14 +506,14 @@ final class WatchLink: NSObject {
                 RestTimerController.shared.skip()
             }
             set.durationSeconds = max(1, elapsedSeconds)
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .startCardio(let workoutExerciseID):
             if let active,
                let block = active.blocks.first(where: { $0.id == workoutExerciseID }) {
                 startWorkoutBlock(block, in: active, context: context)
-                try? context.save()
+                context.saveUserChanges()
                 publishState(policy: .immediate)
                 break
             }
@@ -538,7 +538,7 @@ final class WatchLink: NSObject {
             if library.map({ CardioKind.providesGPSDistance(name: $0.name, equipment: $0.equipment) }) == true {
                 CardioRouteRecorder.shared.start(session: session)
             }
-            try? context.save()
+            context.saveUserChanges()
             // A yoga session started from the wrist also starts the guided
             // flow on the phone (execution authority), so cues + pose
             // mirroring work exactly as a phone-started class.
@@ -689,7 +689,7 @@ final class WatchLink: NSObject {
             if next.status == .completed || next.status == .expired {
                 active.conditioningResultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
             }
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .conditioningBlockEvent(let blockID, let event):
@@ -742,7 +742,7 @@ final class WatchLink: NSObject {
                 completeBlockSession(block, in: active, context: context, endedAt: event.timestamp)
             }
             active.recomputeTotalVolume()
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
 
         case .finishWorkout(let workoutID, let metrics, let savedToHealth):
@@ -856,7 +856,7 @@ final class WatchLink: NSObject {
             block.progressJSON = next.encodedJSON()
             block.resultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
             completeBlockSession(block, in: workout, context: context, endedAt: event.timestamp)
-            try? context.save()
+            context.saveUserChanges()
             publishState(policy: .immediate)
             return
         }
@@ -1044,7 +1044,7 @@ final class WatchLink: NSObject {
     private func beginSession(for workout: WorkoutModel, in context: ModelContext) {
         _ = ReadinessSurfacePublisher.applyCachedStart(to: workout)
         LiveMetricsHub.shared.clearLiveMetrics()
-        try? context.save()
+        context.saveUserChanges()
         onWorkoutStartedFromWatch?()
         publishState(policy: .immediate)
     }

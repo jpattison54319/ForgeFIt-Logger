@@ -76,8 +76,8 @@ final class ForgeFitUITests: XCTestCase {
     /// nested inside the screen's vertical one, and XCUITest's built-in
     /// single-pass "scroll to visible" doesn't reliably resolve nested
     /// scroll axes (it can report a degenerate {-1,-1} hit point and fail).
-    /// Tries vertical first (content above quick-start varies: the readiness
-    /// card / "Jump back in" suggestion only render once there's data), then
+    /// Tries vertical first (content above quick-start varies with the recovery
+    /// dashboard and weekly cards), then
     /// horizontal (quick-start tile order is user-customizable and persists
     /// in UserDefaults across `--reset-store`, which only clears SwiftData).
     private func scrollUntilHittable(_ element: XCUIElement, in app: XCUIApplication, maxAttemptsPerAxis: Int = 6) {
@@ -272,6 +272,11 @@ final class ForgeFitUITests: XCTestCase {
         app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-homeQuickStartActions.v1", ""]
         app.launch()
 
+        let heading = app.staticTexts["Quick start"].firstMatch
+        XCTAssertTrue(heading.waitForExistence(timeout: 8), "Expected the neutral Quick start heading.")
+        XCTAssertFalse(app.staticTexts["Today's recommendation"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["start-suggested-routine-Full Body A"].firstMatch.exists)
+
         let edit = app.buttons["home-quick-start-edit"].firstMatch
         scrollUntilHittable(edit, in: app)
         XCTAssertTrue(edit.isHittable, "Expected a visible way to edit Home quick starts.")
@@ -297,8 +302,8 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(startRow.waitForExistence(timeout: 5), "Expected Row quick-start.")
         // Nested horizontal-in-vertical ScrollViews: XCUITest's single-pass
         // auto-scroll can fail to resolve both axes (surfaced as a degenerate
-        // {-1,-1} hit point) depending on what renders above quick-start
-        // (readiness card, "Jump back in" suggestion). Scroll explicitly first.
+        // {-1,-1} hit point) depending on what renders above quick-start.
+        // Scroll explicitly first.
         scrollUntilHittable(startRow, in: app)
         XCTAssertTrue(startRow.isHittable, "Expected the Row quick-start tile to be reachable by scrolling.")
         startRow.tap()
@@ -336,6 +341,11 @@ final class ForgeFitUITests: XCTestCase {
         tapWhenReady(save)
 
         XCTAssertTrue(app.descendants(matching: .any)["home-workout-Row"].waitForExistence(timeout: 5), "Expected Row cardio workout in recents.")
+        let seeAll = app.descendants(matching: .any)["home-see-all-workouts"].firstMatch
+        XCTAssertTrue(seeAll.waitForExistence(timeout: 3), "Expected See all in the Home Recent header.")
+        seeAll.tap()
+        XCTAssertTrue(app.textFields["history-search-field"].waitForExistence(timeout: 5),
+                      "Expected Home See all to open the full workout history.")
     }
 
     /// Recreates the production failure with two different values in one row:
@@ -754,25 +764,27 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHistorySearchFiltersAndPagination() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-history", "-weightUnitRaw", "kg"]
+        app.launchArguments = [
+            "--reset-store", "-didOnboard", "YES", "--seed-history",
+            "-weightUnitRaw", "kg", "-initialTab", "profile",
+        ]
         app.launch()
 
-        app.descendants(matching: .any)["tab-profile"].firstMatch.tap()
         XCTAssertTrue(
-            app.descendants(matching: .any)["home-workout-Push Day #120"].firstMatch.waitForExistence(timeout: 8),
+            app.descendants(matching: .any)["profile-workout-Push Day #120"].firstMatch.waitForExistence(timeout: 8),
             "Expected the Profile feed to render seeded recents before scrolling."
         )
 
         // Press-drag instead of swipeUp: a fast momentum swipe can misfire as
         // a tap on a feed row's NavigationLink and push a workout detail.
-        let seeAll = app.staticTexts["See all workouts"]
+        let seeAll = app.descendants(matching: .any)["profile-see-all-workouts"].firstMatch
         dragUp(app, until: seeAll)
-        XCTAssertTrue(seeAll.waitForExistence(timeout: 5), "Expected the See all workouts row at the end of the Profile feed.")
+        XCTAssertTrue(seeAll.waitForExistence(timeout: 5), "Expected See all in the Profile Workouts header.")
         seeAll.tap()
 
         // Scope every row assertion to `history-workout-` identifiers: the
         // Profile feed underneath stays in the NavigationStack's accessibility
-        // hierarchy with its own `home-workout-` copies of the same titles.
+        // hierarchy with its own `profile-workout-` copies of the same titles.
         let searchField = app.textFields["history-search-field"]
         let pushRow = app.descendants(matching: .any)["history-workout-Push Day #120"].firstMatch
         let pullRow = app.descendants(matching: .any)["history-workout-Pull Day #119"].firstMatch
@@ -1368,6 +1380,45 @@ final class ForgeFitUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: 5))
         XCTAssertEqual(marker.value as? String, "Purple")
+    }
+
+    /// Regression for a rename that looked correct in the live model but
+    /// reverted to the last store value when an over-install killed the app.
+    /// No structural edit and no explicit Save are allowed to mask the path.
+    @MainActor
+    func testRoutineRenameOnlyPersistsAcrossProcessRelaunch() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+        let newRoutine = app.buttons["new-routine-button"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(newRoutine)
+
+        let routineName = app.textFields["Routine name"].firstMatch
+        XCTAssertTrue(routineName.waitForExistence(timeout: 5))
+        tapWhenReady(routineName)
+        if let currentName = routineName.value as? String {
+            routineName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
+        }
+        routineName.typeText("Push 1 + mile")
+        tapWhenReady(app.buttons["Done"].firstMatch)
+
+        // Let the editor's deliberate idle-time commit run; there are no
+        // exercise/preset mutations whose saves could accidentally carry the
+        // rename along.
+        RunLoop.current.run(until: Date().addingTimeInterval(2.3))
+        app.terminate()
+
+        app.launchArguments = ["-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+        tapWhenReady(app.descendants(matching: .any)["tab-workout"].firstMatch)
+
+        XCTAssertTrue(
+            app.staticTexts["Push 1 + mile"].firstMatch.waitForExistence(timeout: 5),
+            "A text-only routine rename must survive a clean process relaunch."
+        )
     }
 
     /// Routine editor: exercises can be reordered (mirrors the live logger's
@@ -2557,7 +2608,7 @@ final class ForgeFitUITests: XCTestCase {
     @MainActor
     func testHomeRecommendationDisclosureCollapsesDetails() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES","--seed-partial-sleep-demo", "-didOnboard", "YES", "-weightUnitRaw", "kg", "-home_daily_recommendation", "YES"]
         app.launchEnvironment["FORGEFIT_PARTIAL_SLEEP_DEMO"] = "1"
         app.launch()
 
@@ -2576,7 +2627,8 @@ final class ForgeFitUITests: XCTestCase {
     }
 
     /// Home's weekly summary is a Sunday-to-Saturday completion calendar,
-    /// followed by the existing totals. Streak copy and controls are gone.
+    /// followed by adaptive activity metrics. Streak and duplicate workout
+    /// count copy are gone.
     @MainActor
     func testHomeWeekCardShowsCompletionCalendarWithoutStreaks() throws {
         let app = XCUIApplication()
@@ -2592,9 +2644,26 @@ final class ForgeFitUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["home-week-day-\(weekday)"].firstMatch.exists,
                           "Expected a circle for \(weekday).")
         }
-        let sunday = app.descendants(matching: .any)["home-week-day-sunday"].firstMatch
-        XCTAssertEqual(sunday.value as? String, "Workout completed")
+        XCTAssertTrue(app.descendants(matching: .any)["stat-time"].firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["stat-workouts"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Workouts"].exists)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'streak'")).firstMatch.exists)
+        XCTAssertFalse(
+            app.staticTexts.matching(
+                NSPredicate(format: "label BEGINSWITH[c] 'Session CR10'")
+            ).firstMatch.exists,
+            "The ready-state CR10 methodology sentence should stay hidden."
+        )
+
+        // The DEBUG fixture is seeded by the app's launch task, after the
+        // shell can already be visible to XCUITest. Wait for that persisted
+        // completion rather than sampling the first rendered frame.
+        let sunday = app.descendants(matching: .any)["home-week-day-sunday"].firstMatch
+        let completed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Workout completed"),
+            object: sunday
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
     }
 
     @MainActor

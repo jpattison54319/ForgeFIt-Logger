@@ -82,7 +82,7 @@ struct YogaExerciseCard: View {
                         session?.durationSeconds = updated.totalSeconds > 0 ? updated.totalSeconds : nil
                     }
                 }
-                try? modelContext.save()
+                modelContext.saveUserChanges()
                 WatchLink.shared.publishState()
             }
         }
@@ -402,7 +402,7 @@ struct YogaExerciseCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                try? modelContext.save()
+                modelContext.saveUserChanges()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -444,7 +444,7 @@ struct YogaExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         session = new
     }
 
@@ -461,7 +461,7 @@ struct YogaExerciseCard: View {
         let now = Date()
         session.liveStartedAt = now
         session.startedAt = now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
         YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
         showPlayer = true
         WatchLink.shared.publishState()
@@ -526,7 +526,7 @@ struct YogaExerciseCard: View {
 
     private func persist() {
         workoutExercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

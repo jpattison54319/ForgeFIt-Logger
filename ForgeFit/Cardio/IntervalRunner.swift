@@ -314,7 +314,7 @@ final class IntervalRunner {
         split.cardioSession = session
         context.insert(split)
         session.splits.append(split)
-        try? context.save()
+        context.saveUserChanges()
     }
 
     /// Haptic + sound + time-sensitive notification when a step changes, so

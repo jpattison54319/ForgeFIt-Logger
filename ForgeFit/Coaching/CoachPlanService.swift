@@ -103,13 +103,19 @@ enum CoachPlanService {
     static func confirmPlan(
         candidate: ProgramCandidate,
         answers: CoachSetupAnswers,
-        in context: ModelContext
+        in context: ModelContext,
+        onCommit: @escaping () -> Void = {}
     ) -> CoachedProgramModel? {
         guard let program = RoutineTemplateCatalog.loadPrograms().first(where: { $0.id == candidate.id }) else {
             return nil
         }
         let templates = RoutineTemplateCatalog.load()
-        guard let folder = RoutineTemplateCatalog.importProgram(program, templates: templates, in: context) else {
+        guard let folder = RoutineTemplateCatalog.importProgram(
+            program,
+            templates: templates,
+            in: context,
+            saveChanges: false
+        ) else {
             return nil
         }
 
@@ -126,9 +132,10 @@ enum CoachPlanService {
             isActive: true
         )
         context.insert(coached)
-        try? context.save()
-
-        syncActiveCycleFolders(folder)
+        context.saveUserChanges {
+            syncActiveCycleFolders(folder)
+            onCommit()
+        }
         return coached
     }
 
@@ -139,7 +146,8 @@ enum CoachPlanService {
     static func attachPlan(
         folder: RoutineFolderModel,
         sessionsPerWeek: Int,
-        in context: ModelContext
+        in context: ModelContext,
+        onCommit: @escaping () -> Void = {}
     ) -> CoachedProgramModel {
         deactivateActivePrograms(in: context)
 
@@ -153,9 +161,10 @@ enum CoachPlanService {
             isActive: true
         )
         context.insert(coached)
-        try? context.save()
-
-        syncActiveCycleFolders(folder)
+        context.saveUserChanges {
+            syncActiveCycleFolders(folder)
+            onCommit()
+        }
         return coached
     }
 
@@ -166,7 +175,8 @@ enum CoachPlanService {
     static func confirmYogaPlan(
         answers: CoachSetupAnswers,
         sessionsPerWeek: Int,
-        in context: ModelContext
+        in context: ModelContext,
+        onCommit: @escaping () -> Void = {}
     ) -> CoachedProgramModel {
         upsertProfile(answers: answers, in: context)
         deactivateActivePrograms(in: context)
@@ -181,7 +191,9 @@ enum CoachPlanService {
             isActive: true
         )
         context.insert(coached)
-        try? context.save()
+        context.saveUserChanges {
+            onCommit()
+        }
         return coached
     }
 
@@ -195,7 +207,8 @@ enum CoachPlanService {
         _ program: CoachedProgramModel,
         weeks: Int,
         weeklySessionTarget: Int,
-        in context: ModelContext
+        in context: ModelContext,
+        onCommit: @escaping () -> Void = {}
     ) {
         program.weeks = max(0, weeks)
         program.weeklySessionTarget = weeklySessionTarget
@@ -206,15 +219,23 @@ enum CoachPlanService {
             profile.sessionsPerWeek = weeklySessionTarget
             profile.updatedAt = Date()
         }
-        try? context.save()
+        context.saveUserChanges {
+            onCommit()
+        }
     }
 
     /// Stops coaching entirely: deactivates the active program without
     /// deleting anything — the plan's folder, routines, and history stay
     /// exactly as they are, and the active-microcycle preference is left
     /// alone so Home's "Up next" suggestion keeps working off the folder.
-    static func stopCoaching(in context: ModelContext) {
+    static func stopCoaching(
+        in context: ModelContext,
+        onCommit: @escaping () -> Void = {}
+    ) {
         deactivateActivePrograms(in: context)
+        context.saveUserChanges {
+            onCommit()
+        }
     }
 
     /// 1-based calendar week of the program a given date falls in (week 1 =
@@ -258,7 +279,6 @@ enum CoachPlanService {
         profile.equipment = Array(answers.equipment)
         profile.preferredCardioRaw = answers.preferredCardio
         profile.updatedAt = Date()
-        try? context.save()
         return profile
     }
 
@@ -270,7 +290,6 @@ enum CoachPlanService {
             program.isActive = false
             program.updatedAt = Date()
         }
-        try? context.save()
     }
 
     /// Keeps the UI-only "active plan" AppStorage keys in sync with the

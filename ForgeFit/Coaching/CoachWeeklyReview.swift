@@ -201,7 +201,7 @@ enum CoachWeeklyReview {
 
         program.lastReviewedWeekAnchor = currentAnchor
         program.updatedAt = Date()
-        try? context.save()
+        context.saveUserChanges()
 
         return pendingProposals(for: program, weekAnchor: currentAnchor, in: context)
     }
@@ -256,7 +256,7 @@ enum CoachWeeklyReview {
     static func accept(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
         override.statusRaw = CoachingOverrideStatus.active.rawValue
         override.updatedAt = Date()
-        try? context.save()
+        context.saveUserChanges()
     }
 
     /// Declining a proposal cancels it — `proposals(for:now:in:)` treats a
@@ -264,7 +264,7 @@ enum CoachWeeklyReview {
     static func decline(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
         override.statusRaw = CoachingOverrideStatus.cancelled.rawValue
         override.updatedAt = Date()
-        try? context.save()
+        context.saveUserChanges()
     }
 
     /// Cancels an already-active override (e.g. the lifter wants to drop a
@@ -272,6 +272,6 @@ enum CoachWeeklyReview {
     static func cancel(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
         override.statusRaw = CoachingOverrideStatus.cancelled.rawValue
         override.updatedAt = Date()
-        try? context.save()
+        context.saveUserChanges()
     }
 }
