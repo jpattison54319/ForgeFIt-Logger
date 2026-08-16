@@ -26,6 +26,7 @@ struct ForgeFitWatch_Watch_AppApp: App {
                     // silently stopped just because the app was backgrounded
                     // or relaunched mid-workout.
                     if phase == .active {
+                        WatchStore.shared.refreshComplication()
                         Task { await WatchStore.shared.recoverOrStartWorkoutSession() }
                     }
                 }

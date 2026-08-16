@@ -2593,11 +2593,16 @@ final class ForgeFitUITests: XCTestCase {
             if tileID == "home-recovery-card" {
                 XCTAssertFalse(tile.label.contains("%"), "Recovery is an index, not percent recovered.")
             }
+            if tileID == "home-health-card" {
+                XCTAssertTrue(tile.label.contains("Vitals"))
+                XCTAssertFalse(tile.label.contains("outside usual band"))
+            }
             tapWhenReady(tile)
             XCTAssertTrue(app.descendants(matching: .any)[detailID].firstMatch.waitForExistence(timeout: 5))
             XCTAssertTrue(app.descendants(matching: .any)[tabsID].firstMatch.exists)
             XCTAssertTrue(app.descendants(matching: .any)[summaryID].firstMatch.waitForExistence(timeout: 5))
             if detailID == "health-detail" {
+                XCTAssertTrue(app.staticTexts["Vitals"].waitForExistence(timeout: 3))
                 XCTAssertTrue(app.staticTexts["Respiratory rate"].waitForExistence(timeout: 3))
                 XCTAssertTrue(app.staticTexts["Blood oxygen"].exists)
             }

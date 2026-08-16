@@ -12,8 +12,21 @@ struct MetricDetailScaffold<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
 
     let title: String
+    let identifierStem: String
     @Binding var selectedTab: MetricDetailTab
-    @ViewBuilder let content: () -> Content
+    @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        selectedTab: Binding<MetricDetailTab>,
+        identifierStem: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.identifierStem = identifierStem ?? title.lowercased()
+        _selectedTab = selectedTab
+        self.content = content()
+    }
 
     var body: some View {
         DashboardScaffold(title: title, dismiss: dismiss) {
@@ -23,15 +36,15 @@ struct MetricDetailScaffold<Content: View>: View {
             }
             .pickerStyle(.segmented)
             .frame(minHeight: TouchTarget.minimum)
-            .accessibilityIdentifier("\(title.lowercased())-detail-tabs")
+            .accessibilityIdentifier("\(identifierStem)-detail-tabs")
 
-            content()
+            content
         }
-        .accessibilityIdentifier("\(title.lowercased())-detail")
+        .accessibilityIdentifier("\(identifierStem)-detail")
     }
 }
 
-/// Generic personal-baseline chart used by Sleep and Health. The shaded band
+/// Generic personal-baseline chart used by Sleep and Vitals. The shaded band
 /// is this user's 10th-to-90th percentile usual observed band, not a
 /// population cutoff or a medical normal range.
 struct MetricBaselineBandChart: View {

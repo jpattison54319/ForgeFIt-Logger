@@ -67,6 +67,9 @@ final class HealthMetricsStore {
     /// Monotonic invalidation token for derived recovery reports. A correction
     /// changes values in place without changing the Health row count or date.
     private(set) var metricsRevision = 0
+    /// Explicit user preference applied uniformly to every nightly reading.
+    /// Observed sleep never rewrites this target.
+    private(set) var sleepTargetMinutes: Int
     /// The raw HealthKit series before integrity annotation — kept so a new
     /// user correction can be re-applied without re-querying HealthKit.
     @ObservationIgnored private var rawMetrics: [RecoveryEngine.DailyHealthMetric] = []
@@ -99,6 +102,7 @@ final class HealthMetricsStore {
 
     init(worker: any HealthMetricsLoading = HealthMetricsWorker()) {
         self.worker = worker
+        sleepTargetMinutes = SleepTargetPreference.load()
     }
 
     #if DEBUG
@@ -204,7 +208,7 @@ final class HealthMetricsStore {
         )
         guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         rawMetrics = result.daily
-        metrics = SleepOverrideStore.shared.process(result.daily)
+        metrics = processedSleepMetrics(result.daily)
         metricsRevision &+= 1
         extraSignals = result.extras
         activityMetrics = result.activity
@@ -217,8 +221,26 @@ final class HealthMetricsStore {
     /// cached raw series — call after a `SleepOverrideStore` change so the
     /// readiness score and the Home banner update without a HealthKit round-trip.
     func reprocessSleep() {
-        metrics = SleepOverrideStore.shared.process(rawMetrics)
+        metrics = processedSleepMetrics(rawMetrics)
         metricsRevision &+= 1
+    }
+
+    /// Updates the target without another HealthKit query so Home, Recovery,
+    /// cached sleep progress, and the open Sleep detail agree immediately.
+    func setSleepTarget(minutes: Int) {
+        let normalized = SleepTargetPreference.normalized(minutes)
+        guard normalized != sleepTargetMinutes else { return }
+        SleepTargetPreference.save(normalized)
+        sleepTargetMinutes = normalized
+        reprocessSleep()
+    }
+
+    private func processedSleepMetrics(
+        _ raw: [RecoveryEngine.DailyHealthMetric]
+    ) -> [RecoveryEngine.DailyHealthMetric] {
+        SleepOverrideStore.shared.process(
+            SleepTargetPreference.applying(sleepTargetMinutes, to: raw)
+        )
     }
 
     /// The latest measured night when it is still flagged after processing.
@@ -268,7 +290,7 @@ final class HealthMetricsStore {
             SleepOverrideStore.shared.clear(for: today)
         }
         rawMetrics = raw
-        metrics = SleepOverrideStore.shared.process(raw)
+        metrics = processedSleepMetrics(raw)
         metricsRevision &+= 1
         activityMetrics = (0...28).map { offset in
             let day = cal.date(byAdding: .day, value: -offset, to: today)!
@@ -332,7 +354,7 @@ final class HealthMetricsStore {
 
         SleepOverrideStore.shared.clear(for: today)
         rawMetrics = raw
-        metrics = SleepOverrideStore.shared.process(raw)
+        metrics = processedSleepMetrics(raw)
         metricsRevision &+= 1
 
         extraSignals = [

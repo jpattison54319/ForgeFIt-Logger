@@ -25,6 +25,7 @@ struct SettingsView: View {
                     hrmConnected: ble.state == .connected
                 )
                 SettingsAppearanceSection()
+                SettingsAppSection()
                 SettingsHealthSection(
                     showHistoryImporter: $showHistoryImporter
                 )

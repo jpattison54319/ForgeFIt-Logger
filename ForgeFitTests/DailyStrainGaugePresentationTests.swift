@@ -12,9 +12,15 @@ struct DailyStrainGaugePresentationTests {
         #expect(low.band == .usual)
         #expect(middle.band == .usual)
         #expect(high.band == .usual)
-        #expect(try #require(low.position) == 0.4)
+        #expect(try #require(low.position) == DailyStrainGaugePresentation.usualVisualRange.lowerBound)
         #expect(try #require(middle.position) == 0.5)
-        #expect(try #require(high.position) == 0.6)
+        #expect(try #require(high.position) == DailyStrainGaugePresentation.usualVisualRange.upperBound)
+    }
+
+    @Test func usualRangeOccupiesOneThirdOfTheVisualArc() {
+        let visualRange = DailyStrainGaugePresentation.usualVisualRange
+
+        #expect(abs((visualRange.upperBound - visualRange.lowerBound) - 1.0 / 3.0) < 0.000_001)
     }
 
     @Test func lowerAndHigherScoresFillAwayFromTheCenter() throws {

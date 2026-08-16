@@ -27,6 +27,7 @@ enum AppPreferenceKeys {
         CyclePreferenceMigration.activeMesocycleKey,
         CyclePreferenceMigration.activeMicrocycleKey,
         ThemeManager.modeDefaultsKey,
+        DefaultLaunchTab.key,
         "liveSyncEnabled",
         "healthWriteEnabled",
         WorkoutEffortPolicy.loggingEnabledKey,
@@ -71,6 +72,7 @@ enum AppPreferenceKeys {
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
         PlanImportService.importedPackagesDefaultsKey,
         workoutUngroupedCollapsedKey,
+        SleepTargetPreference.key,
         YogaGuidanceCatalog.recentGuidanceKey,
         YogaGuidanceCatalog.safetyAcknowledgementKey,
     ]

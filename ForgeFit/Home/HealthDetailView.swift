@@ -76,12 +76,12 @@ struct HealthDetailView: View {
 
     private var hasLowBloodOxygen: Bool {
         assessment.readings.contains {
-            $0.id == "blood-oxygen" && $0.status == .belowRange
+            $0.kind == .bloodOxygen && $0.status == .belowRange
         }
     }
 
     var body: some View {
-        MetricDetailScaffold(title: "Health", selectedTab: $selectedTab) {
+        MetricDetailScaffold(title: "Vitals", selectedTab: $selectedTab, identifierStem: "health") {
             switch selectedTab {
             case .today:
                 todayContent
@@ -92,8 +92,8 @@ struct HealthDetailView: View {
         .refreshable { await AppRefresh.run(in: modelContext) }
         .sheet(isPresented: $showingInfo) {
             MetricExplanationSheet(
-                title: "How health ranges work",
-                summary: "Health shows individual readings. It does not combine them into a second health or recovery score.",
+                title: "How vital ranges work",
+                summary: "Vitals shows individual readings. It does not combine them into a second health or recovery score.",
                 items: [
                     MetricExplanationItem(
                         "Personal ranges",
@@ -119,9 +119,14 @@ struct HealthDetailView: View {
 
     @ViewBuilder
     private var todayContent: some View {
-        statusSummary
-
-        if !assessment.readings.isEmpty {
+        if assessment.readings.isEmpty {
+            MetricEmptyCard(
+                title: "No vital readings",
+                message: "Connect Apple Health to compare today’s readings with your personal ranges.",
+                systemImage: "waveform.path.ecg"
+            )
+            .accessibilityIdentifier("health-today-summary")
+        } else {
             Card {
                 VStack(alignment: .leading, spacing: Space.md) {
                     Text("Compared with usual")
@@ -133,6 +138,7 @@ struct HealthDetailView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("health-today-summary")
         }
 
         if !supplementalSignals.isEmpty {
@@ -169,7 +175,7 @@ struct HealthDetailView: View {
             }
         }
 
-        MetricInfoLink(title: "How health ranges work") {
+        MetricInfoLink(title: "How vital ranges work") {
             showingInfo = true
         }
     }
@@ -180,16 +186,6 @@ struct HealthDetailView: View {
             Label("Shading shows your personal 10th–90th percentile range.", systemImage: "rectangle.fill")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(theme.textSecondary)
-        }
-
-        if let trend = hrvTrend {
-            trendCard(
-                title: "HRV",
-                value: "\(Int((trend.latest?.value ?? 0).rounded())) ms",
-                metricName: "HRV",
-                trend: trend,
-                tint: theme.secondaryAccent
-            )
         }
 
         if let trend = heartRateTrend {
@@ -222,46 +218,30 @@ struct HealthDetailView: View {
             )
         }
 
+        if let trend = hrvTrend {
+            trendCard(
+                title: "HRV",
+                value: "\(Int((trend.latest?.value ?? 0).rounded())) ms",
+                metricName: "HRV",
+                trend: trend,
+                tint: theme.secondaryAccent
+            )
+        }
+
         if hrvTrend == nil, heartRateTrend == nil, respiratoryTrend == nil, oxygenTrend == nil {
             MetricEmptyCard(
-                title: "Health trends are building",
+                title: "Vital trends are building",
                 message: "A usual observed band needs 28 comparable readings spanning at least 42 days.",
                 systemImage: "waveform.path.ecg"
             )
         }
     }
 
-    private var statusSummary: some View {
-        let outside = assessment.outsideRangeCount
-        let tint = outside > 0 ? theme.recoveryLow : assessment.evaluatedCount > 0 ? theme.success : theme.textTertiary
-        return Card {
-            HStack(spacing: Space.lg) {
-                ZStack {
-                    Circle()
-                        .fill(tint.opacity(0.12))
-                        .frame(width: 58, height: 58)
-                    Image(systemName: outside > 0 ? "exclamationmark.triangle.fill" : assessment.evaluatedCount > 0 ? "checkmark.circle.fill" : "waveform.path.ecg")
-                        .font(.system(size: 23, weight: .bold))
-                        .foregroundStyle(tint)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(assessment.headline)
-                        .font(.cardTitle)
-                        .foregroundStyle(theme.textPrimary)
-                    Text(assessment.caption)
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                }
-            }
-        }
-        .accessibilityIdentifier("health-today-summary")
-    }
-
     private func personalRangeRow(_ reading: PersonalRangeReading) -> some View {
         let presentation = rangePresentation(reading)
         return MetricReadingRow(
             title: reading.name,
-            value: formattedValue(reading.value, for: reading),
+            value: reading.formattedVitalValue,
             systemImage: reading.systemImage,
             detail: presentation.detail,
             tint: presentation.tint
@@ -275,29 +255,31 @@ struct HealthDetailView: View {
         let baseline = "\(formattedValue(lower, for: reading))–\(formattedValue(upper, for: reading))"
         switch reading.status {
         case .typical:
-            return ("Within usual · \(baseline)", theme.success)
+            return ("Within usual · \(baseline)", theme.zone2)
         case .belowRange:
-            let tint = reading.id == "hrv" || reading.id == "blood-oxygen"
-                ? theme.recoveryLow
-                : theme.secondaryAccent
-            return ("Below usual · \(baseline)", tint)
+            let favorable = reading.interpretation == .favorable
+            return (
+                "\(favorable ? "Favorable" : "Needs attention") · Below usual · \(baseline)",
+                favorable ? theme.success : theme.recoveryLow
+            )
         case .aboveRange:
-            let tint = reading.id == "resting-heart-rate" || reading.id == "respiratory-rate"
-                ? theme.recoveryLow
-                : theme.secondaryAccent
-            return ("Above usual · \(baseline)", tint)
+            let favorable = reading.interpretation == .favorable
+            return (
+                "\(favorable ? "Favorable" : "Needs attention") · Above usual · \(baseline)",
+                favorable ? theme.success : theme.recoveryLow
+            )
         case .building:
             return ("Usual range building", theme.textTertiary)
         }
     }
 
     private func formattedValue(_ value: Double, for reading: PersonalRangeReading) -> String {
-        switch reading.id {
-        case "respiratory-rate":
+        switch reading.kind {
+        case .respiratoryRate:
             return "\(value.formatted(.number.precision(.fractionLength(1)))) \(reading.unit)"
-        case "blood-oxygen":
+        case .bloodOxygen:
             return "\(Int(value.rounded()))\(reading.unit)"
-        default:
+        case .heartRate, .hrv:
             return "\(Int(value.rounded())) \(reading.unit)"
         }
     }

@@ -31,6 +31,9 @@ nonisolated struct HomeDashboardCache: Codable, Equatable, Sendable {
     var healthCaption: String
     var healthEvaluatedCount: Int
     var healthOutsideRangeCount: Int
+    /// Optional so a same-day cache written by an older app build still
+    /// decodes; Home shows neutral loading indicators until Health refreshes.
+    var vitals: VitalsTilePresentation? = nil
     // Non-Home surfaces use the exact same finished report. Optional defaults
     // preserve decoding of caches written by older app builds.
     var preWorkoutAdjustment: String? = nil
@@ -234,6 +237,40 @@ final class RecoverySnapshotStore {
                 healthCaption: "4 health signals checked",
                 healthEvaluatedCount: 4,
                 healthOutsideRangeCount: 0,
+                vitals: VitalsTilePresentation(indicators: [
+                    VitalIndicatorPresentation(
+                        kind: .heartRate,
+                        name: "Sleeping HR",
+                        valueText: "52 bpm",
+                        relationText: "below usual, favorable",
+                        interpretation: .favorable,
+                        position: 0.82
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .respiratoryRate,
+                        name: "Respiratory rate",
+                        valueText: "14.5 br/min",
+                        relationText: "within usual band",
+                        interpretation: .typical,
+                        position: 0.5
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .bloodOxygen,
+                        name: "Blood oxygen",
+                        valueText: "98%",
+                        relationText: "above usual, favorable",
+                        interpretation: .favorable,
+                        position: 0.78
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .hrv,
+                        name: "HRV",
+                        valueText: "66 ms",
+                        relationText: "within usual band",
+                        interpretation: .typical,
+                        position: 0.55
+                    ),
+                ]),
                 preWorkoutAdjustment: "Train as planned.",
                 readinessMethodID: "recovery-index-v2",
                 readinessCoverage: 1))

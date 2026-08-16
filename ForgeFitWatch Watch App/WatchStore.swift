@@ -653,6 +653,16 @@ final class WatchStore: NSObject {
         WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitWatchComplication")
     }
 
+    /// Reassert the latest received state whenever the watch app becomes
+    /// active. WatchConnectivity can update this process while it is in the
+    /// background, where WidgetKit may defer the accompanying reload request;
+    /// foregrounding must therefore give the complication another explicit
+    /// chance to consume the already-current context.
+    func refreshComplication() {
+        guard let context else { return }
+        publishComplicationSnapshot(context)
+    }
+
     /// Buzz the wrist when the phone's rest timer hits zero.
     private func scheduleRestHaptic(endsAt: Date?) {
         restHapticTask?.cancel()

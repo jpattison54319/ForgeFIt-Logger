@@ -12,7 +12,7 @@ import WidgetKit
 /// active-workout logger is presented full-screen.
 @Observable
 final class AppState {
-    var selectedTab: AppTab = .home
+    var selectedTab: AppTab
     var showingLogger = false
     /// Import completion hands the Workout tab an ID instead of a model from
     /// another ModelContext; the tab resolves it after its @Query refreshes.
@@ -22,6 +22,10 @@ final class AppState {
     /// here so ContentView can warn before discarding an active session.
     var startRequestID = 0
     var pendingWorkoutStart: (() -> Void)?
+
+    init(defaults: UserDefaults = .standard) {
+        selectedTab = DefaultLaunchTab.load(from: defaults).appTab
+    }
 
     func requestStart(_ action: @escaping () -> Void) {
         pendingWorkoutStart = action

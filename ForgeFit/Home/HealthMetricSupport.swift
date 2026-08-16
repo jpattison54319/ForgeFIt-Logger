@@ -32,7 +32,8 @@ nonisolated struct PersonalRangeReading: Identifiable, Equatable, Sendable {
         }
     }
 
-    let id: String
+    var id: String { kind.id }
+    let kind: VitalMetricKind
     let name: String
     let systemImage: String
     let value: Double
@@ -212,7 +213,7 @@ nonisolated struct HealthMetricChannelSeries {
     }
 }
 
-/// Home's Health tile summary. Each reading is compared only with the same
+/// Home's Vitals summary. Each reading is compared only with the same
 /// channel in the user's own recent history; isolated readings remain
 /// informational until at least 28 comparable readings spanning 42 days
 /// establish a usual observed band.
@@ -227,17 +228,30 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         readings.count { $0.status.isOutsideRange }
     }
 
+    var favorableCount: Int {
+        readings.count { $0.interpretation == .favorable }
+    }
+
+    var adverseCount: Int {
+        readings.count { $0.interpretation == .adverse }
+    }
+
     var headline: String {
         if readings.isEmpty { return "No readings" }
         if evaluatedCount == 0 { return "Building" }
-        if outsideRangeCount == 0 { return "Within usual bands" }
-        return "\(outsideRangeCount) outside usual band"
+        if adverseCount > 0 {
+            return adverseCount == 1 ? "1 needs attention" : "\(adverseCount) need attention"
+        }
+        if favorableCount > 0 {
+            return "\(favorableCount) favorable shift\(favorableCount == 1 ? "" : "s")"
+        }
+        return "Within usual bands"
     }
 
     var caption: String {
         if readings.isEmpty { return "Connect Apple Health" }
         if evaluatedCount == 0 { return "Usual bands need 28 readings over 42 days" }
-        return "\(evaluatedCount) health signal\(evaluatedCount == 1 ? "" : "s") checked"
+        return "\(evaluatedCount) vital reading\(evaluatedCount == 1 ? "" : "s") checked"
     }
 
     static func make(
@@ -245,26 +259,11 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         calendar: Calendar = .current
     ) -> HealthRangeAssessment {
         var readings: [PersonalRangeReading] = []
-        let hrvChannel = HealthMetricChannelSeries.hrv(metrics: metrics, calendar: calendar)
-        if let hrvChannel {
-            readings.append(reading(
-                id: "hrv",
-                name: "HRV",
-                systemImage: "waveform.path.ecg",
-                value: hrvChannel.current,
-                unit: "ms",
-                baseline: hrvChannel.baselineValues,
-                baselineDates: hrvChannel.baselineDates,
-                calendar: calendar
-            ))
-        }
-
         let heartRateChannel = HealthMetricChannelSeries.heartRate(metrics: metrics, calendar: calendar)
         if let heartRateChannel {
             readings.append(reading(
-                id: "resting-heart-rate",
+                kind: .heartRate,
                 name: heartRateChannel.name,
-                systemImage: "heart.fill",
                 value: heartRateChannel.current,
                 unit: "bpm",
                 baseline: heartRateChannel.baselineValues,
@@ -275,9 +274,8 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         let respiratoryChannel = HealthMetricChannelSeries.respiratoryRate(metrics: metrics, calendar: calendar)
         if let respiratoryChannel {
             readings.append(reading(
-                id: "respiratory-rate",
+                kind: .respiratoryRate,
                 name: respiratoryChannel.name,
-                systemImage: "lungs.fill",
                 value: respiratoryChannel.current,
                 unit: "br/min",
                 baseline: respiratoryChannel.baselineValues,
@@ -288,9 +286,8 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         let oxygenChannel = HealthMetricChannelSeries.oxygenSaturation(metrics: metrics, calendar: calendar)
         if let oxygenChannel {
             readings.append(reading(
-                id: "blood-oxygen",
+                kind: .bloodOxygen,
                 name: oxygenChannel.name,
-                systemImage: "drop.degreesign.fill",
                 value: oxygenChannel.current,
                 unit: "%",
                 baseline: oxygenChannel.baselineValues,
@@ -298,13 +295,24 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
                 calendar: calendar
             ))
         }
+        let hrvChannel = HealthMetricChannelSeries.hrv(metrics: metrics, calendar: calendar)
+        if let hrvChannel {
+            readings.append(reading(
+                kind: .hrv,
+                name: "HRV",
+                value: hrvChannel.current,
+                unit: "ms",
+                baseline: hrvChannel.baselineValues,
+                baselineDates: hrvChannel.baselineDates,
+                calendar: calendar
+            ))
+        }
         return HealthRangeAssessment(readings: readings)
     }
 
     private static func reading(
-        id: String,
+        kind: VitalMetricKind,
         name: String,
-        systemImage: String,
         value: Double,
         unit: String,
         baseline: [Double],
@@ -315,9 +323,9 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
               let first = baselineDates.min(), let last = baselineDates.max(),
               (calendar.dateComponents([.day], from: calendar.startOfDay(for: first), to: calendar.startOfDay(for: last)).day ?? 0) >= 42 else {
             return PersonalRangeReading(
-                id: id,
+                kind: kind,
                 name: name,
-                systemImage: systemImage,
+                systemImage: kind.systemImage,
                 value: value,
                 unit: unit,
                 mean: nil,
@@ -333,9 +341,9 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
             ? .belowRange
             : value > upper ? .aboveRange : .typical
         return PersonalRangeReading(
-            id: id,
+            kind: kind,
             name: name,
-            systemImage: systemImage,
+            systemImage: kind.systemImage,
             value: value,
             unit: unit,
             mean: mean,

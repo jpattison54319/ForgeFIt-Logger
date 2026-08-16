@@ -258,6 +258,7 @@ struct HomeView: View {
             healthCaption: health.caption,
             healthEvaluatedCount: health.evaluatedCount,
             healthOutsideRangeCount: health.outsideRangeCount,
+            vitals: .make(assessment: health),
             preWorkoutAdjustment: report.preWorkoutAdjustment,
             readinessMethodID: report.displayScore == nil ? nil : report.recovery.daily.methodID,
             readinessCoverage: report.displayScore == nil ? nil : report.dataCoverage)
