@@ -493,7 +493,7 @@ struct ContentView: View {
     }
 
     private var shellRealtimeHandlers: some View {
-        presentedShell
+        let syncHandlers = presentedShell
             // Fresh opt-in flips status to .active — publish the user's
             // existing history right then, not on the next launch.
             .onChange(of: social.status) { _, status in
@@ -511,6 +511,8 @@ struct ContentView: View {
                 guard hasDuplicatePlanRows else { return }
                 schedulePlanDeduplication()
             }
+
+        let preferenceHandlers = syncHandlers
             .onChange(of: exercises.count) { schedulePlanDeduplication() }
             .onChange(of: themeManager.family) { _, _ in
                 handleThemePreferenceChange()
@@ -518,6 +520,8 @@ struct ContentView: View {
             .onChange(of: themeManager.mode) { _, _ in
                 handleThemePreferenceChange()
             }
+
+        return preferenceHandlers
             .onChange(of: conditioningPresetRevision) {
                 guard didFinishLaunchTasks, activeWorkout == nil else { return }
                 reconcileConditioningPresetHistory()
