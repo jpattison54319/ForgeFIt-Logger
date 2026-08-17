@@ -7,7 +7,8 @@ public enum ExerciseSeedRepository {
 
     public static func seedGlobalLibrary(
         _ snapshot: ExerciseLibrarySnapshot = GlobalExerciseLibrary.snapshot,
-        in context: ModelContext
+        in context: ModelContext,
+        persist: Bool = true
     ) throws {
         let existingExercises = Dictionary(
             try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).map { ($0.id, $0) },
@@ -79,7 +80,7 @@ public enum ExerciseSeedRepository {
             if model.alias != alias.alias { model.alias = alias.alias }
         }
 
-        if context.hasChanges {
+        if persist, context.hasChanges {
             try context.save()
         }
     }

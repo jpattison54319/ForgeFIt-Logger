@@ -40,6 +40,11 @@ enum WorkoutLoggerMode {
     case historicalEdit
 }
 
+private struct RemovedSessionRuntime {
+    let id: UUID
+    let wasLive: Bool
+}
+
 /// Full-screen active-workout logger with per-set type selection, dynamic
 /// columns per exercise, inline reordering, sticky notes, and add/replace/remove.
 struct ActiveWorkoutLoggerView: View {
@@ -232,8 +237,7 @@ struct ActiveWorkoutLoggerView: View {
             titleVisibility: .visible
         ) {
             Button("Discard Workout", role: .destructive) {
-                WorkoutFinisher.discard(workout, in: modelContext)
-                dismiss()
+                discardWorkout()
             }
             Button("Keep Logging", role: .cancel) {}
         } message: {
@@ -286,13 +290,14 @@ struct ActiveWorkoutLoggerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: block.planSnapshotJSON,
                     exercises: liveExerciseLibrary,
-                    workouts: history
-                ) { updateBlock(block, planJSON: $0) }
+                    workouts: history,
+                    commit: { updateBlock(block, planJSON: $0) }
+                )
             } else {
-                YogaFlowBuilderView(planJSON: block.planSnapshotJSON) { json in
-                    guard let json else { return }
-                    updateBlock(block, planJSON: json)
-                }
+                YogaFlowBuilderView(planJSON: block.planSnapshotJSON, commit: { json in
+                    guard let json else { return false }
+                    return updateBlock(block, planJSON: json)
+                })
             }
         }
         .sheet(item: $replaceTarget) { target in
@@ -437,8 +442,9 @@ struct ActiveWorkoutLoggerView: View {
             for (index, row) in reorderSession.rows.enumerated() {
                 itemsByID[row.id]?.position = index
             }
-            modelContext.saveUserChanges()
-            publishWorkoutChange()
+            modelContext.saveUserChanges {
+                publishWorkoutChange()
+            }
         }
         withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
     }
@@ -451,8 +457,9 @@ struct ActiveWorkoutLoggerView: View {
         guard target != index else { return }
         rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
         for (index, item) in rows.enumerated() { item.position = index }
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     @ViewBuilder
@@ -914,8 +921,9 @@ struct ActiveWorkoutLoggerView: View {
             set.reps = nil
             set.recomputeDerivedMetrics()
         }
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     private func sortedPriorWorkouts() -> [WorkoutModel] {
@@ -1029,8 +1037,9 @@ struct ActiveWorkoutLoggerView: View {
             }
         }
         refreshLiveStats()
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
         Task { await refreshReferenceCaches() }
     }
 
@@ -1092,26 +1101,24 @@ struct ActiveWorkoutLoggerView: View {
             workout.blocks.append(block)
             workout.cardioSessions.append(session)
         }
-        modelContext.saveUserChanges()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
         computeModalityFlags()
-        publishWorkoutChange()
     }
 
-    private func updateBlock(_ block: WorkoutBlockModel, planJSON: String) {
+    private func updateBlock(_ block: WorkoutBlockModel, planJSON: String) -> Bool {
         let session = workout.cardioSessions.first { $0.workoutBlockID == block.id }
-        guard session?.liveStartedAt == nil, session?.endedAt == nil else { return }
-        block.planSnapshotJSON = planJSON
-        block.updatedAt = .now
-        if block.kind == .conditioning {
-            block.progressJSON = ConditioningProgress().encodedJSON()
-            block.resultJSON = nil
-        } else if let plan = YogaFlowPlan.decode(from: planJSON) {
-            session?.durationSeconds = plan.totalSeconds > 0 ? plan.totalSeconds : nil
-            session?.yogaStyleRaw = plan.styleRaw
-            workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }?.yogaFlowJSON = planJSON
-        }
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        guard session?.liveStartedAt == nil, session?.endedAt == nil else { return false }
+        let generatedExercise = workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }
+        return WorkoutBlockPlanPersistence.apply(
+            planJSON,
+            to: block,
+            session: session,
+            generatedExercise: generatedExercise,
+            in: modelContext,
+            onCommit: { publishWorkoutChange() }
+        )
     }
 
     private func removeBlock(_ block: WorkoutBlockModel) {
@@ -1120,9 +1127,10 @@ struct ActiveWorkoutLoggerView: View {
         let sessions = workout.cardioSessions.filter {
             $0.workoutBlockID == block.id || $0.workoutExerciseID.map(generatedIDs.contains) == true
         }
+        let removedRuntime = sessions.map {
+            RemovedSessionRuntime(id: $0.id, wasLive: $0.liveStartedAt != nil && $0.endedAt == nil)
+        }
         for session in sessions {
-            WorkoutFinisher.cancelLiveRuntime(for: session)
-            YogaFlowRunnerHub.shared.stop(for: session.id, clearCheckpoint: true)
             modelContext.delete(session)
         }
         workout.cardioSessions.removeAll { session in
@@ -1134,9 +1142,11 @@ struct ActiveWorkoutLoggerView: View {
         modelContext.delete(block)
         normalizeOrderedPositions()
         workout.recomputeTotalVolume()
-        modelContext.saveUserChanges()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
         computeModalityFlags()
-        publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
 
@@ -1174,6 +1184,7 @@ struct ActiveWorkoutLoggerView: View {
         let wasSessionBased = previousExercise?.isCardio == true
             || previousExercise?.isYoga == true
             || previousSession != nil
+        var removedRuntime: [RemovedSessionRuntime] = []
         let replacement = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
         // `exercise` may have been created inside the replacement picker's
         // nested sheet. Cache the concrete model before either replacement path
@@ -1271,7 +1282,7 @@ struct ActiveWorkoutLoggerView: View {
             target.intervalPlanJSON = nil
             target.yogaFlowJSON = nil
             if wasSessionBased {
-                deleteCardioSessions(for: target.id)
+                removedRuntime = deleteCardioSessions(for: target.id)
             }
             if target.sets.isEmpty {
                 let set = SetModel(userID: ForgeFitDemo.userID, position: 0, weightMode: exercise.defaultWeightMode)
@@ -1281,29 +1292,53 @@ struct ActiveWorkoutLoggerView: View {
         }
         workout.recomputeTotalVolume()
         refreshLiveStats()
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
         Task { await refreshReferenceCaches() }
     }
 
     private func removeExercise(_ we: WorkoutExerciseModel) {
+        var removedRuntime: [RemovedSessionRuntime] = []
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
-            deleteCardioSessions(for: we.id)
+            removedRuntime = deleteCardioSessions(for: we.id)
             modelContext.delete(we)
             normalizeOrderedPositions(excluding: we.id)
             workout.recomputeTotalVolume()
             refreshLiveStats()
         }
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
     }
 
-    private func deleteCardioSessions(for workoutExerciseID: UUID) {
-        for session in workout.cardioSessions.filter({ $0.workoutExerciseID == workoutExerciseID }) {
-            WorkoutFinisher.cancelLiveRuntime(for: session)
+    private func deleteCardioSessions(for workoutExerciseID: UUID) -> [RemovedSessionRuntime] {
+        let sessions = workout.cardioSessions.filter { $0.workoutExerciseID == workoutExerciseID }
+        let removedRuntime = sessions.map {
+            RemovedSessionRuntime(id: $0.id, wasLive: $0.liveStartedAt != nil && $0.endedAt == nil)
+        }
+        for session in sessions {
             modelContext.delete(session)
         }
         workout.cardioSessions.removeAll { $0.workoutExerciseID == workoutExerciseID }
+        return removedRuntime
+    }
+
+    private func cancelRemovedSessionRuntime(_ removed: [RemovedSessionRuntime]) {
+        guard !removed.isEmpty else { return }
+        for session in removed {
+            CardioGoalAnnouncer.shared.cancel(sessionID: session.id)
+            CardioRouteRecorder.shared.cancel(sessionID: session.id)
+            IntervalRunnerHub.shared.stop(for: session.id)
+            YogaFlowRunnerHub.shared.stop(for: session.id, clearCheckpoint: true)
+        }
+        guard removed.contains(where: \.wasLive) else { return }
+        HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
+        PaceAnnouncer.shared.stop()
+        NotificationScheduler.shared.cancelCardioCues()
     }
 
     private func nextSupersetGroup() -> Int {
@@ -1314,8 +1349,9 @@ struct ActiveWorkoutLoggerView: View {
         we.supersetGroup = group
         we.updatedAt = Date()
         compactSupersetPositions()
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState()
+        modelContext.saveUserChanges {
+            WatchLink.shared.publishState()
+        }
     }
 
     private func ungroupSuperset(_ group: Int) {
@@ -1324,8 +1360,9 @@ struct ActiveWorkoutLoggerView: View {
             exercise.updatedAt = Date()
         }
         compactSupersetPositions()
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState()
+        modelContext.saveUserChanges {
+            WatchLink.shared.publishState()
+        }
     }
 
     private func compactSupersetPositions() {
@@ -1431,8 +1468,9 @@ struct ActiveWorkoutLoggerView: View {
         guard !isHistoricalEdit, !showRPEInLogger else { return }
         guard WorkoutEffortPolicy.removeEffort(from: workout) else { return }
         workout.updatedAt = .now
-        modelContext.saveUserChanges()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     private func updateWidgetSnapshot() {
@@ -1461,7 +1499,7 @@ struct ActiveWorkoutLoggerView: View {
     private func finishAndDismiss(endedAt: Date) -> String? {
         // Prefer live session metrics (watch or BLE monitor) when streaming.
         if let failure = WorkoutFinisher.finish(
-            workout,
+            workoutID: workout.id,
             in: modelContext,
             liveMetrics: LiveMetricsHub.shared.liveMetrics,
             endedAt: endedAt
@@ -1471,6 +1509,12 @@ struct ActiveWorkoutLoggerView: View {
         onFinished?(workout)
         dismiss()
         return nil
+    }
+
+    private func discardWorkout() {
+        PersistentChangeSaveCenter.shared.performReportingFailure({
+            WorkoutFinisher.discard(workoutID: workout.id, in: modelContext)
+        }, onSuccess: dismiss.callAsFunction)
     }
 
     private func saveHistoricalEdit() {
@@ -3222,8 +3266,7 @@ private struct ExerciseLogCard: View {
     }
 
     private func saveNow() {
-        modelContext.saveUserChanges()
-        onWorkoutChanged()
+        modelContext.saveUserChanges { onWorkoutChanged() }
     }
 }
 
@@ -3517,6 +3560,7 @@ private struct SetRow: View {
 
                 Button {
                     let seconds = amrapSeconds
+                    let persistElapsedDuration = onChange
                     set.durationSeconds = seconds
                     RestTimerController.shared.start(
                         seconds: seconds,
@@ -3524,9 +3568,10 @@ private struct SetRow: View {
                         ownerID: set.id,
                         soundOnEnd: true,
                         endNotification: (title: "Time's up", body: "Log the reps you got."),
-                        onComplete: { [weak set] ranSeconds in
+                        onComplete: { [set] ranSeconds in
                             // Stopping early counts the window actually used.
-                            set?.durationSeconds = ranSeconds
+                            set.durationSeconds = ranSeconds
+                            persistElapsedDuration()
                         }
                     )
                     onChange()

@@ -14,10 +14,12 @@ enum SetTypeRetirementBackfill {
     private static let restPauseRaw = SetType.restPause.rawValue
 
     static func run(in context: ModelContext) {
-        let sets = (try? context.fetch(FetchDescriptor<SetModel>(
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        let sets = (try? transaction.fetch(FetchDescriptor<SetModel>(
             predicate: #Predicate { $0.setTypeRaw == restPauseRaw }
         ))) ?? []
-        let routineSets = (try? context.fetch(FetchDescriptor<RoutineSetModel>(
+        let routineSets = (try? transaction.fetch(FetchDescriptor<RoutineSetModel>(
             predicate: #Predicate { $0.setTypeRaw == restPauseRaw }
         ))) ?? []
         guard !sets.isEmpty || !routineSets.isEmpty else { return }
@@ -29,6 +31,10 @@ enum SetTypeRetirementBackfill {
         for set in routineSets {
             set.setType = .myoRep
         }
-        try? context.save()
+        do {
+            try transaction.save()
+        } catch {
+            transaction.rollback()
+        }
     }
 }

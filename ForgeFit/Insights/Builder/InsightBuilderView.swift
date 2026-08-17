@@ -1027,32 +1027,30 @@ struct InsightBuilderView: View {
         }
 
         if let editing {
-            let previous = (editing.name, editing.recipeJSON, editing.updatedAt)
-            editing.name = toSave.name
-            editing.recipeJSON = encoded
-            editing.updatedAt = toSave.updatedAt
             do {
-                try modelContext.save()
+                _ = try SavedInsightPersistence.update(
+                    id: editing.id,
+                    name: toSave.name,
+                    recipeJSON: encoded,
+                    in: modelContext,
+                    now: toSave.updatedAt
+                )
             } catch {
-                editing.name = previous.0
-                editing.recipeJSON = previous.1
-                editing.updatedAt = previous.2
                 saveError = "Couldn't save this insight: \(error.localizedDescription)"
                 return
             }
         } else {
             let existingCount = (try? modelContext.fetchCount(FetchDescriptor<SavedInsightModel>())) ?? 0
-            let row = SavedInsightModel(
-                userID: ForgeFitDemo.userID,
-                name: toSave.name,
-                recipeJSON: encoded,
-                position: existingCount
-            )
-            modelContext.insert(row)
             do {
-                try modelContext.save()
+                _ = try SavedInsightPersistence.create(
+                    userID: ForgeFitDemo.userID,
+                    name: toSave.name,
+                    recipeJSON: encoded,
+                    position: existingCount,
+                    in: modelContext,
+                    now: toSave.updatedAt
+                )
             } catch {
-                modelContext.delete(row)
                 saveError = "Couldn't save this insight: \(error.localizedDescription)"
                 return
             }

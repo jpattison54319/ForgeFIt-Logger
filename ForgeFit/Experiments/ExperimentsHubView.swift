@@ -300,7 +300,7 @@ struct ExperimentsHubView: View {
         .task(id: performanceGate.isLiveWorkoutActive) {
             guard performanceGate.allowsNonWorkoutWork else { return }
             do {
-                _ = try ExperimentLifecycleService.reconcile(in: modelContext)
+                _ = try ExperimentLifecycleService.reconcileIsolated(from: modelContext)
                 if initialResultsExperiment != nil {
                     showingInitialResults = true
                 }

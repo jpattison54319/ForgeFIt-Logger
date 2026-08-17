@@ -75,7 +75,7 @@ struct HomeView: View {
     // Recovery reports are full-history passes — memoized so the always-alive
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
-    @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
+    @AppStorage(HomeQuickStartAction.preferenceKey) private var quickStartActionsJSON = ""
     @State private var healthAuthorization = HealthAuthorizationStore.shared
 
     private var connectingHealth: Bool { healthAuthorization.state.isRequesting }
@@ -91,6 +91,7 @@ struct HomeView: View {
     // @Query reflects the write, to avoid a one-frame flicker to the old value.
     @State private var checkinDraft: [String]?
     @State private var checkinCommitTask: Task<Void, Never>?
+    @State private var pendingCheckinID = UUID()
     @State private var dashboardAnalytics: HomeAnalyticsResult?
     @State private var dashboardAnalyticsKey: String?
     @State private var dashboardIsComputing = false
@@ -637,8 +638,7 @@ struct HomeView: View {
                         showQuickStartAdd = false
                     },
                     onCreateRoutine: {
-                        showQuickStartAdd = false
-                        editingRoutine = createRoutine()
+                        createRoutine()
                     }
                 )
             }
@@ -681,8 +681,14 @@ struct HomeView: View {
                     onImport: { program in
                         // A catalog program lands as one standalone microcycle
                         // folder containing its day routines.
-                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
-                        showExploreLibrary = false
+                        let attempt = RoutineProgramImportAttempt(
+                            program: program,
+                            templates: templates,
+                            in: modelContext
+                        )
+                        attempt.commit(into: modelContext) { _ in
+                            showExploreLibrary = false
+                        }
                     }
                 )
             }
@@ -1119,23 +1125,25 @@ struct HomeView: View {
     /// Persist the pending mood tags. Idempotent and safe to call from the
     /// debounce, on scene-background, and on disappear — a nil/unchanged draft
     /// is a no-op, so a tapped-then-backgrounded check-in is never lost. Writing
-    /// `model.tags` here is what finally moves `todayCheckinTags`, so this is the
-    /// single point where the (memoized) recovery recompute is triggered.
+    /// The committed private-context row is what finally moves
+    /// `todayCheckinTags`, so this is the single point where the (memoized)
+    /// recovery recompute is triggered.
     private func commitCheckinDraft() {
         checkinCommitTask?.cancel()
         checkinCommitTask = nil
         guard let tags = checkinDraft else { return }
         guard tags != todayCheckinTags else { checkinDraft = nil; return }
-        let model: DailyCheckinModel
-        if let existing = todayCheckin {
-            model = existing
-        } else {
-            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
-            modelContext.insert(model)
-        }
-        model.tags = tags
-        model.updatedAt = Date()
-        modelContext.saveUserChanges()
+        let attempt = DailyCheckinCommitAttempt(
+            id: todayCheckin?.id ?? pendingCheckinID,
+            userID: ForgeFitDemo.userID,
+            day: Date(),
+            tags: tags
+        )
+        PersistentChangeSaveCenter.shared.perform({
+            _ = try attempt.commit(in: modelContext)
+        }, onSuccess: {
+            pendingCheckinID = UUID()
+        })
         // Draft is cleared by the todayCheckinTags onChange once the write is
         // reflected, so the capsule never flickers back mid-commit.
     }
@@ -1168,11 +1176,21 @@ struct HomeView: View {
             onApplyPlan: effective != nil ? { plan in
                 guard let suggestion else { return }
                 appState.requestStart {
-                    let workout = WorkoutFactory.start(
-                        routine: suggestion.routine, exercises: exercises,
-                        setupNotes: setupNotes, in: modelContext)
-                    CoachAdjustments.apply(plan, to: workout, in: modelContext)
-                    appState.showingLogger = true
+                    _ = WorkoutFactory.start(
+                        routine: suggestion.routine,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        in: modelContext,
+                        prepare: { workout, context in
+                            CoachAdjustments.apply(
+                                plan,
+                                to: workout,
+                                in: context,
+                                saveChanges: false
+                            )
+                        },
+                        onCommit: { _ in appState.showingLogger = true }
+                    )
                 }
             } : nil
         )
@@ -1259,8 +1277,13 @@ struct HomeView: View {
                 // anything other than what it does.
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     appState.requestStart {
-                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                        appState.showingLogger = true
+                        _ = WorkoutFactory.start(
+                            routine: routine,
+                            exercises: exercises,
+                            setupNotes: setupNotes,
+                            in: modelContext,
+                            onCommit: { _ in appState.showingLogger = true }
+                        )
                     }
                 }
                 .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
@@ -1319,8 +1342,10 @@ struct HomeView: View {
                     isDragging: false,
                     onTap: {
                         appState.requestStart {
-                            _ = WorkoutFactory.startEmpty(in: modelContext)
-                            appState.showingLogger = true
+                            _ = WorkoutFactory.startEmpty(
+                                in: modelContext,
+                                onCommit: { _ in appState.showingLogger = true }
+                            )
                         }
                     },
                     onLongPress: {},
@@ -1397,8 +1422,7 @@ struct HomeView: View {
     }
 
     private var quickStartActions: [HomeQuickStartAction] {
-        let decoded = HomeQuickStartAction.decodeList(from: quickStartActionsJSON)
-        let actions = decoded.isEmpty ? HomeQuickStartAction.defaults : decoded
+        let actions = HomeQuickStartAction.resolvedList(from: quickStartActionsJSON)
         return actions.filter { action in
             switch action.kind {
             case .cardio: true
@@ -1446,20 +1470,31 @@ struct HomeView: View {
         appState.requestStart {
             switch action.kind {
             case .cardio(let modality):
-                _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
+                _ = WorkoutFactory.startCardio(
+                    modality,
+                    exercises: exercises,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             case .routine(let id):
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
-                _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                _ = WorkoutFactory.start(
+                    routine: routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             case .yoga(let slug):
                 guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }
                 _ = WorkoutFactory.startYoga(
                     flow: YogaFlowCatalog.plan(for: seed),
                     named: seed.name,
                     exercises: exercises,
-                    in: modelContext
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
                 )
             }
-            appState.showingLogger = true
         }
     }
 
@@ -1487,12 +1522,18 @@ struct HomeView: View {
         }
     }
 
-    private func createRoutine() -> RoutineModel {
-        let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "New Routine", position: routines.count)
-        modelContext.insert(routine)
-        modelContext.saveUserChanges()
-        addQuickStartAction(.routine(routine.id))
-        return routine
+    private func createRoutine() {
+        let attempt = RoutineCreationAttempt(
+            name: "New Routine",
+            folderID: nil,
+            position: routines.count,
+            in: modelContext
+        )
+        attempt.commit(into: modelContext) { routine in
+            addQuickStartAction(.routine(routine.id))
+            showQuickStartAdd = false
+            editingRoutine = routine
+        }
     }
 }
 
@@ -1506,7 +1547,9 @@ enum HomeRoute: Hashable {
     case microcycle(UUID)
 }
 
-private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
+struct HomeQuickStartAction: Hashable, Identifiable {
+    static let preferenceKey = "homeQuickStartActions.v1"
+
     enum Kind: Hashable {
         case cardio(CardioModality)
         case routine(UUID)
@@ -1542,9 +1585,7 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         self.kind = kind
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let raw = try container.decode(String.self)
+    init?(id raw: String) {
         if let modalityRaw = raw.removingPrefix("cardio:"),
            let modality = CardioModality(rawValue: modalityRaw) {
             kind = .cardio(modality)
@@ -1554,23 +1595,31 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         } else if let slug = raw.removingPrefix("yoga:") {
             kind = .yoga(slug)
         } else {
-            kind = .cardio(.run)
+            return nil
         }
     }
 
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(id)
+    /// Nil means the stored payload is malformed. An empty array is a valid,
+    /// intentional choice because Home always retains its fixed Empty tile.
+    static func decodeList(from json: String) -> [HomeQuickStartAction]? {
+        guard let data = json.data(using: .utf8),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else { return nil }
+        var seen = Set<String>()
+        return ids
+            .compactMap { HomeQuickStartAction(id: $0) }
+            .filter { seen.insert($0.id).inserted }
     }
 
-    static func decodeList(from json: String) -> [HomeQuickStartAction] {
-        guard let data = json.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([HomeQuickStartAction].self, from: data) else { return [] }
-        return decoded
+    /// An absent preference gets the onboarding defaults. A persisted `[]`
+    /// stays empty, so removing the final configurable tile survives redraws
+    /// and relaunches instead of silently restoring the defaults.
+    static func resolvedList(from json: String) -> [HomeQuickStartAction] {
+        guard !json.isEmpty else { return defaults }
+        return decodeList(from: json) ?? defaults
     }
 
     static func encodeList(_ actions: [HomeQuickStartAction]) -> String {
-        guard let data = try? JSONEncoder().encode(actions),
+        guard let data = try? JSONEncoder().encode(actions.map(\.id)),
               let json = String(data: data, encoding: .utf8) else { return "" }
         return json
     }

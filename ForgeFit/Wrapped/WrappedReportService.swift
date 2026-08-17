@@ -11,7 +11,13 @@ import SwiftData
 /// repeated calls, delayed launches days after the 1st, and timezone changes
 /// can't create duplicates.
 nonisolated enum WrappedReportService {
-    private static let lastAutomaticAttemptKey = "wrapped.lastAutomaticAttempt"
+    static let lastAutomaticAttemptKey = "wrapped.lastAutomaticAttempt"
+    typealias SaveOperation = (ModelContext) throws -> Void
+
+    private struct GenerationOutcome {
+        var createdIDs: [UUID] = []
+        var touchedIDs: [UUID] = []
+    }
 
     /// Pure calendar logic, separated so date/idempotency tests never touch
     /// SwiftData.
@@ -47,19 +53,22 @@ nonisolated enum WrappedReportService {
     /// notification scheduling by the caller's UI layer).
     @discardableResult
     static func generateIfDue(
-        in context: ModelContext,
+        in sourceContext: ModelContext,
         healthMetrics: [RecoveryEngine.DailyHealthMetric] = [],
         now: Date = Date(),
         calendar: Calendar = .current,
         weightUnit: WeightUnit = .lb,
-        coalesceAutomaticAttempt: Bool = false
+        coalesceAutomaticAttempt: Bool = false,
+        save: SaveOperation = { try $0.save() }
     ) -> [WrappedReportModel] {
         guard !Task.isCancelled else { return [] }
         var stampedAutomaticAttempt = false
+        var completedAutomaticAttempt = false
         defer {
-            if stampedAutomaticAttempt, Task.isCancelled {
-                // A workout-start cancellation must leave this daily job due;
-                // the post-workout foreground pass owns the retry.
+            if stampedAutomaticAttempt,
+               (!completedAutomaticAttempt || Task.isCancelled) {
+                // Cancellation and failed persistence both leave this daily
+                // job due; the next foreground pass owns the exact retry.
                 UserDefaults.standard.removeObject(forKey: lastAutomaticAttemptKey)
             }
         }
@@ -77,15 +86,59 @@ nonisolated enum WrappedReportService {
             stampedAutomaticAttempt = true
         }
 
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        let outcome: GenerationOutcome
+        do {
+            outcome = try generateDueReports(
+                in: transaction,
+                healthMetrics: healthMetrics,
+                now: now,
+                calendar: calendar,
+                weightUnit: weightUnit
+            )
+            guard !Task.isCancelled else { return [] }
+            if transaction.hasChanges {
+                try save(transaction)
+            }
+            completedAutomaticAttempt = true
+        } catch {
+            return []
+        }
+
+        // Fetching touched rows after the private commit refreshes any cached
+        // report in the caller while never saving its unrelated pending edits.
+        let touched = Set(outcome.touchedIDs)
+        if !touched.isEmpty {
+            _ = try? sourceContext.fetch(FetchDescriptor<WrappedReportModel>())
+                .filter { touched.contains($0.id) }
+        }
+        guard !outcome.createdIDs.isEmpty else { return [] }
+        let fetchedByID = Dictionary(
+            ((try? sourceContext.fetch(FetchDescriptor<WrappedReportModel>())) ?? [])
+                .map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return outcome.createdIDs.compactMap { fetchedByID[$0] }
+    }
+
+    private static func generateDueReports(
+        in context: ModelContext,
+        healthMetrics: [RecoveryEngine.DailyHealthMetric],
+        now: Date,
+        calendar: Calendar,
+        weightUnit: WeightUnit
+    ) throws -> GenerationOutcome {
+
         // Checking whether a keyed report exists is a tiny indexed fetch. Load
         // the full workout/library graph only when a report is actually missing
         // or inside its short refresh window.
         var cachedBuilder: WrappedBuilder?
-        func builder() -> WrappedBuilder {
+        func builder() throws -> WrappedBuilder {
             if let cachedBuilder { return cachedBuilder }
             let value = WrappedBuilder(
-                workouts: (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? [],
-                exercises: (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? [],
+                workouts: try context.fetch(FetchDescriptor<WorkoutModel>()),
+                exercises: try context.fetch(FetchDescriptor<ExerciseLibraryModel>()),
                 healthMetrics: healthMetrics,
                 calendar: calendar,
                 weightUnit: weightUnit
@@ -93,23 +146,23 @@ nonisolated enum WrappedReportService {
             cachedBuilder = value
             return value
         }
-        var created: [WrappedReportModel] = []
+        var outcome = GenerationOutcome()
 
-        guard !Task.isCancelled else { return [] }
+        guard !Task.isCancelled else { return outcome }
         if let monthStart = WrappedSchedule.dueMonthStart(now: now, calendar: calendar) {
             let year = calendar.component(.year, from: monthStart)
             let month = calendar.component(.month, from: monthStart)
-            if let existing = fetchReport(type: "monthly", year: year, month: month, in: context) {
+            if let existing = try fetchReport(type: "monthly", year: year, month: month, in: context) {
                 if WrappedSchedule.isInRefreshWindow(now: now, calendar: calendar),
-                   let payload = builder().buildMonth(starting: monthStart),
+                   let payload = try builder().buildMonth(starting: monthStart),
                    !Task.isCancelled,
                    payload.encodedJSON() != existing.payloadJSON {
                     existing.payloadJSON = payload.encodedJSON()
                     existing.updatedAt = now
-                    try? context.save()
+                    outcome.touchedIDs.append(existing.id)
                 }
-            } else if let payload = builder().buildMonth(starting: monthStart) {
-                guard !Task.isCancelled else { return [] }
+            } else if let payload = try builder().buildMonth(starting: monthStart) {
+                guard !Task.isCancelled else { return outcome }
                 let interval = calendar.dateInterval(of: .month, for: monthStart)
                 let report = WrappedReportModel(
                     userID: ForgeFitDemo.userID,
@@ -123,16 +176,16 @@ nonisolated enum WrappedReportService {
                     sourceRangeEnd: interval?.end ?? monthStart
                 )
                 context.insert(report)
-                try? context.save()
-                created.append(report)
+                outcome.createdIDs.append(report.id)
+                outcome.touchedIDs.append(report.id)
             }
         }
 
-        guard !Task.isCancelled else { return [] }
+        guard !Task.isCancelled else { return outcome }
         if let dueYear = WrappedSchedule.dueYear(now: now, calendar: calendar),
-           fetchReport(type: "yearly", year: dueYear, month: 0, in: context) == nil,
-           let payload = builder().buildYear(dueYear) {
-            guard !Task.isCancelled else { return [] }
+           try fetchReport(type: "yearly", year: dueYear, month: 0, in: context) == nil,
+           let payload = try builder().buildYear(dueYear) {
+            guard !Task.isCancelled else { return outcome }
             var components = DateComponents()
             components.year = dueYear
             components.month = 1
@@ -151,31 +204,46 @@ nonisolated enum WrappedReportService {
                 sourceRangeEnd: interval?.end ?? yearStart
             )
             context.insert(report)
-            try? context.save()
-            created.append(report)
+            outcome.createdIDs.append(report.id)
+            outcome.touchedIDs.append(report.id)
         }
 
-        return created
+        return outcome
     }
 
-    static func fetchReport(type: String, year: Int, month: Int, in context: ModelContext) -> WrappedReportModel? {
+    private static func fetchReport(type: String, year: Int, month: Int, in context: ModelContext) throws -> WrappedReportModel? {
         var descriptor = FetchDescriptor<WrappedReportModel>(
             predicate: #Predicate {
                 $0.reportTypeRaw == type && $0.year == year && $0.month == month && $0.deletedAt == nil
             }
         )
         descriptor.fetchLimit = 1
-        return try? context.fetch(descriptor).first
+        return try context.fetch(descriptor).first
     }
 
     /// Opening the report (any page) counts as viewed — the Home card keys
     /// off this; the report stays permanently reachable from Profile.
     @MainActor
-    static func markViewed(_ report: WrappedReportModel, in context: ModelContext, now: Date = Date()) {
-        guard report.viewedAt == nil else { return }
-        report.viewedAt = now
-        report.updatedAt = now
-        context.saveUserChanges()
+    static func markViewed(
+        _ report: WrappedReportModel,
+        in context: ModelContext,
+        now: Date = Date(),
+        save: SaveOperation = { try $0.save() }
+    ) throws {
+        let reportID = report.id
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        guard let persistedReport = try transaction.fetch(
+            FetchDescriptor<WrappedReportModel>(predicate: #Predicate { $0.id == reportID })
+        ).first,
+        persistedReport.deletedAt == nil else { return }
+        guard persistedReport.viewedAt == nil else { return }
+        persistedReport.viewedAt = now
+        persistedReport.updatedAt = now
+        try save(transaction)
+        _ = try context.fetch(
+            FetchDescriptor<WrappedReportModel>(predicate: #Predicate { $0.id == reportID })
+        ).first
     }
 
     /// Human title like "June Wrapped" / "2026 Wrapped".

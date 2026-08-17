@@ -32,6 +32,7 @@ import SwiftData
 /// (change tracking + queued upload + retry) provided by the platform.
 @MainActor
 final class SyncCoordinator {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
 
     private struct SyncOperation {
         let id: UUID
@@ -52,6 +53,7 @@ final class SyncCoordinator {
     private let context: ModelContext
     private let debounce: Duration
     private let postWorkoutDelay: Duration
+    private let saveContext: SaveOperation
     private var saveObserver: NSObjectProtocol?
     private var pathMonitor: NWPathMonitor?
     private var connectivityMonitoringRequested = false
@@ -73,12 +75,15 @@ final class SyncCoordinator {
         social: SocialService,
         container: ModelContainer,
         debounce: Duration = .seconds(2),
-        postWorkoutDelay: Duration = .seconds(2)
+        postWorkoutDelay: Duration = .seconds(2),
+        saveContext: @escaping SaveOperation = { try $0.save() }
     ) {
         self.social = social
         self.context = ModelContext(container)
+        self.context.autosaveEnabled = false
         self.debounce = debounce
         self.postWorkoutDelay = postWorkoutDelay
+        self.saveContext = saveContext
     }
 
     deinit {
@@ -305,7 +310,7 @@ final class SyncCoordinator {
         guard !ids.isEmpty, social.isOptedIn else { return }
 
         var ops: [UUID: SocialService.ShareOp] = [:]
-        var stampsToSave = false
+        var publishIDs = Set<UUID>()
         for id in ids {
             guard !Task.isCancelled, !isLiveWorkoutActive else {
                 pendingWorkoutIDs.formUnion(ids)
@@ -319,9 +324,7 @@ final class SyncCoordinator {
                 // The feed saw content change beneath this workout: advance
                 // its clock so the share watermark (and reconcile drift
                 // detection on other passes) reflect the edit.
-                workout.updatedAt = Date()
-                suppressEcho.insert(id)
-                stampsToSave = true
+                publishIDs.insert(id)
                 ops[id] = .publish
             }
             // In-progress and imported workouts don't touch the community.
@@ -331,7 +334,40 @@ final class SyncCoordinator {
             needsFullSyncAfterWorkout = true
             return
         }
-        if stampsToSave { try? context.save() }
+        if !publishIDs.isEmpty {
+            let transaction = ModelContext(context.container)
+            transaction.autosaveEnabled = false
+            let publishIDList = Array(publishIDs)
+            let publishWorkouts = (try? transaction.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { publishIDList.contains($0.id) }
+            ))) ?? []
+            guard publishWorkouts.count == publishIDs.count else {
+                pendingWorkoutIDs.formUnion(ids)
+                return
+            }
+            let now = Date()
+            publishWorkouts.forEach { workout in
+                // Device clocks and restored/imported rows can be ahead of
+                // wall time. The share watermark still has to advance for an
+                // edit or reconciliation can mistake the new payload for an
+                // already-published version.
+                workout.updatedAt = max(
+                    now,
+                    workout.updatedAt.addingTimeInterval(0.001)
+                )
+            }
+            suppressEcho.formUnion(publishIDs)
+            do {
+                try saveContext(transaction)
+            } catch {
+                suppressEcho.subtract(publishIDs)
+                pendingWorkoutIDs.formUnion(ids)
+                return
+            }
+            // Refresh the coordinator's read context before building the
+            // payload so the just-committed watermark is what gets published.
+            publishIDs.forEach { _ = workout($0) }
+        }
 
         social.enqueueShare(ops)
         await social.drainShareOutbox { [weak self] ids in self?.makeItems(for: ids) ?? [] }

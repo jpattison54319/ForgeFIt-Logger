@@ -131,15 +131,14 @@ struct RoutineEditorView: View {
                 ConditioningBlockBuilderView(
                     planJSON: block.planJSON,
                     exercises: exercises,
-                    workouts: allWorkouts
-                ) { json in
-                    update(block, planJSON: json)
-                }
+                    workouts: allWorkouts,
+                    commit: { update(block, planJSON: $0) }
+                )
             } else {
-                YogaFlowBuilderView(planJSON: block.planJSON) { json in
-                    guard let json else { return }
-                    update(block, planJSON: json)
-                }
+                YogaFlowBuilderView(planJSON: block.planJSON, commit: { json in
+                    guard let json else { return false }
+                    return update(block, planJSON: json)
+                })
             }
         }
         .sheet(item: $replaceTarget) { target in
@@ -429,10 +428,8 @@ struct RoutineEditorView: View {
         }
     }
 
-    private func update(_ block: RoutineBlockModel, planJSON: String) {
-        block.planJSON = planJSON
-        block.updatedAt = .now
-        save()
+    private func update(_ block: RoutineBlockModel, planJSON: String) -> Bool {
+        RoutineBlockPlanPersistence.apply(planJSON, to: block, in: modelContext)
     }
 
     /// The starter target rows an exercise gets when added: one rep set for
@@ -854,10 +851,13 @@ private struct ExerciseEditRow: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("routine-yoga-flow-builder")
             .sheet(isPresented: $showFlowBuilder) {
-                YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON) { json in
-                    routineExercise.yogaFlowJSON = json
-                    save()
-                }
+                YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON, commit: { json in
+                    RoutineYogaPlanPersistence.apply(
+                        json,
+                        to: routineExercise,
+                        in: modelContext
+                    )
+                })
             }
 
             if let exercise {

@@ -32,7 +32,6 @@ private struct IntervalSplitsEditor: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Bindable var session: CardioSessionModel
-    @State private var saveError: String?
 
     private var laps: [CardioSplitModel] {
         session.splits.sorted { $0.index < $1.index }
@@ -59,12 +58,16 @@ private struct IntervalSplitsEditor: View {
                     }
                     .onDelete { offsets in
                         let ordered = laps
-                        for index in offsets {
-                            let split = ordered[index]
-                            session.splits.removeAll { $0.id == split.id }
-                            modelContext.delete(split)
-                        }
-                        saveError = modelContext.saveReportingFailure()
+                        let splitIDs = offsets.map { ordered[$0].id }
+                        let sessionID = session.id
+                        PersistentChangeSaveCenter.shared.perform({
+                            try WorkoutDetailPersistence.deleteSplits(
+                                container: modelContext.container,
+                                sessionID: sessionID,
+                                splitIDs: splitIDs,
+                                updatedAt: .now
+                            )
+                        })
                     }
                 } footer: {
                     Text("Reverting restores the original laps.")
@@ -79,14 +82,6 @@ private struct IntervalSplitsEditor: View {
                     }
                     .font(.bodyStrong)
                 }
-            }
-            .alert(
-                "Couldn't Save",
-                isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
-            ) {
-                Button("OK", role: .cancel) { saveError = nil }
-            } message: {
-                Text(saveError ?? "")
             }
             // A sheet swipe is still a navigation exit. Commit label edits
             // there too instead of relying on SwiftData's eventual autosave.
@@ -111,13 +106,13 @@ struct WorkoutDetailView: View {
     @State private var showEditor = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
-    @State private var deleteError: String?
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
     @State private var heartRateRefreshError: String?
     @State private var recoveryPoints: [SetRecoveryPoint] = []
     @State private var showSharePreview = false
     @State private var sharePayload: SharePayload?
+    @State private var routeExportError: String?
     @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
@@ -327,14 +322,6 @@ struct WorkoutDetailView: View {
         } message: {
             Text("This removes the workout from ForgeFit. Apple Health workout records and metadata are not deleted.")
         }
-        .alert("Couldn’t delete workout", isPresented: Binding(
-            get: { deleteError != nil },
-            set: { if !$0 { deleteError = nil } }
-        )) {
-            Button("OK", role: .cancel) { deleteError = nil }
-        } message: {
-            Text(deleteError ?? "Try again in a moment.")
-        }
         .alert("Couldn’t Update Heart Rate", isPresented: Binding(
             get: { heartRateRefreshError != nil },
             set: { if !$0 { heartRateRefreshError = nil } }
@@ -342,6 +329,14 @@ struct WorkoutDetailView: View {
             Button("OK", role: .cancel) { heartRateRefreshError = nil }
         } message: {
             Text(heartRateRefreshError ?? "The corrected values are visible now but may not be available elsewhere yet.")
+        }
+        .alert("Couldn’t Export Route", isPresented: Binding(
+            get: { routeExportError != nil },
+            set: { if !$0 { routeExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { routeExportError = nil }
+        } message: {
+            Text(routeExportError ?? "ForgeFit couldn’t create the GPX file. Try again.")
         }
         .navigationDestination(for: UUID.self) { exerciseID in
             ExerciseDetailView(exerciseID: exerciseID, workouts: history.isEmpty ? [workout] : history, exercises: exercises)
@@ -412,17 +407,20 @@ struct WorkoutDetailView: View {
 
     private func deleteWorkout() {
         let now = Date()
-        workout.updatedAt = now
-        workout.deletedAt = now
-        // Rollback-on-failure keeps a phantom-deleted row from riding a later
-        // unrelated save (and undoes `updatedAt` too, unlike a manual revert).
-        if let failure = modelContext.saveReportingFailure() {
+        let workoutID = workout.id
+        let committed = PersistentChangeSaveCenter.shared.perform({
+            try WorkoutDetailPersistence.softDeleteWorkout(
+                container: modelContext.container,
+                workoutID: workoutID,
+                deletedAt: now
+            )
+        }, onSuccess: {
+            BackupScheduler.shared.noteLogDataChanged()
+            dismiss()
+        })
+        if !committed {
             isDeleting = false
-            deleteError = failure
-            return
         }
-        BackupScheduler.shared.noteLogDataChanged()
-        dismiss()
     }
 
     /// Health metrics captured live during the session (Apple Watch /
@@ -467,10 +465,11 @@ struct WorkoutDetailView: View {
         hrSamples = samples
         recoveryPoints = betweenSetRecovery(from: samples)
         hrLoaded = true
-        if WorkoutHeartRateResolution.reconcile(workout: workout, samples: samples),
-           let failure = modelContext.saveReportingFailure() {
-            heartRateRefreshError = failure
-        }
+        heartRateRefreshError = WorkoutDetailPersistence.reconcileHeartRate(
+            container: modelContext.container,
+            workoutID: workout.id,
+            samples: samples
+        )
     }
 
     /// Per-set between-set HR recovery for this workout's strength sets, derived
@@ -1189,8 +1188,12 @@ struct WorkoutDetailView: View {
         let stamp = cardio.startedAt.formatted(.iso8601.year().month().day())
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeFit-\(kind.title)-\(stamp).gpx")
-        guard (try? GPXCodec.encode(track: track).write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
-        sharePayload = SharePayload(items: [url])
+        do {
+            try GPXCodec.encode(track: track).write(to: url, atomically: true, encoding: .utf8)
+            sharePayload = SharePayload(items: [url])
+        } catch {
+            routeExportError = "ForgeFit couldn’t create the GPX file. \(error.localizedDescription)"
+        }
     }
 
     /// Start (green) / finish (red) markers for a route — without them a bare

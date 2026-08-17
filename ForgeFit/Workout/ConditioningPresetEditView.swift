@@ -36,10 +36,11 @@ struct ConditioningPresetEditView: View {
             workouts: workouts,
             navigationTitle: navigationTitle,
             allowsMultipleSections: false,
-            showsPresetActions: false
-        ) { json in
-            try save(json)
-        }
+            showsPresetActions: false,
+            onSave: { json in
+                try save(json)
+            }
+        )
     }
 
     private func save(_ json: String) throws {
@@ -47,28 +48,37 @@ struct ConditioningPresetEditView: View {
             throw ConditioningPresetStoreError.encodingFailed
         }
         let name = editedSection.name
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
+        let workoutIDs = Set(workouts.map(\.id))
+        let persistedWorkouts = try context.fetch(FetchDescriptor<WorkoutModel>())
+            .filter { workoutIDs.contains($0.id) }
 
         switch selection {
         case .builtIn(let preset):
             let record = try ConditioningPresetStore.save(
                 editedSection,
                 named: name,
-                in: modelContext
+                in: context,
+                saveChanges: false
             )
             let descriptor = FetchDescriptor<IntervalPresetModel>()
-            let records = try modelContext.fetch(descriptor)
+            let records = try context.fetch(descriptor)
             try ConditioningPresetStore.hide(
                 preset,
                 records: records,
-                in: modelContext
+                in: context,
+                saveChanges: false
             )
             try ConditioningPresetHistoryRenamer.renameMatchingHistory(
                 from: section,
                 to: record.name,
                 presetReferenceID: "saved-\(record.id.uuidString)",
-                in: workouts,
-                context: modelContext
+                in: persistedWorkouts,
+                context: context,
+                saveChanges: false
             )
+            try context.save()
             var savedSection = editedSection
             savedSection.name = record.name
             onSaved(.saved(id: record.id, name: record.name, section: savedSection))
@@ -77,7 +87,7 @@ struct ConditioningPresetEditView: View {
             let descriptor = FetchDescriptor<IntervalPresetModel>(
                 predicate: #Predicate { $0.id == id }
             )
-            guard let record = try modelContext.fetch(descriptor).first,
+            guard let record = try context.fetch(descriptor).first,
                   record.deletedAt == nil else {
                 throw ConditioningPresetStoreError.presetUnavailable
             }
@@ -85,15 +95,18 @@ struct ConditioningPresetEditView: View {
                 record,
                 with: editedSection,
                 named: name,
-                in: modelContext
+                in: context,
+                saveChanges: false
             )
             try ConditioningPresetHistoryRenamer.renameMatchingHistory(
                 from: section,
                 to: record.name,
                 presetReferenceID: "saved-\(record.id.uuidString)",
-                in: workouts,
-                context: modelContext
+                in: persistedWorkouts,
+                context: context,
+                saveChanges: false
             )
+            try context.save()
             var savedSection = editedSection
             savedSection.name = record.name
             onSaved(.saved(id: id, name: record.name, section: savedSection))

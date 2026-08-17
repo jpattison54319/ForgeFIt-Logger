@@ -38,7 +38,8 @@ enum ConditioningPresetStore {
         _ section: ConditioningSection,
         named name: String,
         userID: UUID = ForgeFitDemo.userID,
-        in context: ModelContext
+        in context: ModelContext,
+        saveChanges: Bool = true
     ) throws -> IntervalPresetModel {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { throw ConditioningPresetStoreError.emptyName }
@@ -59,6 +60,7 @@ enum ConditioningPresetStore {
             planJSON: json
         )
         context.insert(record)
+        guard saveChanges else { return record }
         do {
             try context.save()
             return record
@@ -72,7 +74,8 @@ enum ConditioningPresetStore {
         _ preset: ConditioningPreset,
         records: [IntervalPresetModel],
         userID: UUID = ForgeFitDemo.userID,
-        in context: ModelContext
+        in context: ModelContext,
+        saveChanges: Bool = true
     ) throws {
         guard !hiddenBuiltInIDs(from: records).contains(preset.id) else { return }
         guard let json = StoredConditioningPreset.deletedBuiltIn(preset.id).encodedJSON() else {
@@ -81,6 +84,7 @@ enum ConditioningPresetStore {
 
         let marker = IntervalPresetModel(userID: userID, name: preset.title, planJSON: json)
         context.insert(marker)
+        guard saveChanges else { return }
         do {
             try context.save()
         } catch {
@@ -109,7 +113,8 @@ enum ConditioningPresetStore {
         _ record: IntervalPresetModel,
         with section: ConditioningSection,
         named name: String,
-        in context: ModelContext
+        in context: ModelContext,
+        saveChanges: Bool = true
     ) throws {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { throw ConditioningPresetStoreError.emptyName }
@@ -129,6 +134,7 @@ enum ConditioningPresetStore {
         record.planJSON = json
         record.updatedAt = .now
 
+        guard saveChanges else { return }
         do {
             try context.save()
         } catch {

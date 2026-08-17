@@ -365,6 +365,58 @@ struct WrappedTests {
         #expect(all.count == 1)
     }
 
+    @Test func failedGenerationLeavesNoPhantomAndRetryDoesNotCommitOtherEdits() throws {
+        struct InjectedFailure: Error {}
+
+        UserDefaults.standard.removeObject(forKey: WrappedReportService.lastAutomaticAttemptKey)
+        defer { UserDefaults.standard.removeObject(forKey: WrappedReportService.lastAutomaticAttemptKey) }
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let bench = benchPress()
+        let pendingRoutine = RoutineModel(userID: userID, name: "Persisted name")
+        context.insert(bench)
+        context.insert(pendingRoutine)
+        for day in [2, 9, 16, 23] {
+            context.insert(strengthWorkout(on: date(2026, 6, day), exercise: bench))
+        }
+        try context.save()
+        pendingRoutine.name = "Pending elsewhere"
+
+        let failed = WrappedReportService.generateIfDue(
+            in: context,
+            now: date(2026, 7, 1),
+            calendar: cal,
+            coalesceAutomaticAttempt: true,
+            save: { _ in throw InjectedFailure() }
+        )
+        #expect(failed.isEmpty)
+        #expect(UserDefaults.standard.object(
+            forKey: WrappedReportService.lastAutomaticAttemptKey
+        ) == nil)
+
+        var verification = ModelContext(container)
+        verification.autosaveEnabled = false
+        #expect(try verification.fetch(FetchDescriptor<WrappedReportModel>()).isEmpty)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Persisted name")
+
+        let retry = WrappedReportService.generateIfDue(
+            in: context,
+            now: date(2026, 7, 1),
+            calendar: cal,
+            coalesceAutomaticAttempt: true
+        )
+        #expect(retry.count == 1)
+
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<WrappedReportModel>()).count == 1)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Persisted name")
+
+        try context.save()
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Pending elsewhere")
+    }
+
     @Test func emptyMonthGeneratesNothing() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }
@@ -416,10 +468,10 @@ struct WrappedTests {
         let report = try #require(WrappedReportService.generateIfDue(in: context, now: date(2026, 7, 1), calendar: cal).first)
         #expect(!report.isViewed)
         let viewedAt = date(2026, 7, 1, hour: 12)
-        WrappedReportService.markViewed(report, in: context, now: viewedAt)
+        try WrappedReportService.markViewed(report, in: context, now: viewedAt)
         #expect(report.viewedAt == viewedAt)
         // Second open doesn't move the timestamp.
-        WrappedReportService.markViewed(report, in: context, now: date(2026, 7, 3))
+        try WrappedReportService.markViewed(report, in: context, now: date(2026, 7, 3))
         #expect(report.viewedAt == viewedAt)
 
         // A refresh keeps viewed state.
@@ -427,6 +479,48 @@ struct WrappedTests {
         try context.save()
         WrappedReportService.generateIfDue(in: context, now: date(2026, 7, 2), calendar: cal)
         #expect(report.viewedAt == viewedAt)
+    }
+
+    @Test func markViewedFailureAndRetryDoNotCommitAnotherTabsPendingEdit() throws {
+        struct InjectedFailure: Error {}
+
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let report = WrappedReportModel(
+            userID: userID,
+            reportTypeRaw: "monthly",
+            year: 2026,
+            month: 6,
+            payloadJSON: "{}"
+        )
+        let routine = RoutineModel(userID: userID, name: "Committed")
+        context.insert(report)
+        context.insert(routine)
+        try context.save()
+        routine.name = "Pending elsewhere"
+        let viewedAt = date(2026, 7, 1, hour: 12)
+
+        #expect(throws: InjectedFailure.self) {
+            try WrappedReportService.markViewed(
+                report,
+                in: context,
+                now: viewedAt,
+                save: { _ in throw InjectedFailure() }
+            )
+        }
+        var verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<WrappedReportModel>()).first?.viewedAt == nil)
+
+        try WrappedReportService.markViewed(report, in: context, now: viewedAt)
+        #expect(report.viewedAt == viewedAt)
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<WrappedReportModel>()).first?.viewedAt == viewedAt)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Committed")
+
+        try context.save()
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Pending elsewhere")
     }
 
     @Test func yearlyGeneratesInJanuaryAlongsideDecemberMonthly() throws {

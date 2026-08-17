@@ -278,31 +278,23 @@ struct MyInsightsView: View {
             persistError = "Couldn't encode the duplicated insight."
             return
         }
-        let copy = SavedInsightModel(
-            userID: card.userID,
-            name: recipe.name,
-            recipeJSON: encoded,
-            position: liveCards.count
-        )
-        modelContext.insert(copy)
         do {
-            try modelContext.save()
+            _ = try SavedInsightPersistence.create(
+                userID: card.userID,
+                name: recipe.name,
+                recipeJSON: encoded,
+                position: liveCards.count,
+                in: modelContext
+            )
         } catch {
-            modelContext.delete(copy)
             persistError = "Couldn't duplicate the insight: \(error.localizedDescription)"
         }
     }
 
     private func delete(_ card: SavedInsightModel) {
-        let previous = (card.deletedAt, card.updatedAt)
-        let now = Date()
-        card.deletedAt = now
-        card.updatedAt = now
         do {
-            try modelContext.save()
+            try SavedInsightPersistence.delete(id: card.id, in: modelContext)
         } catch {
-            card.deletedAt = previous.0
-            card.updatedAt = previous.1
             persistError = "Couldn't delete the insight: \(error.localizedDescription)"
         }
     }
@@ -313,24 +305,13 @@ struct MyInsightsView: View {
         var cards = liveCards
         guard let index = cards.firstIndex(where: { $0.id == card.id }),
               cards.indices.contains(index + offset) else { return }
-        let previous = Dictionary(
-            uniqueKeysWithValues: cards.map { ($0.id, ($0.position, $0.updatedAt)) }
-        )
         cards.swapAt(index, index + offset)
-        let now = Date()
-        for (position, row) in cards.enumerated() where row.position != position {
-            row.position = position
-            row.updatedAt = now
-        }
         do {
-            try modelContext.save()
+            try SavedInsightPersistence.reorder(
+                ids: cards.map(\.id),
+                in: modelContext
+            )
         } catch {
-            for row in cards {
-                if let old = previous[row.id] {
-                    row.position = old.0
-                    row.updatedAt = old.1
-                }
-            }
             persistError = "Couldn't reorder insights: \(error.localizedDescription)"
         }
     }

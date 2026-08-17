@@ -170,8 +170,10 @@ struct WorkoutHomeView: View {
             ScreenScaffold("Workout") {
                 SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
                     appState.requestStart {
-                        _ = WorkoutFactory.startEmpty(in: modelContext)
-                        appState.showingLogger = true
+                        _ = WorkoutFactory.startEmpty(
+                            in: modelContext,
+                            onCommit: { _ in appState.showingLogger = true }
+                        )
                     }
                 }
 
@@ -318,8 +320,14 @@ struct WorkoutHomeView: View {
                     onImport: { program in
                         // Imported day routines land together as one leaf
                         // microcycle folder.
-                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
-                        showExploreLibrary = false
+                        let attempt = RoutineProgramImportAttempt(
+                            program: program,
+                            templates: templates,
+                            in: modelContext
+                        )
+                        attempt.commit(into: modelContext) { _ in
+                            showExploreLibrary = false
+                        }
                     }
                 )
             }
@@ -393,7 +401,7 @@ struct WorkoutHomeView: View {
         .task(id: performanceGate.isLiveWorkoutActive) {
             guard performanceGate.allowsNonWorkoutWork else { return }
             CyclePreferenceMigration.migrate()
-            _ = try? MicrocycleTrackingService.reconcile(in: modelContext)
+            _ = try? MicrocycleTrackingService.reconcileIsolated(from: modelContext)
         }
         .interactiveBackSwipeEnabled()
     }
@@ -775,8 +783,13 @@ struct WorkoutHomeView: View {
 
     private func start(_ routine: RoutineModel) {
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-            appState.showingLogger = true
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: setupNotes,
+                in: modelContext,
+                onCommit: { _ in appState.showingLogger = true }
+            )
         }
     }
 
@@ -797,28 +810,21 @@ struct WorkoutHomeView: View {
     private func commitCreateFolder() {
         guard let request = pendingFolderCreation else { return }
         let trimmed = folderNameDraft.trimmingCharacters(in: .whitespaces)
-        let folder = RoutineFolderModel(
-            userID: ForgeFitDemo.userID,
+        let attempt = RoutineFolderCreationAttempt(
             name: trimmed.isEmpty ? "New Folder" : trimmed,
             position: folders.count,
-            parentID: request.parentID
+            parentID: request.parentID,
+            in: modelContext
         )
-        modelContext.insert(folder)
-        // A parent gaining its first subfolder holds only folders from then on
-        // — its loose routines move into the new subfolder.
-        if let parentID = request.parentID, let parent = folders.first(where: { $0.id == parentID }) {
-            let existingChildren = childFolders(of: parent).filter { $0.id != folder.id }
-            if existingChildren.isEmpty {
-                for routine in routines(in: parent) {
-                    routine.folderID = folder.id
-                    routine.updatedAt = Date()
-                }
+        attempt.commit(into: modelContext) { _ in
+            if let parentID = request.parentID {
+                // Make the newly materialized microcycle visible immediately.
+                // All model moves were committed atomically in the attempt.
+                collapsed.remove(parentID)
             }
-            parent.updatedAt = Date()
-            collapsed.remove(parentID)
+            pendingFolderCreation = nil
+            folderNameDraft = ""
         }
-        save()
-        pendingFolderCreation = nil
     }
 
     private func startRename(_ folder: RoutineFolderModel) {
@@ -834,39 +840,32 @@ struct WorkoutHomeView: View {
     }
 
     private func deleteFolder(_ folder: RoutineFolderModel) {
-        // Pull contents out rather than deleting them: routines and subfolders
-        // move up to this folder's parent level.
-        let now = Date()
-        for routine in routines(in: folder) {
-            routine.folderID = folder.parentID
-            routine.updatedAt = now
+        let clearsMesocycle = isActiveMesocycle(folder)
+        let clearsMicrocycle = isActiveMicrocycle(folder)
+        let attempt = RoutineFolderDeletionAttempt(
+            folder: folder,
+            in: modelContext
+        )
+        attempt.commit {
+            if clearsMesocycle { activeMesocycleFolderRaw = "" }
+            if clearsMicrocycle { activeMicrocycleFolderRaw = "" }
         }
-        for child in childFolders(of: folder) {
-            child.parentID = folder.parentID
-            child.updatedAt = now
-        }
-        if isActiveMesocycle(folder) { activeMesocycleFolderRaw = "" }
-        if isActiveMicrocycle(folder) { activeMicrocycleFolderRaw = "" }
-        folder.updatedAt = now
-        folder.deletedAt = now
-        save()
     }
 
-    /// Insert-then-edit: the editor's exercise picker saves eagerly, so it
-    /// needs a live inserted model. The editor knows it's new (see
-    /// `newlyCreatedRoutineID`) and deletes the placeholder if the user
-    /// backs out without saving.
+    /// Commit the placeholder before opening its editor. The editor's exercise
+    /// picker saves eagerly, so it needs a durable model; a failed creation
+    /// remains isolated and cannot appear in the library or autosave later.
     private func createRoutine(folderID: UUID?) {
-        let routine = RoutineModel(
-            userID: ForgeFitDemo.userID,
+        let attempt = RoutineCreationAttempt(
             name: activeRoutines.isEmpty ? "Full Body A" : "New Routine",
             folderID: folderID,
-            position: activeRoutines.count
+            position: activeRoutines.count,
+            in: modelContext
         )
-        modelContext.insert(routine)
-        save()
-        newlyCreatedRoutineID = routine.id
-        newRoutine = routine
+        attempt.commit(into: modelContext) { routine in
+            newlyCreatedRoutineID = routine.id
+            newRoutine = routine
+        }
     }
 
     private func delete(_ routine: RoutineModel) {
@@ -885,8 +884,12 @@ struct WorkoutHomeView: View {
     }
 
     private func duplicate(_ source: RoutineModel) {
-        RoutineDuplicator.duplicate(source, position: activeRoutines.count, in: modelContext)
-        save()
+        let attempt = RoutineCreationAttempt(
+            duplicating: source,
+            position: activeRoutines.count,
+            in: modelContext
+        )
+        attempt.commit(into: modelContext) { _ in }
     }
 
     private func save() {

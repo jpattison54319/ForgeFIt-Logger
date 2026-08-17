@@ -5,6 +5,10 @@ import Testing
 
 @MainActor
 struct RoutineAlternationServiceTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private let userID = UUID()
     private let base = Date(timeIntervalSinceReferenceDate: 1_000)
 
@@ -220,5 +224,55 @@ struct RoutineAlternationServiceTests {
         #expect(states.count == 1)
         #expect(states.first?.alternation.id == newer.id)
         #expect(states.first?.partner.id == newerPartner.id)
+    }
+
+    @Test func failedCreateAndRemoveLeaveNoPendingAlternationMutation() throws {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+        let owner = routine("AX400")
+        let partner = routine("Cindy")
+        [owner, partner].forEach(context.insert)
+        try context.save()
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try RoutineAlternationService.create(
+                owner: owner,
+                partner: partner,
+                in: context,
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        try context.save()
+        #expect(try ModelContext(container).fetch(
+            FetchDescriptor<RoutineAlternationModel>()
+        ).isEmpty)
+
+        let alternation = try RoutineAlternationService.create(
+            owner: owner,
+            partner: partner,
+            in: context
+        )
+        let originalUpdatedAt = alternation.updatedAt
+        #expect(throws: ForcedSaveFailure.self) {
+            try RoutineAlternationService.remove(
+                alternation,
+                in: context,
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(alternation.deletedAt == nil)
+        #expect(alternation.updatedAt == originalUpdatedAt)
+
+        try context.save()
+        let persisted = try #require(ModelContext(container).fetch(
+            FetchDescriptor<RoutineAlternationModel>()
+        ).first)
+        #expect(persisted.deletedAt == nil)
     }
 }

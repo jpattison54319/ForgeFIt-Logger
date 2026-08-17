@@ -100,8 +100,18 @@ enum CoachAdjustments {
     /// Delegates through the default (unedited) `AdjustmentDraft` — see
     /// `apply(draft:to:in:)` for the actual mutation logic.
     @MainActor
-    static func apply(_ plan: Plan, to workout: WorkoutModel, in context: ModelContext) {
-        apply(draft: defaultDraft(for: plan, workout: workout), to: workout, in: context)
+    static func apply(
+        _ plan: Plan,
+        to workout: WorkoutModel,
+        in context: ModelContext,
+        saveChanges: Bool = true
+    ) {
+        apply(
+            draft: defaultDraft(for: plan, workout: workout),
+            to: workout,
+            in: context,
+            saveChanges: saveChanges
+        )
     }
 
     // MARK: - Adjustment draft (Coach's Corner review)
@@ -212,7 +222,12 @@ enum CoachAdjustments {
     /// `draft(for:routine:exercises:)` and never touched by the UI applies
     /// identically to the legacy `apply(_:to:in:)`.
     @MainActor
-    static func apply(draft: AdjustmentDraft, to workout: WorkoutModel, in context: ModelContext) {
+    static func apply(
+        draft: AdjustmentDraft,
+        to workout: WorkoutModel,
+        in context: ModelContext,
+        saveChanges: Bool = true
+    ) {
         // Compare against the equivalent default BEFORE mutating anything —
         // `defaultDraft(for:workout:)` re-derives working-set counts from the
         // live workout, which the loop below is about to change.
@@ -252,7 +267,7 @@ enum CoachAdjustments {
             : "Coach-adjusted (\(draft.plan.action.title.lowercased())): \(draft.plan.summary)"
         workout.notes = [workout.notes, stamp].compactMap(\.self).filter { !$0.isEmpty }.joined(separator: "\n")
         workout.updatedAt = Date()
-        context.saveUserChanges()
+        if saveChanges { context.saveUserChanges() }
     }
 
     /// Short human summary of what an edited draft actually did, for the

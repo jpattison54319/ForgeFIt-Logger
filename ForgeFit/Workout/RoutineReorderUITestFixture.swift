@@ -13,16 +13,23 @@ enum RoutineReorderUITestFixture {
             context.delete(folder)
         }
 
+        let mesocycle = RoutineFolderModel(
+            userID: ForgeFitDemo.userID,
+            name: "Mesocycle",
+            position: 0
+        )
         let firstFolder = RoutineFolderModel(
             userID: ForgeFitDemo.userID,
             name: "Folder One",
-            position: 0
+            position: 0,
+            parentID: mesocycle.id
         )
         let secondFolder = RoutineFolderModel(
             userID: ForgeFitDemo.userID,
             name: "Folder Two",
             position: 1
         )
+        context.insert(mesocycle)
         context.insert(firstFolder)
         context.insert(secondFolder)
 

@@ -7,6 +7,10 @@ import Testing
 
 @MainActor
 struct CoachWeeklyReviewTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private let userID = ForgeFitDemo.userID
 
     /// A single fixed "now" for every test, and the week anchors derived
@@ -110,7 +114,9 @@ struct CoachWeeklyReviewTests {
         try context.save()
 
         #expect(program.lastReviewedWeekAnchor == nil)
-        let proposals = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let proposals = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
 
         #expect(proposals.isEmpty)
         #expect(program.lastReviewedWeekAnchor == Self.currentAnchor)
@@ -130,7 +136,9 @@ struct CoachWeeklyReviewTests {
         )
         try context.save()
 
-        let proposals = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let proposals = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
 
         #expect(proposals.count == 1)
         let row = try #require(proposals.first)
@@ -172,7 +180,9 @@ struct CoachWeeklyReviewTests {
         insertSuggestion(exerciseID: heldExerciseID, workoutID: session2.id, workoutExerciseID: session2.exercises[0].id, kind: .hold, in: context)
         try context.save()
 
-        let proposals = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let proposals = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
         let holdProposal = try #require(proposals.first {
             $0.kindRaw == CoachingOverrideKind.progressionHold.rawValue && $0.exerciseID == heldExerciseID
         })
@@ -256,7 +266,9 @@ struct CoachWeeklyReviewTests {
         }
         try context.save()
 
-        let proposals = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let proposals = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
 
         let deload = try #require(proposals.first { $0.kindRaw == CoachingOverrideKind.deloadWeek.rawValue })
         #expect(deload.weekStart == Self.currentAnchor)
@@ -276,12 +288,16 @@ struct CoachWeeklyReviewTests {
         )
         try context.save()
 
-        let firstPass = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let firstPass = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
         let carryForward = try #require(firstPass.first { $0.kindRaw == CoachingOverrideKind.carryForward.rawValue })
         CoachWeeklyReview.decline(carryForward, in: context)
         #expect(carryForward.statusRaw == CoachingOverrideStatus.cancelled.rawValue)
 
-        let secondPass = CoachWeeklyReview.proposals(for: program, now: Self.now, in: context)
+        let secondPass = CoachWeeklyReview.proposals(
+            for: program, now: Self.now, in: context, saveChanges: true
+        )
         #expect(!secondPass.contains { $0.kindRaw == CoachingOverrideKind.carryForward.rawValue })
 
         // Still exactly one carryForward row this week — declining doesn't
@@ -395,5 +411,87 @@ struct CoachWeeklyReviewTests {
 
         // Neither applies — train as written.
         #expect(CoachAdjustments.effectivePlan(daily: nil, weeklyDeloadActive: false) == nil)
+    }
+
+    @Test func failedOverrideDecisionRestoresProposalBeforeAnyLaterSave() throws {
+        let (container, context) = try TestStore.make()
+        let program = makeProgram()
+        let override = CoachingWeekOverrideModel(
+            userID: userID,
+            programID: program.id,
+            kindRaw: CoachingOverrideKind.deloadWeek.rawValue,
+            weekStart: Self.currentAnchor,
+            statusRaw: CoachingOverrideStatus.proposed.rawValue,
+            reason: "Deload"
+        )
+        context.insert(program)
+        context.insert(override)
+        try context.save()
+        let originalUpdatedAt = override.updatedAt
+
+        let succeeded = CoachWeeklyReview.accept(
+            override,
+            in: context,
+            save: { _ in throw ForcedSaveFailure.failed }
+        )
+        #expect(!succeeded)
+        #expect(override.statusRaw == CoachingOverrideStatus.proposed.rawValue)
+        #expect(override.updatedAt == originalUpdatedAt)
+
+        try context.save()
+        let persisted = try #require(
+            ModelContext(container).fetch(FetchDescriptor<CoachingWeekOverrideModel>()).first
+        )
+        #expect(persisted.statusRaw == CoachingOverrideStatus.proposed.rawValue)
+    }
+
+    @Test func isolatedAutomaticReviewLeavesNoFailedRowsAndDoesNotSaveUnrelatedMainEdits() async throws {
+        let (container, context) = try TestStore.make()
+        let program = makeProgram(weeks: 0, sessionsPerWeek: 3)
+        context.insert(program)
+        insertCompletedWorkout(
+            exerciseID: UUID(),
+            reps: 10,
+            weight: 100,
+            startedAt: Self.reviewedWeekStart.addingTimeInterval(86400),
+            in: context
+        )
+        try context.save()
+
+        // Simulate another editor holding a real, unsaved main-context edit
+        // while Coach's Corner performs its automatic review.
+        program.weeklySessionTarget = 9
+        let center = PersistentChangeSaveCenter()
+        var saveAttempts = 0
+        var committedCount = -1
+        let didCommit = CoachWeeklyReview.proposalsIsolated(
+            for: program,
+            now: Self.now,
+            from: context,
+            saveCenter: center,
+            save: { persistenceContext in
+                saveAttempts += 1
+                if saveAttempts == 1 { throw ForcedSaveFailure.failed }
+                try persistenceContext.save()
+            },
+            onCommit: { committedCount = $0.count }
+        )
+
+        #expect(!didCommit)
+        #expect(committedCount == -1)
+        var fresh = ModelContext(container)
+        #expect(try fresh.fetch(FetchDescriptor<CoachingWeekOverrideModel>()).isEmpty)
+        #expect(try #require(fresh.fetch(FetchDescriptor<CoachedProgramModel>()).first).weeklySessionTarget == 3)
+
+        center.retry()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(committedCount == 1)
+        fresh = ModelContext(container)
+        #expect(try fresh.fetch(FetchDescriptor<CoachingWeekOverrideModel>()).count == 1)
+        let persistedProgram = try #require(fresh.fetch(FetchDescriptor<CoachedProgramModel>()).first)
+        #expect(persistedProgram.lastReviewedWeekAnchor == Self.currentAnchor)
+        #expect(persistedProgram.weeklySessionTarget == 3)
+        #expect(program.weeklySessionTarget == 9)
     }
 }

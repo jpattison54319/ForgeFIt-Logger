@@ -39,7 +39,8 @@ enum ExperimentLifecycleService {
     @discardableResult
     static func reconcile(
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        persist: Bool = true
     ) throws -> Reconciliation {
         let live = try liveExperiments(in: context)
         var result = Reconciliation()
@@ -58,13 +59,27 @@ enum ExperimentLifecycleService {
             result.duplicateActiveIDs = Array(stillActive.dropFirst().map(\.id))
         }
 
-        if changed {
+        if changed, persist {
             try context.save()
             for id in result.completedIDs {
                 ExperimentNotificationScheduler.cancelAll(experimentID: id)
             }
         }
         return result
+    }
+
+    /// Launch and foreground maintenance must not commit edits that another
+    /// screen is still holding in the shared context. Reconcile only durable
+    /// inputs in a short-lived transaction and publish completion side effects
+    /// after that transaction commits.
+    @discardableResult
+    static func reconcileIsolated(
+        from sourceContext: ModelContext,
+        now: Date = .now
+    ) throws -> Reconciliation {
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        return try reconcile(in: transaction, now: now)
     }
 }
 

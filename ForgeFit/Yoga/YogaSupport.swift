@@ -125,6 +125,7 @@ enum YogaSessionCompletion {
         clearCheckpoint: Bool = true
     ) {
         session.endedAt = endedAt
+        session.updatedAt = endedAt
 
         let plan = workoutExercise.flatMap { YogaFlowPlan.resolved(for: $0, exercise: exercise) }
 

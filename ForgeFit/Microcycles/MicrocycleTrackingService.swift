@@ -5,6 +5,8 @@ import SwiftData
 
 @MainActor
 enum MicrocycleTrackingService {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     enum ServiceError: LocalizedError, Equatable {
         case folderUnavailable
         case folderIsMesocycle
@@ -36,7 +38,8 @@ enum MicrocycleTrackingService {
         durationDays: Int,
         in context: ModelContext,
         now: Date = .now,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        save: SaveOperation = { try $0.save() }
     ) throws -> MicrocycleTrackingModel {
         guard folder.deletedAt == nil, folder.archivedAt == nil else {
             throw ServiceError.folderUnavailable
@@ -66,45 +69,80 @@ enum MicrocycleTrackingService {
         )
         guard anchor <= today else { throw ServiceError.futureStart }
 
-        let active = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
-            .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }
-        for existing in active {
-            existing.stateRaw = "ended"
-            existing.endedAt = today
-            existing.updatedAt = now
+        return try withMutationRollback(in: context) {
+            let active = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+                .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }
+            for existing in active {
+                existing.stateRaw = "ended"
+                existing.endedAt = today
+                existing.updatedAt = now
+            }
+
+            folder.defaultMicrocycleLengthDays = durationDays
+            folder.updatedAt = now
+
+            let tracking = MicrocycleTrackingModel(
+                userID: ForgeFitDemo.userID,
+                folderID: folder.id,
+                folderName: folder.name,
+                anchorDate: anchor,
+                durationDays: durationDays,
+                timeZoneIdentifier: timeZoneIdentifier,
+                createdAt: now,
+                updatedAt: now
+            )
+            context.insert(tracking)
+            try materializeWindows(
+                for: tracking,
+                routines: availableRoutines,
+                in: context,
+                now: now
+            )
+            try save(context)
+            return tracking
         }
-
-        folder.defaultMicrocycleLengthDays = durationDays
-        folder.updatedAt = now
-
-        let tracking = MicrocycleTrackingModel(
-            userID: ForgeFitDemo.userID,
-            folderID: folder.id,
-            folderName: folder.name,
-            anchorDate: anchor,
-            durationDays: durationDays,
-            timeZoneIdentifier: timeZoneIdentifier,
-            createdAt: now,
-            updatedAt: now
-        )
-        context.insert(tracking)
-        try materializeWindows(
-            for: tracking,
-            routines: availableRoutines,
-            in: context,
-            now: now
-        )
-        try context.save()
-        return tracking
     }
 
     @discardableResult
-    static func reconcile(in context: ModelContext, now: Date = .now) throws -> MicrocycleTrackingModel? {
+    static func reconcile(
+        in context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws -> MicrocycleTrackingModel? {
+        try withMutationRollback(in: context) {
+            try reconcileApplying(in: context, now: now, save: save)
+        }
+    }
+
+    /// Launch/foreground reconciliation must not save whatever an unrelated
+    /// editor currently has pending in the shared main context. A short-lived
+    /// context sees only durable inputs and commits only lifecycle mutations.
+    @discardableResult
+    static func reconcileIsolated(
+        from sourceContext: ModelContext,
+        now: Date = .now
+    ) throws -> Date? {
+        let context = ModelContext(sourceContext.container)
+        context.autosaveEnabled = false
+        _ = try reconcile(in: context, now: now)
+        return try nextTransitionDate(in: context, now: now)
+    }
+
+    private static func reconcileApplying(
+        in context: ModelContext,
+        now: Date,
+        save: SaveOperation
+    ) throws -> MicrocycleTrackingModel? {
         let allTrackings = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
             .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }
             .sorted { $0.updatedAt > $1.updatedAt }
         guard let tracking = allTrackings.first else {
-            try RestDayService.removeWorkoutConflicts(in: context, now: now)
+            try RestDayService.removeWorkoutConflicts(
+                in: context,
+                now: now,
+                shouldSave: false
+            )
+            if context.hasChanges { try save(context) }
             return nil
         }
 
@@ -134,8 +172,12 @@ enum MicrocycleTrackingService {
                 tracking.stateRaw = "needsAttention"
                 tracking.updatedAt = now
             }
-            try RestDayService.removeWorkoutConflicts(in: context, now: now)
-            try context.save()
+            try RestDayService.removeWorkoutConflicts(
+                in: context,
+                now: now,
+                shouldSave: false
+            )
+            try save(context)
             return tracking
         }
 
@@ -159,8 +201,12 @@ enum MicrocycleTrackingService {
                 changed = true
             }
             if changed { tracking.updatedAt = now }
-            try RestDayService.removeWorkoutConflicts(in: context, now: now)
-            try context.save()
+            try RestDayService.removeWorkoutConflicts(
+                in: context,
+                now: now,
+                shouldSave: false
+            )
+            try save(context)
             return tracking
         }
         if tracking.stateRaw != "active" {
@@ -174,20 +220,27 @@ enum MicrocycleTrackingService {
             now: now
         ) || changed
         if changed { tracking.updatedAt = now }
-        try RestDayService.removeWorkoutConflicts(in: context, now: now)
-        try context.save()
+        try RestDayService.removeWorkoutConflicts(
+            in: context,
+            now: now,
+            shouldSave: false
+        )
+        try save(context)
         return tracking
     }
 
     static func end(
         _ tracking: MicrocycleTrackingModel,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
-        tracking.stateRaw = "ended"
-        tracking.endedAt = now
-        tracking.updatedAt = now
-        try context.save()
+        try withMutationRollback(in: context) {
+            tracking.stateRaw = "ended"
+            tracking.endedAt = now
+            tracking.updatedAt = now
+            try save(context)
+        }
     }
 
     static func setPresentation(
@@ -195,12 +248,15 @@ enum MicrocycleTrackingService {
         showsOnHome: Bool? = nil,
         showsFolderHeader: Bool? = nil,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
-        if let showsOnHome { tracking.showsOnHome = showsOnHome }
-        if let showsFolderHeader { tracking.showsFolderHeader = showsFolderHeader }
-        tracking.updatedAt = now
-        try context.save()
+        try withMutationRollback(in: context) {
+            if let showsOnHome { tracking.showsOnHome = showsOnHome }
+            if let showsFolderHeader { tracking.showsFolderHeader = showsFolderHeader }
+            tracking.updatedAt = now
+            try save(context)
+        }
     }
 
     /// Changes the repeating target without rewriting completed windows. The
@@ -210,7 +266,8 @@ enum MicrocycleTrackingService {
         _ tracking: MicrocycleTrackingModel,
         durationDays: Int,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
         guard tracking.isActive || tracking.needsAttention else {
             throw ServiceError.trackingInactive
@@ -219,21 +276,69 @@ enum MicrocycleTrackingService {
             throw ServiceError.invalidDuration
         }
 
-        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
-            .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
-        if let current = currentWindow(for: tracking, windows: windows, now: now) {
+        try withMutationRollback(in: context) {
+            let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+                .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+            if let current = currentWindow(for: tracking, windows: windows, now: now) {
+                let calendar = try MicrocycleEngine.calendar(
+                    timeZoneIdentifier: tracking.timeZoneIdentifier
+                )
+                let currentDuration = windowDurationDays(for: current)
+                let temporaryExtension = max(0, currentDuration - tracking.durationDays)
+                let elapsedDays = dayNumber(for: current, now: now)
+                let requestedDuration = durationDays + temporaryExtension
+                let preservedDuration = max(elapsedDays, requestedDuration)
+                guard let adjustedEnd = calendar.date(
+                    byAdding: .day,
+                    value: preservedDuration,
+                    to: current.startsAt
+                ) else {
+                    throw ServiceError.windowUnavailable
+                }
+                try resize(
+                    current,
+                    to: adjustedEnd,
+                    shifting: windows,
+                    calendar: calendar,
+                    now: now
+                )
+            }
+
+            tracking.durationDays = durationDays
+            tracking.updatedAt = now
+            let folders = try context.fetch(FetchDescriptor<RoutineFolderModel>())
+            if let folder = folders.first(where: {
+                $0.id == tracking.folderID && $0.deletedAt == nil
+            }) {
+                folder.defaultMicrocycleLengthDays = durationDays
+                folder.updatedAt = now
+            }
+            try save(context)
+        }
+    }
+
+    /// Extends only the active window. Later windows, if already present, move
+    /// with it; newly materialized windows return to the repeating day target.
+    static func addDayToCurrentWindow(
+        _ tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        try withMutationRollback(in: context) {
+            let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+                .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+            guard let current = currentWindow(for: tracking, windows: windows, now: now) else {
+                throw ServiceError.windowUnavailable
+            }
             let calendar = try MicrocycleEngine.calendar(
                 timeZoneIdentifier: tracking.timeZoneIdentifier
             )
-            let currentDuration = windowDurationDays(for: current)
-            let temporaryExtension = max(0, currentDuration - tracking.durationDays)
-            let elapsedDays = dayNumber(for: current, now: now)
-            let requestedDuration = durationDays + temporaryExtension
-            let preservedDuration = max(elapsedDays, requestedDuration)
             guard let adjustedEnd = calendar.date(
                 byAdding: .day,
-                value: preservedDuration,
-                to: current.startsAt
+                value: 1,
+                to: current.endsAt
             ) else {
                 throw ServiceError.windowUnavailable
             }
@@ -244,52 +349,9 @@ enum MicrocycleTrackingService {
                 calendar: calendar,
                 now: now
             )
+            tracking.updatedAt = now
+            try save(context)
         }
-
-        tracking.durationDays = durationDays
-        tracking.updatedAt = now
-        let folders = try context.fetch(FetchDescriptor<RoutineFolderModel>())
-        if let folder = folders.first(where: {
-            $0.id == tracking.folderID && $0.deletedAt == nil
-        }) {
-            folder.defaultMicrocycleLengthDays = durationDays
-            folder.updatedAt = now
-        }
-        try context.save()
-    }
-
-    /// Extends only the active window. Later windows, if already present, move
-    /// with it; newly materialized windows return to the repeating day target.
-    static func addDayToCurrentWindow(
-        _ tracking: MicrocycleTrackingModel,
-        in context: ModelContext,
-        now: Date = .now
-    ) throws {
-        guard tracking.isActive else { throw ServiceError.trackingInactive }
-        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
-            .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
-        guard let current = currentWindow(for: tracking, windows: windows, now: now) else {
-            throw ServiceError.windowUnavailable
-        }
-        let calendar = try MicrocycleEngine.calendar(
-            timeZoneIdentifier: tracking.timeZoneIdentifier
-        )
-        guard let adjustedEnd = calendar.date(
-            byAdding: .day,
-            value: 1,
-            to: current.endsAt
-        ) else {
-            throw ServiceError.windowUnavailable
-        }
-        try resize(
-            current,
-            to: adjustedEnd,
-            shifting: windows,
-            calendar: calendar,
-            now: now
-        )
-        tracking.updatedAt = now
-        try context.save()
     }
 
     static func activeTracking(_ trackings: [MicrocycleTrackingModel]) -> MicrocycleTrackingModel? {
@@ -410,6 +472,170 @@ enum MicrocycleTrackingService {
         guard let tracking, tracking.isActive else { return nil }
         let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
         return currentWindow(for: tracking, windows: windows, now: now)?.endsAt
+    }
+
+    private struct TrackingSnapshot {
+        let model: MicrocycleTrackingModel
+        let folderName: String
+        let anchorDate: Date
+        let durationDays: Int
+        let timeZoneIdentifier: String
+        let stateRaw: String
+        let showsOnHome: Bool
+        let showsFolderHeader: Bool
+        let endedAt: Date?
+        let updatedAt: Date
+        let deletedAt: Date?
+
+        init(_ model: MicrocycleTrackingModel) {
+            self.model = model
+            folderName = model.folderName
+            anchorDate = model.anchorDate
+            durationDays = model.durationDays
+            timeZoneIdentifier = model.timeZoneIdentifier
+            stateRaw = model.stateRaw
+            showsOnHome = model.showsOnHome
+            showsFolderHeader = model.showsFolderHeader
+            endedAt = model.endedAt
+            updatedAt = model.updatedAt
+            deletedAt = model.deletedAt
+        }
+
+        func restore() {
+            model.folderName = folderName
+            model.anchorDate = anchorDate
+            model.durationDays = durationDays
+            model.timeZoneIdentifier = timeZoneIdentifier
+            model.stateRaw = stateRaw
+            model.showsOnHome = showsOnHome
+            model.showsFolderHeader = showsFolderHeader
+            model.endedAt = endedAt
+            model.updatedAt = updatedAt
+            model.deletedAt = deletedAt
+        }
+    }
+
+    private struct WindowSnapshot {
+        let model: MicrocycleWindowModel
+        let folderName: String
+        let index: Int
+        let startsAt: Date
+        let endsAt: Date
+        let timeZoneIdentifier: String
+        let routineSnapshotJSON: String
+        let dayAssignmentSnapshotJSON: String
+        let updatedAt: Date
+        let deletedAt: Date?
+
+        init(_ model: MicrocycleWindowModel) {
+            self.model = model
+            folderName = model.folderName
+            index = model.index
+            startsAt = model.startsAt
+            endsAt = model.endsAt
+            timeZoneIdentifier = model.timeZoneIdentifier
+            routineSnapshotJSON = model.routineSnapshotJSON
+            dayAssignmentSnapshotJSON = model.dayAssignmentSnapshotJSON
+            updatedAt = model.updatedAt
+            deletedAt = model.deletedAt
+        }
+
+        func restore() {
+            model.folderName = folderName
+            model.index = index
+            model.startsAt = startsAt
+            model.endsAt = endsAt
+            model.timeZoneIdentifier = timeZoneIdentifier
+            model.routineSnapshotJSON = routineSnapshotJSON
+            model.dayAssignmentSnapshotJSON = dayAssignmentSnapshotJSON
+            model.updatedAt = updatedAt
+            model.deletedAt = deletedAt
+        }
+    }
+
+    private struct FolderSnapshot {
+        let model: RoutineFolderModel
+        let defaultMicrocycleLengthDays: Int?
+        let updatedAt: Date
+
+        init(_ model: RoutineFolderModel) {
+            self.model = model
+            defaultMicrocycleLengthDays = model.defaultMicrocycleLengthDays
+            updatedAt = model.updatedAt
+        }
+
+        func restore() {
+            model.defaultMicrocycleLengthDays = defaultMicrocycleLengthDays
+            model.updatedAt = updatedAt
+        }
+    }
+
+    private struct RestDaySnapshot {
+        let model: RestDayModel
+        let deletedAt: Date?
+        let updatedAt: Date
+
+        init(_ model: RestDayModel) {
+            self.model = model
+            deletedAt = model.deletedAt
+            updatedAt = model.updatedAt
+        }
+
+        func restore() {
+            model.deletedAt = deletedAt
+            model.updatedAt = updatedAt
+        }
+    }
+
+    private struct MutationSnapshot {
+        let trackings: [TrackingSnapshot]
+        let windows: [WindowSnapshot]
+        let folders: [FolderSnapshot]
+        let restDays: [RestDaySnapshot]
+        let trackingIDs: Set<UUID>
+        let windowIDs: Set<UUID>
+
+        init(context: ModelContext) throws {
+            let trackingModels = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+            let windowModels = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            trackings = trackingModels.map(TrackingSnapshot.init)
+            windows = windowModels.map(WindowSnapshot.init)
+            folders = try context.fetch(FetchDescriptor<RoutineFolderModel>()).map(FolderSnapshot.init)
+            restDays = try context.fetch(FetchDescriptor<RestDayModel>()).map(RestDaySnapshot.init)
+            trackingIDs = Set(trackingModels.map(\.id))
+            windowIDs = Set(windowModels.map(\.id))
+        }
+
+        func restore(in context: ModelContext) {
+            trackings.forEach { $0.restore() }
+            windows.forEach { $0.restore() }
+            folders.forEach { $0.restore() }
+            restDays.forEach { $0.restore() }
+
+            if let currentWindows = try? context.fetch(FetchDescriptor<MicrocycleWindowModel>()) {
+                for window in currentWindows where !windowIDs.contains(window.id) {
+                    context.delete(window)
+                }
+            }
+            if let currentTrackings = try? context.fetch(FetchDescriptor<MicrocycleTrackingModel>()) {
+                for tracking in currentTrackings where !trackingIDs.contains(tracking.id) {
+                    context.delete(tracking)
+                }
+            }
+        }
+    }
+
+    private static func withMutationRollback<Result>(
+        in context: ModelContext,
+        _ operation: () throws -> Result
+    ) throws -> Result {
+        let snapshot = try MutationSnapshot(context: context)
+        do {
+            return try operation()
+        } catch {
+            snapshot.restore(in: context)
+            throw error
+        }
     }
 
     private static func snapshots(

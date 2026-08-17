@@ -104,8 +104,8 @@ struct YogaPoseCatalogTests {
     @Test func seedIsIdempotentAndTagsRowsAsYoga() throws {
         let (container, context) = try TestStore.make()
 
-        YogaPoseCatalog.seed(into: context)
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
 
         let poses = YogaPoseCatalog.load()
         let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
@@ -131,9 +131,44 @@ struct YogaPoseCatalogTests {
         _ = container
     }
 
+    @Test func failedSeedSavePropagatesAndLeavesNoCatalogRows() throws {
+        enum ExpectedFailure: Error { case save }
+
+        let (container, context) = try TestStore.make()
+        var didThrow = false
+        do {
+            try YogaPoseCatalog.seed(
+                into: context,
+                save: { _ in throw ExpectedFailure.save }
+            )
+        } catch {
+            didThrow = true
+        }
+
+        #expect(didThrow)
+        let verificationContext = ModelContext(container)
+        #expect(try verificationContext.fetch(FetchDescriptor<ExerciseLibraryModel>()).isEmpty)
+        #expect(try verificationContext.fetch(FetchDescriptor<ExerciseAliasModel>()).isEmpty)
+    }
+
+    @Test func nonPersistingSeedStagesRowsForTheCallersSingleTransaction() throws {
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+
+        try YogaPoseCatalog.seed(into: context, persist: false)
+
+        #expect(context.hasChanges)
+        #expect(try ModelContext(container).fetch(FetchDescriptor<ExerciseLibraryModel>()).isEmpty)
+
+        try context.save()
+
+        let persisted = try ModelContext(container).fetch(FetchDescriptor<ExerciseLibraryModel>())
+        #expect(persisted.count == YogaPoseCatalog.load().count + 1)
+    }
+
     @Test func seedRespectsUserModifiedRows() throws {
         let (container, context) = try TestStore.make()
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
 
         let id = YogaPoseCatalog.id(forSlug: "pigeon-pose")
         let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
@@ -142,14 +177,14 @@ struct YogaPoseCatalogTests {
         pigeon.userModified = true
         try context.save()
 
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
         #expect(pigeon.name == "My Pigeon")
         _ = container
     }
 
     @Test func sanskritAliasResolvesInSearch() throws {
         let (container, context) = try TestStore.make()
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
 
         let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).map(\.domainInfo)
         let aliases = try context.fetch(FetchDescriptor<ExerciseAliasModel>()).map(\.domainAlias)
@@ -173,7 +208,7 @@ struct YogaPoseCatalogTests {
         )
         stretchRow.category = "stretching"
         context.insert(stretchRow)
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
         try context.save()
 
         let summary = try ExerciseLibraryDeduplicator.removeDuplicates(in: context)
@@ -208,7 +243,7 @@ struct YogaPoseCatalogTests {
     /// user-modified rows all survive.
     @Test func pruneRemovesDeprecatedPosesOnly() throws {
         let (container, context) = try TestStore.make()
-        YogaPoseCatalog.seed(into: context)
+        try YogaPoseCatalog.seed(into: context)
 
         // A pose from a previous catalog version (no longer bundled).
         let deprecatedSlug = "eagle-pose"
@@ -238,7 +273,7 @@ struct YogaPoseCatalogTests {
         context.insert(userPose)
         try context.save()
 
-        YogaPoseCatalog.pruneUnavailablePoses(into: context)
+        try YogaPoseCatalog.pruneUnavailablePoses(into: context)
 
         let rows = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let ids = Set(rows.map(\.id))
@@ -256,7 +291,7 @@ struct YogaPoseCatalogTests {
 
         // Idempotent: a second prune changes nothing.
         let before = rows.count
-        YogaPoseCatalog.pruneUnavailablePoses(into: context)
+        try YogaPoseCatalog.pruneUnavailablePoses(into: context)
         let after = try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).count
         #expect(after == before)
         _ = container

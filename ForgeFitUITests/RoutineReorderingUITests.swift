@@ -81,6 +81,24 @@ final class RoutineReorderingUITests: XCTestCase {
         XCTAssertTrue(organize.waitForExistence(timeout: 3))
         organize.tap()
         assertRoutine("One A", appearsAfter: "One C", in: app)
+
+        // Reopening the sheet exercises only the live ModelContext. Relaunch
+        // without reseeding to prove the order crossed the durable store
+        // boundary that failed for users after process termination.
+        app.buttons["Cancel"].firstMatch.tap()
+        app.terminate()
+        app.launchArguments = [
+            "-didOnboard", "YES",
+            "-initialTab", "workout",
+            "-workoutUngroupedCollapsed", "NO",
+        ]
+        app.launch()
+
+        let relaunchedOrganize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(relaunchedOrganize.waitForExistence(timeout: 8))
+        relaunchedOrganize.tap()
+        XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
+        assertRoutine("One A", appearsAfter: "One C", in: app)
     }
 
     @MainActor

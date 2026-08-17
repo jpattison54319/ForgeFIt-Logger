@@ -268,18 +268,19 @@ struct ExercisePickerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: nil,
                     exercises: exercises,
-                    workouts: history
-                ) { json in
-                    onAddConditioningBlock?(json)
-                    dismiss()
-                }
+                    workouts: history,
+                    onSave: { json in
+                        onAddConditioningBlock?(json)
+                        dismiss()
+                    }
+                )
             }
             .sheet(isPresented: $showYogaBuilder) {
-                YogaFlowBuilderView(planJSON: nil) { json in
+                YogaFlowBuilderView(planJSON: nil, onSave: { json in
                     guard let json else { return }
                     onAddYogaBlock?(json)
                     dismiss()
-                }
+                })
             }
             .fullScreenCover(item: $detailExercise) { exercise in
                 NavigationStack {
@@ -1240,87 +1241,98 @@ struct CreateExerciseView: View {
         // and flash the "already exists" card while the sheet dismisses.
         isSaving = true
         duplicateCandidates = []
-        if let editing {
-            apply(to: editing)
-            editing.userModified = true
-            editing.needsReview = false
-            editing.classificationSource = ClassificationSource.manual
-            editing.classificationConfidence = 1.0
-            editing.updatedAt = Date()
-            upsertSanskritAlias(for: editing)
-            modelContext.saveUserChanges {
-                onCreate(editing)
+        let draftName = name.trimmingCharacters(in: .whitespaces)
+        let draftModality = modality
+        let draftIsCardio = modality == .cardio
+        let draftIsYoga = modality == .yoga
+        let draftKind = resolvedKind
+        let draftPrimaryMuscle = primaryMuscle
+        let draftSecondaryMuscles = secondaryMuscles
+            .subtracting([primaryMuscle])
+            .sorted()
+        let draftEquipment = equipment
+        let draftWeightMode = weightMode
+        let draftPreferredUnitRaw = preferredUnit?.rawValue
+        let draftCardioKindRaw = cardioKindChoice?.rawValue
+        let draftIsUnilateral = isUnilateral
+        let draftDefaultHoldSeconds = defaultHoldSeconds
+        let draftSanskritName = sanskritName.trimmingCharacters(in: .whitespaces)
+        let wasYoga = editing?.isYoga == true
+        let isEditing = editing != nil
+        let updatedAt = Date()
+
+        let applyDraft: @MainActor (ExerciseLibraryModel) -> Void = { exercise in
+            exercise.name = draftName
+            exercise.modality = draftModality
+            exercise.movementPattern = draftIsCardio ? "cardio" : (draftIsYoga ? "yoga" : nil)
+            exercise.primaryMuscles = draftIsCardio ? draftKind.musclesWorked : [draftPrimaryMuscle]
+            exercise.secondaryMuscles = draftIsCardio ? [] : draftSecondaryMuscles
+            exercise.equipment = draftEquipment
+            exercise.defaultWeightMode = draftIsCardio || draftIsYoga ? .bodyweight : draftWeightMode
+            exercise.preferredWeightUnitRaw = draftIsCardio || draftIsYoga ? nil : draftPreferredUnitRaw
+            exercise.cardioKindRaw = draftIsCardio ? draftCardioKindRaw : nil
+            exercise.isUnilateral = draftIsCardio ? false : draftIsUnilateral
+            exercise.defaultHoldSeconds = draftIsYoga ? draftDefaultHoldSeconds : nil
+            switch draftModality {
+            case .strength: exercise.category = "strength"
+            case .cardio: exercise.category = "cardio"
+            case .yoga: exercise.category = "yoga"
+            }
+            if isEditing {
+                exercise.userModified = true
+                exercise.needsReview = false
+                exercise.classificationSource = ClassificationSource.manual
+                exercise.classificationConfidence = 1.0
+            }
+            exercise.updatedAt = updatedAt
+        }
+
+        let attempt = editing.map {
+            ExercisePersistenceAttempt(editing: $0, in: modelContext)
+        } ?? ExercisePersistenceAttempt(creatingName: draftName, in: modelContext)
+        let succeeded = attempt.commit(
+            into: modelContext,
+            mutate: { exercise, persistenceContext in
+                applyDraft(exercise)
+                guard draftIsYoga || wasYoga else { return }
+                let exerciseID = exercise.id
+                let existing = try persistenceContext.fetch(
+                    FetchDescriptor<ExerciseAliasModel>(
+                        predicate: #Predicate { $0.exerciseID == exerciseID }
+                    )
+                )
+
+                if draftIsYoga, !draftSanskritName.isEmpty {
+                    if let owned = existing.first(where: { $0.ownerID != nil }) {
+                        if owned.alias != draftSanskritName { owned.alias = draftSanskritName }
+                    } else if !existing.contains(where: { $0.alias == draftSanskritName }) {
+                        persistenceContext.insert(ExerciseAliasModel(
+                            exerciseID: exerciseID,
+                            ownerID: ForgeFitDemo.userID,
+                            alias: draftSanskritName
+                        ))
+                    }
+                } else {
+                    for alias in existing where alias.ownerID != nil {
+                        persistenceContext.delete(alias)
+                    }
+                }
+            },
+            onCommit: { committedExercise in
+                // SwiftData can retain an already-loaded source-context
+                // instance after the isolated save. Mirror only now, once the
+                // durable write has succeeded.
+                if let editing {
+                    applyDraft(editing)
+                    onCreate(editing)
+                } else {
+                    onCreate(committedExercise)
+                }
                 dismiss()
             }
-        } else {
-            let exercise = ExerciseLibraryModel(ownerID: ForgeFitDemo.userID, name: name)
-            apply(to: exercise)
-            modelContext.insert(exercise)
-            upsertSanskritAlias(for: exercise)
-            modelContext.saveUserChanges {
-                onCreate(exercise)
-                dismiss()
-            }
-        }
-    }
+        )
 
-    /// Write the current form state onto an exercise model. Shared by the create
-    /// and edit paths so both stay in lockstep.
-    private func apply(to exercise: ExerciseLibraryModel) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        // Every field branches on the selected modality, so values left over
-        // from the other modes' hidden forms can never leak into the save.
-        let kind = resolvedKind
-        let isYoga = modality == .yoga
-        exercise.name = trimmed
-        exercise.modality = modality  // writes modalityRaw and keeps isCardio in sync
-        exercise.movementPattern = isCardio ? "cardio" : (isYoga ? "yoga" : nil)
-        exercise.primaryMuscles = isCardio ? kind.musclesWorked : [primaryMuscle]
-        exercise.secondaryMuscles = isCardio ? [] : secondaryMuscles.subtracting([primaryMuscle]).sorted()
-        exercise.equipment = equipment
-        exercise.defaultWeightMode = isCardio || isYoga ? .bodyweight : weightMode
-        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit?.rawValue
-        exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
-        // Yoga keeps laterality (one-sided poses run L/R in guided flows).
-        exercise.isUnilateral = isCardio ? false : isUnilateral
-        exercise.defaultHoldSeconds = isYoga ? defaultHoldSeconds : nil
-        switch modality {
-        case .strength: exercise.category = "strength"
-        case .cardio: exercise.category = "cardio"
-        case .yoga: exercise.category = "yoga"
-        }
-    }
-
-    /// Keep the pose's Sanskrit alias in step with the form: update the one we
-    /// manage, create it when first filled in, remove it when cleared.
-    private func upsertSanskritAlias(for exercise: ExerciseLibraryModel) {
-        guard modality == .yoga || editing?.isYoga == true else { return }
-        let trimmed = sanskritName.trimmingCharacters(in: .whitespaces)
-        let exerciseID = exercise.id
-        let existing = (try? modelContext.fetch(
-            FetchDescriptor<ExerciseAliasModel>(predicate: #Predicate { $0.exerciseID == exerciseID })
-        )) ?? []
-
-        if modality == .yoga, !trimmed.isEmpty {
-            // Seeded catalog aliases (ownerID nil) belong to the re-seed and
-            // would be reverted next launch — user edits live on their own
-            // user-owned alias row instead.
-            if let owned = existing.first(where: { $0.ownerID != nil }) {
-                if owned.alias != trimmed { owned.alias = trimmed }
-            } else if !existing.contains(where: { $0.alias == trimmed }) {
-                modelContext.insert(ExerciseAliasModel(
-                    exerciseID: exerciseID,
-                    ownerID: ForgeFitDemo.userID,
-                    alias: trimmed
-                ))
-            }
-        } else {
-            // Cleared, or the pose was retyped to another modality: only drop
-            // user-owned aliases; seeded (catalog) aliases are not ours to remove.
-            for alias in existing where alias.ownerID != nil {
-                modelContext.delete(alias)
-            }
-        }
+        if !succeeded { isSaving = false }
     }
 }
 

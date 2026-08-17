@@ -36,6 +36,16 @@ enum CoachPlanRecommendation {
 /// `ModelContext`.
 @MainActor
 enum CoachPlanService {
+    enum PersistenceError: LocalizedError {
+        case committedProgramUnavailable
+
+        var errorDescription: String? {
+            "The coached plan was saved, but ForgeFit couldn't reopen it. Try again."
+        }
+    }
+
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
 
     // MARK: - Reads
 
@@ -104,39 +114,74 @@ enum CoachPlanService {
         candidate: ProgramCandidate,
         answers: CoachSetupAnswers,
         in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping () -> Void = {}
     ) -> CoachedProgramModel? {
         guard let program = RoutineTemplateCatalog.loadPrograms().first(where: { $0.id == candidate.id }) else {
             return nil
         }
         let templates = RoutineTemplateCatalog.load()
-        guard let folder = RoutineTemplateCatalog.importProgram(
-            program,
-            templates: templates,
-            in: context,
-            saveChanges: false
-        ) else {
-            return nil
-        }
-
-        upsertProfile(answers: answers, in: context)
-        deactivateActivePrograms(in: context)
-
-        let coached = CoachedProgramModel(
-            userID: ForgeFitDemo.userID,
-            folderID: folder.id,
-            catalogProgramID: program.id,
-            startDate: Date(),
-            weeks: program.weeks,
-            weeklySessionTarget: answers.sessionsPerWeek,
-            isActive: true
-        )
-        context.insert(coached)
-        context.saveUserChanges {
-            syncActiveCycleFolders(folder)
+        let startedAt = Date()
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
+        var pendingProgram: CoachedProgramModel?
+        var committedProgram: CoachedProgramModel?
+        var committedFolder: RoutineFolderModel?
+        (saveCenter ?? .shared).perform({
+            if pendingProgram == nil {
+                // Every fallible fetch runs before its corresponding graph is
+                // inserted, so retry can resume this same isolated attempt
+                // without multiplying profiles, folders, or programs.
+                _ = try upsertProfile(answers: answers, in: persistenceContext)
+                try deactivateActivePrograms(in: persistenceContext)
+                guard let folder = try RoutineTemplateCatalog.importProgram(
+                    program,
+                    templates: templates,
+                    in: persistenceContext,
+                    saveChanges: false
+                ) else {
+                    throw RoutineTemplateCatalog.ImportError.programHasNoRoutines
+                }
+                let coached = CoachedProgramModel(
+                    userID: ForgeFitDemo.userID,
+                    folderID: folder.id,
+                    catalogProgramID: program.id,
+                    startDate: startedAt,
+                    weeks: program.weeks,
+                    weeklySessionTarget: answers.sessionsPerWeek,
+                    isActive: true
+                )
+                persistenceContext.insert(coached)
+                pendingProgram = coached
+            }
+            guard let pendingProgram else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+            try save(persistenceContext)
+            let coachedID = pendingProgram.id
+            committedProgram = try context.fetch(
+                FetchDescriptor<CoachedProgramModel>(predicate: #Predicate { $0.id == coachedID })
+            ).first
+            guard committedProgram != nil else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+            guard let folderID = pendingProgram.folderID else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+            committedFolder = try context.fetch(
+                FetchDescriptor<RoutineFolderModel>(predicate: #Predicate { $0.id == folderID })
+            ).first
+            guard committedFolder != nil else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+        }, onSuccess: {
+            if let committedFolder {
+                syncActiveCycleFolders(committedFolder)
+            }
             onCommit()
-        }
-        return coached
+        })
+        return committedProgram
     }
 
     /// The "Coach this plan" path: adopts an existing folder the user
@@ -147,25 +192,47 @@ enum CoachPlanService {
         folder: RoutineFolderModel,
         sessionsPerWeek: Int,
         in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping () -> Void = {}
-    ) -> CoachedProgramModel {
-        deactivateActivePrograms(in: context)
-
-        let coached = CoachedProgramModel(
-            userID: ForgeFitDemo.userID,
-            folderID: folder.id,
-            catalogProgramID: "",
-            startDate: Date(),
-            weeks: 0,
-            weeklySessionTarget: sessionsPerWeek,
-            isActive: true
-        )
-        context.insert(coached)
-        context.saveUserChanges {
+    ) -> CoachedProgramModel? {
+        let startedAt = Date()
+        let folderID = folder.id
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
+        var pendingProgram: CoachedProgramModel?
+        var committedProgram: CoachedProgramModel?
+        (saveCenter ?? .shared).perform({
+            if pendingProgram == nil {
+                try deactivateActivePrograms(in: persistenceContext)
+                let coached = CoachedProgramModel(
+                    userID: ForgeFitDemo.userID,
+                    folderID: folderID,
+                    catalogProgramID: "",
+                    startDate: startedAt,
+                    weeks: 0,
+                    weeklySessionTarget: sessionsPerWeek,
+                    isActive: true
+                )
+                persistenceContext.insert(coached)
+                pendingProgram = coached
+            }
+            guard let pendingProgram else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+            try save(persistenceContext)
+            let coachedID = pendingProgram.id
+            committedProgram = try context.fetch(
+                FetchDescriptor<CoachedProgramModel>(predicate: #Predicate { $0.id == coachedID })
+            ).first
+            guard committedProgram != nil else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+        }, onSuccess: {
             syncActiveCycleFolders(folder)
             onCommit()
-        }
-        return coached
+        })
+        return committedProgram
     }
 
     /// Yoga has no routine program to import — the "plan" is a weekly
@@ -176,25 +243,44 @@ enum CoachPlanService {
         answers: CoachSetupAnswers,
         sessionsPerWeek: Int,
         in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping () -> Void = {}
-    ) -> CoachedProgramModel {
-        upsertProfile(answers: answers, in: context)
-        deactivateActivePrograms(in: context)
-
-        let coached = CoachedProgramModel(
-            userID: ForgeFitDemo.userID,
-            folderID: nil,
-            catalogProgramID: "yoga-flows",
-            startDate: Date(),
-            weeks: 0,
-            weeklySessionTarget: sessionsPerWeek,
-            isActive: true
-        )
-        context.insert(coached)
-        context.saveUserChanges {
-            onCommit()
-        }
-        return coached
+    ) -> CoachedProgramModel? {
+        let startedAt = Date()
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
+        var pendingProgram: CoachedProgramModel?
+        var committedProgram: CoachedProgramModel?
+        (saveCenter ?? .shared).perform({
+            if pendingProgram == nil {
+                _ = try upsertProfile(answers: answers, in: persistenceContext)
+                try deactivateActivePrograms(in: persistenceContext)
+                let coached = CoachedProgramModel(
+                    userID: ForgeFitDemo.userID,
+                    folderID: nil,
+                    catalogProgramID: "yoga-flows",
+                    startDate: startedAt,
+                    weeks: 0,
+                    weeklySessionTarget: sessionsPerWeek,
+                    isActive: true
+                )
+                persistenceContext.insert(coached)
+                pendingProgram = coached
+            }
+            guard let pendingProgram else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+            try save(persistenceContext)
+            let coachedID = pendingProgram.id
+            committedProgram = try context.fetch(
+                FetchDescriptor<CoachedProgramModel>(predicate: #Predicate { $0.id == coachedID })
+            ).first
+            guard committedProgram != nil else {
+                throw PersistenceError.committedProgramUnavailable
+            }
+        }, onSuccess: { onCommit() })
+        return committedProgram
     }
 
     // MARK: - Editing an active plan
@@ -203,39 +289,80 @@ enum CoachPlanService {
     /// and weekly session target. The stored coaching profile's cadence is
     /// kept in sync so the next setup run starts from the target the user
     /// actually trains to.
+    @discardableResult
     static func updatePlan(
         _ program: CoachedProgramModel,
         weeks: Int,
         weeklySessionTarget: Int,
         in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping () -> Void = {}
-    ) {
-        program.weeks = max(0, weeks)
-        program.weeklySessionTarget = weeklySessionTarget
-        program.updatedAt = Date()
+    ) -> Bool {
+        let previousWeeks = program.weeks
+        let previousTarget = program.weeklySessionTarget
+        let previousProgramUpdatedAt = program.updatedAt
+        let updatedAt = Date()
 
-        if let profile = (try? context.fetch(FetchDescriptor<CoachingProfileModel>()))?
-            .first(where: { $0.userID == program.userID }) {
-            profile.sessionsPerWeek = weeklySessionTarget
-            profile.updatedAt = Date()
-        }
-        context.saveUserChanges {
-            onCommit()
-        }
+        return (saveCenter ?? .shared).perform({
+            let profile = try context.fetch(FetchDescriptor<CoachingProfileModel>())
+                .first(where: { $0.userID == program.userID })
+            let previousProfileTarget = profile?.sessionsPerWeek
+            let previousProfileUpdatedAt = profile?.updatedAt
+            program.weeks = max(0, weeks)
+            program.weeklySessionTarget = weeklySessionTarget
+            program.updatedAt = updatedAt
+            profile?.sessionsPerWeek = weeklySessionTarget
+            profile?.updatedAt = updatedAt
+            do {
+                try save(context)
+            } catch {
+                program.weeks = previousWeeks
+                program.weeklySessionTarget = previousTarget
+                program.updatedAt = previousProgramUpdatedAt
+                if let profile,
+                   let previousProfileTarget,
+                   let previousProfileUpdatedAt {
+                    profile.sessionsPerWeek = previousProfileTarget
+                    profile.updatedAt = previousProfileUpdatedAt
+                }
+                throw error
+            }
+        }, onSuccess: { onCommit() })
     }
 
     /// Stops coaching entirely: deactivates the active program without
     /// deleting anything — the plan's folder, routines, and history stay
     /// exactly as they are, and the active-microcycle preference is left
     /// alone so Home's "Up next" suggestion keeps working off the folder.
+    @discardableResult
     static func stopCoaching(
         in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping () -> Void = {}
-    ) {
-        deactivateActivePrograms(in: context)
-        context.saveUserChanges {
-            onCommit()
-        }
+    ) -> Bool {
+        let updatedAt = Date()
+        return (saveCenter ?? .shared).perform({
+            let programs = try context.fetch(FetchDescriptor<CoachedProgramModel>())
+                .filter { $0.isActive && $0.deletedAt == nil }
+            let snapshots = programs.map {
+                (program: $0, isActive: $0.isActive, updatedAt: $0.updatedAt)
+            }
+            for program in programs {
+                program.isActive = false
+                program.updatedAt = updatedAt
+            }
+            do {
+                try save(context)
+            } catch {
+                for snapshot in snapshots {
+                    snapshot.program.isActive = snapshot.isActive
+                    snapshot.program.updatedAt = snapshot.updatedAt
+                }
+                throw error
+            }
+        }, onSuccess: { onCommit() })
     }
 
     /// 1-based calendar week of the program a given date falls in (week 1 =
@@ -255,9 +382,12 @@ enum CoachPlanService {
     /// otherwise inserts a new one (query-before-insert — CloudKit forbids
     /// unique constraints).
     @discardableResult
-    private static func upsertProfile(answers: CoachSetupAnswers, in context: ModelContext) -> CoachingProfileModel {
+    private static func upsertProfile(
+        answers: CoachSetupAnswers,
+        in context: ModelContext
+    ) throws -> CoachingProfileModel {
         let userID = ForgeFitDemo.userID
-        let existing = (try? context.fetch(FetchDescriptor<CoachingProfileModel>()))?
+        let existing = try context.fetch(FetchDescriptor<CoachingProfileModel>())
             .first { $0.userID == userID }
 
         let profile = existing ?? {
@@ -284,8 +414,8 @@ enum CoachPlanService {
 
     /// Deactivates every currently-active coached program. Prior folders and
     /// routines are never touched — only `isActive` flips.
-    private static func deactivateActivePrograms(in context: ModelContext) {
-        let programs = (try? context.fetch(FetchDescriptor<CoachedProgramModel>())) ?? []
+    private static func deactivateActivePrograms(in context: ModelContext) throws {
+        let programs = try context.fetch(FetchDescriptor<CoachedProgramModel>())
         for program in programs where program.isActive && program.deletedAt == nil {
             program.isActive = false
             program.updatedAt = Date()

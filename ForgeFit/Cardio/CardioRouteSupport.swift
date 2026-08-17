@@ -132,6 +132,100 @@ nonisolated enum CardioRouteMath {
     }
 }
 
+/// Scalar and relationship state touched by a cardio/yoga terminal mutation.
+/// SwiftData rollback restores the store transaction, but a view or Watch
+/// command can still hold model references with their just-mutated values.
+/// Terminal callers restore this snapshot before presenting/publishing the
+/// still-live session after a failed save.
+@MainActor
+struct CardioSessionPersistenceSnapshot {
+    private let startedAt: Date
+    private let liveStartedAt: Date?
+    private let endedAt: Date?
+    private let durationSeconds: Int?
+    private let distanceMeters: Double?
+    private let distanceSourceRaw: String?
+    private let elevationGainMeters: Double?
+    private let updatedAt: Date
+    private let yogaStyleRaw: String?
+    private let flexibilityExposureJSON: String?
+    private let posesCompleted: Int?
+    private let routePoints: [CardioRoutePointModel]
+    private let splits: [CardioSplitModel]
+
+    init(_ session: CardioSessionModel) {
+        startedAt = session.startedAt
+        liveStartedAt = session.liveStartedAt
+        endedAt = session.endedAt
+        durationSeconds = session.durationSeconds
+        distanceMeters = session.distanceMeters
+        distanceSourceRaw = session.distanceSourceRaw
+        elevationGainMeters = session.elevationGainMeters
+        updatedAt = session.updatedAt
+        yogaStyleRaw = session.yogaStyleRaw
+        flexibilityExposureJSON = session.flexibilityExposureJSON
+        posesCompleted = session.posesCompleted
+        routePoints = session.routePoints
+        splits = session.splits
+    }
+
+    func restore(_ session: CardioSessionModel) {
+        session.startedAt = startedAt
+        session.liveStartedAt = liveStartedAt
+        session.endedAt = endedAt
+        session.durationSeconds = durationSeconds
+        session.distanceMeters = distanceMeters
+        session.distanceSourceRaw = distanceSourceRaw
+        session.elevationGainMeters = elevationGainMeters
+        session.updatedAt = updatedAt
+        session.yogaStyleRaw = yogaStyleRaw
+        session.flexibilityExposureJSON = flexibilityExposureJSON
+        session.posesCompleted = posesCompleted
+        session.routePoints = routePoints
+        session.splits = splits
+    }
+}
+
+/// One retryable start contract for phone and Watch cardio/yoga surfaces.
+/// A failed write restores the not-started model immediately; the retained
+/// Retry reapplies the exact timestamp and launches runtime only after commit.
+@MainActor
+enum CardioSessionStartPersistence {
+    @discardableResult
+    static func perform(
+        session: CardioSessionModel,
+        startedAt: Date,
+        updatedAt: Date? = nil,
+        resetsStartedAt: Bool = true,
+        context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping (ModelContext) throws -> Void = { try $0.save() },
+        applyAdditionalMutation: @escaping @MainActor @Sendable () -> Void = {},
+        restoreAdditionalMutation: @escaping @MainActor @Sendable () -> Void = {},
+        onFailure: @escaping @MainActor @Sendable () -> Void = {},
+        onCommit: @escaping @MainActor @Sendable () -> Void
+    ) -> Bool {
+        let sessionBeforeStart = CardioSessionPersistenceSnapshot(session)
+        let resolvedSaveCenter = saveCenter ?? .shared
+        return resolvedSaveCenter.perform({
+            applyAdditionalMutation()
+            session.liveStartedAt = startedAt
+            if resetsStartedAt {
+                session.startedAt = startedAt
+            }
+            session.updatedAt = updatedAt ?? startedAt
+            do {
+                try save(context)
+            } catch {
+                sessionBeforeStart.restore(session)
+                restoreAdditionalMutation()
+                onFailure()
+                throw error
+            }
+        }, onSuccess: onCommit)
+    }
+}
+
 enum CardioRouteOwnershipPolicy {
     static func shouldStartAfterAuthorization(
         isAuthorized: Bool,

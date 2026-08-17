@@ -633,7 +633,7 @@ struct ExperimentLogUpdateSheet: View {
 
     private func save() {
         do {
-            var savedAny = false
+            var updates: [ExperimentUIStore.EntryUpdate] = []
             for tracker in visibleTrackers {
                 guard let value = values[tracker.id]?.entryValue(for: tracker) else { continue }
                 if let editingEntry, editingEntry.trackerID == tracker.id {
@@ -644,25 +644,23 @@ struct ExperimentLogUpdateSheet: View {
                         saveError = "An entry already exists for this tracker and date."
                         return
                     }
-                    editingEntry.value = value
-                    editingEntry.observedAt = observedAt
-                    editingEntry.workoutID = effectiveWorkoutID
-                    editingEntry.updatedAt = .now
-                    try modelContext.save()
-                } else {
-                    _ = try ExperimentUIStore.saveEntry(
-                        value: value,
-                        tracker: tracker,
-                        experiment: experiment,
-                        entries: entries,
-                        observedAt: observedAt,
-                        workoutID: effectiveWorkoutID,
-                        in: modelContext
-                    )
                 }
-                savedAny = true
+                updates.append(.init(
+                    trackerID: tracker.id,
+                    value: value,
+                    observedAt: observedAt,
+                    workoutID: effectiveWorkoutID,
+                    editingEntryID: editingEntry?.trackerID == tracker.id
+                        ? editingEntry?.id
+                        : nil
+                ))
             }
-            guard savedAny else { return }
+            guard !updates.isEmpty else { return }
+            try ExperimentUIStore.saveEntries(
+                updates,
+                for: experiment,
+                in: modelContext
+            )
             onSaved()
             dismiss()
         } catch {

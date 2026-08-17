@@ -13,7 +13,8 @@ enum ConditioningPresetHistoryRenamer {
         to newName: String,
         presetReferenceID: String,
         in workouts: [WorkoutModel],
-        context: ModelContext
+        context: ModelContext,
+        saveChanges: Bool = true
     ) throws {
         let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
@@ -63,7 +64,7 @@ enum ConditioningPresetHistoryRenamer {
             if changedWorkout { workout.updatedAt = now }
         }
 
-        try context.save()
+        if saveChanges { try context.save() }
     }
 
     private static func renameSections(

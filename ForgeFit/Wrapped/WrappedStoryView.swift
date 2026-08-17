@@ -29,7 +29,9 @@ struct WrappedStoryView: View {
         }
         .onAppear {
             payload = WrappedPayload.decode(from: report.payloadJSON)
-            WrappedReportService.markViewed(report, in: modelContext)
+            PersistentChangeSaveCenter.shared.perform {
+                try WrappedReportService.markViewed(report, in: modelContext)
+            }
         }
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: [payload.image])

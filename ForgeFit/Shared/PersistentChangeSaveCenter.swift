@@ -47,6 +47,29 @@ final class PersistentChangeSaveCenter {
         }
     }
 
+    /// Bridges terminal operations that already return their user-facing
+    /// persistence failure (for example workout finish/discard). Completion
+    /// still waits for a successful first attempt or exact Retry.
+    @discardableResult
+    func performReportingFailure(
+        _ operation: @escaping @MainActor () -> String?,
+        onSuccess: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard let message = operation() else {
+            dismiss()
+            onSuccess()
+            return true
+        }
+        report(message) {
+            guard let retryMessage = operation() else {
+                onSuccess()
+                return nil
+            }
+            return retryMessage
+        }
+        return false
+    }
+
     func report(_ message: String, retry: @escaping @MainActor () -> String?) {
         failure = Failure(message: message)
         retryAction = retry

@@ -22,7 +22,8 @@ enum AppPreferenceKeys {
         "weightUnitRaw",
         "distanceUnitRaw",
         "trainingFocusRaw",
-        "homeQuickStartActions.v1",
+        ShareCardStyle.preferenceKey,
+        HomeQuickStartAction.preferenceKey,
         AppQuickActionStore.key,
         CyclePreferenceMigration.activeMesocycleKey,
         CyclePreferenceMigration.activeMicrocycleKey,
@@ -47,11 +48,16 @@ enum AppPreferenceKeys {
         YogaInstructor.preferenceKey,
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
-    ]
+    ] + StatisticsSectionPreference.allCases.map(\.defaultsKey)
 
     static let localOnly: [String] = [
         "initialTab",
         "insightsBuilderEnabled",
+        WrappedReportService.lastAutomaticAttemptKey,
+        ImportedExerciseBackfill.didRunKey,
+        WeightModeBackfill.convertKey,
+        BLEHeartRateService.rememberedIDKey,
+        BLEHeartRateService.rememberedNameKey,
         "autoStartRoutine",
         "openSettings",
         LaunchSeedPolicy.defaultsKey,
@@ -70,9 +76,15 @@ enum AppPreferenceKeys {
         HealthWorkoutImporter.lastAutomaticAttemptKey,
         ExperimentNotificationRoute.pendingURLDefaultsKey,
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
+        SocialService.shareOutboxKey,
+        SocialService.legacyPendingUnpublishKey,
         PlanImportService.importedPackagesDefaultsKey,
         workoutUngroupedCollapsedKey,
         SleepTargetPreference.key,
+        SleepOverrideStore.defaultsKey,
+        SleepOverrideStore.eagerDeleteRepairKey,
+        RecoverySnapshotStore.defaultsKey,
+        RecoverySnapshotStore.backfillKey,
         YogaGuidanceCatalog.recentGuidanceKey,
         YogaGuidanceCatalog.safetyAcknowledgementKey,
     ]

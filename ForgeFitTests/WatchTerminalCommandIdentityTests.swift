@@ -59,8 +59,13 @@ struct WatchTerminalCommandIdentityTests {
             .finishWorkout(workoutID: workout.id, metrics: nil, savedToHealth: true)
         )
 
-        #expect(workout.endedAt != nil)
-        #expect(workout.deletedAt == nil)
+        let workoutID = workout.id
+        let verification = ModelContext(container)
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.endedAt != nil)
+        #expect(persisted.deletedAt == nil)
     }
 
     @Test func matchingDiscardTombstonesTheWorkoutItNames() throws {
@@ -73,8 +78,13 @@ struct WatchTerminalCommandIdentityTests {
             .discardWorkout(workoutID: workout.id)
         )
 
-        #expect(workout.deletedAt != nil)
-        #expect(workout.endedAt == nil)
+        let workoutID = workout.id
+        let verification = ModelContext(container)
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.deletedAt != nil)
+        #expect(persisted.endedAt == nil)
     }
 
     /// A queued finish for a workout the phone already ended arrives while a

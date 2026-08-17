@@ -120,10 +120,7 @@ struct CardioExerciseCard: View {
     private func setZoneTarget(_ zone: Int?) {
         var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON) ?? IntervalPlan(steps: [])
         plan.hrZoneTarget = zone
-        workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
-        workoutExercise.updatedAt = Date()
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState()
+        _ = persistPlan(plan.isMeaningful ? plan.encodedJSON() : nil)
     }
 
     /// Pre-start goal selector: open tracking, a heart-rate zone to hold, or
@@ -190,12 +187,10 @@ struct CardioExerciseCard: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .sheet(isPresented: $showIntervalEditor) {
-            IntervalPlanBuilderView(planJSON: workoutExercise.intervalPlanJSON) { json in
-                workoutExercise.intervalPlanJSON = json
-                workoutExercise.updatedAt = Date()
-                modelContext.saveUserChanges()
-                WatchLink.shared.publishState()
-            }
+            IntervalPlanBuilderView(
+                planJSON: workoutExercise.intervalPlanJSON,
+                commit: persistPlan
+            )
         }
     }
 
@@ -214,20 +209,23 @@ struct CardioExerciseCard: View {
     }
 
     private func setGoalOpen() {
-        workoutExercise.intervalPlanJSON = nil
-        workoutExercise.updatedAt = Date()
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState()
+        _ = persistPlan(nil)
     }
 
     private func setGoalZone(_ zone: Int) {
         // A zone goal replaces intervals — the selector is choosing the
         // session's mode, and the interval editor can still layer a zone
         // lock on top of steps.
-        workoutExercise.intervalPlanJSON = IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON()
-        workoutExercise.updatedAt = Date()
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState()
+        _ = persistPlan(IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON())
+    }
+
+    private func persistPlan(_ planJSON: String?) -> Bool {
+        WorkoutIntervalPlanPersistence.apply(
+            planJSON,
+            to: workoutExercise,
+            in: modelContext,
+            onCommit: { WatchLink.shared.publishState() }
+        )
     }
 
     /// Live zone-lock picker on the cardio card: choose a target zone to get
@@ -618,20 +616,27 @@ struct CardioExerciseCard: View {
             activeSegmentMessage = "\(active) is already recording. Complete it before starting cardio."
             return
         }
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
-        session.liveStartedAt = now
-        session.startedAt = now
+        CardioSessionStartPersistence.perform(
+            session: session,
+            startedAt: now,
+            context: modelContext,
+            onCommit: {
+            beginPersistedCardioRuntime(session, startedAt: now)
+        })
+    }
+
+    private func beginPersistedCardioRuntime(_ session: CardioSessionModel, startedAt: Date) {
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         CardioGoalAnnouncer.shared.activate(
             sessionID: session.id,
             goal: decodedPlan?.goal,
-            startedAt: now,
+            startedAt: startedAt,
             cardioKind: kind
         )
         if providesGPSDistance {
             CardioRouteRecorder.shared.start(session: session)
         }
-        modelContext.saveUserChanges()
         // Structured session: begin the step engine with the segment. The
         // runner drives the zone guard per step (work Z4, recover Z3...).
         if let planJSON = workoutExercise.intervalPlanJSON {
@@ -646,53 +651,62 @@ struct CardioExerciseCard: View {
     }
 
     private func complete(_ session: CardioSessionModel) {
-        IntervalRunnerHub.shared.stop(for: session.id)
-        HRZoneGuard.shared.deactivate()
-        PaceGuard.shared.deactivate()
-        NotificationScheduler.shared.cancelCardioCues()
         let end = Date()
         let start = session.liveStartedAt ?? session.startedAt
         let distanceAtEnd = liveDistance(session)
         let elevationAtEnd = CardioRouteRecorder.shared.recordingSessionID == session.id
             ? CardioRouteRecorder.shared.liveElevationGainMeters
             : session.elevationGainMeters
-        session.endedAt = end
-        session.durationSeconds = max(1, Int(end.timeIntervalSince(start)))
-        CardioRouteRecorder.shared.stop(session: session, in: modelContext)
-        CardioGoalAnnouncer.shared.evaluate(
-            sessionID: session.id,
-            distanceMeters: distanceAtEnd,
-            elapsedSeconds: session.durationSeconds,
-            liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
-            elevationGainMeters: elevationAtEnd,
-            at: end
-        )
-        CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
-        modelContext.saveUserChanges()
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
-            .init(
-                sessionID: session.id,
-                start: start,
-                end: end,
-                modality: kind,
-                fallbackAvgHR: bleStats?.avgHR,
-                fallbackMaxHR: bleStats?.maxHR,
-                importsDistance: providesGPSDistance,
-                providesGPSDistance: providesGPSDistance,
-                hadManualIntervalPlan: hadManualIntervalPlan
-            ),
-            container: modelContext.container
-        )
-        CardioGoalAnnouncer.shared.finish(
+        CardioSessionTerminalPersistence.perform(
+            container: modelContext.container,
             sessionID: session.id,
-            distanceMeters: session.distanceMeters ?? distanceAtEnd,
-            durationSeconds: session.durationSeconds,
-            activeEnergyKcal: session.activeEnergyKcal,
-            elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
-        )
-        importing = false
+            endedAt: end,
+            completesYoga: false,
+            useClockDuration: true,
+            stagesRoute: providesGPSDistance
+        ) { outcome in
+            IntervalRunnerHub.shared.stop(for: outcome.sessionID)
+            HRZoneGuard.shared.deactivate()
+            PaceGuard.shared.deactivate()
+            NotificationScheduler.shared.cancelCardioCues()
+            if providesGPSDistance {
+                CardioRouteRecorder.shared.cancel(sessionID: outcome.sessionID)
+            }
+            CardioGoalAnnouncer.shared.evaluate(
+                sessionID: outcome.sessionID,
+                distanceMeters: outcome.distanceMeters ?? distanceAtEnd,
+                elapsedSeconds: outcome.durationSeconds,
+                liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
+                elevationGainMeters: outcome.elevationGainMeters ?? elevationAtEnd,
+                at: outcome.end
+            )
+            CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: outcome.sessionID)
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
+                    sessionID: outcome.sessionID,
+                    start: outcome.start,
+                    end: outcome.end,
+                    modality: kind,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: providesGPSDistance,
+                    providesGPSDistance: providesGPSDistance,
+                    hadManualIntervalPlan: hadManualIntervalPlan
+                ),
+                container: modelContext.container
+            )
+            CardioGoalAnnouncer.shared.finish(
+                sessionID: outcome.sessionID,
+                distanceMeters: outcome.distanceMeters ?? distanceAtEnd,
+                durationSeconds: outcome.durationSeconds,
+                activeEnergyKcal: outcome.activeEnergyKcal,
+                elevationGainMeters: outcome.elevationGainMeters ?? elevationAtEnd
+            )
+            importing = false
+            WatchLink.shared.publishDurableState()
+        }
     }
 
     private var header: some View {
@@ -792,8 +806,9 @@ struct CardioExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        modelContext.saveUserChanges()
-        session = new
+        modelContext.saveUserChanges {
+            session = new
+        }
     }
 
     /// Post-hoc goal verdict against the final session numbers — met in

@@ -1,6 +1,7 @@
 import ForgeCore
 import ForgeData
 import Foundation
+import SwiftData
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -10,6 +11,8 @@ import WidgetKit
 /// rebuild workout history on MainActor.
 @MainActor
 enum ReadinessSurfacePublisher {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     static func currentDashboard(now: Date = .now) -> HomeDashboardCache? {
         RecoverySnapshotStore.shared.snapshot(for: now)?.dashboard
     }
@@ -48,6 +51,50 @@ enum ReadinessSurfacePublisher {
         workout.readinessAtStart = Int((displayScore * 100).rounded())
         workout.readinessMethodID = dashboard.readinessMethodID
         workout.readinessCoverageAtStart = dashboard.readinessCoverage
+        return true
+    }
+
+    /// Persists the delayed workout-start stamp without saving or rolling back
+    /// unrelated edits held by the screen's shared ModelContext.
+    @discardableResult
+    static func persistCachedStart(
+        to workoutID: UUID,
+        in sourceContext: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws -> Bool {
+        guard let dashboard = currentDashboard(now: now) else { return false }
+        return try persist(
+            dashboard,
+            to: workoutID,
+            in: sourceContext,
+            save: save
+        )
+    }
+
+    /// Internal overload keeps the transaction boundary directly testable
+    /// without coupling persistence tests to the singleton snapshot cache.
+    @discardableResult
+    static func persist(
+        _ dashboard: HomeDashboardCache,
+        to workoutID: UUID,
+        in sourceContext: ModelContext,
+        save: SaveOperation = { try $0.save() }
+    ) throws -> Bool {
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        let targetID = workoutID
+        var descriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == targetID }
+        )
+        descriptor.fetchLimit = 1
+        guard let workout = try transaction.fetch(descriptor).first,
+              workout.deletedAt == nil,
+              workout.readinessAtStart == nil,
+              apply(dashboard, to: workout) else {
+            return false
+        }
+        try save(transaction)
         return true
     }
 

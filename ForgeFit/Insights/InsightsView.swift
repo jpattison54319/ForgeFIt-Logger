@@ -897,9 +897,13 @@ private struct ExerciseUnitSettingsCard: View {
         Binding(
             get: { exercise.preferredWeightUnit },
             set: { newValue in
-                exercise.preferredWeightUnit = newValue
-                exercise.updatedAt = Date()
-                modelContext.saveUserChanges()
+                PersistentChangeSaveCenter.shared.perform {
+                    try ExerciseUnitPreferencePersistence.set(
+                        newValue,
+                        for: exercise,
+                        in: modelContext
+                    )
+                }
             }
         )
     }

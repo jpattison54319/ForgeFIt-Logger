@@ -28,7 +28,8 @@ struct RoutineDuplicationTests {
         let workingSet = RoutineSetModel(
             userID: userID, position: 2, setType: .working,
             targetRepsLow: 8, targetRepsHigh: 12, targetWeight: 100,
-            targetRPE: 8, targetRIR: 2, targetDurationSeconds: 45
+            targetRPE: 8, targetRIR: 2, targetDurationSeconds: 45,
+            targetDistanceMeters: 2_000
         )
         let strength = RoutineExerciseModel(
             userID: userID, exerciseID: UUID(), position: 0,
@@ -104,6 +105,7 @@ struct RoutineDuplicationTests {
                 #expect(c.targetRPE == s.targetRPE)
                 #expect(c.targetRIR == s.targetRIR)
                 #expect(c.targetDurationSeconds == s.targetDurationSeconds)
+                #expect(c.targetDistanceMeters == s.targetDistanceMeters)
                 // The two fields the old inline copy dropped on sets:
                 #expect(c.plannedMiniSetCount == s.plannedMiniSetCount)
                 #expect(c.plannedMiniRepsJSON == s.plannedMiniRepsJSON)

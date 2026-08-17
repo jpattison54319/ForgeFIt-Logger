@@ -135,8 +135,14 @@ enum ExerciseAIClassifier {
         guard !isLiveWorkoutActive,
               LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
               !Task.isCancelled else { return }
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        let guessIDs = Array(guesses.keys)
+        guard let candidates = try? transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { guessIDs.contains($0.id) }
+        )) else { return }
         var didChange = false
-        for exercise in flagged.prefix(limit) {
+        for exercise in candidates {
             guard let guess = guesses[exercise.id] else { continue }
             let primary = guess.sanitizedPrimary
             guard !primary.isEmpty else { continue }
@@ -157,7 +163,13 @@ enum ExerciseAIClassifier {
         guard !isLiveWorkoutActive,
               LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
               !Task.isCancelled else { return }
-        if didChange { try? context.save() }
+        if didChange {
+            do {
+                try transaction.save()
+            } catch {
+                transaction.rollback()
+            }
+        }
     }
 
     // MARK: - Model call

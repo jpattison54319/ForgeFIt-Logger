@@ -15,6 +15,16 @@ import SwiftData
 /// here ever reads or writes readiness/HRV/sleep data.
 @MainActor
 enum CoachWeeklyReview {
+    enum PersistenceError: LocalizedError {
+        case activeProgramUnavailable
+
+        var errorDescription: String? {
+            "The weekly coaching review couldn't reopen the active plan. Try again."
+        }
+    }
+
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
 
     // MARK: - Week anchoring
 
@@ -149,7 +159,12 @@ enum CoachWeeklyReview {
     /// false for the rest of the week. Returns every still-`proposed` row
     /// for the current week (new + pre-existing).
     @discardableResult
-    static func proposals(for program: CoachedProgramModel, now: Date, in context: ModelContext) -> [CoachingWeekOverrideModel] {
+    static func proposals(
+        for program: CoachedProgramModel,
+        now: Date,
+        in context: ModelContext,
+        saveChanges: Bool
+    ) -> [CoachingWeekOverrideModel] {
         let currentAnchor = weekAnchor(for: now)
         let summary = buildSummary(program: program, now: now, in: context)
         let weeklyProposals = CoachingPolicy.review(summary)
@@ -200,10 +215,56 @@ enum CoachWeeklyReview {
         }
 
         program.lastReviewedWeekAnchor = currentAnchor
-        program.updatedAt = Date()
-        context.saveUserChanges()
+        program.updatedAt = now
+        if saveChanges {
+            context.saveUserChanges()
+        }
 
         return pendingProposals(for: program, weekAnchor: currentAnchor, in: context)
+    }
+
+    /// Runs the automatic weekly review away from the shared UI context. A
+    /// failed review can therefore neither commit unrelated editor changes nor
+    /// leave proposed rows that an autosave later makes real. Retry rebuilds
+    /// the same week's deterministic proposal set in a fresh context.
+    @discardableResult
+    static func proposalsIsolated(
+        for program: CoachedProgramModel,
+        now: Date,
+        from sourceContext: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor ([CoachingWeekOverrideModel]) -> Void
+    ) -> Bool {
+        let programID = program.id
+        var committedProposals: [CoachingWeekOverrideModel] = []
+
+        return (saveCenter ?? .shared).perform({
+            let persistenceContext = ModelContext(sourceContext.container)
+            persistenceContext.autosaveEnabled = false
+            guard let persistedProgram = try persistenceContext.fetch(
+                FetchDescriptor<CoachedProgramModel>(predicate: #Predicate { $0.id == programID })
+            ).first else {
+                throw PersistenceError.activeProgramUnavailable
+            }
+            let pending = proposals(
+                for: persistedProgram,
+                now: now,
+                in: persistenceContext,
+                saveChanges: false
+            )
+            let proposalIDs = Set(pending.map(\.id))
+            try save(persistenceContext)
+
+            guard try sourceContext.fetch(
+                FetchDescriptor<CoachedProgramModel>(predicate: #Predicate { $0.id == programID })
+            ).first != nil else {
+                throw PersistenceError.activeProgramUnavailable
+            }
+            committedProposals = try sourceContext.fetch(
+                FetchDescriptor<CoachingWeekOverrideModel>()
+            ).filter { proposalIDs.contains($0.id) }
+        }, onSuccess: { onCommit(committedProposals) })
     }
 
     /// Read-only: the current `proposed`-status rows for `program` in the
@@ -253,25 +314,85 @@ enum CoachWeeklyReview {
     // MARK: - Lifecycle
 
     /// Accepting a proposal turns it into this week's active override.
-    static func accept(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
-        override.statusRaw = CoachingOverrideStatus.active.rawValue
-        override.updatedAt = Date()
-        context.saveUserChanges()
+    @discardableResult
+    static func accept(
+        _ override: CoachingWeekOverrideModel,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        persistStatus(
+            CoachingOverrideStatus.active.rawValue,
+            for: override,
+            in: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 
     /// Declining a proposal cancels it — `proposals(for:now:in:)` treats a
     /// cancelled row as "already handled," so it never comes back this week.
-    static func decline(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
-        override.statusRaw = CoachingOverrideStatus.cancelled.rawValue
-        override.updatedAt = Date()
-        context.saveUserChanges()
+    @discardableResult
+    static func decline(
+        _ override: CoachingWeekOverrideModel,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        persistStatus(
+            CoachingOverrideStatus.cancelled.rawValue,
+            for: override,
+            in: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 
     /// Cancels an already-active override (e.g. the lifter wants to drop a
     /// hold or a deload week mid-week).
-    static func cancel(_ override: CoachingWeekOverrideModel, in context: ModelContext) {
-        override.statusRaw = CoachingOverrideStatus.cancelled.rawValue
-        override.updatedAt = Date()
-        context.saveUserChanges()
+    @discardableResult
+    static func cancel(
+        _ override: CoachingWeekOverrideModel,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        persistStatus(
+            CoachingOverrideStatus.cancelled.rawValue,
+            for: override,
+            in: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
+    }
+
+    private static func persistStatus(
+        _ statusRaw: String,
+        for override: CoachingWeekOverrideModel,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter,
+        save: @escaping SaveOperation,
+        onCommit: @escaping @MainActor () -> Void
+    ) -> Bool {
+        let previousStatus = override.statusRaw
+        let previousUpdatedAt = override.updatedAt
+        let updatedAt = Date()
+        return saveCenter.perform({
+            override.statusRaw = statusRaw
+            override.updatedAt = updatedAt
+            do {
+                try save(context)
+            } catch {
+                override.statusRaw = previousStatus
+                override.updatedAt = previousUpdatedAt
+                throw error
+            }
+        }, onSuccess: onCommit)
     }
 }

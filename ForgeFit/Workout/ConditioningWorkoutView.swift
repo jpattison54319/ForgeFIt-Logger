@@ -140,13 +140,24 @@ struct ConditioningWorkoutView: View {
                         finishGate.end()
                         return
                     }
-                    apply(ConditioningProgressEvent(action: .setScore(
+                    let committed = apply(ConditioningProgressEvent(action: .setScore(
                         rounds: rounds,
                         partialMovementID: nil,
                         partialValue: 0,
                         load: load
-                    )))
-                    finishWorkout()
+                    ))) { applied in
+                        guard applied else {
+                            finishGate.end()
+                            return
+                        }
+                        finishWorkout()
+                    }
+                    if !committed {
+                        // The global persistence alert owns the exact retry.
+                        // Release the local tap gate so Keep Editing remains
+                        // usable while the durable model stays unchanged.
+                        finishGate.end()
+                    }
                 }
             )
             .interactiveDismissDisabled()
@@ -197,146 +208,61 @@ struct ConditioningWorkoutView: View {
         apply(ConditioningProgressEvent(action: progress.status == .paused ? .resume : .pause))
     }
 
-    private func apply(_ event: ConditioningProgressEvent) {
-        let before = progress
-        let next = ConditioningProgressEngine.apply(event, to: before, plan: plan)
-        guard next != before else { return }
-        materializeChanges(from: before, to: next, at: event.timestamp)
-        withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) { progress = next }
-        let resultJSON = ConditioningProgressEngine.result(for: next, plan: plan).encodedJSON()
-        if let block {
-            block.progressJSON = next.encodedJSON()
-            block.resultJSON = resultJSON
-            block.updatedAt = .now
-            if before.status == .ready, next.status != .ready {
-                startBlockSessionIfNeeded(block)
+    @discardableResult
+    private func apply(
+        _ event: ConditioningProgressEvent,
+        onCommit: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) -> Bool {
+        let workoutID = workout.id
+        let blockID = block?.id
+        return ConditioningEventPersistence.perform(
+            container: modelContext.container,
+            workoutID: workoutID,
+            blockID: blockID,
+            event: event,
+            sourceDevice: "iphone-conditioning",
+            distanceSource: .userEntered
+        ) { outcome in
+            guard outcome.applied else {
+                onCommit(false)
+                return
             }
-        } else {
-            workout.conditioningProgressJSON = next.encodedJSON()
-            workout.conditioningResultJSON = resultJSON
-        }
-        workout.updatedAt = .now
-        modelContext.saveUserChanges()
-        WatchLink.shared.publishState(policy: .immediate)
-        WorkoutActivityController.shared.update(workout: workout, exercises: exercises)
-    }
-
-    private func materializeChanges(from old: ConditioningProgress, to new: ConditioningProgress, at date: Date) {
-        for section in plan.sections {
-            for movement in section.movements {
-                let delta = (new.movementTotals[movement.id] ?? 0) - (old.movementTotals[movement.id] ?? 0)
-                guard delta != 0 else { continue }
-                if delta > 0 { materialize(movement, value: delta, at: date) }
-                else { undoMaterialized(movement, value: -delta) }
+            withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+                progress = outcome.progress
             }
-        }
-        workout.recomputeTotalVolume()
-    }
-
-    private func materialize(_ movement: ConditioningMovement, value: Double, at date: Date) {
-        guard let exercise = exerciseByID[movement.exerciseID] else { return }
-        let workoutExercise = workout.exercises.first {
-            $0.exerciseID == movement.exerciseID
-                && $0.generatedByWorkoutBlockID == block?.id
-        }
-            ?? makeWorkoutExercise(for: movement.exerciseID)
-        if exercise.isCardio || exercise.isYoga {
-            let session = workout.cardioSessions.first { $0.workoutExerciseID == workoutExercise.id }
-                ?? makeCardioSession(for: workoutExercise, exercise: exercise, at: date)
-            if movement.targetUnit == .seconds { session.durationSeconds = (session.durationSeconds ?? 0) + Int(value) }
-            if movement.targetUnit == .meters {
-                session.distanceMeters = (session.distanceMeters ?? 0) + value
-                session.distanceSource = .userEntered
+            if outcome.startedSessionID != nil,
+               outcome.startedSessionID != outcome.completedSessionID {
+                Task { await HealthService.shared.requestAuthorizationIfNeeded() }
             }
-            session.endedAt = date
-            return
-        }
-        let set = SetModel(
-            userID: workout.userID,
-            position: workoutExercise.sets.count,
-            weightMode: movement.weightMode,
-            reps: movement.targetUnit == .reps ? Int(value) : nil,
-            durationSeconds: movement.targetUnit == .seconds ? Int(value) : nil,
-            completedAt: date
-        )
-        set.setModeWeight(movement.targetLoad)
-        modelContext.insert(set)
-        workoutExercise.sets.append(set)
-    }
-
-    private func undoMaterialized(_ movement: ConditioningMovement, value: Double) {
-        guard let workoutExercise = workout.exercises.first(where: {
-            $0.exerciseID == movement.exerciseID
-                && $0.generatedByWorkoutBlockID == block?.id
-        }) else { return }
-        if let set = workoutExercise.sets
-            .filter({ $0.completedAt != nil })
-            .sorted(by: { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) })
-            .first {
-            modelContext.delete(set)
-            workoutExercise.sets.removeAll { $0.id == set.id }
-        } else if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
-            if movement.targetUnit == .seconds { session.durationSeconds = max(0, (session.durationSeconds ?? 0) - Int(value)) }
-            if movement.targetUnit == .meters {
-                session.distanceMeters = max(0, (session.distanceMeters ?? 0) - value)
-                session.distanceSource = .userEntered
+            if let completedSessionID = outcome.completedSessionID {
+                scheduleBlockEnrichment(
+                    sessionID: completedSessionID,
+                    progress: outcome.progress,
+                    fallbackEnd: event.timestamp
+                )
             }
+            WatchLink.shared.publishDurableState()
+            let readContext = ModelContext(modelContext.container)
+            readContext.autosaveEnabled = false
+            let committedWorkout = try? readContext.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { $0.id == workoutID }
+            )).first
+            WorkoutActivityController.shared.update(
+                workout: committedWorkout ?? workout,
+                exercises: exercises
+            )
+            onCommit(true)
         }
-    }
-
-    private func makeWorkoutExercise(for exerciseID: UUID) -> WorkoutExerciseModel {
-        let workoutExercise = WorkoutExerciseModel(
-            userID: workout.userID,
-            exerciseID: exerciseID,
-            position: block?.position ?? workout.exercises.count,
-            generatedByWorkoutBlockID: block?.id
-        )
-        modelContext.insert(workoutExercise)
-        workout.exercises.append(workoutExercise)
-        return workoutExercise
-    }
-
-    private func makeCardioSession(
-        for workoutExercise: WorkoutExerciseModel,
-        exercise: ExerciseLibraryModel,
-        at date: Date
-    ) -> CardioSessionModel {
-        let modality = exercise.isYoga ? CardioSessionModel.yogaModality : CardioKind.infer(name: exercise.name, equipment: exercise.equipment).rawValue
-        let blockStart = block.flatMap { block in
-            workout.cardioSessions.first {
-                $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
-            }?.liveStartedAt
-        }
-        let session = CardioSessionModel(
-            userID: workout.userID,
-            workoutExerciseID: workoutExercise.id,
-            workoutBlockID: block?.id,
-            modality: modality,
-            startedAt: block == nil ? workout.startedAt : (blockStart ?? date),
-            liveStartedAt: block == nil ? workout.startedAt : blockStart,
-            endedAt: date,
-            sourceDevice: "iphone-conditioning"
-        )
-        modelContext.insert(session)
-        workout.cardioSessions.append(session)
-        return session
     }
 
     private func finishWorkout() {
-        let resultJSON = ConditioningProgressEngine.result(for: progress, plan: plan).encodedJSON()
-        if let block {
-            block.progressJSON = progress.encodedJSON()
-            block.resultJSON = resultJSON
-            block.updatedAt = .now
-            completeBlockSession(block)
-            workout.updatedAt = .now
-            modelContext.saveUserChanges()
+        if block != nil {
             showScore = false
+            finishGate.end()
             onBlockCompleted?()
             return
         }
-        workout.conditioningResultJSON = resultJSON
-        if let error = WorkoutFinisher.finish(workout, in: modelContext) {
+        if let error = WorkoutFinisher.finish(workoutID: workout.id, in: modelContext) {
             saveError = error
             finishGate.end()
             return
@@ -353,47 +279,18 @@ struct ConditioningWorkoutView: View {
         return "Conditioning"
     }
 
-    private func startBlockSessionIfNeeded(_ block: WorkoutBlockModel) {
-        let session = workout.cardioSessions.first {
-            $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
-        }
-            ?? makeBlockSession(block)
-        guard session.liveStartedAt == nil else { return }
-        let now = progress.startedAt ?? .now
-        session.startedAt = now
-        session.liveStartedAt = now
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
-    }
-
-    private func makeBlockSession(_ block: WorkoutBlockModel) -> CardioSessionModel {
-        let session = CardioSessionModel(
-            userID: workout.userID,
-            workoutBlockID: block.id,
-            modality: CardioSessionModel.conditioningModality,
-            startedAt: .now,
-            sourceDevice: "iphone-conditioning"
-        )
-        modelContext.insert(session)
-        workout.cardioSessions.append(session)
-        return session
-    }
-
-    private func completeBlockSession(_ block: WorkoutBlockModel) {
-        let session = workout.cardioSessions.first {
-            $0.workoutBlockID == block.id && $0.workoutExerciseID == nil
-        }
-            ?? makeBlockSession(block)
-        let end = progress.completedAt ?? .now
-        let start = session.liveStartedAt ?? progress.startedAt ?? end
-        session.liveStartedAt = start
-        session.startedAt = start
-        session.endedAt = end
-        session.durationSeconds = max(1, Int(end.timeIntervalSince(start)))
-
+    private func scheduleBlockEnrichment(
+        sessionID: UUID,
+        progress: ConditioningProgress,
+        fallbackEnd: Date
+    ) {
+        guard block != nil else { return }
+        let end = progress.completedAt ?? fallbackEnd
+        let start = progress.startedAt ?? end
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
             .init(
-                sessionID: session.id,
+                sessionID: sessionID,
                 start: start,
                 end: end,
                 modality: .other,

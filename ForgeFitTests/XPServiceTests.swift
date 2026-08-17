@@ -81,8 +81,8 @@ struct XPServiceTests {
         context.insert(workout)
         try context.save()
 
-        let first = XPService.awardXPIfNeeded(for: workout, in: context)
-        let second = XPService.awardXPIfNeeded(for: workout, in: context)
+        let first = try XPService.awardXPIfNeeded(for: workout, in: context)
+        let second = try XPService.awardXPIfNeeded(for: workout, in: context)
 
         #expect(first.amount == 119)
         #expect(second.amount == 119)
@@ -99,12 +99,67 @@ struct XPServiceTests {
         context.insert(workout)
         try context.save()
 
-        let award = XPService.awardXPIfNeeded(for: workout, in: context)
+        let award = try XPService.awardXPIfNeeded(for: workout, in: context)
 
         #expect(!award.eligible)
         #expect(award.amount == 0)
         #expect(try context.fetch(FetchDescriptor<WorkoutXPEventModel>()).isEmpty)
         #expect(try context.fetch(FetchDescriptor<UserProgressModel>()).isEmpty)
+    }
+
+    @Test func failedStandaloneAwardLeavesNoResidueAndRetriesExactlyOnce() throws {
+        struct InjectedFailure: Error {}
+
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let workout = strengthWorkout(minutes: 45, completedSets: 4)
+        let pendingRoutine = RoutineModel(userID: userID, name: "Before")
+        context.insert(workout)
+        context.insert(pendingRoutine)
+        try context.save()
+        pendingRoutine.name = "Still pending"
+
+        #expect(throws: InjectedFailure.self) {
+            try XPService.awardXPIfNeeded(
+                for: workout,
+                in: context,
+                save: { _ in throw InjectedFailure() }
+            )
+        }
+
+        #expect(workout.xpAwardedAt == nil)
+        #expect(pendingRoutine.name == "Still pending")
+        try context.save()
+
+        var verification = ModelContext(container)
+        verification.autosaveEnabled = false
+        let failedWorkout = try #require(verification.fetch(FetchDescriptor<WorkoutModel>()).first)
+        #expect(failedWorkout.xpAwardedAt == nil)
+        #expect(try verification.fetch(FetchDescriptor<WorkoutXPEventModel>()).isEmpty)
+        #expect(try verification.fetch(FetchDescriptor<UserProgressModel>()).isEmpty)
+
+        pendingRoutine.name = "Pending during retry"
+        let retry = try XPService.awardXPIfNeeded(for: workout, in: context)
+        let duplicateRetry = try XPService.awardXPIfNeeded(for: workout, in: context)
+        #expect(retry.amount == 119)
+        #expect(duplicateRetry.amount == retry.amount)
+
+        verification = ModelContext(container)
+        let events = try verification.fetch(FetchDescriptor<WorkoutXPEventModel>())
+        let progress = try verification.fetch(FetchDescriptor<UserProgressModel>())
+        #expect(events.count == 1)
+        #expect(progress.count == 1)
+        #expect(progress.first?.totalXP == 119)
+        #expect(
+            try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Still pending"
+        )
+
+        try context.save()
+        verification = ModelContext(container)
+        #expect(
+            try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Pending during retry"
+        )
     }
 
     private func strengthWorkout(minutes: Int, completedSets: Int) -> WorkoutModel {

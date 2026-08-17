@@ -99,6 +99,15 @@ final class YogaFlowRunnerHub {
         runner?.sessionID == sessionID ? runner : nil
     }
 
+    /// Freeze the current wall-clock position for an isolated terminal save
+    /// without stopping or mutating the live SwiftData session. A failed save
+    /// therefore leaves guidance running; a successful transaction can derive
+    /// the exact partial hold from this local checkpoint before teardown.
+    func captureCheckpointForTerminalAttempt(sessionID: UUID) {
+        guard let runner, runner.sessionID == sessionID else { return }
+        runner.captureCheckpointForTerminalAttempt()
+    }
+
     func stop(for sessionID: UUID? = nil, clearCheckpoint: Bool = false) {
         if let sessionID, runner?.sessionID != sessionID { return }
         let resolvedSessionID = sessionID ?? runner?.sessionID
@@ -155,6 +164,8 @@ final class YogaFlowRunner {
     let sessionID: UUID
     private let session: CardioSessionModel
     private let context: ModelContext
+    @ObservationIgnored private let splitSaveCenter: PersistentChangeSaveCenter
+    @ObservationIgnored private let splitSave: @MainActor (ModelContext) throws -> Void
 
     /// Index of the currently running hold; == steps.count when finished.
     private(set) var currentIndex: Int = 0
@@ -172,14 +183,23 @@ final class YogaFlowRunner {
     @ObservationIgnored private var playedGuidanceIDs: Set<String> = []
     @ObservationIgnored private var recordedGuidanceHistory = false
     @ObservationIgnored private let guidanceSeed: UInt64
+    @ObservationIgnored private var splitSavePending = false
 
-    init?(plan: YogaFlowPlan, session: CardioSessionModel, context: ModelContext) {
+    init?(
+        plan: YogaFlowPlan,
+        session: CardioSessionModel,
+        context: ModelContext,
+        splitSaveCenter: PersistentChangeSaveCenter? = nil,
+        splitSave: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() }
+    ) {
         guard plan.hasSteps else { return nil }
         self.plan = plan
         self.steps = Self.expand(plan)
         self.sessionID = session.id
         self.session = session
         self.context = context
+        self.splitSaveCenter = splitSaveCenter ?? .shared
+        self.splitSave = splitSave
         self.guidanceSeed = Self.stableSeed(for: session.id)
         let now = Date()
         self.stepStartedAt = now
@@ -244,8 +264,11 @@ final class YogaFlowRunner {
                 TimeInterval(max(0, step.seconds - checkpoint.elapsedSeconds))
             )
             stepStartedAt = endedAt.addingTimeInterval(-TimeInterval(step.seconds))
-            recordSplit(upTo: endedAt, durationSeconds: step.seconds)
-            beginStep(at: checkpoint.stepIndex + 1, announceEntry: true)
+            let completedIndex = checkpoint.stepIndex
+            recordSplit(upTo: endedAt, durationSeconds: step.seconds) { [weak self] in
+                guard let self, self.currentIndex == completedIndex else { return }
+                self.beginStep(at: completedIndex + 1, announceEntry: true)
+            }
         } else if checkpoint.isPaused {
             isPaused = true
             pausedRemaining = max(1, step.seconds - elapsed)
@@ -277,15 +300,23 @@ final class YogaFlowRunner {
 
     /// Skip forward to the next hold (records the current split short).
     func skip() {
-        guard !isFinished else { return }
+        guard !isFinished, !splitSavePending else { return }
+        advanceTask?.cancel()
+        advanceTask = nil
+        let completedIndex = currentIndex
         let wasPaused = isPaused
         YogaGuidanceAudio.shared.stop()
-        recordSplit(upTo: Date.now, durationSeconds: wasPaused ? currentElapsedSeconds() : nil)
-        transitionHaptic(sideSwitch: false)
-        if wasPaused {
-            beginPausedStep(at: currentIndex + 1)
-        } else {
-            beginStep(at: currentIndex + 1, announceEntry: true)
+        recordSplit(
+            upTo: Date.now,
+            durationSeconds: wasPaused ? currentElapsedSeconds() : nil
+        ) { [weak self] in
+            guard let self, self.currentIndex == completedIndex else { return }
+            self.transitionHaptic(sideSwitch: false)
+            if wasPaused {
+                self.beginPausedStep(at: completedIndex + 1)
+            } else {
+                self.beginStep(at: completedIndex + 1, announceEntry: true)
+            }
         }
     }
 
@@ -327,7 +358,11 @@ final class YogaFlowRunner {
                 sessionID: sessionID
             )
         }
-        WatchLink.shared.publishState()
+    }
+
+    func captureCheckpointForTerminalAttempt() {
+        guard !isFinished else { return }
+        persistCheckpoint(at: .now)
     }
 
     /// Go back to the start of the current hold, or the previous one when
@@ -483,10 +518,12 @@ final class YogaFlowRunner {
             guard let endsAt = self?.stepEndsAt else { return }
             try? await Task.sleep(for: .seconds(max(0, endsAt.timeIntervalSinceNow)))
             guard !Task.isCancelled, let self, self.currentIndex == index, !self.isPaused else { return }
-            self.recordSplit(upTo: self.stepEndsAt)
-            self.transitionHaptic(sideSwitch: self.nextStep?.poseStep.id == step.poseStep.id)
-            self.scheduleBackstopNotification()
-            self.beginStep(at: index + 1, announceEntry: true)
+            self.recordSplit(upTo: self.stepEndsAt) { [weak self] in
+                guard let self, self.currentIndex == index else { return }
+                self.transitionHaptic(sideSwitch: self.nextStep?.poseStep.id == step.poseStep.id)
+                self.scheduleBackstopNotification()
+                self.beginStep(at: index + 1, announceEntry: true)
+            }
         }
     }
 
@@ -511,24 +548,26 @@ final class YogaFlowRunner {
             )
         }
         session.posesCompleted = plan.steps.count
-        context.saveUserChanges()
-        let completion = YogaGuidancePlanner.completionClip(
-            sessionSeed: guidanceSeed,
-            excludedClipIDs: YogaGuidanceHistory.recentClipIDs.union(plannedGuidanceIDs)
-        )
-        YogaGuidanceAudio.shared.play(
-            completion,
-            voiceEnabled: plan.voiceGuidanceEnabled
-        )
-        playedGuidanceIDs.insert(completion.id)
-        if !recordedGuidanceHistory {
-            YogaGuidanceHistory.record(Array(playedGuidanceIDs))
-            recordedGuidanceHistory = true
+        context.saveUserChanges { [weak self] in
+            guard let self else { return }
+            let completion = YogaGuidancePlanner.completionClip(
+                sessionSeed: self.guidanceSeed,
+                excludedClipIDs: YogaGuidanceHistory.recentClipIDs.union(self.plannedGuidanceIDs)
+            )
+            YogaGuidanceAudio.shared.play(
+                completion,
+                voiceEnabled: self.plan.voiceGuidanceEnabled
+            )
+            self.playedGuidanceIDs.insert(completion.id)
+            if !self.recordedGuidanceHistory {
+                YogaGuidanceHistory.record(Array(self.playedGuidanceIDs))
+                self.recordedGuidanceHistory = true
+            }
+            #if canImport(UIKit)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            #endif
+            WatchLink.shared.publishState()
         }
-        #if canImport(UIKit)
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-        #endif
-        WatchLink.shared.publishState()
     }
 
     private func guidancePlan(for step: RuntimeStep, index: Int) -> YogaGuidancePlan {
@@ -563,29 +602,51 @@ final class YogaFlowRunner {
 
     /// Persist the completed hold as a split on the session — the raw
     /// material for per-region flexibility analytics.
+    @discardableResult
     private func recordSplit(
         upTo end: Date,
         durationSeconds overrideDuration: Int? = nil,
-        persist: Bool = true
-    ) {
-        guard currentIndex < steps.count else { return }
+        persist: Bool = true,
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard currentIndex < steps.count, !splitSavePending else { return false }
         let step = steps[currentIndex]
-        let duration = max(1, overrideDuration ?? Int(end.timeIntervalSince(stepStartedAt)))
-        let split = CardioSplitModel(
-            userID: session.userID,
-            cardioSessionID: session.id,
-            index: step.id,
-            distanceMeters: 0,
-            durationSeconds: duration,
-            paceSecondsPerKm: 0,
-            label: step.displayName,
-            startedAt: stepStartedAt,
-            endedAt: end
-        )
-        split.cardioSession = session
-        context.insert(split)
-        session.splits.append(split)
-        if persist { context.saveUserChanges() }
+        if session.splits.contains(where: { $0.index == step.id && $0.label != nil }) == false {
+            let duration = max(1, overrideDuration ?? Int(end.timeIntervalSince(stepStartedAt)))
+            let split = CardioSplitModel(
+                userID: session.userID,
+                cardioSessionID: session.id,
+                index: step.id,
+                distanceMeters: 0,
+                durationSeconds: duration,
+                paceSecondsPerKm: 0,
+                label: step.displayName,
+                startedAt: stepStartedAt,
+                endedAt: end
+            )
+            split.cardioSession = session
+            context.insert(split)
+            session.splits.append(split)
+        }
+        guard persist else {
+            onCommit()
+            return true
+        }
+
+        return splitSaveCenter.perform({ [weak self] in
+            guard let self else { return }
+            self.splitSavePending = true
+            do {
+                try self.splitSave(self.context)
+            } catch {
+                self.splitSavePending = false
+                throw error
+            }
+        }, onSuccess: { [weak self] in
+            guard let self else { return }
+            self.splitSavePending = false
+            onCommit()
+        })
     }
 
     /// Distinct patterns: light tap for switching sides of the same pose,

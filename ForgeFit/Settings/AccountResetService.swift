@@ -10,6 +10,8 @@ extension Notification.Name {
 
 @MainActor
 enum AccountResetService {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     /// Result of a full reset. The local wipe is all-or-nothing and throws on
     /// failure; the iCloud backup deletion is awaited and reported separately
     /// so the confirmation can never claim a deletion that did not happen.
@@ -29,16 +31,33 @@ enum AccountResetService {
 
     static func resetAllAppData(
         in context: ModelContext,
-        backupDeleter: any BackupDeleting = BackupExporter.shared
+        backupDeleter: any BackupDeleting = BackupExporter.shared,
+        databaseSave: SaveOperation = { try $0.save() }
     ) async throws -> ResetOutcome {
+        // Delete and reseed inside one private transaction. Until this single
+        // save commits, the user's durable models, defaults, live devices, and
+        // backups are untouched; a seed/save failure therefore leaves a fully
+        // retryable pre-reset app instead of a half-wiped one.
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        try stageAllLocalModelDeletes(in: transaction)
+        try ExerciseSeedRepository.seedGlobalLibrary(
+            in: transaction,
+            persist: false
+        )
+        try ExerciseCatalog.seed(into: transaction, persist: false)
+        try YogaPoseCatalog.seed(into: transaction, persist: false)
+        try YogaPoseCatalog.pruneUnavailablePoses(into: transaction, persist: false)
+        try databaseSave(transaction)
+
+        // The private commit supersedes any stale or unsaved rows retained by
+        // the keep-resident UI context. Reset intentionally discards them so a
+        // later autosave cannot resurrect pre-reset user data.
+        context.rollback()
         clearLiveSurfaces()
         cancelAppNotifications()
         ExperimentExportService.cleanupAll()
-        try deleteAllLocalModels(in: context)
         clearAppDefaults()
-        try ExerciseSeedRepository.seedGlobalLibrary(in: context)
-        ExerciseCatalog.seed(into: context)
-        try context.save()
         // The privacy policy promises reset also removes the iCloud Drive
         // backup. Await the deletion: the reset must not be declared complete
         // (and the shell must not move to onboarding) until we know whether
@@ -71,6 +90,11 @@ enum AccountResetService {
         DeferredWorkoutEnrichmentCoordinator.shared.cancelAll()
         ExerciseAIClassifier.cancelAll()
         WorkoutFinisher.cancelLiveRuntime()
+        try stageAllLocalModelDeletes(in: context)
+        try context.save()
+    }
+
+    private static func stageAllLocalModelDeletes(in context: ModelContext) throws {
         try deleteAll(RestDayModel.self, in: context)
         try deleteAll(MicrocycleWindowModel.self, in: context)
         try deleteAll(MicrocycleTrackingModel.self, in: context)
@@ -105,7 +129,6 @@ enum AccountResetService {
         try deleteAll(UserExerciseNoteModel.self, in: context)
         try deleteAll(ExerciseAliasModel.self, in: context)
         try deleteAll(ExerciseLibraryModel.self, in: context)
-        try context.save()
     }
 
     private static func deleteAll<T: PersistentModel>(_ type: T.Type, in context: ModelContext) throws {
@@ -116,6 +139,9 @@ enum AccountResetService {
 
     private static func clearLiveSurfaces() {
         WorkoutFinisher.cancelLiveRuntime()
+        // Pairing is device-local and deliberately excluded from backup. A full
+        // reset must also stop a standing reconnect and forget its identifiers.
+        BLEHeartRateService.shared.forget()
         WatchLink.shared.sendCommand(.discardWorkout(workoutID: nil))
         WatchLink.shared.publishState()
     }
@@ -137,6 +163,11 @@ enum AccountResetService {
         // catalog seed against the freshly-reset store.)
         let defaults = UserDefaults.standard
         AppPreferenceKeys.allResettable.forEach(defaults.removeObject(forKey:))
+        // These health-derived stores are local-only. Clear through the stores
+        // as well as the canonical key list so their live singleton state
+        // cannot survive the reset until the next process launch.
+        SleepOverrideStore.shared.clearAll()
+        RecoverySnapshotStore.shared.clearAll()
         YogaRuntimeCheckpointStore.clearAll(defaults: defaults)
         // HR-zone config lives in the app-group suite (health-derived —
         // never backed up, but reset must still clear it).

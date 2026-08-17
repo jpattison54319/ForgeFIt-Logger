@@ -108,13 +108,14 @@ struct ConditioningPresetManagerView: View {
                 workouts: workouts,
                 navigationTitle: "New Preset",
                 allowsMultipleSections: false,
-                showsPresetActions: false
-            ) { json in
-                guard let section = ConditioningPlan.decode(from: json)?.sections.first else {
-                    throw ConditioningPresetStoreError.encodingFailed
+                showsPresetActions: false,
+                onSave: { json in
+                    guard let section = ConditioningPlan.decode(from: json)?.sections.first else {
+                        throw ConditioningPresetStoreError.encodingFailed
+                    }
+                    try ConditioningPresetStore.save(section, named: section.name, in: modelContext)
                 }
-                try ConditioningPresetStore.save(section, named: section.name, in: modelContext)
-            }
+            )
         }
         .alert("Couldn't Update Presets", isPresented: $showError) {
         } message: {

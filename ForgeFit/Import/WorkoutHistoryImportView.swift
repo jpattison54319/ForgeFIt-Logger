@@ -671,8 +671,12 @@ struct WorkoutHistoryImportView: View {
             avgHR: avgHR,
             maxHR: heartRates.max()
         )
-        modelContext.insert(workout)
-        modelContext.insert(session)
+        // Keep this import transactional without committing or rolling back
+        // unrelated edits held by another keep-resident UI surface.
+        let importContext = ModelContext(modelContext.container)
+        importContext.autosaveEnabled = false
+        importContext.insert(workout)
+        importContext.insert(session)
         session.workout = workout
         for entry in timed {
             let point = CardioRoutePointModel(
@@ -683,12 +687,12 @@ struct WorkoutHistoryImportView: View {
                 longitude: entry.point.longitude,
                 altitudeMeters: entry.point.elevationMeters
             )
-            modelContext.insert(point)
+            importContext.insert(point)
             session.routePoints.append(point)
         }
-        CardioRouteMath.replaceSplits(for: session, in: modelContext)
+        CardioRouteMath.replaceSplits(for: session, in: importContext)
         do {
-            try modelContext.save()
+            try importContext.save()
             result = WorkoutHistoryImportCommitResult(
                 importedWorkouts: 1,
                 skippedDuplicates: 0,
@@ -696,7 +700,11 @@ struct WorkoutHistoryImportView: View {
                 flaggedForReview: 0,
                 warningCount: track.points.count == timed.count ? 0 : 1
             )
+            BackupScheduler.shared.noteLogDataChanged()
         } catch {
+            // Failed imports must not remain pending and silently commit with
+            // the next unrelated save (or duplicate on a retry).
+            importContext.rollback()
             errorMessage = error.localizedDescription
         }
     }

@@ -5,6 +5,8 @@ import SwiftData
 
 @MainActor
 enum RestDayService {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     enum ServiceError: LocalizedError, Equatable {
         case futureDate
         case trainingExists
@@ -23,7 +25,8 @@ enum RestDayService {
         workouts: [WorkoutModel],
         in context: ModelContext,
         now: Date = .now,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        save: SaveOperation = { try $0.save() }
     ) throws -> RestDayModel {
         let identifier = timeZone.identifier
         let calendar = try MicrocycleEngine.calendar(timeZoneIdentifier: identifier)
@@ -38,9 +41,17 @@ enum RestDayService {
         if let existing = all.first(where: {
             calendar.isDate($0.date, inSameDayAs: day) && $0.timeZoneIdentifier == identifier
         }) {
+            let previousDeletedAt = existing.deletedAt
+            let previousUpdatedAt = existing.updatedAt
             existing.deletedAt = nil
             existing.updatedAt = now
-            try context.save()
+            do {
+                try save(context)
+            } catch {
+                existing.deletedAt = previousDeletedAt
+                existing.updatedAt = previousUpdatedAt
+                throw error
+            }
             return existing
         }
 
@@ -52,39 +63,65 @@ enum RestDayService {
             updatedAt: now
         )
         context.insert(restDay)
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            context.delete(restDay)
+            throw error
+        }
         return restDay
     }
 
     static func remove(
         _ restDay: RestDayModel,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
+        let previousDeletedAt = restDay.deletedAt
+        let previousUpdatedAt = restDay.updatedAt
         restDay.deletedAt = now
         restDay.updatedAt = now
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            restDay.deletedAt = previousDeletedAt
+            restDay.updatedAt = previousUpdatedAt
+            throw error
+        }
     }
 
     static func removeWorkoutConflicts(
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        shouldSave: Bool = true,
+        save: SaveOperation = { try $0.save() }
     ) throws {
         let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
         let restDays = try context.fetch(FetchDescriptor<RestDayModel>())
             .filter { $0.deletedAt == nil }
-        var changed = false
+        var snapshots: [(restDay: RestDayModel, deletedAt: Date?, updatedAt: Date)] = []
         for restDay in restDays {
             guard let calendar = try? MicrocycleEngine.calendar(
                 timeZoneIdentifier: restDay.timeZoneIdentifier
             ) else { continue }
             if containsCompletedWorkout(on: restDay.date, workouts: workouts, calendar: calendar) {
+                snapshots.append((restDay, restDay.deletedAt, restDay.updatedAt))
                 restDay.deletedAt = now
                 restDay.updatedAt = now
-                changed = true
             }
         }
-        if changed { try context.save() }
+        guard !snapshots.isEmpty else { return }
+        guard shouldSave else { return }
+        do {
+            try save(context)
+        } catch {
+            for snapshot in snapshots {
+                snapshot.restDay.deletedAt = snapshot.deletedAt
+                snapshot.restDay.updatedAt = snapshot.updatedAt
+            }
+            throw error
+        }
     }
 
     static func live(_ restDays: [RestDayModel]) -> [RestDayModel] {

@@ -22,7 +22,10 @@ import Testing
 
     private let userID = UUID()
 
-    private func makePipeline(_ name: String) async throws -> Pipeline {
+    private func makePipeline(
+        _ name: String,
+        saveContext: @escaping SyncCoordinator.SaveOperation = { try $0.save() }
+    ) async throws -> Pipeline {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let backend = InstrumentedSocialBackend()
@@ -37,7 +40,8 @@ import Testing
             social: service,
             container: container,
             debounce: .zero,
-            postWorkoutDelay: .zero
+            postWorkoutDelay: .zero,
+            saveContext: saveContext
         )
         coordinator.start(monitorConnectivity: false)
         return Pipeline(container: container, context: context, backend: backend, service: service, coordinator: coordinator)
@@ -118,6 +122,45 @@ import Testing
         #expect(republished, "a child-row edit must republish the workout with an advanced watermark")
         // Republishing refreshed content in place — the order key held still.
         #expect(await remoteRefs(pipeline.backend).first?.publishedAt == workout.endedAt)
+    }
+
+    @Test func failedWatermarkSaveDoesNotPublishAndRetryIsExact() async throws {
+        struct InjectedFailure: Error {}
+        var saveAttempts = 0
+        let pipeline = try await makePipeline(
+            "sync-pipeline-save-retry",
+            saveContext: { context in
+                saveAttempts += 1
+                if saveAttempts == 1 { throw InjectedFailure() }
+                try context.save()
+            }
+        )
+        defer { _ = pipeline.container }
+        let originalStamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let workout = insertFinishedWorkout(
+            in: pipeline.context,
+            endedAt: originalStamp
+        )
+        workout.updatedAt = originalStamp
+        try pipeline.context.save()
+
+        #expect(await settles { saveAttempts == 1 })
+        #expect(await remoteRefs(pipeline.backend).isEmpty)
+        var verification = ModelContext(pipeline.container)
+        #expect(
+            try verification.fetch(FetchDescriptor<WorkoutModel>()).first?.updatedAt
+                == originalStamp
+        )
+
+        await pipeline.coordinator.flushNow()
+        #expect(await settles { await remoteRefs(pipeline.backend).map(\.id) == [workout.id] })
+        #expect(saveAttempts == 2)
+        verification = ModelContext(pipeline.container)
+        #expect(
+            (try verification.fetch(FetchDescriptor<WorkoutModel>()).first?.updatedAt
+                ?? .distantPast) > originalStamp
+        )
+        #expect(await pipeline.backend.publishCount == 1)
     }
 
     @Test func importedAndInProgressWorkoutsNeverPublish() async throws {

@@ -37,22 +37,21 @@ struct RecoveryDetailView: View {
     }
 
     private func toggleCheckinTag(_ tag: String) {
-        let model: DailyCheckinModel
-        if let existing = todayCheckin {
-            model = existing
-        } else {
-            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
-            modelContext.insert(model)
-        }
-        var tags = model.tags
+        var tags = todayCheckin?.tags ?? []
         if let index = tags.firstIndex(of: tag) {
             tags.remove(at: index)
         } else {
             tags.append(tag)
         }
-        model.tags = tags
-        model.updatedAt = Date()
-        modelContext.saveUserChanges()
+        let attempt = DailyCheckinCommitAttempt(
+            id: todayCheckin?.id ?? UUID(),
+            userID: ForgeFitDemo.userID,
+            day: Date(),
+            tags: tags
+        )
+        PersistentChangeSaveCenter.shared.perform {
+            _ = try attempt.commit(in: modelContext)
+        }
     }
 
     /// Daily HRV over the last ~45 days with a source-pure 10th–90th

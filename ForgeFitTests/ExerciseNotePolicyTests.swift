@@ -41,12 +41,14 @@ struct ExerciseNotePolicyTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(
+        let committedWorkout = WorkoutFactory.start(
             routine: routine,
             exercises: [exercise],
             setupNotes: [blankPinnedNote],
-            in: context
+            in: context,
+            onCommit: { _ in }
         )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == nil)
         #expect(workout.exercises.first?.notePinned == false)
@@ -82,12 +84,14 @@ struct ExerciseNotePolicyTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(
+        let committedWorkout = WorkoutFactory.start(
             routine: routine,
             exercises: [exercise],
             setupNotes: [pinnedNote],
-            in: context
+            in: context,
+            onCommit: { _ in }
         )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == "Chest tall")
         #expect(workout.exercises.first?.notePinned == true)

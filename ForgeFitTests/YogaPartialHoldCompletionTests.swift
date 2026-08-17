@@ -16,6 +16,7 @@ import Testing
 /// (`YogaSessionCompletion.recordInterruptedHold`) is fully deterministic.
 @MainActor
 struct YogaPartialHoldCompletionTests {
+    private enum InjectedSplitSaveFailure: Error { case save }
 
     private struct RecordedSplit: Equatable {
         let index: Int
@@ -229,6 +230,48 @@ struct YogaPartialHoldCompletionTests {
         _ = container
     }
 
+    @Test func failedTerminalSaveRestoresPausedRunnerForExplicitResume() throws {
+        let (container, context) = try TestStore.make()
+        let fold = insertPose("Forward Fold", primary: ["hamstrings"], in: context)
+        let flow = twoHoldFlow(fold, insertPose("Low Lunge", primary: ["hips"], in: context))
+        let (session, workoutExercise) = liveSession(flow, exercise: fold, in: context)
+        try context.save()
+
+        let sessionBeforeCompletion = CardioSessionPersistenceSnapshot(session)
+        let hub = YogaFlowRunnerHub()
+        hub.start(plan: flow, session: session, context: context)
+        defer { hub.stop(for: session.id, clearCheckpoint: true) }
+
+        hub.complete(for: session.id, persist: false)
+        #expect(hub.runner(for: session.id) == nil)
+        #expect(!session.splits.isEmpty)
+
+        YogaSessionCompletion.complete(
+            session: session,
+            workoutExercise: workoutExercise,
+            exercise: fold,
+            context: context,
+            endedAt: .now,
+            useClockDuration: true,
+            clearCheckpoint: false
+        )
+
+        // This is the view's failed-save recovery sequence: roll back the
+        // uncommitted terminal graph, repair the held model reference, then
+        // reconstruct the runner from complete(persist: false)'s checkpoint.
+        context.rollback()
+        sessionBeforeCompletion.restore(session)
+        hub.start(plan: flow, session: session, context: context)
+
+        let restoredRunner = try #require(hub.runner(for: session.id))
+        #expect(restoredRunner.currentIndex == 0)
+        #expect(restoredRunner.isPaused)
+        #expect(!restoredRunner.isFinished)
+        #expect(session.endedAt == nil)
+        #expect(session.splits.isEmpty)
+        _ = container
+    }
+
     // MARK: - Skip vs Complete parity
 
     @Test func skipMidHoldCreditsTheSameInProgressHoldShape() throws {
@@ -289,6 +332,56 @@ struct YogaPartialHoldCompletionTests {
         #expect(labeledSplits(sessionB).count == 2)
         #expect(sessionB.posesCompleted == 2)
         _ = container
+    }
+
+    @Test func failedIntermediateSplitDoesNotAdvanceUntilExactRetryCommits() async throws {
+        let (container, context) = try TestStore.make()
+        let fold = insertPose("Forward Fold", primary: ["hamstrings"], in: context)
+        let lunge = insertPose("Low Lunge", primary: ["hips"], in: context)
+        let flow = twoHoldFlow(fold, lunge)
+        let (session, _) = liveSession(flow, exercise: fold, in: context)
+        try context.save()
+
+        let saveCenter = PersistentChangeSaveCenter()
+        var attempts = 0
+        let createdRunner = YogaFlowRunner(
+            plan: flow,
+            session: session,
+            context: context,
+            splitSaveCenter: saveCenter,
+            splitSave: { candidate in
+                attempts += 1
+                if attempts == 1 { throw InjectedSplitSaveFailure.save }
+                try candidate.save()
+            }
+        )
+        let runner = try #require(createdRunner)
+        defer {
+            runner.stop()
+            YogaRuntimeCheckpointStore.clear(sessionID: session.id)
+        }
+        runner.start()
+
+        runner.skip()
+
+        #expect(attempts == 1)
+        #expect(runner.currentIndex == 0)
+        #expect(session.splits.count == 1)
+        #expect(saveCenter.failure != nil)
+        var verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<CardioSplitModel>()).isEmpty)
+
+        saveCenter.retry()
+        try await Task.sleep(for: .milliseconds(25))
+
+        #expect(attempts == 2)
+        #expect(saveCenter.failure == nil)
+        #expect(runner.currentIndex == 1)
+        verification = ModelContext(container)
+        let persisted = try verification.fetch(FetchDescriptor<CardioSplitModel>())
+        #expect(persisted.count == 1)
+        #expect(persisted.first?.index == 0)
+        #expect(persisted.first?.label == "Forward Fold")
     }
 
     // MARK: - Background/termination (no live runner)

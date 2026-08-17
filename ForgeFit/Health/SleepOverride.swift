@@ -21,8 +21,8 @@ nonisolated enum SleepNightOverride: Equatable, Codable, Sendable {
 final class SleepOverrideStore {
     static let shared = SleepOverrideStore()
 
-    private let defaultsKey = "sleepNightOverrides.v1"
-    private let eagerDeleteRepairKey = "sleepNightOverrides.repairedEagerDelete.v1"
+    static let defaultsKey = "sleepNightOverrides.v1"
+    static let eagerDeleteRepairKey = "sleepNightOverrides.repairedEagerDelete.v1"
     private let defaults: UserDefaults
     private let calendar: Calendar
 
@@ -48,6 +48,15 @@ final class SleepOverrideStore {
     func clear(for day: Date) {
         overrides.removeValue(forKey: calendar.startOfDay(for: day))
         persist()
+    }
+
+    /// Erases every local sleep correction and migration marker. Sleep data is
+    /// intentionally device-only, but a full account reset still has to clear
+    /// both the persisted copy and this live singleton's in-memory view.
+    func clearAll() {
+        overrides = [:]
+        defaults.removeObject(forKey: Self.defaultsKey)
+        defaults.removeObject(forKey: Self.eagerDeleteRepairKey)
     }
 
     // MARK: - Applying corrections
@@ -123,12 +132,12 @@ final class SleepOverrideStore {
             dict[String(pair.key.timeIntervalSince1970)] = pair.value
         }
         if let data = try? JSONEncoder().encode(coded) {
-            defaults.set(data, forKey: defaultsKey)
+            defaults.set(data, forKey: Self.defaultsKey)
         }
     }
 
     private func load() {
-        guard let data = defaults.data(forKey: defaultsKey),
+        guard let data = defaults.data(forKey: Self.defaultsKey),
               let coded = try? JSONDecoder().decode([String: SleepNightOverride].self, from: data) else { return }
         overrides = coded.reduce(into: [Date: SleepNightOverride]()) { dict, pair in
             if let seconds = TimeInterval(pair.key) {
@@ -142,7 +151,7 @@ final class SleepOverrideStore {
     /// night. Repair only recent destructive entries once; older corrections
     /// and every non-destructive correction remain untouched.
     private func repairRecentEagerDeleteIfNeeded() {
-        guard !defaults.bool(forKey: eagerDeleteRepairKey) else { return }
+        guard !defaults.bool(forKey: Self.eagerDeleteRepairKey) else { return }
 
         let cutoff = calendar.startOfDay(
             for: calendar.date(byAdding: .day, value: -2, to: .now) ?? .now
@@ -154,6 +163,6 @@ final class SleepOverrideStore {
             overrides.removeValue(forKey: day)
         }
         if !affectedDays.isEmpty { persist() }
-        defaults.set(true, forKey: eagerDeleteRepairKey)
+        defaults.set(true, forKey: Self.eagerDeleteRepairKey)
     }
 }

@@ -22,7 +22,7 @@ struct WorkoutSharePreviewSheet: View {
     var recoveryPoints: [SetRecoveryPoint] = []
 
     /// Opens on the style picked last time, when this workout offers it.
-    @AppStorage("shareCardStyle.last") private var lastStyleRaw = ShareCardStyle.trainingLog.rawValue
+    @AppStorage(ShareCardStyle.preferenceKey) private var lastStyleRaw = ShareCardStyle.trainingLog.rawValue
 
     @State private var selection: ShareCardStyle = .trainingLog
     @State private var pages: [ShareCardStyle: UIImage] = [:]

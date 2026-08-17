@@ -171,17 +171,13 @@ actor HealthWorkoutImportWorker {
         var existing = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
         var existingHealthUUIDs = Set(existing.compactMap(\.hkWorkoutUUID))
         var imported = 0
-        var shouldCommit = false
+        var didCommit = false
         // A workout-start cancellation rolls the private batch back instead
         // of performing a potentially large SwiftData save while the logger
         // is becoming interactive. The automatic throttle is cleared by the
         // scheduling actor, so the entire batch retries after the workout.
         defer {
-            if shouldCommit, !Task.isCancelled {
-                if imported > 0 { try? context.save() }
-            } else {
-                context.rollback()
-            }
+            if !didCommit { context.rollback() }
         }
 
         for healthWorkout in healthWorkouts {
@@ -282,8 +278,16 @@ actor HealthWorkoutImportWorker {
         }
 
         guard !Task.isCancelled else { return 0 }
-        shouldCommit = true
-        return imported
+        do {
+            if imported > 0 { try context.save() }
+            didCommit = true
+            return imported
+        } catch {
+            // Never report an imported count for objects that did not become
+            // durable, and never leave this private batch pending to be swept
+            // into an unrelated later save.
+            return 0
+        }
         #else
         return 0
         #endif

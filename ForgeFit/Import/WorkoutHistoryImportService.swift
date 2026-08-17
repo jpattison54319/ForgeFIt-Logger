@@ -93,8 +93,16 @@ enum WorkoutHistoryImportService {
         preview: WorkoutHistoryImportPreview,
         workouts existingWorkouts: [WorkoutModel],
         exercises existingExercises: [ExerciseLibraryModel],
-        in context: ModelContext
+        in context: ModelContext,
+        performSave: ((ModelContext) throws -> Void)? = nil
     ) throws -> WorkoutHistoryImportCommitResult {
+        // Build the entire import in a short-lived context. The action must
+        // neither commit nor roll back unrelated pending edits in the shared
+        // UI context, while the isolated context gives this batch a true
+        // all-or-nothing transaction boundary.
+        let importContext = ModelContext(context.container)
+        importContext.autosaveEnabled = false
+        let save = performSave ?? { try $0.save() }
         let userID = ForgeFitDemo.userID
         let existingFingerprints = Set(existingWorkouts.compactMap(\.importFingerprint))
         let existingExternalKeys = Set(existingWorkouts.compactMap { workout -> String? in
@@ -113,7 +121,7 @@ enum WorkoutHistoryImportService {
             startedAt: preview.parseResult.workouts.map(\.startedAt).min(),
             endedAt: preview.parseResult.workouts.map(\.startedAt).max()
         )
-        context.insert(batch)
+        importContext.insert(batch)
 
         var exerciseByImportedName = Dictionary(uniqueKeysWithValues: preview.matches.compactMap { match -> (String, UUID)? in
             guard let exerciseID = match.exerciseID else { return nil }
@@ -148,7 +156,7 @@ enum WorkoutHistoryImportService {
                         batchID: batch.id,
                         userID: userID
                     )
-                    context.insert(created)
+                    importContext.insert(created)
                     exerciseByID[created.id] = created
                     exerciseByImportedName[exerciseDraft.name] = created.id
                     exerciseID = created.id
@@ -222,15 +230,23 @@ enum WorkoutHistoryImportService {
                 cardioSessions: cardioSessions
             )
             workout.recomputeTotalVolume()
-            context.insert(workout)
+            importContext.insert(workout)
             importedWorkouts += 1
         }
 
         batch.importedCount = importedWorkouts
         batch.skippedDuplicateCount = skipped
-        try context.save()
+        do {
+            try save(importContext)
+        } catch {
+            // Never leave a failed batch pending: a later unrelated save could
+            // otherwise commit it invisibly, and tapping Import again would
+            // build a duplicate graph on top of those pending inserts.
+            importContext.rollback()
+            throw error
+        }
         if flaggedForReview > 0 {
-            ExerciseAIClassifier.scheduleRefinement(in: context)
+            ExerciseAIClassifier.scheduleRefinement(in: importContext)
         }
 
         return WorkoutHistoryImportCommitResult(

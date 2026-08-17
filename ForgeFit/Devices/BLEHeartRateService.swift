@@ -33,8 +33,8 @@ final class BLEHeartRateService: NSObject {
 
     private nonisolated static let heartRateService = CBUUID(string: "180D")
     private nonisolated static let heartRateMeasurement = CBUUID(string: "2A37")
-    private static let rememberedIDKey = "blehrm.peripheralID"
-    private static let rememberedNameKey = "blehrm.peripheralName"
+    static let rememberedIDKey = "blehrm.peripheralID"
+    static let rememberedNameKey = "blehrm.peripheralName"
 
     private(set) var state: ConnectionState = .idle
     private(set) var discovered: [DiscoveredMonitor] = []

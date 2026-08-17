@@ -23,7 +23,7 @@ struct ConditioningBlockBuilderView: View {
     let navigationTitle: String
     let allowsMultipleSections: Bool
     let showsPresetActions: Bool
-    let onSave: (String) throws -> Void
+    private let saveAction: (String) throws -> Bool
 
     @State private var plan: ConditioningPlan
     @State private var addMovementSection: BlockSectionSelection?
@@ -45,7 +45,29 @@ struct ConditioningBlockBuilderView: View {
         self.navigationTitle = navigationTitle
         self.allowsMultipleSections = allowsMultipleSections
         self.showsPresetActions = showsPresetActions
-        self.onSave = onSave
+        saveAction = { json in
+            try onSave(json)
+            return true
+        }
+        let decoded = ConditioningPlan.decode(from: planJSON)
+        _plan = State(initialValue: decoded ?? ConditioningPlan(sections: [Self.emptySection(index: 0)]))
+    }
+
+    init(
+        planJSON: String?,
+        exercises: [ExerciseLibraryModel],
+        workouts: [WorkoutModel],
+        navigationTitle: String = "Conditioning Block",
+        allowsMultipleSections: Bool = true,
+        showsPresetActions: Bool = true,
+        commit: @escaping (String) -> Bool
+    ) {
+        self.exercises = exercises
+        self.workouts = workouts
+        self.navigationTitle = navigationTitle
+        self.allowsMultipleSections = allowsMultipleSections
+        self.showsPresetActions = showsPresetActions
+        saveAction = commit
         let decoded = ConditioningPlan.decode(from: planJSON)
         _plan = State(initialValue: decoded ?? ConditioningPlan(sections: [Self.emptySection(index: 0)]))
     }
@@ -152,8 +174,9 @@ struct ConditioningBlockBuilderView: View {
     private func save() {
         guard let json = plan.encodedJSON(), !plan.isEmpty else { return }
         do {
-            try onSave(json)
-            dismiss()
+            if try saveAction(json) {
+                dismiss()
+            }
         } catch {
             saveError = error.localizedDescription
         }

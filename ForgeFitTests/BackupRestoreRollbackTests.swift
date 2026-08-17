@@ -379,10 +379,11 @@ struct BackupRestoreRollbackTests {
     @Test func preferencesUnchangedOnFailureAndAppliedOnSuccess() throws {
         let defaults = UserDefaults.standard
         let nameKey = "profileDisplayName"
-        let dataKey = "homeQuickStartActions.v1"
+        let quickStartKey = HomeQuickStartAction.preferenceKey
+        let dataKey = WarmupRampConfigStore.key
         let weekdaysKey = "reminderWeekdays"
         let rejectedKey = "health-derived-key-must-not-restore"
-        let keys = [nameKey, dataKey, weekdaysKey, rejectedKey]
+        let keys = [nameKey, quickStartKey, dataKey, weekdaysKey, rejectedKey]
         let snapshot = keys.map { ($0, defaults.object(forKey: $0)) }
         defer {
             for (key, value) in snapshot {
@@ -394,6 +395,7 @@ struct BackupRestoreRollbackTests {
         let originalData = Data([9, 9, 9])
         let restoredData = Data([1, 2, 3, 4])
         defaults.set("sentinel", forKey: nameKey)
+        defaults.set("[\"empty\"]", forKey: quickStartKey)
         defaults.set(originalData, forKey: dataKey)
         defaults.set([2], forKey: weekdaysKey)
 
@@ -403,6 +405,7 @@ struct BackupRestoreRollbackTests {
             var failing = backupFile()
             failing.preferences = [
                 nameKey: .string("James"),
+                quickStartKey: .string("[\"routine:123\"]"),
                 dataKey: .string(restoredData.base64EncodedString()),
                 weekdaysKey: .string("1,3,5"),
             ]
@@ -413,6 +416,7 @@ struct BackupRestoreRollbackTests {
                 )
             }
             #expect(defaults.string(forKey: nameKey) == "sentinel")
+            #expect(defaults.string(forKey: quickStartKey) == "[\"empty\"]")
             #expect(defaults.data(forKey: dataKey) == originalData)
             #expect(defaults.array(forKey: weekdaysKey) as? [Int] == [2])
         }
@@ -423,6 +427,7 @@ struct BackupRestoreRollbackTests {
             var succeeding = backupFile()
             succeeding.preferences = [
                 nameKey: .string("James"),
+                quickStartKey: .string("[\"routine:123\"]"),
                 dataKey: .string(restoredData.base64EncodedString()),
                 weekdaysKey: .string("1,3,5"),
                 rejectedKey: .string("must not land"),
@@ -432,8 +437,9 @@ struct BackupRestoreRollbackTests {
                 restorePreferences: true,
                 in: context
             )
-            #expect(result.restoredPreferences == 3)
+            #expect(result.restoredPreferences == 4)
             #expect(defaults.string(forKey: nameKey) == "James")
+            #expect(defaults.string(forKey: quickStartKey) == "[\"routine:123\"]")
             #expect(defaults.data(forKey: dataKey) == restoredData)
             #expect(defaults.array(forKey: weekdaysKey) as? [Int] == [1, 3, 5])
             #expect(defaults.object(forKey: rejectedKey) == nil)

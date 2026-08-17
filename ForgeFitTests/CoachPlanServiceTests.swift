@@ -7,6 +7,10 @@ import Testing
 
 @MainActor
 struct CoachPlanServiceTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private static let activeMicrocycleFolderKey = CyclePreferenceMigration.activeMicrocycleKey
     private static let activeMesocycleFolderKey = CyclePreferenceMigration.activeMesocycleKey
 
@@ -156,7 +160,11 @@ struct CoachPlanServiceTests {
             context.insert(routine)
             try context.save()
 
-            let coached = CoachPlanService.attachPlan(folder: folder, sessionsPerWeek: 4, in: context)
+            let coached = try #require(CoachPlanService.attachPlan(
+                folder: folder,
+                sessionsPerWeek: 4,
+                in: context
+            ))
 
             #expect(coached.isActive)
             #expect(coached.catalogProgramID == "")
@@ -181,11 +189,11 @@ struct CoachPlanServiceTests {
     @Test func confirmYogaPlanCreatesFolderlessActiveProgram() throws {
         let (container, context) = try TestStore.make()
 
-        let coached = CoachPlanService.confirmYogaPlan(
+        let coached = try #require(CoachPlanService.confirmYogaPlan(
             answers: Self.answers(focus: .yoga, goal: "general fitness", equipment: []),
             sessionsPerWeek: 3,
             in: context
-        )
+        ))
 
         #expect(coached.isActive)
         #expect(coached.folderID == nil)
@@ -312,6 +320,69 @@ struct CoachPlanServiceTests {
         }
         #expect(!reason.isEmpty)
         _ = container
+    }
+
+    @Test func failedPlanConfirmationLeavesNoGraphAndRetryCreatesOneProgram() async throws {
+        let (container, context) = try TestStore.make()
+        let center = PersistentChangeSaveCenter()
+        var saves = 0
+        var commits = 0
+
+        let immediate = CoachPlanService.confirmPlan(
+            candidate: Self.stubCandidate(id: "dumbbell-home-builder"),
+            answers: Self.answers(),
+            in: context,
+            saveCenter: center,
+            save: { isolatedContext in
+                saves += 1
+                if saves == 1 { throw ForcedSaveFailure.failed }
+                try isolatedContext.save()
+            },
+            onCommit: { commits += 1 }
+        )
+        #expect(immediate == nil)
+        #expect(try ModelContext(container).fetch(FetchDescriptor<CoachedProgramModel>()).isEmpty)
+        #expect(try ModelContext(container).fetch(FetchDescriptor<RoutineFolderModel>()).isEmpty)
+
+        center.retry()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(saves == 2)
+        #expect(commits == 1)
+        #expect(try ModelContext(container).fetch(FetchDescriptor<CoachedProgramModel>()).count == 1)
+    }
+
+    @Test func failedPlanUpdateRestoresValuesBeforeAnyLaterSave() throws {
+        let (container, context) = try TestStore.make()
+        let program = CoachedProgramModel(
+            userID: ForgeFitDemo.userID,
+            startDate: Date(),
+            weeks: 8,
+            weeklySessionTarget: 3,
+            isActive: true
+        )
+        context.insert(program)
+        try context.save()
+        let originalUpdatedAt = program.updatedAt
+
+        let succeeded = CoachPlanService.updatePlan(
+            program,
+            weeks: 12,
+            weeklySessionTarget: 5,
+            in: context,
+            save: { _ in throw ForcedSaveFailure.failed }
+        )
+        #expect(!succeeded)
+        #expect(program.weeks == 8)
+        #expect(program.weeklySessionTarget == 3)
+        #expect(program.updatedAt == originalUpdatedAt)
+
+        try context.save()
+        let persisted = try #require(
+            ModelContext(container).fetch(FetchDescriptor<CoachedProgramModel>()).first
+        )
+        #expect(persisted.weeks == 8)
+        #expect(persisted.weeklySessionTarget == 3)
     }
 
     @Test func buildPlanShortCircuitsToYogaWithoutMatching() throws {

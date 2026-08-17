@@ -8,6 +8,8 @@ import SwiftData
 /// reversible, backup-safe, and independent from HealthKit timestamps.
 @MainActor
 enum MicrocycleDayAssignmentService {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     enum ServiceError: LocalizedError, Equatable {
         case invalidDay
         case futureDay
@@ -127,7 +129,8 @@ enum MicrocycleDayAssignmentService {
         workouts: [WorkoutModel],
         restDays: [RestDayModel],
         context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
         let calendar = try calendar(for: window)
         let day = calendar.startOfDay(for: date)
@@ -152,12 +155,20 @@ enum MicrocycleDayAssignmentService {
         // A day cannot truthfully be both an explicit rest day and a credited
         // training day. Replacing it is safe because the rest entry is a soft
         // deletion and the workout itself remains untouched.
-        for restDay in restDays where restDay.deletedAt == nil
-            && calendar.isDate(restDay.date, inSameDayAs: day) {
+        let restDaySnapshots = restDays.compactMap { restDay
+            -> (restDay: RestDayModel, deletedAt: Date?, updatedAt: Date)? in
+            guard restDay.deletedAt == nil,
+                  calendar.isDate(restDay.date, inSameDayAs: day) else { return nil }
+            return (restDay, restDay.deletedAt, restDay.updatedAt)
+        }
+        for snapshot in restDaySnapshots {
+            let restDay = snapshot.restDay
             restDay.deletedAt = now
             restDay.updatedAt = now
         }
 
+        let previousAssignmentsJSON = window.dayAssignmentSnapshotJSON
+        let previousUpdatedAt = window.updatedAt
         var assignments = window.dayAssignments.filter { assignment in
             !calendar.isDate(assignment.day, inSameDayAs: day)
         }
@@ -172,18 +183,37 @@ enum MicrocycleDayAssignmentService {
         }
         window.dayAssignments = assignments
         window.updatedAt = now
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            window.dayAssignmentSnapshotJSON = previousAssignmentsJSON
+            window.updatedAt = previousUpdatedAt
+            for snapshot in restDaySnapshots {
+                snapshot.restDay.deletedAt = snapshot.deletedAt
+                snapshot.restDay.updatedAt = snapshot.updatedAt
+            }
+            throw error
+        }
     }
 
     static func remove(
         _ assignment: MicrocycleDayAssignment,
         from window: MicrocycleWindowModel,
         context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
     ) throws {
+        let previousAssignmentsJSON = window.dayAssignmentSnapshotJSON
+        let previousUpdatedAt = window.updatedAt
         window.dayAssignments.removeAll { $0.id == assignment.id }
         window.updatedAt = now
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            window.dayAssignmentSnapshotJSON = previousAssignmentsJSON
+            window.updatedAt = previousUpdatedAt
+            throw error
+        }
     }
 
     private static func calendar(for window: MicrocycleWindowModel) throws -> Calendar {

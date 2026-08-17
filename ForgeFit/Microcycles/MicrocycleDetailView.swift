@@ -391,9 +391,9 @@ struct MicrocycleDetailView: View {
                 routine: routine,
                 exercises: exercises,
                 setupNotes: setupNotes,
-                in: modelContext
+                in: modelContext,
+                onCommit: { _ in appState.showingLogger = true }
             )
-            appState.showingLogger = true
         }
     }
 

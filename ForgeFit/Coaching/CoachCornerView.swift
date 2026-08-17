@@ -191,12 +191,21 @@ struct CoachCornerView: View {
         let now = Date()
         let anchor = CoachWeeklyReview.weekAnchor(for: now)
         if CoachWeeklyReview.isReviewDue(program: activeProgram, now: now) {
-            weeklyProposals = CoachWeeklyReview.proposals(for: activeProgram, now: now, in: modelContext)
+            CoachWeeklyReview.proposalsIsolated(
+                for: activeProgram,
+                now: now,
+                from: modelContext,
+                onCommit: { proposals in
+                    weeklyProposals = proposals
+                    weeklyActiveOverrides = CoachWeeklyReview.activeOverrides(for: anchor, in: modelContext)
+                        .filter { $0.programID == activeProgram.id }
+                }
+            )
         } else {
             weeklyProposals = CoachWeeklyReview.pendingProposals(for: activeProgram, weekAnchor: anchor, in: modelContext)
+            weeklyActiveOverrides = CoachWeeklyReview.activeOverrides(for: anchor, in: modelContext)
+                .filter { $0.programID == activeProgram.id }
         }
-        weeklyActiveOverrides = CoachWeeklyReview.activeOverrides(for: anchor, in: modelContext)
-            .filter { $0.programID == activeProgram.id }
     }
 
     // MARK: - 1. Today's call
@@ -260,10 +269,17 @@ struct CoachCornerView: View {
                         }
                         HStack(spacing: Space.sm) {
                             PrimaryButton(title: "Start", systemImage: "play.fill") {
-                                dismiss()
                                 appState.requestStart {
-                                    _ = WorkoutFactory.start(routine: suggestion.routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                                    appState.showingLogger = true
+                                    _ = WorkoutFactory.start(
+                                        routine: suggestion.routine,
+                                        exercises: exercises,
+                                        setupNotes: setupNotes,
+                                        in: modelContext,
+                                        onCommit: { _ in
+                                            dismiss()
+                                            appState.showingLogger = true
+                                        }
+                                    )
                                 }
                             }
                             .accessibilityIdentifier("coach-corner-start-\(suggestion.routine.name)")
@@ -473,8 +489,11 @@ struct CoachCornerView: View {
             Spacer(minLength: Space.sm)
             HStack(spacing: Space.md) {
                 Button {
-                    CoachWeeklyReview.accept(override, in: modelContext)
-                    refreshWeeklyReview()
+                    CoachWeeklyReview.accept(
+                        override,
+                        in: modelContext,
+                        onCommit: refreshWeeklyReview
+                    )
                 } label: {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22))
@@ -485,8 +504,11 @@ struct CoachCornerView: View {
                 .accessibilityIdentifier("coach-corner-weekly-accept-\(override.id)")
 
                 Button {
-                    CoachWeeklyReview.decline(override, in: modelContext)
-                    refreshWeeklyReview()
+                    CoachWeeklyReview.decline(
+                        override,
+                        in: modelContext,
+                        onCommit: refreshWeeklyReview
+                    )
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 22))
@@ -514,8 +536,11 @@ struct CoachCornerView: View {
             }
             Spacer(minLength: Space.sm)
             Button {
-                CoachWeeklyReview.cancel(override, in: modelContext)
-                refreshWeeklyReview()
+                CoachWeeklyReview.cancel(
+                    override,
+                    in: modelContext,
+                    onCommit: refreshWeeklyReview
+                )
             } label: {
                 Text("Cancel")
                     .font(.system(size: 13, weight: .semibold))
@@ -657,11 +682,25 @@ struct CoachCornerView: View {
                 // AICoachChatView already dismissed (popped) itself before
                 // calling this closure — also close the Corner so the
                 // logger isn't left with a sheet stacked behind it.
-                dismiss()
                 appState.requestStart {
-                    let workout = WorkoutFactory.start(routine: suggestion.routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                    CoachAdjustments.apply(plan, to: workout, in: modelContext)
-                    appState.showingLogger = true
+                    _ = WorkoutFactory.start(
+                        routine: suggestion.routine,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        in: modelContext,
+                        prepare: { workout, context in
+                            CoachAdjustments.apply(
+                                plan,
+                                to: workout,
+                                in: context,
+                                saveChanges: false
+                            )
+                        },
+                        onCommit: { _ in
+                            dismiss()
+                            appState.showingLogger = true
+                        }
+                    )
                 }
             } : nil
         )

@@ -38,8 +38,10 @@ final class HealthEnrichmentService {
 
     func enrich(workoutIDs: [UUID], in context: ModelContext) async -> Summary {
         var summary = Summary()
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
         let ids = Set(workoutIDs)
-        let workouts = ((try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? [])
+        let workouts = ((try? persistenceContext.fetch(FetchDescriptor<WorkoutModel>())) ?? [])
             .filter { ids.contains($0.id) && $0.deletedAt == nil }
 
         for workout in workouts {
@@ -86,7 +88,7 @@ final class HealthEnrichmentService {
                     await CardioSeriesService.finalize(
                         session: session,
                         hadManualIntervalPlan: !session.splits.isEmpty || session.intervalsAutoApplied,
-                        in: context
+                        in: persistenceContext
                     )
                 }
             }
@@ -105,7 +107,12 @@ final class HealthEnrichmentService {
             workout.recomputeTotalVolume()
         }
 
-        context.saveUserChanges()
-        return summary
+        do {
+            try persistenceContext.save()
+            return summary
+        } catch {
+            persistenceContext.rollback()
+            return Summary()
+        }
     }
 }

@@ -261,6 +261,64 @@ struct WorkoutFinishIdempotencyTests {
         #expect(!gate.isActive)
     }
 
+    @Test func isolatedTerminalFailurePreservesUnrelatedPendingEditAndRetryCommitsOnce() throws {
+        let (container, context) = try TestStore.make()
+        let recorder = FinishRecorder()
+        let workout = substantiveLiveWorkout(in: context)
+        let workoutID = workout.id
+        let routine = RoutineModel(userID: userID, name: "Before")
+        context.insert(routine)
+        try context.save()
+        let routineID = routine.id
+        routine.name = "Still pending"
+
+        let first = WorkoutFinisher.finish(
+            workoutID: workoutID,
+            in: context,
+            effects: recorder.effects(),
+            terminalSave: { transaction in
+                transaction.rollback()
+                return "simulated persistent store failure"
+            }
+        )
+
+        #expect(first == "simulated persistent store failure")
+        #expect(routine.name == "Still pending")
+        #expect(context.hasChanges)
+        var verificationContext = ModelContext(container)
+        var persistedWorkout = try #require(try verificationContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persistedWorkout.endedAt == nil)
+        #expect(recorder.healthKitSaveCount == 0)
+        #expect(recorder.watchSendCount == 0)
+        #expect(recorder.backupNoteCount == 0)
+
+        let retry = WorkoutFinisher.finish(
+            workoutID: workoutID,
+            in: context,
+            effects: recorder.effects()
+        )
+        #expect(retry == nil)
+        #expect(routine.name == "Still pending")
+        #expect(context.hasChanges)
+        #expect(recorder.healthKitSaveCount == 1)
+        #expect(recorder.watchSendCount == 1)
+        #expect(recorder.watchPublishCount == 1)
+        #expect(recorder.backupNoteCount == 1)
+
+        try context.save()
+        verificationContext = ModelContext(container)
+        persistedWorkout = try #require(try verificationContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        let persistedRoutine = try #require(try verificationContext.fetch(FetchDescriptor<RoutineModel>(
+            predicate: #Predicate { $0.id == routineID }
+        )).first)
+        #expect(persistedWorkout.endedAt != nil)
+        #expect(persistedRoutine.name == "Still pending")
+    }
+
     // MARK: - Helpers
 
     /// A live strength workout with completed working sets (XP-eligible) and

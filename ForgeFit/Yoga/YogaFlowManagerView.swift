@@ -60,7 +60,7 @@ struct YogaFlowManagerView: View {
     @State private var editTarget: YogaFlowEditTarget?
     @State private var pendingFlow: PendingYogaFlow?
     @State private var flowName = ""
-    @State private var errorMessage: String?
+    @State private var flowCreationAttempt: YogaFlowCreationAttempt?
 
     var body: some View {
         NavigationStack {
@@ -109,27 +109,25 @@ struct YogaFlowManagerView: View {
             YogaFlowBuilderView(
                 planJSON: target.planJSON,
                 navigationTitle: target.title,
-                showsTemplates: target.showsTemplates
-            ) { json in
-                guard let json else { return }
-                save(json, for: target)
-            }
+                showsTemplates: target.showsTemplates,
+                commit: { json in
+                    guard let json else { return false }
+                    return save(json, for: target)
+                }
+            )
         }
         .alert("Save Yoga Flow", isPresented: Binding(
             get: { pendingFlow != nil },
-            set: { if !$0 { pendingFlow = nil } }
+            set: { isPresented in
+                if !isPresented, flowCreationAttempt == nil {
+                    pendingFlow = nil
+                }
+            }
         )) {
             TextField("Flow name", text: $flowName)
-            Button("Cancel", role: .cancel) { pendingFlow = nil }
+            Button("Cancel", role: .cancel) { cancelPendingFlow() }
             Button("Save", action: savePendingFlow)
                 .disabled(flowName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .alert("Couldn't Save Yoga Flow", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-        } message: {
-            Text(errorMessage ?? "The flow couldn't be saved.")
         }
     }
 
@@ -157,21 +155,28 @@ struct YogaFlowManagerView: View {
         .accessibilityLabel(target.actionLabel)
     }
 
-    private func save(_ json: String, for target: YogaFlowEditTarget) {
+    private func save(_ json: String, for target: YogaFlowEditTarget) -> Bool {
         switch target {
         case .new:
             pendingFlow = PendingYogaFlow(planJSON: json)
             flowName = "My Flow"
+            flowCreationAttempt = nil
+            return true
         case .builtIn(_, let name, _):
             pendingFlow = PendingYogaFlow(planJSON: json)
             flowName = "\(name) Custom"
+            flowCreationAttempt = nil
+            return true
         case .saved(let id, _, _):
             guard let flow = savedFlows.first(where: { $0.id == id }),
-                  let plan = YogaFlowPlan.decode(from: json) else { return }
-            flow.planJSON = json
-            flow.styleRaw = plan.style.rawValue
-            flow.updatedAt = .now
-            do { try modelContext.save() } catch { errorMessage = error.localizedDescription }
+                  let plan = YogaFlowPlan.decode(from: json) else { return false }
+            return YogaFlowPersistence.update(
+                flow,
+                planJSON: json,
+                styleRaw: plan.style.rawValue,
+                in: modelContext,
+                onCommit: { editTarget = nil }
+            )
         }
     }
 
@@ -179,30 +184,39 @@ struct YogaFlowManagerView: View {
         guard let pendingFlow,
               let plan = YogaFlowPlan.decode(from: pendingFlow.planJSON) else { return }
         let trimmedName = flowName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let flow = YogaFlowModel(
-            userID: ForgeFitDemo.userID,
+        let attempt = flowCreationAttempt ?? YogaFlowCreationAttempt(
             name: trimmedName,
             styleRaw: plan.style.rawValue,
             planJSON: pendingFlow.planJSON,
-            position: (savedFlows.map(\.position).max() ?? -1) + 1
+            position: (savedFlows.map(\.position).max() ?? -1) + 1,
+            in: modelContext
         )
-        modelContext.insert(flow)
-        do {
-            try modelContext.save()
+        flowCreationAttempt = attempt
+        attempt.update(
+            name: trimmedName,
+            styleRaw: plan.style.rawValue,
+            planJSON: pendingFlow.planJSON
+        )
+        attempt.commit(into: modelContext) { _ in
+            flowCreationAttempt = nil
             self.pendingFlow = nil
             flowName = ""
-        } catch {
-            modelContext.delete(flow)
-            errorMessage = error.localizedDescription
         }
     }
 
-    private func deleteSavedFlows(at offsets: IndexSet) {
-        let now = Date.now
-        for index in offsets {
-            savedFlows[index].deletedAt = now
-            savedFlows[index].updatedAt = now
+    private func cancelPendingFlow() {
+        if flowCreationAttempt != nil {
+            PersistentChangeSaveCenter.shared.dismiss()
         }
-        do { try modelContext.save() } catch { errorMessage = error.localizedDescription }
+        flowCreationAttempt = nil
+        pendingFlow = nil
+        flowName = ""
+    }
+
+    private func deleteSavedFlows(at offsets: IndexSet) {
+        let flows = offsets.compactMap { index in
+            savedFlows.indices.contains(index) ? savedFlows[index] : nil
+        }
+        YogaFlowPersistence.softDelete(flows, in: modelContext)
     }
 }

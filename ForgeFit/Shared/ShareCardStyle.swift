@@ -48,6 +48,8 @@ enum WorkoutShareShape {
 /// One share-card format the preview carousel offers. `full` is the existing
 /// tall card; the rest are fixed-size social formats.
 enum ShareCardStyle: String, CaseIterable, Identifiable {
+    static let preferenceKey = "shareCardStyle.last"
+
     case trainingLog
     case metrics
     case minimal

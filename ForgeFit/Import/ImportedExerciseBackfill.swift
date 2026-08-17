@@ -5,11 +5,15 @@ import SwiftData
 
 @MainActor
 enum ImportedExerciseBackfill {
-    private static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
+    static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
 
-    static func runIfNeeded(in context: ModelContext) async {
+    static func runIfNeeded(
+        in context: ModelContext,
+        defaults: UserDefaults = .standard,
+        save: @escaping @MainActor @Sendable (ModelContext) throws -> Void = { try $0.save() }
+    ) async {
         guard LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
-              !UserDefaults.standard.bool(forKey: didRunKey) else { return }
+              !defaults.bool(forKey: didRunKey) else { return }
 
         let descriptor = FetchDescriptor<ExerciseLibraryModel>(
             predicate: #Predicate { exercise in
@@ -22,7 +26,7 @@ enum ImportedExerciseBackfill {
             .filter { $0.primaryMuscles.isEmpty }
 
         guard !candidates.isEmpty else {
-            UserDefaults.standard.set(true, forKey: didRunKey)
+            defaults.set(true, forKey: didRunKey)
             return
         }
 
@@ -45,8 +49,22 @@ enum ImportedExerciseBackfill {
         guard !Task.isCancelled,
               LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
 
+        let candidateIDs = candidates.map(\.id)
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        let transactionCandidates: [ExerciseLibraryModel]
+        do {
+            let ids = candidateIDs
+            transactionCandidates = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { ids.contains($0.id) }
+            ))
+        } catch {
+            transaction.rollback()
+            return
+        }
+
         var didChange = false
-        for exercise in candidates {
+        for exercise in transactionCandidates {
             guard !Task.isCancelled,
                   LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
             guard let classification = classifications[exercise.id] else { continue }
@@ -65,13 +83,22 @@ enum ImportedExerciseBackfill {
         }
 
         if didChange {
-            try? context.save()
+            do {
+                try save(transaction)
+            } catch {
+                transaction.rollback()
+                // Do not stamp the migration. A later launch/idle window must
+                // retry rather than permanently suppressing unsaved changes.
+                return
+            }
         }
-        UserDefaults.standard.set(true, forKey: didRunKey)
+        defaults.set(true, forKey: didRunKey)
 
-        if candidates.contains(where: \.needsReview),
+        if classifications.values.contains(where: {
+            $0.confidence < ExerciseClassifier.reviewConfidenceThreshold
+        }),
            LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork {
-            ExerciseAIClassifier.scheduleRefinement(in: context)
+            ExerciseAIClassifier.scheduleRefinement(in: transaction)
         }
     }
 }

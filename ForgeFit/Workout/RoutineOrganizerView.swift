@@ -13,7 +13,6 @@ struct RoutineOrganizerView: View {
     @State private var draft: RoutineOrganizerDraft
     @State private var entries: [RoutineOrganizerDraft.Entry]
     @State private var showingDiscardConfirmation = false
-    @State private var saveError: String?
 
     @AppStorage(CyclePreferenceMigration.activeMesocycleKey)
     private var activeMesocycleFolderRaw = ""
@@ -84,14 +83,6 @@ struct RoutineOrganizerView: View {
         } message: {
             Text("Folder and routine order will stay as it was before you opened Organize.")
         }
-        .alert("Couldn't save organization", isPresented: Binding(
-            get: { saveError != nil },
-            set: { if !$0 { saveError = nil } }
-        )) {
-            Button("OK", role: .cancel) { saveError = nil }
-        } message: {
-            Text(saveError ?? "")
-        }
         .accessibilityIdentifier("routine-organizer")
     }
 
@@ -108,23 +99,32 @@ struct RoutineOrganizerView: View {
             dismiss()
             return
         }
-        do {
-            try RoutineOrganizerPersistence.apply(
+        let committedAt = Date.now
+        PersistentChangeSaveCenter.shared.perform({
+            try RoutineOrganizerPersistence.commit(
                 draft,
                 folders: folders,
-                routines: routines
+                routines: routines,
+                in: modelContext,
+                now: committedAt
             )
-            try modelContext.save()
-            reconcileActiveCycle()
+        }, onSuccess: {
+            // The organizer rows are now durable. Refresh the active
+            // microcycle's persisted checklist immediately so Home cannot
+            // keep presenting its previous routine order until a later
+            // lifecycle observer happens to reconcile it. The primary order
+            // stays committed if this derived write fails, while the exact
+            // reconciliation remains available through the global Retry.
+            PersistentChangeSaveCenter.shared.perform({
+                _ = try MicrocycleTrackingService.reconcileIsolated(
+                    from: modelContext,
+                    now: committedAt
+                )
+            }, onSuccess: {
+                reconcileActiveCycle()
+            })
             dismiss()
-        } catch {
-            RoutineOrganizerPersistence.restoreOriginal(
-                draft,
-                folders: folders,
-                routines: routines
-            )
-            saveError = error.localizedDescription
-        }
+        })
     }
 
     private func reconcileActiveCycle() {

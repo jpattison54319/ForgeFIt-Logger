@@ -1,8 +1,9 @@
 import ForgeData
 import Foundation
+import SwiftData
 
 /// Applies one validated organizer draft to the existing CloudKit-backed plan
-/// models. The caller owns the single ModelContext save and failure recovery.
+/// models, with an optional single-save commit boundary for user actions.
 @MainActor
 enum RoutineOrganizerPersistence {
     enum PersistenceError: LocalizedError {
@@ -80,6 +81,36 @@ enum RoutineOrganizerPersistence {
         }
         guard routinesByID.isEmpty else {
             throw PersistenceError.invalidHierarchy
+        }
+    }
+
+    /// Applies and durably commits one staged organization operation. If the
+    /// store rejects the write, restore the original live-model values so
+    /// Cancel still means discard while the caller retains this exact
+    /// operation for Retry.
+    static func commit(
+        _ draft: RoutineOrganizerDraft,
+        folders: [RoutineFolderModel],
+        routines: [RoutineModel],
+        in context: ModelContext,
+        now: Date = .now,
+        save: @MainActor (ModelContext) throws -> Void = { try $0.save() }
+    ) throws {
+        do {
+            try apply(
+                draft,
+                folders: folders,
+                routines: routines,
+                now: now
+            )
+            try save(context)
+        } catch {
+            restoreOriginal(
+                draft,
+                folders: folders,
+                routines: routines
+            )
+            throw error
         }
     }
 

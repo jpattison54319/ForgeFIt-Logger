@@ -377,8 +377,9 @@ actor BackupExporter {
             case let string as String:
                 preferences[key] = .string(string)
             case let data as Data:
-                // JSON-blob prefs (quick starts, plate inventory) travel as
-                // base64 strings.
+                // Binary JSON preferences (plate inventory and warm-up ramp)
+                // travel as base64 strings. String-backed JSON, such as Home
+                // quick starts, is handled by the String case above.
                 preferences[key] = .string(data.base64EncodedString())
             case let array as [Int]:
                 // reminderWeekdays — encode as CSV string.

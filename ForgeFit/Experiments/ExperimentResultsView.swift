@@ -153,7 +153,9 @@ struct ExperimentResultsView: View {
         }
         .onAppear {
             if !experiment.isActive {
-                ExperimentUIStore.markResultsViewed(experiment, in: modelContext)
+                PersistentChangeSaveCenter.shared.perform {
+                    try ExperimentUIStore.markResultsViewed(experiment, in: modelContext)
+                }
             }
         }
         .task(id: analysisTaskID) {
@@ -1027,9 +1029,13 @@ struct ExperimentResultsView: View {
               let json = String(data: data, encoding: .utf8) else {
             return
         }
-        experiment.savedComparisonJSON = json
-        experiment.updatedAt = .now
-        modelContext.saveUserChanges()
+        PersistentChangeSaveCenter.shared.perform {
+            try ExperimentUIStore.updateSavedComparison(
+                json,
+                for: experiment,
+                in: modelContext
+            )
+        }
     }
 }
 

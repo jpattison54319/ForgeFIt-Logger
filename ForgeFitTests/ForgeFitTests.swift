@@ -60,7 +60,10 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [treadmill], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [treadmill], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.count == 1)
         #expect(workout.exercises.first?.sets.isEmpty == true)
@@ -96,7 +99,14 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            setupNotes: [setupNote],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == setupNote.note)
         #expect(workout.exercises.first?.notePinned == true)
@@ -123,7 +133,14 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            setupNotes: [setupNote],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == "Routine-specific cue")
         #expect(workout.exercises.first?.notePinned == false)

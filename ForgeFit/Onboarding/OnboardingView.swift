@@ -94,7 +94,7 @@ struct OnboardingView: View {
     /// Seeds focus-relevant Home actions without silently installing a training
     /// program. Home's permanent Empty tile remains the direct strength entry.
     private func seedQuickStarts() {
-        let key = "homeQuickStartActions.v1"
+        let key = HomeQuickStartAction.preferenceKey
         guard (UserDefaults.standard.string(forKey: key) ?? "").isEmpty else { return }
         let ids = focus.quickStartIDs(routineIDs: [])
         if let data = try? JSONEncoder().encode(ids),

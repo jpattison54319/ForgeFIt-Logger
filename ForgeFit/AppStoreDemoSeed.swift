@@ -74,12 +74,13 @@ enum AppStoreDemoSeed {
 
         let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
         let notes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
-        let workout = WorkoutFactory.start(
+        guard let workout = WorkoutFactory.start(
             routine: routine,
             exercises: exercises,
             setupNotes: notes,
-            in: context
-        )
+            in: context,
+            onCommit: { _ in }
+        ) else { return }
         let start = Date().addingTimeInterval(-34 * 60)
         workout.startedAt = start
 
@@ -142,7 +143,12 @@ enum AppStoreDemoSeed {
         )
         for id in ["push-pull-legs", "hybrid-engine"] {
             guard let program = programs.first(where: { $0.id == id }) else { continue }
-            RoutineTemplateCatalog.importProgram(program, templates: templates, in: context)
+            _ = try? RoutineTemplateCatalog.importProgram(
+                program,
+                templates: templates,
+                in: context,
+                saveChanges: false
+            )
         }
         try? context.save()
     }
@@ -286,9 +292,8 @@ enum AppStoreDemoSeed {
         // number, so the profile card can't claim a level the history doesn't
         // support. Awards are idempotent (they stamp `xpAwardedAt`).
         for workout in try context.fetch(FetchDescriptor<WorkoutModel>()) {
-            _ = XPService.awardXPIfNeeded(for: workout, in: context)
+            _ = try XPService.awardXPIfNeeded(for: workout, in: context)
         }
-        try context.save()
     }
 
     private enum SessionKind {

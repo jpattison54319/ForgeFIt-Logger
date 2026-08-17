@@ -1,5 +1,6 @@
 import ForgeData
 import Foundation
+import SwiftData
 import Testing
 @testable import ForgeFit
 
@@ -56,7 +57,7 @@ struct RoutineOrganizerTests {
             routines: [loose, nested, standalone]
         )
 
-        #expect(draft.entries.map(\.id) == [
+        let expectedEntryIDs: [RoutineOrganizerDraft.EntryID] = [
             .ungrouped,
             .routine(loose.id),
             .folder(parent.id),
@@ -64,7 +65,8 @@ struct RoutineOrganizerTests {
             .routine(nested.id),
             .folder(leaf.id),
             .routine(standalone.id),
-        ])
+        ]
+        #expect(draft.entries.map(\.id) == expectedEntryIDs)
 
         let childEntry = try #require(draft.entries.first { $0.id == .folder(child.id) })
         guard case .folder(_, let parentID, let depth) = childEntry.kind else {
@@ -178,6 +180,94 @@ struct RoutineOrganizerTests {
         #expect(draft.entries.filter { entry in
             if case .routine(_, .folder(target.id), _) = entry.kind { true } else { false }
         }.map(\.id) == [.routine(second.id), .routine(third.id), .routine(first.id)])
+    }
+
+    @Test("Routine order inside a microcycle is durable in a fresh context")
+    func microcycleRoutineOrderPersistsAcrossContexts() throws {
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let mesocycle = folder("Mesocycle", position: 0)
+        let microcycle = folder("Microcycle", position: 0, parentID: mesocycle.id)
+        let first = routine("First", folderID: microcycle.id, position: 0)
+        let second = routine("Second", folderID: microcycle.id, position: 1)
+        let third = routine("Third", folderID: microcycle.id, position: 2)
+        [mesocycle, microcycle].forEach(context.insert)
+        [first, second, third].forEach(context.insert)
+        try context.save()
+
+        let draft = RoutineOrganizerDraft(
+            folders: [mesocycle, microcycle],
+            routines: [first, second, third]
+        )
+        #expect(draft.moveRoutine(first.id, to: .folder(microcycle.id)))
+        try RoutineOrganizerPersistence.commit(
+            draft,
+            folders: [mesocycle, microcycle],
+            routines: [first, second, third],
+            in: context
+        )
+
+        let verificationContext = ModelContext(container)
+        verificationContext.autosaveEnabled = false
+        let microcycleID = microcycle.id
+        let persisted = try verificationContext.fetch(
+            FetchDescriptor<RoutineModel>(
+                predicate: #Predicate { $0.folderID == microcycleID },
+                sortBy: [SortDescriptor(\RoutineModel.position)]
+            )
+        )
+        #expect(persisted.map(\.name) == ["Second", "Third", "First"])
+        #expect(persisted.map(\.position) == [0, 1, 2])
+    }
+
+    @Test("A failed organizer save restores the old order and retry stays exact")
+    func failedCommitLeavesNoReorderResidueBeforeRetry() throws {
+        enum ExpectedFailure: Error { case write }
+
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let microcycle = folder("Microcycle", position: 0)
+        let first = routine("First", folderID: microcycle.id, position: 0)
+        let second = routine("Second", folderID: microcycle.id, position: 1)
+        [microcycle].forEach(context.insert)
+        [first, second].forEach(context.insert)
+        try context.save()
+
+        let draft = RoutineOrganizerDraft(
+            folders: [microcycle],
+            routines: [first, second]
+        )
+        #expect(draft.moveRoutine(first.id, to: .folder(microcycle.id)))
+        #expect(throws: ExpectedFailure.write) {
+            try RoutineOrganizerPersistence.commit(
+                draft,
+                folders: [microcycle],
+                routines: [first, second],
+                in: context,
+                save: { _ in throw ExpectedFailure.write }
+            )
+        }
+
+        #expect(first.position == 0)
+        #expect(second.position == 1)
+        try context.save()
+        let beforeRetry = ModelContext(container)
+        beforeRetry.autosaveEnabled = false
+        #expect(try beforeRetry.fetch(
+            FetchDescriptor<RoutineModel>(sortBy: [SortDescriptor(\.position)])
+        ).map(\.name) == ["First", "Second"])
+
+        try RoutineOrganizerPersistence.commit(
+            draft,
+            folders: [microcycle],
+            routines: [first, second],
+            in: context
+        )
+        let afterRetry = ModelContext(container)
+        afterRetry.autosaveEnabled = false
+        #expect(try afterRetry.fetch(
+            FetchDescriptor<RoutineModel>(sortBy: [SortDescriptor(\.position)])
+        ).map(\.name) == ["Second", "First"])
     }
 
     @Test("A routine-holding folder cannot become a mesocycle implicitly")

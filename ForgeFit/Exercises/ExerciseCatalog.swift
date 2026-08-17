@@ -143,7 +143,7 @@ enum ExerciseCatalog {
 
     /// Insert any catalog exercises not already present. Idempotent.
     @MainActor
-    static func seed(into context: ModelContext) {
+    static func seed(into context: ModelContext, persist: Bool = true) throws {
         let seeds = load()
         guard !seeds.isEmpty else { return }
 
@@ -208,7 +208,7 @@ enum ExerciseCatalog {
                 changed += 1
             }
         }
-        if changed > 0 { try? context.save() }
+        if persist, changed > 0 { try context.save() }
     }
 
     // MARK: - Filter taxonomy for the picker

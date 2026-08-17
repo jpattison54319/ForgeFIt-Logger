@@ -15,7 +15,7 @@ struct YogaFlowBuilderView: View {
     @Query(filter: #Predicate<YogaFlowModel> { $0.deletedAt == nil }, sort: \YogaFlowModel.position)
     private var savedFlows: [YogaFlowModel]
 
-    let onSave: (String?) -> Void
+    private let saveAction: (String?) -> Bool
     let navigationTitle: String
     let showsTemplates: Bool
 
@@ -25,6 +25,7 @@ struct YogaFlowBuilderView: View {
     @State private var showPosePicker = false
     @State private var showSaveAsFlow = false
     @State private var newFlowName = ""
+    @State private var flowCreationAttempt: YogaFlowCreationAttempt?
     @State private var detailExercise: ExerciseLibraryModel?
 
     init(
@@ -33,7 +34,28 @@ struct YogaFlowBuilderView: View {
         showsTemplates: Bool = true,
         onSave: @escaping (String?) -> Void
     ) {
-        self.onSave = onSave
+        saveAction = { json in
+            onSave(json)
+            return true
+        }
+        self.navigationTitle = navigationTitle
+        self.showsTemplates = showsTemplates
+        let plan = YogaFlowPlan.decode(from: planJSON)
+        _style = State(initialValue: plan?.style ?? .hatha)
+        _steps = State(initialValue: plan?.steps ?? [])
+        _voiceGuidanceEnabled = State(
+            initialValue: plan?.voiceGuidanceEnabled
+                ?? YogaVoiceGuidancePreference.defaultEnabled
+        )
+    }
+
+    init(
+        planJSON: String?,
+        navigationTitle: String = "Yoga Flow",
+        showsTemplates: Bool = true,
+        commit: @escaping (String?) -> Bool
+    ) {
+        saveAction = commit
         self.navigationTitle = navigationTitle
         self.showsTemplates = showsTemplates
         let plan = YogaFlowPlan.decode(from: planJSON)
@@ -75,8 +97,9 @@ struct YogaFlowBuilderView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(steps.isEmpty ? nil : plan.encodedJSON())
-                        dismiss()
+                        if saveAction(steps.isEmpty ? nil : plan.encodedJSON()) {
+                            dismiss()
+                        }
                     }
                     .disabled(hasGuidanceTimingIssue)
                 }
@@ -107,10 +130,20 @@ struct YogaFlowBuilderView: View {
                     ExerciseDetailView(exerciseID: exercise.id, workouts: [], exercises: exercises)
                 }
             }
-            .alert("Save as My Flow", isPresented: $showSaveAsFlow) {
+            .alert("Save as My Flow", isPresented: Binding(
+                get: { showSaveAsFlow },
+                set: { isPresented in
+                    // SwiftUI dismisses alerts after a button tap. Keep the
+                    // naming attempt alive after a failed write so Retry or a
+                    // second Save cannot create a duplicate pending row.
+                    if !isPresented, flowCreationAttempt == nil {
+                        showSaveAsFlow = false
+                    }
+                }
+            )) {
                 TextField("Flow name", text: $newFlowName)
                 Button("Save") { saveAsUserFlow() }
-                Button("Cancel", role: .cancel) { newFlowName = "" }
+                Button("Cancel", role: .cancel) { cancelSaveAsUserFlow() }
             } message: {
                 Text("Saves this sequence for reuse from any routine or quick start.")
             }
@@ -262,15 +295,29 @@ struct YogaFlowBuilderView: View {
     private func saveAsUserFlow() {
         let trimmed = newFlowName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, let json = plan.encodedJSON() else { return }
-        modelContext.insert(YogaFlowModel(
-            userID: ForgeFitDemo.userID,
+        let attempt = flowCreationAttempt ?? YogaFlowCreationAttempt(
             name: trimmed,
             styleRaw: style.rawValue,
             planJSON: json,
-            position: (savedFlows.map(\.position).max() ?? -1) + 1
-        ))
-        modelContext.saveUserChanges()
+            position: (savedFlows.map(\.position).max() ?? -1) + 1,
+            in: modelContext
+        )
+        flowCreationAttempt = attempt
+        attempt.update(name: trimmed, styleRaw: style.rawValue, planJSON: json)
+        attempt.commit(into: modelContext) { _ in
+            flowCreationAttempt = nil
+            newFlowName = ""
+            showSaveAsFlow = false
+        }
+    }
+
+    private func cancelSaveAsUserFlow() {
+        if flowCreationAttempt != nil {
+            PersistentChangeSaveCenter.shared.dismiss()
+        }
+        flowCreationAttempt = nil
         newFlowName = ""
+        showSaveAsFlow = false
     }
 
     private func isUnilateral(_ step: YogaFlowPlan.PoseStep) -> Bool {

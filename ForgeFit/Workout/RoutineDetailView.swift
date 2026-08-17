@@ -170,8 +170,13 @@ struct RoutineDetailView: View {
 
     private func start() {
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-            appState.showingLogger = true
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: setupNotes,
+                in: modelContext,
+                onCommit: { _ in appState.showingLogger = true }
+            )
         }
     }
 

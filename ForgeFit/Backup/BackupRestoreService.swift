@@ -313,7 +313,7 @@ enum BackupRestoreService {
             switch value {
             case .string(let string):
                 // JSON-blob and CSV-encoded prefs round-trip through strings.
-                if key == "homeQuickStartActions.v1" || key.hasPrefix("plateInventory") || key == WarmupRampConfigStore.key {
+                if key.hasPrefix("plateInventory") || key == WarmupRampConfigStore.key {
                     // A hand-edited backup must not change a Data-valued
                     // preference into a String. Invalid base64 is skipped and
                     // does not count as restored.

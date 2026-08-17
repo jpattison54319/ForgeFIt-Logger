@@ -88,7 +88,11 @@ enum CardioSeriesService {
             applyDetectedIntervals(segments, to: session, series: series, start: start, in: freshContext)
         }
         guard !Task.isCancelled else { return }
-        try? freshContext.save()
+        do {
+            try freshContext.save()
+        } catch {
+            freshContext.rollback()
+        }
     }
 
     // MARK: - Series assembly

@@ -143,7 +143,8 @@ public enum RoutineAlternationService {
         owner: RoutineModel,
         partner: RoutineModel,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: @MainActor (ModelContext) throws -> Void = { try $0.save() }
     ) throws -> RoutineAlternationModel {
         guard owner.id != partner.id else { throw ServiceError.sameRoutine }
         guard isLive(owner), isLive(partner) else { throw ServiceError.unavailableRoutine }
@@ -160,33 +161,60 @@ public enum RoutineAlternationService {
             updatedAt: now
         )
         context.insert(alternation)
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            context.delete(alternation)
+            throw error
+        }
         return alternation
     }
 
     public static func remove(
         _ alternation: RoutineAlternationModel,
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        save: @MainActor (ModelContext) throws -> Void = { try $0.save() }
     ) throws {
+        let previousDeletedAt = alternation.deletedAt
+        let previousUpdatedAt = alternation.updatedAt
         alternation.deletedAt = now
         alternation.updatedAt = now
-        try context.save()
+        do {
+            try save(context)
+        } catch {
+            alternation.deletedAt = previousDeletedAt
+            alternation.updatedAt = previousUpdatedAt
+            throw error
+        }
     }
 
     public static func removeAll(
         containing routineID: UUID,
         in context: ModelContext,
         now: Date = .now,
-        saveChanges: Bool = true
+        saveChanges: Bool = true,
+        save: @MainActor (ModelContext) throws -> Void = { try $0.save() }
     ) throws {
         let matches = live(try context.fetch(FetchDescriptor<RoutineAlternationModel>()))
             .filter { $0.ownerRoutineID == routineID || $0.partnerRoutineID == routineID }
+        let snapshots = matches.map {
+            (alternation: $0, deletedAt: $0.deletedAt, updatedAt: $0.updatedAt)
+        }
         for alternation in matches {
             alternation.deletedAt = now
             alternation.updatedAt = now
         }
-        if saveChanges, !matches.isEmpty { try context.save() }
+        guard saveChanges, !matches.isEmpty else { return }
+        do {
+            try save(context)
+        } catch {
+            for snapshot in snapshots {
+                snapshot.alternation.deletedAt = snapshot.deletedAt
+                snapshot.alternation.updatedAt = snapshot.updatedAt
+            }
+            throw error
+        }
     }
 
     private static func liveRoutine(id: UUID, in routines: [RoutineModel]) -> RoutineModel? {

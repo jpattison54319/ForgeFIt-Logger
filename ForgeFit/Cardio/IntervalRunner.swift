@@ -66,6 +66,7 @@ final class IntervalRunner {
 
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var transitionSavePending = false
     @ObservationIgnored private var stepStartedAt: Date
     /// Session-cumulative feed reading when the current step began; the
     /// step's own covered distance is the delta from here.
@@ -135,8 +136,7 @@ final class IntervalRunner {
 
     /// Manually skip to the next step (writes the current split short).
     func skip() {
-        recordSplit(upTo: Date())
-        advance()
+        persistCurrentSplit(upTo: Date(), onCommit: advance)
     }
 
     func stop() {
@@ -172,9 +172,10 @@ final class IntervalRunner {
             advanceTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(max(0, interval)))
                 guard !Task.isCancelled, let self else { return }
-                self.recordSplit(upTo: self.stepEndsAt)
-                self.cue()
-                self.advance()
+                self.persistCurrentSplit(upTo: self.stepEndsAt) {
+                    self.cue()
+                    self.advance()
+                }
             }
         }
         ensurePollTaskIfNeeded()
@@ -224,9 +225,10 @@ final class IntervalRunner {
            let target = step.distanceMeters,
            let covered = stepDistanceCovered,
            covered >= target {
-            recordSplit(upTo: Date())
-            cue()
-            advance()
+            persistCurrentSplit(upTo: Date()) {
+                self.cue()
+                self.advance()
+            }
         }
     }
 
@@ -290,9 +292,14 @@ final class IntervalRunner {
     /// Persist the completed step as a split on the session. Timed and
     /// distance steps both record whatever real distance the feed saw —
     /// zero stays the honest floor when no source was flowing.
-    private func recordSplit(upTo end: Date) {
-        guard currentIndex < plan.steps.count else { return }
+    private func persistCurrentSplit(
+        upTo end: Date,
+        onCommit: @escaping @MainActor () -> Void
+    ) {
+        guard !transitionSavePending, currentIndex < plan.steps.count else { return }
+        transitionSavePending = true
         let step = plan.steps[currentIndex]
+        let splitIndex = session.splits.count
         let duration = max(1, Int(end.timeIntervalSince(stepStartedAt)))
         let covered: Double = {
             if step.isDistanceBased, let progress = stepDistanceCovered { return progress }
@@ -300,21 +307,37 @@ final class IntervalRunner {
             return 0
         }()
         let pace = covered > 0 ? Double(duration) / (covered / 1000) : 0
-        let split = CardioSplitModel(
-            userID: session.userID,
-            cardioSessionID: session.id,
-            index: session.splits.count,
-            distanceMeters: covered,
-            durationSeconds: duration,
-            paceSecondsPerKm: pace,
-            label: step.label,
-            startedAt: stepStartedAt,
-            endedAt: end
-        )
-        split.cardioSession = session
-        context.insert(split)
-        session.splits.append(split)
-        context.saveUserChanges()
+        let updatedAtBeforeSave = session.updatedAt
+        PersistentChangeSaveCenter.shared.perform({ [weak self] in
+            guard let self else { return }
+            let split = CardioSplitModel(
+                userID: self.session.userID,
+                cardioSessionID: self.session.id,
+                index: splitIndex,
+                distanceMeters: covered,
+                durationSeconds: duration,
+                paceSecondsPerKm: pace,
+                label: step.label,
+                startedAt: self.stepStartedAt,
+                endedAt: end
+            )
+            split.cardioSession = self.session
+            self.context.insert(split)
+            self.session.splits.append(split)
+            self.session.updatedAt = end
+            do {
+                try self.context.save()
+            } catch {
+                self.session.splits.removeAll { $0.id == split.id }
+                self.session.updatedAt = updatedAtBeforeSave
+                self.context.delete(split)
+                self.transitionSavePending = false
+                throw error
+            }
+        }, onSuccess: { [weak self] in
+            self?.transitionSavePending = false
+            onCommit()
+        })
     }
 
     /// Haptic + sound + time-sensitive notification when a step changes, so

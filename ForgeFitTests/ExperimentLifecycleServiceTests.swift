@@ -85,6 +85,65 @@ struct ExperimentLifecycleServiceTests {
         #expect(second.isActive)
     }
 
+    @Test func isolatedReconcileDoesNotCommitAnUnrelatedPendingEdit() throws {
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let experiment = ExperimentModel(
+            userID: ForgeFitDemo.userID,
+            name: "Expired",
+            startedAt: now.addingTimeInterval(-7_200),
+            plannedEndAt: now.addingTimeInterval(-60)
+        )
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Durable name"
+        )
+        context.insert(experiment)
+        context.insert(routine)
+        try context.save()
+
+        routine.name = "Pending editor name"
+        let result = try ExperimentLifecycleService.reconcileIsolated(
+            from: context,
+            now: now
+        )
+        #expect(result.completedIDs == [experiment.id])
+
+        let verification = ModelContext(container)
+        verification.autosaveEnabled = false
+        let experimentID = experiment.id
+        let routineID = routine.id
+        let persistedExperiment = try #require(verification.fetch(
+            FetchDescriptor<ExperimentModel>(
+                predicate: #Predicate { $0.id == experimentID }
+            )
+        ).first)
+        let persistedRoutine = try #require(verification.fetch(
+            FetchDescriptor<RoutineModel>(
+                predicate: #Predicate { $0.id == routineID }
+            )
+        ).first)
+        #expect(persistedExperiment.state == .completed)
+        #expect(persistedRoutine.name == "Durable name")
+
+        try context.save()
+        let afterEditorSave = ModelContext(container)
+        afterEditorSave.autosaveEnabled = false
+        let finalExperiment = try #require(afterEditorSave.fetch(
+            FetchDescriptor<ExperimentModel>(
+                predicate: #Predicate { $0.id == experimentID }
+            )
+        ).first)
+        let finalRoutine = try #require(afterEditorSave.fetch(
+            FetchDescriptor<RoutineModel>(
+                predicate: #Predicate { $0.id == routineID }
+            )
+        ).first)
+        #expect(finalExperiment.state == .completed)
+        #expect(finalRoutine.name == "Pending editor name")
+    }
+
     @Test func reminderRequestsAreBoundedAndNeverOutliveTheExperiment() throws {
         let timeZone = try #require(TimeZone(identifier: "America/New_York"))
         var calendar = Calendar(identifier: .gregorian)

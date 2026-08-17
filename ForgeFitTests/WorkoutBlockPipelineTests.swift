@@ -43,7 +43,10 @@ struct WorkoutBlockPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [bench, burpee], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [bench, burpee], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         let block = try #require(workout.blocks.first)
         #expect(block.kind == .conditioning)
@@ -76,7 +79,10 @@ struct WorkoutBlockPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [bench, burpee], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [bench, burpee], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.blocks.count == 1)
         #expect(workout.blocks.first?.kind == .conditioning)
@@ -118,7 +124,10 @@ struct WorkoutBlockPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [bench, burpee], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [bench, burpee], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.blocks.map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.conditioning, .yoga])
         #expect(workout.exercises.map(\.exerciseID) == [bench.id])

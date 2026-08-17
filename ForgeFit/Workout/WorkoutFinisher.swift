@@ -151,7 +151,7 @@ enum WorkoutFinisher {
                     WatchLink.shared.sendCommand(.workoutFinished)
                 },
                 publishWatchState: {
-                    WatchLink.shared.publishState()
+                    WatchLink.shared.publishDurableState()
                 },
                 noteLogDataChanged: {
                     BackupScheduler.shared.noteLogDataChanged()
@@ -193,13 +193,44 @@ enum WorkoutFinisher {
     @MainActor
     @discardableResult
     static func finish(
+        workoutID: UUID,
+        in callerContext: ModelContext,
+        liveMetrics: WatchLiveMetrics? = nil,
+        watchSavedToHealth: Bool = false,
+        endedAt requestedEnd: Date? = nil,
+        effects: FinishEffects? = nil,
+        terminalSave: ((ModelContext) -> String?)? = nil
+    ) -> String? {
+        let transaction = ModelContext(callerContext.container)
+        transaction.autosaveEnabled = false
+        guard let workout = try? transaction.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first else {
+            return "The active workout could not be found."
+        }
+        return finish(
+            workout,
+            in: transaction,
+            liveMetrics: liveMetrics,
+            watchSavedToHealth: watchSavedToHealth,
+            endedAt: requestedEnd,
+            effects: effects,
+            terminalSave: terminalSave,
+            prepareLiveYogaRunnerBeforeSave: false
+        )
+    }
+
+    @MainActor
+    @discardableResult
+    static func finish(
         _ workout: WorkoutModel,
         in context: ModelContext,
         liveMetrics: WatchLiveMetrics? = nil,
         watchSavedToHealth: Bool = false,
         endedAt requestedEnd: Date? = nil,
         effects: FinishEffects? = nil,
-        terminalSave: ((ModelContext) -> String?)? = nil
+        terminalSave: ((ModelContext) -> String?)? = nil,
+        prepareLiveYogaRunnerBeforeSave: Bool = true
     ) -> String? {
         // Per-call injection (FF-006): tests hand in a recorder to count
         // dispatch, and a terminal-save stand-in to exercise failure. The
@@ -371,7 +402,9 @@ enum WorkoutFinisher {
                 // drop partial credit (FF-013). The runner does it while
                 // alive; YogaSessionCompletion.complete reconciles the
                 // terminated-app case where no runner exists.
-                YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
+                if prepareLiveYogaRunnerBeforeSave {
+                    YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
+                }
                 YogaSessionCompletion.complete(
                     session: session,
                     workoutExercise: workoutExercise,
@@ -448,7 +481,7 @@ enum WorkoutFinisher {
         }
         workout.endedAt = now
         workout.recomputeTotalVolume()
-        XPService.awardXPIfNeeded(for: workout, in: context, now: now, persist: false)
+        XPService.stageXPIfNeeded(for: workout, in: context, now: now)
         // Terminal save: if this fails, NOTHING committed (rollback undid
         // endedAt/XP/cardio completions) — the workout is still live, so skip
         // every downstream write and let the caller surface the failure.
@@ -547,6 +580,19 @@ enum WorkoutFinisher {
     /// success.
     @MainActor
     @discardableResult
+    static func discard(workoutID: UUID, in callerContext: ModelContext) -> String? {
+        let transaction = ModelContext(callerContext.container)
+        transaction.autosaveEnabled = false
+        guard let workout = try? transaction.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first else {
+            return "The active workout could not be found."
+        }
+        return discard(workout, in: transaction)
+    }
+
+    @MainActor
+    @discardableResult
     static func discard(_ workout: WorkoutModel, in context: ModelContext) -> String? {
         // FF-006 repeat-discard no-op: an already-tombstoned workout must not
         // re-run the Watch relay or runtime teardown for one user action.
@@ -565,7 +611,7 @@ enum WorkoutFinisher {
         // authoritative on the watch (it clears unconditionally); the carried
         // ID keeps the wire shape uniform with the watch → phone direction.
         WatchLink.shared.sendCommand(.discardWorkout(workoutID: workout.id))
-        WatchLink.shared.publishState()
+        WatchLink.shared.publishDurableState()
         cancelLiveRuntime()
         return nil
     }

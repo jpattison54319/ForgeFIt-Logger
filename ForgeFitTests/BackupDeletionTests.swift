@@ -1,4 +1,6 @@
 import Foundation
+import ForgeCore
+import ForgeData
 import SwiftData
 import Testing
 @testable import ForgeFit
@@ -23,15 +25,112 @@ struct BackupDeletionTests {
             let (container, context) = try TestStore.make()
             defer { _ = container }
             let deleter = CountingDeleter(result: .deleted)
+            UserDefaults.standard.set(
+                UUID().uuidString,
+                forKey: BLEHeartRateService.rememberedIDKey
+            )
+            UserDefaults.standard.set(
+                "Reset fixture",
+                forKey: BLEHeartRateService.rememberedNameKey
+            )
+            UserDefaults.standard.set(
+                [UUID().uuidString: SocialService.ShareOp.publish.rawValue],
+                forKey: SocialService.shareOutboxKey
+            )
+            UserDefaults.standard.set(
+                [UUID().uuidString],
+                forKey: SocialService.legacyPendingUnpublishKey
+            )
             let capture = NotificationCapture()
             capture.start(.forgeFitAccountResetDidComplete)
             defer { capture.stop() }
+
+            #expect(BLEHeartRateService.shared.hasRememberedMonitor)
 
             let outcome = try await AccountResetService.resetAllAppData(in: context, backupDeleter: deleter)
 
             #expect(outcome == .completed)
             #expect(deleter.callCount == 1, "reset must await the deletion, not fire it and forget it")
             #expect(capture.count == 1, "completion must be posted only after the deletion result is known")
+            #expect(!BLEHeartRateService.shared.hasRememberedMonitor)
+            #expect(BLEHeartRateService.shared.rememberedName == nil)
+            #expect(UserDefaults.standard.object(forKey: SocialService.shareOutboxKey) == nil)
+            #expect(
+                UserDefaults.standard.object(forKey: SocialService.legacyPendingUnpublishKey) == nil
+            )
+            #expect(
+                try context.fetchCount(FetchDescriptor<ExerciseLibraryModel>()) > 0,
+                "the atomic reset transaction must also commit the clean exercise reseed"
+            )
+            let resetExercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            #expect(
+                resetExercises.contains(where: YogaPoseCatalog.isSessionExercise),
+                "the Yoga session row must be usable immediately after reset"
+            )
+            #expect(
+                resetExercises.contains { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) },
+                "the bundled pose catalog must be usable immediately after reset"
+            )
+        }
+    }
+
+    @Test func databaseFailureLeavesModelsDefaultsAndBackupUntouched() async throws {
+        struct InjectedFailure: Error {}
+
+        try await withPrefsSnapshot {
+            let container = try TestStore.makeContainer()
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "Keep me")
+            context.insert(routine)
+            try context.save()
+            UserDefaults.standard.set("Reset fixture", forKey: "profileDisplayName")
+            UserDefaults.standard.set(
+                UUID().uuidString,
+                forKey: BLEHeartRateService.rememberedIDKey
+            )
+            let deleter = CountingDeleter(result: .deleted)
+            let capture = NotificationCapture()
+            capture.start(.forgeFitAccountResetDidComplete)
+            defer { capture.stop() }
+
+            var receivedExpectedFailure = false
+            do {
+                _ = try await AccountResetService.resetAllAppData(
+                    in: context,
+                    backupDeleter: deleter,
+                    databaseSave: { _ in throw InjectedFailure() }
+                )
+            } catch is InjectedFailure {
+                receivedExpectedFailure = true
+            }
+
+            #expect(receivedExpectedFailure)
+            let verification = ModelContext(container)
+            #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Keep me")
+            #expect(UserDefaults.standard.string(forKey: "profileDisplayName") == "Reset fixture")
+            #expect(BLEHeartRateService.shared.hasRememberedMonitor)
+            #expect(deleter.callCount == 0)
+            #expect(capture.count == 0)
+
+            let outcome = try await AccountResetService.resetAllAppData(
+                in: context,
+                backupDeleter: deleter
+            )
+            #expect(outcome == .completed)
+            #expect(try context.fetch(FetchDescriptor<RoutineModel>()).isEmpty)
+            let sourceExercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            #expect(sourceExercises.contains(where: YogaPoseCatalog.isSessionExercise))
+            #expect(sourceExercises.contains { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) })
+            let afterRetry = ModelContext(container)
+            #expect(try afterRetry.fetch(FetchDescriptor<RoutineModel>()).isEmpty)
+            let retryExercises = try afterRetry.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            #expect(retryExercises.contains(where: YogaPoseCatalog.isSessionExercise))
+            #expect(retryExercises.contains { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) })
+            #expect(UserDefaults.standard.object(forKey: "profileDisplayName") == nil)
+            #expect(!BLEHeartRateService.shared.hasRememberedMonitor)
+            #expect(deleter.callCount == 1)
+            #expect(capture.count == 1)
         }
     }
 

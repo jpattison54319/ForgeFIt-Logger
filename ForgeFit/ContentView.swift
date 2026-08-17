@@ -337,8 +337,11 @@ struct ContentView: View {
                 titleVisibility: .visible
             ) {
                 Button("Discard Current & Start New", role: .destructive) {
-                    if let activeWorkout { discard(activeWorkout) }
-                    runPendingStart()
+                    if let activeWorkout {
+                        discardThenRunPendingStart(activeWorkout)
+                    } else {
+                        runPendingStart()
+                    }
                 }
                 Button("Keep Current Workout", role: .cancel) {
                     appState.pendingWorkoutStart = nil
@@ -787,7 +790,10 @@ struct ContentView: View {
         }) else { return nil }
 
         do {
-            _ = try ExperimentLifecycleService.reconcile(in: modelContext, now: now)
+            _ = try ExperimentLifecycleService.reconcileIsolated(
+                from: modelContext,
+                now: now
+            )
             let experiment = try modelContext.fetch(
                 FetchDescriptor<ExperimentModel>(
                     sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
@@ -972,8 +978,13 @@ struct ContentView: View {
             if let routineID,
                let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }) {
                 appState.requestStart {
-                    _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                    appState.showingLogger = true
+                    _ = WorkoutFactory.start(
+                        routine: routine,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        in: modelContext,
+                        onCommit: { _ in appState.showingLogger = true }
+                    )
                 }
             } else {
                 appState.selectedTab = .workout
@@ -1260,15 +1271,17 @@ struct ContentView: View {
 
     private func scheduleReadinessStamp(for workout: WorkoutModel, delayMilliseconds: Int) {
         readinessStampTask?.cancel()
+        let workoutID = workout.id
         readinessStampTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(delayMilliseconds))
             guard !Task.isCancelled,
                   !appState.showingLogger,
                   workout.deletedAt == nil,
                   workout.readinessAtStart == nil else { return }
-            if ReadinessSurfacePublisher.applyCachedStart(to: workout) {
-                try? modelContext.save()
-            }
+            _ = try? ReadinessSurfacePublisher.persistCachedStart(
+                to: workoutID,
+                in: modelContext
+            )
         }
     }
 
@@ -1438,8 +1451,13 @@ struct ContentView: View {
            let routine = launchRoutineForAutoStart() {
             let launchExercises = (try? modelContext.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? exercises
             let launchSetupNotes = (try? modelContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? setupNotes
-            _ = WorkoutFactory.start(routine: routine, exercises: launchExercises, setupNotes: launchSetupNotes, in: modelContext)
-            presentLoggerWhenActiveWorkoutIsReady()
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: launchExercises,
+                setupNotes: launchSetupNotes,
+                in: modelContext,
+                onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+            )
         }
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
@@ -1500,7 +1518,7 @@ struct ContentView: View {
         experimentNotificationScheduleTask = nil
         guard performanceGate.allowsNonWorkoutWork else { return }
         do {
-            _ = try ExperimentLifecycleService.reconcile(in: modelContext)
+            _ = try ExperimentLifecycleService.reconcileIsolated(from: modelContext)
             guard let active = try ExperimentLifecycleService.activeExperiment(in: modelContext) else {
                 return
             }
@@ -1553,9 +1571,8 @@ struct ContentView: View {
         microcycleTransitionTask = nil
         guard performanceGate.allowsNonWorkoutWork else { return }
         do {
-            _ = try MicrocycleTrackingService.reconcile(in: modelContext)
-            guard let transition = try MicrocycleTrackingService.nextTransitionDate(
-                in: modelContext
+            guard let transition = try MicrocycleTrackingService.reconcileIsolated(
+                from: modelContext
             ) else { return }
             let wait = transition.timeIntervalSinceNow
             guard wait > 0 else { return }
@@ -1681,8 +1698,24 @@ struct ContentView: View {
         )
     }
 
-    private func discard(_ workout: WorkoutModel) {
-        WorkoutFinisher.discard(workout, in: modelContext)
+    private func discard(
+        _ workout: WorkoutModel,
+        onSuccess: @escaping @MainActor () -> Void = {}
+    ) {
+        PersistentChangeSaveCenter.shared.performReportingFailure({
+            WorkoutFinisher.discard(workoutID: workout.id, in: modelContext)
+        }, onSuccess: onSuccess)
+    }
+
+    private func discardThenRunPendingStart(_ workout: WorkoutModel) {
+        // Remove the global pending action before the fallible write. Retry
+        // retains this exact closure, while Keep Editing drops it instead of
+        // leaving a surprise start queued for a later state change.
+        let pendingStart = appState.pendingWorkoutStart
+        appState.pendingWorkoutStart = nil
+        discard(workout) {
+            pendingStart?()
+        }
     }
 
     private func runPendingStart() {
@@ -1720,11 +1753,11 @@ struct ContentView: View {
             )
             if needsSeed {
                 try ExerciseSeedRepository.seedGlobalLibrary(in: modelContext)
-                ExerciseCatalog.seed(into: modelContext)
-                YogaPoseCatalog.seed(into: modelContext)
+                try ExerciseCatalog.seed(into: modelContext)
+                try YogaPoseCatalog.seed(into: modelContext)
                 // Drop yoga poses trimmed from the catalog (e.g. poses awaiting
                 // real artwork) so users only ever see fully-illustrated poses.
-                YogaPoseCatalog.pruneUnavailablePoses(into: modelContext)
+                try YogaPoseCatalog.pruneUnavailablePoses(into: modelContext)
             }
             // CloudKit duplicate cleanup is intentionally not performed here.
             // It scans the full ~900-row plan store on a private worker after
@@ -1894,21 +1927,26 @@ struct ContentView: View {
     }
 
     private func clearStarterSlate() {
-        // Tear down live runtime (rest timers, GPS/cardio recording, watch
-        // state, HR, Live Activity) ONLY when the currently active workout is
-        // itself the seeded starter workout about to be deleted. A genuine
-        // user workout preserved by the cleanup must keep its runtime.
-        if StarterSlatePolicy.cancelsLiveRuntimeForDeletion(activeWorkout: activeWorkout) {
-            WorkoutFinisher.cancelLiveRuntime()
-        }
-        do {
+        let cancelsStarterRuntime = StarterSlatePolicy.cancelsLiveRuntimeForDeletion(
+            activeWorkout: activeWorkout
+        )
+        PersistentChangeSaveCenter.shared.perform({
+            // Keep this terminal cleanup out of the shared main context. A
+            // rejected write can then be discarded with this short-lived
+            // context instead of leaving phantom deletions for autosave.
+            let cleanupContext = ModelContext(modelContext.container)
+            cleanupContext.autosaveEnabled = false
             // Deletes only seeded starter content (starter routine, its setup
             // note, and unfinished starter-derived workouts); genuine user
             // work-in-progress survives via `routineID` provenance.
-            try StarterSlateCleanup.run(in: modelContext)
-        } catch {
-            assertionFailure("Failed to clear onboarding starter slate: \(error)")
-        }
+            try StarterSlateCleanup.run(in: cleanupContext)
+        }, onSuccess: {
+            // Runtime teardown is a consequence of a committed delete, never
+            // something that happens while the starter workout remains live.
+            if cancelsStarterRuntime {
+                WorkoutFinisher.cancelLiveRuntime()
+            }
+        })
     }
 
     private func handleAccountReset() {

@@ -1,6 +1,7 @@
 import Foundation
 import ForgeCore
 import ForgeData
+import SwiftData
 import Testing
 @testable import ForgeFit
 
@@ -14,6 +15,27 @@ struct RecoverySnapshotStoreTests {
         let store = RecoverySnapshotStore()
         store.removeAllForTesting()   // isolate from any persisted state
         return store
+    }
+
+    @Test func clearAllErasesPersistedAndLiveRecoverySnapshots() throws {
+        let suiteName = "RecoverySnapshotStoreClearTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = RecoverySnapshotStore(defaults: defaults, calendar: cal)
+        store.recordToday(daily: 0.82, trend: 0.64)
+        defaults.set(true, forKey: RecoverySnapshotStore.backfillKey)
+
+        #expect(defaults.data(forKey: RecoverySnapshotStore.defaultsKey) != nil)
+        #expect(!store.needsBackfill)
+
+        store.clearAll()
+
+        #expect(store.snapshot(for: Date()) == nil)
+        #expect(defaults.object(forKey: RecoverySnapshotStore.defaultsKey) == nil)
+        #expect(defaults.object(forKey: RecoverySnapshotStore.backfillKey) == nil)
+        let reloaded = RecoverySnapshotStore(defaults: defaults, calendar: cal)
+        #expect(reloaded.snapshot(for: Date()) == nil)
+        #expect(reloaded.needsBackfill)
     }
 
     @Test func recordTodayIsSeparateDailyAndTrendNotDisplayScore() {
@@ -245,6 +267,56 @@ struct RecoverySnapshotStoreTests {
         #expect(workout.readinessAtStart == 82)
         #expect(workout.readinessMethodID == "recovery-index-v2")
         #expect(workout.readinessCoverageAtStart == 0.91)
+    }
+
+    @Test func delayedWorkoutStampIsIsolatedAndExactRetryPersists() throws {
+        struct InjectedFailure: Error {}
+
+        let container = try TestStore.makeContainer()
+        let source = ModelContext(container)
+        source.autosaveEnabled = false
+        let workout = WorkoutModel(userID: ForgeFitDemo.userID, startedAt: Date())
+        let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "Committed")
+        source.insert(workout)
+        source.insert(routine)
+        try source.save()
+        routine.name = "Unrelated pending edit"
+
+        #expect(throws: InjectedFailure.self) {
+            try ReadinessSurfacePublisher.persist(
+                demoDashboard(),
+                to: workout.id,
+                in: source,
+                save: { _ in throw InjectedFailure() }
+            )
+        }
+
+        var verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<WorkoutModel>()).first?.readinessAtStart == nil)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Committed")
+
+        #expect(try ReadinessSurfacePublisher.persist(
+            demoDashboard(),
+            to: workout.id,
+            in: source
+        ))
+        verification = ModelContext(container)
+        let persistedWorkout = try verification.fetch(FetchDescriptor<WorkoutModel>()).first
+        #expect(persistedWorkout?.readinessAtStart == 82)
+        #expect(persistedWorkout?.readinessMethodID == "recovery-index-v2")
+        #expect(persistedWorkout?.readinessCoverageAtStart == 0.91)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Committed")
+
+        // A second execution is harmless, and the unrelated editor state is
+        // still owned by the source context until its user action saves it.
+        #expect(try !ReadinessSurfacePublisher.persist(
+            demoDashboard(),
+            to: workout.id,
+            in: source
+        ))
+        try source.save()
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Unrelated pending edit")
     }
 }
 

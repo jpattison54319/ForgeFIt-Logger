@@ -58,6 +58,10 @@ struct IntervalPlanBuilderView: View {
     }
 
     private let onSave: (String?) -> Void
+    private let commitAction: ((String?) -> Bool)?
+    /// Non-nil only for the routine-card convenience initializer. That path
+    /// owns a durable commit rather than merely handing JSON to its caller.
+    private let routineExercise: RoutineExerciseModel?
 
     @State private var warmup: Int
     @State private var repeats: Int
@@ -93,11 +97,19 @@ struct IntervalPlanBuilderView: View {
     /// "Save as preset" name-prompt state.
     @State private var showSavePrompt = false
     @State private var presetName = ""
+    @State private var presetCreationAttempt: IntervalPresetCreationAttempt?
     /// Presents the soft-delete management list for user presets.
     @State private var showManageSheet = false
 
-    init(planJSON: String?, onSave: @escaping (String?) -> Void) {
+    init(
+        planJSON: String?,
+        routineExercise: RoutineExerciseModel? = nil,
+        commitAction: ((String?) -> Bool)? = nil,
+        onSave: @escaping (String?) -> Void
+    ) {
         self.onSave = onSave
+        self.commitAction = commitAction
+        self.routineExercise = routineExercise
         let existing = IntervalPlan.decode(from: planJSON)
         // Derive the mode from the stored shape: steps win (intervals), then
         // a session goal/band (target), then a plan-wide zone (lock).
@@ -139,6 +151,17 @@ struct IntervalPlanBuilderView: View {
         _customSteps = State(initialValue: (existing?.steps ?? []).map(EditableStep.init))
     }
 
+    init(
+        planJSON: String?,
+        commit: @escaping (String?) -> Bool
+    ) {
+        self.init(
+            planJSON: planJSON,
+            commitAction: commit,
+            onSave: { _ in }
+        )
+    }
+
     /// Edit a routine exercise's stored template in place.
     init(routineExercise: RoutineExerciseModel) {
         let legacyTarget = routineExercise.sets.sorted { $0.position < $1.position }.first
@@ -152,21 +175,12 @@ struct IntervalPlanBuilderView: View {
             }
         }
 
-        self.init(planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil) { json in
-            routineExercise.intervalPlanJSON = json
-            routineExercise.updatedAt = Date()
-
-            // Older routines stored duration/distance on their synthetic set.
-            // Keep that compatibility projection aligned until those fields can
-            // be removed from the persisted/exported routine format.
-            let savedGoal = IntervalPlan.decode(from: json)?.goal
-            legacyTarget?.targetDurationSeconds = savedGoal?.kind == .duration
-                ? Int(savedGoal?.value ?? 0)
-                : nil
-            legacyTarget?.targetDistanceMeters = savedGoal?.kind == .distance
-                ? savedGoal?.value
-                : nil
-        }
+        self.init(
+            planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil,
+            routineExercise: routineExercise,
+            commitAction: nil,
+            onSave: { _ in }
+        )
     }
 
     private var workPaceBand: IntervalPlan.Target? {
@@ -265,9 +279,16 @@ struct IntervalPlanBuilderView: View {
                         .accessibilityIdentifier("cardio-goal-save")
                 }
             }
-            .alert("Save preset", isPresented: $showSavePrompt) {
+            .alert("Save preset", isPresented: Binding(
+                get: { showSavePrompt },
+                set: { isPresented in
+                    if !isPresented, presetCreationAttempt == nil {
+                        showSavePrompt = false
+                    }
+                }
+            )) {
                 TextField("Preset name", text: $presetName)
-                Button("Cancel", role: .cancel) { presetName = "" }
+                Button("Cancel", role: .cancel) { cancelPresetCreation() }
                 Button("Save") { saveAsPreset() }
             } message: {
                 Text("Save this interval structure to reuse it later.")
@@ -668,11 +689,28 @@ struct IntervalPlanBuilderView: View {
 
     private func saveAsPreset() {
         let trimmed = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
-        presetName = ""
         guard !trimmed.isEmpty, plan.isMeaningful, let json = plan.encodedJSON() else { return }
-        let preset = IntervalPresetModel(userID: ForgeFitDemo.userID, name: trimmed, planJSON: json)
-        modelContext.insert(preset)
-        modelContext.saveUserChanges()
+        let attempt = presetCreationAttempt ?? IntervalPresetCreationAttempt(
+            name: trimmed,
+            planJSON: json,
+            in: modelContext
+        )
+        presetCreationAttempt = attempt
+        attempt.update(name: trimmed, planJSON: json)
+        attempt.commit(into: modelContext) { _ in
+            presetCreationAttempt = nil
+            presetName = ""
+            showSavePrompt = false
+        }
+    }
+
+    private func cancelPresetCreation() {
+        if presetCreationAttempt != nil {
+            PersistentChangeSaveCenter.shared.dismiss()
+        }
+        presetCreationAttempt = nil
+        presetName = ""
+        showSavePrompt = false
     }
 
     private func stepZoneRow(_ label: String, selection: Binding<Int>) -> some View {
@@ -701,8 +739,20 @@ struct IntervalPlanBuilderView: View {
     }
 
     private func save() {
-        onSave(plan.isMeaningful ? plan.encodedJSON() : nil)
-        dismiss()
+        let planJSON = plan.isMeaningful ? plan.encodedJSON() : nil
+        if let routineExercise {
+            RoutineIntervalPlanPersistence.apply(
+                planJSON,
+                to: routineExercise,
+                in: modelContext,
+                onCommit: dismiss.callAsFunction
+            )
+        } else if let commitAction {
+            if commitAction(planJSON) { dismiss() }
+        } else {
+            onSave(planJSON)
+            dismiss()
+        }
     }
 }
 
@@ -800,7 +850,7 @@ struct PaceEntryField: View {
 
 /// Editor-friendly mirror of `IntervalPlan.Step`: labels regenerate on save,
 /// so the editor only tracks the structural fields.
-struct EditableStep: Identifiable, Equatable {
+nonisolated struct EditableStep: Identifiable, Equatable {
     let id: UUID
     var kind: IntervalPlan.Step.Kind
     var seconds: Int
@@ -1172,12 +1222,9 @@ private struct IntervalPresetManagerView: View {
     }
 
     private func delete(_ offsets: IndexSet) {
-        let now = Date()
-        for index in offsets {
-            let preset = intervalPresets[index]
-            preset.deletedAt = now
-            preset.updatedAt = now
+        let presets = offsets.compactMap { index in
+            intervalPresets.indices.contains(index) ? intervalPresets[index] : nil
         }
-        modelContext.saveUserChanges()
+        IntervalPresetPersistence.softDelete(presets, in: modelContext)
     }
 }

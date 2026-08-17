@@ -37,7 +37,6 @@ struct YogaExerciseCard: View {
     @State private var showPlayer = false
     @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var activeSegmentMessage: String?
-    @State private var completionSaveError: String?
     @State private var noteFocusRequested = false
 
     private var plan: YogaFlowPlan? {
@@ -72,19 +71,17 @@ struct YogaExerciseCard: View {
         .onAppear(perform: ensureSession)
         .sheet(isPresented: $showFlowBuilder) {
             YogaFlowBuilderView(
-                planJSON: workoutExercise.yogaFlowJSON ?? plan?.encodedJSON()
-            ) { json in
-                workoutExercise.yogaFlowJSON = json
-                workoutExercise.updatedAt = Date()
-                if let updated = YogaFlowPlan.decode(from: json) {
-                    session?.yogaStyleRaw = updated.styleRaw
-                    if session?.endedAt == nil {
-                        session?.durationSeconds = updated.totalSeconds > 0 ? updated.totalSeconds : nil
-                    }
+                planJSON: workoutExercise.yogaFlowJSON ?? plan?.encodedJSON(),
+                commit: { json in
+                    WorkoutYogaPlanPersistence.apply(
+                        json,
+                        to: workoutExercise,
+                        session: session,
+                        in: modelContext,
+                        onCommit: { WatchLink.shared.publishState() }
+                    )
                 }
-                modelContext.saveUserChanges()
-                WatchLink.shared.publishState()
-            }
+            )
         }
         .sheet(item: $yogaSafetyPresentation) { presentation in
             switch presentation {
@@ -107,14 +104,6 @@ struct YogaExerciseCard: View {
         )) {
         } message: {
             Text(activeSegmentMessage ?? "Complete the current segment first.")
-        }
-        .alert("Yoga Wasn't Saved", isPresented: Binding(
-            get: { completionSaveError != nil },
-            set: { if !$0 { completionSaveError = nil } }
-        )) {
-            Button("OK", role: .cancel) { completionSaveError = nil }
-        } message: {
-            Text("\(completionSaveError ?? "") Your yoga session is still active. Resume it and try completing again.")
         }
     }
 
@@ -444,8 +433,9 @@ struct YogaExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        modelContext.saveUserChanges()
-        session = new
+        modelContext.saveUserChanges {
+            session = new
+        }
     }
 
     private func start(_ session: CardioSessionModel) {
@@ -457,14 +447,18 @@ struct YogaExerciseCard: View {
             activeSegmentMessage = "\(active) is already recording. Complete it before starting Yoga."
             return
         }
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
-        session.liveStartedAt = now
-        session.startedAt = now
-        modelContext.saveUserChanges()
-        YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
-        showPlayer = true
-        WatchLink.shared.publishState()
+        CardioSessionStartPersistence.perform(
+            session: session,
+            startedAt: now,
+            context: modelContext,
+            onCommit: {
+                Task { await HealthService.shared.requestAuthorizationIfNeeded() }
+                YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
+                showPlayer = true
+                WatchLink.shared.publishState()
+            }
+        )
     }
 
     private func requestStart(_ session: CardioSessionModel) {
@@ -484,44 +478,39 @@ struct YogaExerciseCard: View {
     }
 
     private func complete(_ session: CardioSessionModel) {
-        // Record the hold in progress before stopping (Skip's partial credit,
-        // FF-013); YogaSessionCompletion.complete derives the rest.
-        YogaFlowRunnerHub.shared.complete(for: session.id, persist: false)
-        showPlayer = false
+        // Snapshot the live hold without touching the shared SwiftData graph.
+        // The isolated transaction derives partial credit from this checkpoint.
+        YogaFlowRunnerHub.shared.captureCheckpointForTerminalAttempt(sessionID: session.id)
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
-        YogaSessionCompletion.complete(
-            session: session,
-            workoutExercise: workoutExercise,
-            exercise: exercise,
-            context: modelContext,
+        CardioSessionTerminalPersistence.perform(
+            container: modelContext.container,
+            sessionID: session.id,
             endedAt: end,
+            completesYoga: true,
             useClockDuration: true,
-            clearCheckpoint: false
-        )
-        if let failure = modelContext.saveReportingFailure() {
-            completionSaveError = failure
-            WatchLink.shared.publishState()
-            return
+            stagesRoute: false
+        ) { outcome in
+            YogaFlowRunnerHub.shared.stop(for: outcome.sessionID, clearCheckpoint: true)
+            showPlayer = false
+            let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
+                    sessionID: outcome.sessionID,
+                    start: outcome.start,
+                    end: outcome.end,
+                    modality: .other,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: false,
+                    providesGPSDistance: false,
+                    hadManualIntervalPlan: false
+                ),
+                container: modelContext.container
+            )
+            importing = false
+            WatchLink.shared.publishDurableState()
         }
-        YogaRuntimeCheckpointStore.clear(sessionID: session.id)
-        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
-            .init(
-                sessionID: session.id,
-                start: start,
-                end: end,
-                modality: .other,
-                fallbackAvgHR: bleStats?.avgHR,
-                fallbackMaxHR: bleStats?.maxHR,
-                importsDistance: false,
-                providesGPSDistance: false,
-                hadManualIntervalPlan: false
-            ),
-            container: modelContext.container
-        )
-        importing = false
-        WatchLink.shared.publishState()
     }
 
     private func persist() {

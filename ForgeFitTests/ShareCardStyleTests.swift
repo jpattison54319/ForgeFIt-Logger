@@ -12,6 +12,11 @@ import UIKit
 /// hollow or overflowing share image.
 @MainActor
 struct ShareCardStyleTests {
+    @Test func selectedStyleIsPortableAndResettable() {
+        #expect(AppPreferenceKeys.backedUp.contains(ShareCardStyle.preferenceKey))
+        #expect(AppPreferenceKeys.allResettable.contains(ShareCardStyle.preferenceKey))
+    }
+
     private let userID = UUID()
 
     private func strengthExercise(
