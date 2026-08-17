@@ -219,7 +219,7 @@ struct MetricInfoLink: View {
             Card(padding: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "info.circle.fill")
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     Text(title)
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -279,7 +279,7 @@ struct MetricExplanationSheet: View {
                         HStack(alignment: .top, spacing: Space.md) {
                             Image(systemName: item.systemImage)
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                                 .frame(width: 28, height: 28)
                                 .background(theme.secondaryAccent.opacity(0.12), in: Circle())
                             VStack(alignment: .leading, spacing: 3) {

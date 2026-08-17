@@ -342,6 +342,7 @@ final class WatchLink: NSObject {
             )
         }
 
+        let themePreference = ForgeThemePreferenceStore.load()
         return WatchAppContext(
             workout: snapshot,
             routines: routineSummaries,
@@ -350,7 +351,9 @@ final class WatchLink: NSObject {
             readinessDetail: idleReadiness?.readinessDetail,
             unitSuffix: Fmt.unit.suffix,
             distanceUnit: Fmt.distanceUnit,
-            hrZoneConfig: HRZoneConfigStore.load()
+            hrZoneConfig: HRZoneConfigStore.load(),
+            themeFamily: themePreference.family,
+            themeMode: themePreference.mode
         )
     }
 

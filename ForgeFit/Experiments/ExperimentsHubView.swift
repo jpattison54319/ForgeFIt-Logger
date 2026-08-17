@@ -27,7 +27,7 @@ struct ExperimentsEntryCard: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "flask.fill")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 38, height: 38)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -53,7 +53,7 @@ struct ExperimentsEntryCard: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
         }
         .accessibilityElement(children: .combine)
@@ -153,7 +153,7 @@ struct ActiveExperimentHomeCard: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "flask.fill")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(experiment.name)
                             .font(.bodyStrong)
@@ -475,7 +475,7 @@ private struct ExperimentActiveLibraryCard: View {
                     Tag(text: "ACTIVE", color: theme.accent, background: theme.accentSoft)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
                 Text(experiment.name)
                     .font(.cardTitle)
@@ -561,7 +561,7 @@ private struct ExperimentCompletedLibraryCard: View {
                         .accessibilityLabel("New results")
                 }
                 Image(systemName: "chevron.right")
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
         }
     }

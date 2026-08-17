@@ -62,7 +62,7 @@ struct MicrocycleDayDetailSheet: View {
                                 HStack(spacing: Space.md) {
                                     Image(systemName: "moon.zzz.fill")
                                         .font(.title3)
-                                        .foregroundStyle(theme.accent)
+                                        .foregroundStyle(theme.accentForeground)
                                         .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Rest day")

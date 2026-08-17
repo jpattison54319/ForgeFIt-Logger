@@ -149,7 +149,7 @@ struct CardioExerciseCard: View {
                 } label: {
                     Text("Edit")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                         .minimumTouchTarget()
                 }
                     .buttonStyle(.plain)
@@ -175,7 +175,7 @@ struct CardioExerciseCard: View {
             } label: {
                 Text(plan?.isMeaningful == true ? "Change" : "Set")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
@@ -249,7 +249,7 @@ struct CardioExerciseCard: View {
             } label: {
                 Text(currentZoneTarget == 0 ? "Set" : "Z\(currentZoneTarget)")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
@@ -332,7 +332,7 @@ struct CardioExerciseCard: View {
                 } label: {
                     Text(showManual ? "Done" : "Edit")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                         .minimumTouchTarget()
                 }
                     .buttonStyle(.plain)
@@ -388,7 +388,7 @@ struct CardioExerciseCard: View {
                     Image(systemName: "play.fill")
                     Text("Start \(kind.title)")
                 }
-                .font(.bodyStrong).foregroundStyle(.white)
+                .font(.bodyStrong).foregroundStyle(theme.onSecondaryAccent)
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(theme.secondaryAccent)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
@@ -429,7 +429,7 @@ struct CardioExerciseCard: View {
                 } label: {
                     Label("Start interval guidance", systemImage: "timer")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                         .minimumTouchTarget()
                 }
             } else {
@@ -515,7 +515,7 @@ struct CardioExerciseCard: View {
                 } label: {
                     Text(showManual ? "Done" : "Edit")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                         .minimumTouchTarget()
                 }
             }
@@ -537,7 +537,7 @@ struct CardioExerciseCard: View {
                             Spacer()
                             Text(Fmt.durationShort(split.durationSeconds))
                                 .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                         }
                     }
                 }
@@ -584,7 +584,7 @@ struct CardioExerciseCard: View {
                     } label: {
                         Text("Open Settings")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
@@ -713,7 +713,7 @@ struct CardioExerciseCard: View {
         HStack(spacing: Space.md) {
             Image(systemName: kind.systemImage)
                 .font(.rowValue)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .frame(width: 38, height: 38)
                 .background(theme.surfaceElevated).clipShape(Circle())
             VStack(alignment: .leading, spacing: 1) {
@@ -1014,7 +1014,7 @@ private struct CardioSessionEditor: View {
                     Text(session.strokeStyleRaw.flatMap(SwimStrokeStyle.init(rawValue:))?.title ?? "Stroke")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(theme.secondaryAccent.opacity(0.12))
                 .clipShape(Capsule())
@@ -1456,7 +1456,7 @@ struct CardioSummaryCard: View {
         let zone = session.avgHR.map { HRZone.zone(forAvgHR: $0) }
         return HStack(spacing: Space.md) {
             Image(systemName: kind.systemImage)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(kind.title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -1558,7 +1558,7 @@ struct CardioZoneInsightsCard: View {
                     } label: {
                         HStack {
                             Text("What your zones train")
-                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accent)
+                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accentForeground)
                             Spacer()
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 11, weight: .bold)).foregroundStyle(theme.textTertiary)

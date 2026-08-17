@@ -85,7 +85,7 @@ struct YogaBlockCard: View {
                 theme.surfaceElevated
                 Image(systemName: style.systemImage)
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
             .frame(width: 38, height: 38)
             .clipShape(Circle())
@@ -156,7 +156,7 @@ struct YogaBlockCard: View {
             } label: {
                 Label(plan?.hasSteps == true ? "Start Guided Class" : "Configure Flow", systemImage: plan?.hasSteps == true ? "play.fill" : "slider.horizontal.3")
                     .font(.bodyStrong)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onAccent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(theme.accent)
@@ -177,14 +177,14 @@ struct YogaBlockCard: View {
                 } label: {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
                     Circle().fill(theme.accent).frame(width: 10, height: 10)
-                    Text("In session").font(.label).foregroundStyle(theme.accent)
+                    Text("In session").font(.label).foregroundStyle(theme.accentForeground)
                     Spacer()
                     Text(Fmt.elapsed(max(0, Int(context.date.timeIntervalSince(session.liveStartedAt ?? session.startedAt)))))
                         .font(.metricValue)
@@ -231,7 +231,7 @@ struct YogaBlockCard: View {
     private var flowSummary: some View {
         HStack(spacing: Space.sm) {
             Image(systemName: style.systemImage)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Flow")
                     .font(.bodyStrong)
@@ -244,7 +244,7 @@ struct YogaBlockCard: View {
             Button(action: onEdit) {
                 Text("Edit")
                     .font(.bodyStrong)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
             }
                 .disabled(hasStarted)

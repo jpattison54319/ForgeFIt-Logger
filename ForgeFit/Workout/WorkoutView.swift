@@ -57,6 +57,7 @@ struct WorkoutHomeView: View {
     @State private var showExploreLibrary = false
     @State private var organizingRoutines = false
     @State private var trackingFolder: RoutineFolderModel?
+    @State private var activationOfferFolder: RoutineFolderModel?
     @State private var editingMicrocycleTracking: MicrocycleTrackingModel?
     @State private var alternationRoutine: RoutineModel?
 
@@ -142,6 +143,43 @@ struct WorkoutHomeView: View {
         }
     }
 
+    private func activateMicrocycleWithTrackingOffer(_ folder: RoutineFolderModel) {
+        let offer = activationOfferContent(for: folder)
+        setActiveMicrocycle(folder)
+        guard offer.shouldOffer else { return }
+        activationOfferFolder = folder
+    }
+
+    private func activationOfferBinding(for folder: RoutineFolderModel) -> Binding<Bool> {
+        Binding(
+            get: { activationOfferFolder?.id == folder.id },
+            set: { isPresented in
+                if !isPresented, activationOfferFolder?.id == folder.id {
+                    activationOfferFolder = nil
+                }
+            }
+        )
+    }
+
+    private func activationOfferMessage(for folder: RoutineFolderModel) -> String {
+        activationOfferContent(for: folder).message
+    }
+
+    private func activationOfferContent(
+        for folder: RoutineFolderModel
+    ) -> MicrocycleActivationOfferContent {
+        MicrocycleActivationOfferPolicy.content(
+            folderID: folder.id,
+            hasRoutines: !routines(in: folder).isEmpty,
+            activeTracking: activeTracking
+        )
+    }
+
+    private func presentTrackingSetup(for folder: RoutineFolderModel) {
+        activationOfferFolder = nil
+        trackingFolder = folder
+    }
+
     private func setActiveMesocycle(_ folder: RoutineFolderModel) {
         activeMesocycleFolderRaw = folder.id.uuidString
         if let microcycleID = UUID(uuidString: activeMicrocycleFolderRaw),
@@ -185,7 +223,7 @@ struct WorkoutHomeView: View {
                             } label: {
                                 Text("Organize")
                                     .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .minimumTouchTarget()
                             }
                                 .accessibilityIdentifier("organize-routines-button")
@@ -357,7 +395,10 @@ struct WorkoutHomeView: View {
             .sheet(item: $trackingFolder) { folder in
                 MicrocycleSetupView(
                     folder: folder,
-                    routines: routines(in: folder)
+                    routines: routines(in: folder),
+                    replacingTrackingName: activeTracking.flatMap {
+                        $0.folderID == folder.id ? nil : $0.folderName
+                    }
                 ) { startDate, durationDays in
                     _ = try MicrocycleTrackingService.start(
                         folder: folder,
@@ -391,7 +432,7 @@ struct WorkoutHomeView: View {
                 )
             }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .onChange(of: appState.pendingRoutineDetailID, initial: true) {
             openPendingImportedRoutineIfAvailable()
         }
@@ -501,7 +542,7 @@ struct WorkoutHomeView: View {
                             if isActive {
                                 Text("ACTIVE")
                                     .font(.system(size: 9, weight: .heavy))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(theme.accent.opacity(0.15))
@@ -590,7 +631,7 @@ struct WorkoutHomeView: View {
                         } label: {
                             Label("Add Routine", systemImage: "plus")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .frame(maxWidth: .infinity)
                                 .minimumTouchTarget()
                         }
@@ -641,7 +682,7 @@ struct WorkoutHomeView: View {
                     }
                 } else {
                     Button("Set as Active Microcycle", systemImage: "star") {
-                        setActiveMicrocycle(folder)
+                        activateMicrocycleWithTrackingOffer(folder)
                     }
                 }
                 if let activeTracking, activeTracking.folderID == folder.id {
@@ -700,6 +741,21 @@ struct WorkoutHomeView: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Folder options for \(folder.name)")
+        .confirmationDialog(
+            "Track \"\(folder.name)\"?",
+            isPresented: activationOfferBinding(for: folder),
+            titleVisibility: .visible
+        ) {
+            Button("Set Day Target", systemImage: "calendar.badge.plus") {
+                presentTrackingSetup(for: folder)
+            }
+            .disabled(!activationOfferContent(for: folder).canSetDayTarget)
+            Button("Not Now", role: .cancel) {
+                activationOfferFolder = nil
+            }
+        } message: {
+            Text(activationOfferMessage(for: folder))
+        }
     }
 
     /// Keep the readable image and lossless plan document together. A
@@ -1057,7 +1113,7 @@ private struct RoutineCard: View {
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityIdentifier("alternating-routine-\(routine.id.uuidString)")
                     }
 
@@ -1069,7 +1125,7 @@ private struct RoutineCard: View {
                         if routine.blocks.isEmpty, let conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                         }
                         RoutineExerciseSummaryDisclosure(
                             routineName: routine.name,

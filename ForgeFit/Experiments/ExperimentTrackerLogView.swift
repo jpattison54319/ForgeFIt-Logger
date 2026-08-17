@@ -292,7 +292,7 @@ struct ExperimentLogUpdateSheet: View {
             Card(padding: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Tracker")
                             .font(.system(size: 12))
@@ -324,7 +324,7 @@ struct ExperimentLogUpdateSheet: View {
             } label: {
                 HStack(spacing: Space.md) {
                     Image(systemName: selectedTracker?.type.experimentSystemImage ?? "list.bullet")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Tracker")
                             .font(.system(size: 12))
@@ -364,7 +364,7 @@ struct ExperimentLogUpdateSheet: View {
         } label: {
             HStack(spacing: Space.md) {
                 Image(systemName: selectedWorkoutSystemImage)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Workout")
                         .font(.system(size: 12))
@@ -450,7 +450,7 @@ struct ExperimentLogUpdateSheet: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: Space.sm) {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(tracker.label)
                             .font(.bodyStrong)

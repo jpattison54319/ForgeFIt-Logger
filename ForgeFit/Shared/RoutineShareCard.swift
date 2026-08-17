@@ -86,7 +86,7 @@ struct RoutineShareCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Yoga", systemImage: "figure.yoga")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text("\(plan.structureSummary) · \(plan.style.title)")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
@@ -107,7 +107,7 @@ struct RoutineShareCard: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Image(systemName: isCardio ? "figure.run" : "dumbbell.fill")
-                    .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accent)
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text(exercise?.name ?? "Exercise").font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
@@ -130,7 +130,7 @@ struct RoutineShareCard: View {
                 }
                 .font(.system(size: 10, weight: .heavy)).foregroundStyle(theme.textTertiary)
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
-                    let style = SetTypeStyle.of(set.setType)
+                    let style = SetTypeStyle.of(set.setType, theme: theme)
                     HStack {
                         Text(style.numbered ? "\(numberedIndex(sets, upTo: index))" : (style.badge.isEmpty ? "•" : style.badge))
                             .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -194,11 +194,11 @@ struct RoutineShareHeader: View {
         HStack(alignment: .center, spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.accent)
-                Image(systemName: systemImage).font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
+                Image(systemName: systemImage).font(.system(size: 20, weight: .bold)).foregroundStyle(theme.onAccent)
             }
             .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text(kicker.uppercased()).font(.system(size: 11, weight: .heavy)).foregroundStyle(theme.accent)
+                Text(kicker.uppercased()).font(.system(size: 11, weight: .heavy)).foregroundStyle(theme.accentForeground)
                 Text(title).font(.system(size: 24, weight: .bold)).foregroundStyle(theme.textPrimary).lineLimit(2)
             }
             Spacer(minLength: 0)
@@ -228,7 +228,7 @@ struct ShareCardFooter: View {
     let theme: AppTheme
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "dumbbell.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(theme.accent)
+            Image(systemName: "dumbbell.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(theme.accentForeground)
             Text("Built with ForgeFit").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
             Spacer()
         }
@@ -239,6 +239,10 @@ struct ShareCardFooter: View {
 @MainActor
 enum RoutineShareRenderer {
     static func image(for routine: RoutineModel, exercises: [ExerciseLibraryModel], theme: AppTheme) -> UIImage? {
-        ShareRenderer.image(RoutineShareCard(routine: routine, exercises: exercises, theme: theme), theme: theme)
+        let exportTheme = AppTheme.export(family: theme.family)
+        return ShareRenderer.image(
+            RoutineShareCard(routine: routine, exercises: exercises, theme: exportTheme),
+            theme: exportTheme
+        )
     }
 }

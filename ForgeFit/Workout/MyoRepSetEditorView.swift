@@ -116,14 +116,14 @@ struct MyoRepSetEditorView: View {
                             if focusedInput == .editorWeight || focusedInput == .editorActivation(side: 1) && isUnilateral {
                                 Button("Next", action: advanceKeyboardFocus)
                                     .font(.bodyStrong)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .buttonStyle(.glass)
                                     .buttonBorderShape(.capsule)
                                     .controlSize(.large)
                             }
                             Button("Done", action: dismissKeyboard)
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .buttonStyle(.glass)
                                 .buttonBorderShape(.capsule)
                                 .controlSize(.large)

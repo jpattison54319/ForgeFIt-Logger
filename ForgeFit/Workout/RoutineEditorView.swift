@@ -67,7 +67,7 @@ struct RoutineEditorView: View {
                     Spacer()
                     Button("Done") { hideKeyboard() }
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .buttonStyle(.glass)
                         .buttonBorderShape(.capsule)
                         .controlSize(.large)
@@ -317,7 +317,7 @@ struct RoutineEditorView: View {
             } label: {
                 Text("Save")
                     .font(.bodyStrong)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
             }
         }
@@ -827,7 +827,7 @@ private struct ExerciseEditRow: View {
             HStack(spacing: 8) {
                 Image(systemName: (plan?.style ?? .hatha).systemImage)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text("Guided flow")
                     .font(.tag)
                     .foregroundStyle(theme.textTertiary)
@@ -845,7 +845,7 @@ private struct ExerciseEditRow: View {
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).opacity(0.7)
                     Spacer()
                 }
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .minimumTouchTarget()
             }
             .buttonStyle(.plain)
@@ -890,7 +890,7 @@ private struct ExerciseEditRow: View {
                     .font(.system(size: 10, weight: .bold))
                 Spacer()
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -1040,7 +1040,7 @@ private struct SetTargetEditRow: View {
     let onAddDrop: () -> Void
     let onDelete: () -> Void
 
-    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
+    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType, theme: theme) }
     private var isDrop: Bool { self.set.setType == .drop }
 
     var body: some View {

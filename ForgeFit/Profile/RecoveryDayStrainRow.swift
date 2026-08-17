@@ -12,7 +12,7 @@ struct RecoveryDayStrainRow: View {
             HStack(alignment: .lastTextBaseline, spacing: Space.sm) {
                 HStack(spacing: Space.xs) {
                     Image(systemName: "flame.fill")
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     Text("Strain")
                         .foregroundStyle(theme.textPrimary)
                 }

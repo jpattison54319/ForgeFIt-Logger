@@ -510,6 +510,7 @@ struct MicrocycleTrackingServiceTests {
 
         #expect(!first.isActive)
         #expect(first.stateRaw == "ended")
+        #expect(first.endedAt == date(2026, 8, 2))
         #expect(second.isActive)
         #expect(MicrocycleTrackingService.activeTracking([first, second])?.id == second.id)
 

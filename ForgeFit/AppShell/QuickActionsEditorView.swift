@@ -150,7 +150,7 @@ struct QuickActionsEditorView: View {
                 } label: {
                     Label("Create a routine", systemImage: "plus.circle.fill")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
                     .buttonStyle(.plain)
                     .themedListRow()
@@ -182,7 +182,7 @@ struct QuickActionsEditorView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: systemImage ?? action.systemImage)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())

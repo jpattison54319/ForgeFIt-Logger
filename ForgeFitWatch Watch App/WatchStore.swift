@@ -58,6 +58,7 @@ final class WatchStore: NSObject {
         // simulator can't authorize.
         if WatchAppStoreDemo.isRequested {
             context = WatchAppStoreDemo.context()
+            WTheme.configure(family: context?.effectiveThemeFamily ?? .sage)
             if WatchAppStoreDemo.wantsActiveWorkout {
                 WatchAppStoreDemo.startHeartRateTicker(engine)
             }
@@ -599,6 +600,11 @@ final class WatchStore: NSObject {
         isAwaitingWorkoutIdentity = false
         hasReceivedAuthoritativeContext = true
         let previous = context
+        WTheme.configure(family: newContext.effectiveThemeFamily)
+        ForgeThemePreferenceStore.save(ForgeThemePreference(
+            family: newContext.effectiveThemeFamily,
+            mode: newContext.effectiveThemeMode
+        ))
         context = newContext
 
         // Keep the live engine on the user's synced HR-zone model so wrist-side

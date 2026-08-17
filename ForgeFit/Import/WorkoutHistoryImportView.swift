@@ -10,6 +10,7 @@ struct WorkoutHistoryImportView: View {
     var onComplete: (() -> Void)?
 
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var themeManager: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
@@ -89,7 +90,7 @@ struct WorkoutHistoryImportView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "icloud.and.arrow.down.fill")
                         .font(.cardTitle)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onSecondaryAccent)
                         .frame(width: 44, height: 44)
                         .background(theme.secondaryAccent)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -118,7 +119,7 @@ struct WorkoutHistoryImportView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text("\(backup.label) — \(backup.exportedAt.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accent)
+                                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accentForeground)
                                     Text("\(backup.workoutCount) workouts")
                                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                                 }
@@ -142,6 +143,7 @@ struct WorkoutHistoryImportView: View {
             do {
                 let file = try await BackupRestoreService.loadFile(at: backup.url)
                 let outcome = try BackupRestoreService.commit(file, restorePreferences: true, in: modelContext)
+                themeManager.reload()
                 let enrichment = await HealthEnrichmentService().enrich(
                     workoutIDs: outcome.restoredWorkoutIDs, in: modelContext
                 )
@@ -161,7 +163,7 @@ struct WorkoutHistoryImportView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.cardTitle)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onAccent)
                         .frame(width: 44, height: 44)
                         .background(theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -187,7 +189,7 @@ struct WorkoutHistoryImportView: View {
                 } label: {
                     Label(preview == nil ? "Choose File" : "Choose Different File", systemImage: "doc.badge.plus")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
                 .disabled(loading)

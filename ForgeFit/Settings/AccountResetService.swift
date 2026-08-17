@@ -173,6 +173,7 @@ enum AccountResetService {
         // never backed up, but reset must still clear it).
         UserDefaults(suiteName: ForgeFitWidgetSnapshotStore.suiteName)?
             .removeObject(forKey: HRZoneConfigStore.key)
+        ForgeThemePreferenceStore.reset()
         Fmt.unit = .lb
         Fmt.distanceUnit = .km
     }

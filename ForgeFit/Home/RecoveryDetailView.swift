@@ -165,16 +165,16 @@ private struct FitnessFatigueCard: View {
                 Chart {
                     ForEach(points, id: \.date) { point in
                         LineMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl), series: .value("Metric", "Long-term"))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .lineStyle(StrokeStyle(lineWidth: 2))
                         LineMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl), series: .value("Metric", "Short-term"))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         PointMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .symbolSize(20)
                         PointMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .symbolSize(20)
                     }
                     if let selectedPoint {

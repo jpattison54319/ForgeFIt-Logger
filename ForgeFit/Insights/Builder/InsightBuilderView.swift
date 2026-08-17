@@ -235,7 +235,7 @@ struct InsightBuilderView: View {
                             systemImage: "plus.circle.fill"
                         )
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
@@ -1225,7 +1225,7 @@ private struct InsightMetricPickerSheet: View {
                                     if currentID == InsightMetricCatalog.muscleSetsID(for: muscle) {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 13, weight: .bold))
-                                            .foregroundStyle(theme.accent)
+                                            .foregroundStyle(theme.accentForeground)
                                     }
                                 }
                             }
@@ -1255,7 +1255,7 @@ private struct InsightMetricPickerSheet: View {
                                         if metric.id == currentID {
                                             Image(systemName: "checkmark")
                                                 .font(.system(size: 13, weight: .bold))
-                                                .foregroundStyle(theme.accent)
+                                                .foregroundStyle(theme.accentForeground)
                                         }
                                     }
                                 }
@@ -1278,7 +1278,7 @@ private struct InsightMetricPickerSheet: View {
                                 if currentID.flatMap({ InsightMetricCatalog.muscle(fromMetricID: $0) }) != nil {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(theme.accent)
+                                        .foregroundStyle(theme.accentForeground)
                                 } else {
                                     Image(systemName: "chevron.right")
                                         .font(.system(size: 12, weight: .semibold))
@@ -1447,7 +1447,7 @@ private struct InsightChipRow<T: Hashable>: View {
                                 .lineLimit(1)
                                 .fixedSize()
                         }
-                        .foregroundStyle(selected ? Color.white : theme.textSecondary)
+                        .foregroundStyle(selected ? theme.onAccent : theme.textSecondary)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 8)
                         .background(selected ? theme.accent : theme.surfaceElevated)

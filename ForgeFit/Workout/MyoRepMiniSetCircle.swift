@@ -12,7 +12,7 @@ struct MyoRepMiniSetCircle: View {
             Text("+\(reps)")
                 .font(.bodyStrong)
                 .monospacedDigit()
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .frame(width: 50, height: 50)
                 .background(theme.accentSoft)
                 .clipShape(.circle)

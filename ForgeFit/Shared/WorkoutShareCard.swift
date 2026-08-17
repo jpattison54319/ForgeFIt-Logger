@@ -513,7 +513,7 @@ struct WorkoutShareCard: View {
             // Deterministic per-set numbering (no mutable counter) — ImageRenderer
             // evaluates the body more than once, so a running `var` double-counts.
             ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
-                let style = SetTypeStyle.of(set.setType)
+                let style = SetTypeStyle.of(set.setType, theme: theme)
                 let label = numberedLabel(for: set, index: index, sets: sets)
                 let isCompleted = HistoricalSetPresentation.isCompleted(set)
                 HStack(spacing: 8) {
@@ -561,7 +561,7 @@ struct WorkoutShareCard: View {
         let kind = CardioKind.from(modality: session.modality)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: kind.systemImage).font(.system(size: 15, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                Image(systemName: kind.systemImage).font(.system(size: 15, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                 Text(we.flatMap { library($0)?.name } ?? kind.title)
                     .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
                 if let we { supersetBadge(we, enabled: showsSupersetBadge) }
@@ -638,7 +638,7 @@ struct WorkoutShareCard: View {
         HStack(spacing: 8) {
             Image(systemName: plan.style.systemImage)
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             Text(plan.steps.count == 1 ? plan.steps[0].name : "\(plan.style.title) Yoga")
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(theme.textPrimary)
@@ -670,7 +670,7 @@ struct WorkoutShareCard: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: style.systemImage)
-                    .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.accent)
+                    .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.accentForeground)
                 Text(name)
                     .font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary)
                 if let we { supersetBadge(we, enabled: showsSupersetBadge) }
@@ -678,7 +678,7 @@ struct WorkoutShareCard: View {
                 if shape != .yoga {
                     Text("\(style.title) Yoga")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(theme.accentSoft, in: Capsule())
                 }
@@ -783,17 +783,18 @@ enum WorkoutShareRenderer {
         routeMaps: [UUID: UIImage] = [:],
         awards: [WorkoutAward] = []
     ) -> UIImage? {
-        ShareRenderer.image(
+        let exportTheme = AppTheme.export(family: theme.family)
+        return ShareRenderer.image(
             WorkoutShareCard(
                 workout: workout,
                 exercises: exercises,
-                theme: theme,
+                theme: exportTheme,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints,
                 routeMaps: routeMaps,
                 awards: awards
             ),
-            theme: theme
+            theme: exportTheme
         )
     }
 }

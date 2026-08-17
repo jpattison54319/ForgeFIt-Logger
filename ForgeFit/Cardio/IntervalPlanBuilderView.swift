@@ -364,7 +364,7 @@ struct IntervalPlanBuilderView: View {
 
                 Label("Voice alert when reached", systemImage: "speaker.wave.2.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .accessibilityIdentifier("cardio-goal-voice-alert")
 
                 if goalKind == .elevation {
@@ -441,7 +441,7 @@ struct IntervalPlanBuilderView: View {
                     HStack {
                         Text("Rounds").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         Spacer()
-                        Text("\(repeats)×").font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                        Text("\(repeats)×").font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -479,7 +479,7 @@ struct IntervalPlanBuilderView: View {
                         Text("Each rep").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(IntervalPlan.metricDistance(workDistance))
-                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
             } else {
@@ -488,7 +488,7 @@ struct IntervalPlanBuilderView: View {
                         Text("Each rep").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(work == 0 ? "Off" : Fmt.durationShort(work))
-                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
             }
@@ -522,7 +522,7 @@ struct IntervalPlanBuilderView: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).opacity(0.6)
                 }
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .minimumTouchTarget()
             }
             .accessibilityIdentifier("customize-steps")
@@ -548,7 +548,7 @@ struct IntervalPlanBuilderView: View {
                         Text(step.isDistanceBased
                              ? IntervalPlan.metricDistance(step.distanceMeters ?? 0)
                              : Fmt.durationShort(step.seconds))
-                            .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                            .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                         if let zone = step.hrZone {
                             Text("Z\(zone)").font(.system(size: 10, weight: .heavy))
                                 .foregroundStyle(theme.zoneColor(zone))
@@ -563,7 +563,7 @@ struct IntervalPlanBuilderView: View {
                         Text("Edit steps")
                     }
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .minimumTouchTarget()
                 }
                 .accessibilityIdentifier("edit-custom-steps")
@@ -578,7 +578,7 @@ struct IntervalPlanBuilderView: View {
                 Spacer()
                 let current = plan
                 Text(totalText(for: current))
-                    .font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
             }
         }
     }
@@ -646,7 +646,7 @@ struct IntervalPlanBuilderView: View {
                     if isUser {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 9))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                     }
                     Text(name)
                         .font(.system(size: 13, weight: .bold))
@@ -944,7 +944,7 @@ struct CustomStepsEditor: View {
                                  ? IntervalPlan.metricDistance(step.distanceMeters ?? 0)
                                  : Fmt.durationShort(step.seconds))
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                             if let zone = step.hrZone {
                                 Text("Z\(zone)")
                                     .font(.system(size: 10, weight: .heavy))
@@ -1051,7 +1051,7 @@ struct StepDetailEditor: View {
                             Text("Distance")
                             Spacer()
                             Text(IntervalPlan.metricDistance(step.distanceMeters ?? 400))
-                                .foregroundStyle(theme.secondaryAccent).bold()
+                                .foregroundStyle(theme.secondaryAccentForeground).bold()
                         }
                     }
                     .listRowBackground(theme.surfaceElevated)
@@ -1061,7 +1061,7 @@ struct StepDetailEditor: View {
                             Text("Duration")
                             Spacer()
                             Text(Fmt.durationShort(step.seconds))
-                                .foregroundStyle(theme.secondaryAccent).bold()
+                                .foregroundStyle(theme.secondaryAccentForeground).bold()
                         }
                     }
                     .listRowBackground(theme.surfaceElevated)

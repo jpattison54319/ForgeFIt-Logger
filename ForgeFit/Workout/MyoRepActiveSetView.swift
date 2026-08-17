@@ -134,7 +134,7 @@ struct MyoRepActiveSetView: View {
                             VStack(alignment: .leading, spacing: Space.xs) {
                                 Text(isUnilateral ? "SIDE \(selectedSide)" : "MYO-REP SET")
                                     .font(.tag)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                 Text(activationIsLogged ? "Mini-sets" : "Activation set")
                                     .font(.screenTitle)
                                     .foregroundStyle(theme.textPrimary)
@@ -151,7 +151,7 @@ struct MyoRepActiveSetView: View {
                                 ) {
                                     Label("\(microRest)s", systemImage: "timer")
                                         .font(.bodyStrong)
-                                        .foregroundStyle(theme.accent)
+                                        .foregroundStyle(theme.accentForeground)
                                         .padding(.horizontal, Space.md)
                                         .frame(minHeight: TouchTarget.minimum)
                                         .background(theme.surfaceElevated)
@@ -214,7 +214,7 @@ struct MyoRepActiveSetView: View {
                     Spacer()
                     Text("Set \(blockNumber)")
                         .font(.tag)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .padding(.horizontal, Space.sm)
                         .padding(.vertical, 6)
                         .background(theme.accentSoft)
@@ -237,14 +237,14 @@ struct MyoRepActiveSetView: View {
                             if focusedInput == .activeWeight {
                                 Button("Next", action: focusActivationReps)
                                     .font(.bodyStrong)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .buttonStyle(.glass)
                                     .buttonBorderShape(.capsule)
                                     .controlSize(.large)
                             }
                             Button(keyboardCompleteTitle, action: completeFromKeyboard)
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .buttonStyle(.glass)
                                 .buttonBorderShape(.capsule)
                                 .controlSize(.large)

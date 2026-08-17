@@ -26,7 +26,7 @@ struct MyoRepMiniSetCard: View {
                     Spacer()
                     Text("Side \(side)")
                         .font(.tag)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .padding(.horizontal, Space.sm)
                         .padding(.vertical, 6)
                         .overlay(Capsule().strokeBorder(theme.accent.opacity(0.4)))

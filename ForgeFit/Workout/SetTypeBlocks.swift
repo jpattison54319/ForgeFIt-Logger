@@ -129,7 +129,7 @@ struct SetBlockView: View {
     private var timer: RestTimerController { RestTimerController.shared }
 
     private var isCluster: Bool { self.set.setType == .cluster }
-    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
+    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType, theme: theme) }
     private var isDone: Bool { self.set.completedAt != nil }
 
     /// Myo-reps has a nested completion hierarchy: the green activation row

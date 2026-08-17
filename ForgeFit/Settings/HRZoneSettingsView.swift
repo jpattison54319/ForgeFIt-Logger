@@ -70,7 +70,7 @@ struct HRZoneSettingsView: View {
                             Text("Max heart rate").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             Spacer()
                             Text("\(config.maxHR) bpm").font(.system(size: 17, weight: .bold, design: .rounded))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                         }
                     }
                     Text(config.restingHR == nil
@@ -568,7 +568,7 @@ struct HRZoneFieldTestView: View {
         VStack(spacing: Space.lg) {
             if peakHR > 0 {
                 Text("Observed peak").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
-                Text("\(peakHR)").font(.system(size: 64, weight: .bold, design: .rounded)).foregroundStyle(theme.secondaryAccent)
+                Text("\(peakHR)").font(.system(size: 64, weight: .bold, design: .rounded)).foregroundStyle(theme.secondaryAccentForeground)
                 Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
                 if !plausibleRange.contains(peakHR) {
                     Card(fill: theme.danger.opacity(0.12)) {

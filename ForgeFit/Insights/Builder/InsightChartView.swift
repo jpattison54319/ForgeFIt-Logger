@@ -273,7 +273,7 @@ struct InsightChartView: View {
                         x: .value("Date", point.date),
                         y: .value(titleFor(series.metricID), point.value)
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .cornerRadius(3)
                     .accessibilityLabel(spokenPointLabel(key: series.metricID, date: point.date))
                     .accessibilityValue(
@@ -455,7 +455,7 @@ struct InsightChartView: View {
                         y: .value("Median", group.median),
                         width: .ratio(0.6)
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .cornerRadius(4)
                     .accessibilityLabel(group.category)
                     .accessibilityValue(
@@ -746,7 +746,7 @@ struct InsightChartView: View {
                     y: .value("Count", bin.count),
                     width: .automatic
                 )
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .cornerRadius(2)
                 .accessibilityLabel(
                     "\(formattedValue(bin.lowerBound, key: primaryKey)) to "

@@ -9,6 +9,8 @@ struct MicrocycleDayStrip: View {
     let restDays: [RestDayModel]
     var now: Date = .now
     var isCompact = false
+    var presentedDays: [MicrocycleDayPresentation]?
+    var isReadOnly = false
     let onSelectDay: (Date) -> Void
 
     var body: some View {
@@ -60,7 +62,7 @@ struct MicrocycleDayStrip: View {
     }
 
     private var days: [MicrocycleDayPresentation] {
-        MicrocycleDayTimeline.days(
+        presentedDays ?? MicrocycleDayTimeline.days(
             in: window,
             workouts: workouts,
             restDays: restDays,
@@ -157,7 +159,10 @@ struct MicrocycleDayStrip: View {
     }
 
     private func accessibilityHint(for status: MicrocycleDayStatus) -> String {
-        switch status {
+        if isReadOnly {
+            return "Shows this day's logged history."
+        }
+        return switch status {
         case .trained:
             "Shows the workout for this day."
         case .rest:

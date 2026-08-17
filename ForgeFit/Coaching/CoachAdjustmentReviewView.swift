@@ -109,7 +109,7 @@ struct CoachAdjustmentReviewView: View {
             }
             Text(sourceLabel)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .textCase(.uppercase)
                 .accessibilityIdentifier("coach-review-source-label")
             Text(draft.plan.summary)

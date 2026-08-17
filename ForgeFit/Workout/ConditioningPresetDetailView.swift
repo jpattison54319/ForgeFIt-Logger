@@ -366,7 +366,7 @@ struct ConditioningPresetDetailView: View {
                     } label: {
                         Text(showFullHistory ? "Show Recent Sessions" : "Show All \(entries.count) Sessions")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(maxWidth: .infinity)
                             .minimumTouchTarget()
                     }

@@ -15,6 +15,7 @@ import Foundation
 /// rate, i.e. health data; reset clears it explicitly, backup excludes it.
 enum AppPreferenceKeys {
     static let workoutUngroupedCollapsedKey = "workoutUngroupedCollapsed"
+    static let microcycleHistoryEducationShownKey = "microcycleHistoryEducationShown"
 
     static let backedUp: [String] = [
         "didOnboard",
@@ -28,6 +29,7 @@ enum AppPreferenceKeys {
         CyclePreferenceMigration.activeMesocycleKey,
         CyclePreferenceMigration.activeMicrocycleKey,
         ThemeManager.modeDefaultsKey,
+        ThemeManager.familyDefaultsKey,
         DefaultLaunchTab.key,
         "liveSyncEnabled",
         "healthWriteEnabled",
@@ -63,6 +65,7 @@ enum AppPreferenceKeys {
         LaunchSeedPolicy.defaultsKey,
         PlanMaintenancePolicy.defaultsKey,
         CyclePreferenceMigration.migrationKey,
+        microcycleHistoryEducationShownKey,
         "lastActiveDate",
         "hasCompletedFirstLaunch",
         "welcomeBackPendingGapDays",

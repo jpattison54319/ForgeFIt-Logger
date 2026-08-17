@@ -414,7 +414,7 @@ struct StatisticsView: View {
                         x: .value("Day", day.position),
                         y: .value("Workouts", day.count)
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .cornerRadius(4)
                     if day.position == selectedWeekdayPosition {
                         RuleMark(x: .value("Selected day", day.position))
@@ -595,7 +595,7 @@ struct StatisticsView: View {
                         Spacer()
                         Text(Fmt.durationShort(region.seconds))
                             .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                 }
                 Text("Primary regions count in full, secondary at half — the same convention as muscle volume.")
@@ -654,7 +654,7 @@ struct StatisticsView: View {
                     HStack(spacing: Space.md) {
                         Image(systemName: share.kind.systemImage)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .frame(width: 32, height: 32)
                             .background(theme.surfaceElevated)
                             .clipShape(Circle())

@@ -90,7 +90,7 @@ struct ExperimentPostWorkoutTrackerPrompt: View {
             Card(padding: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "flask.fill")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(active.name)
                             .font(.bodyStrong)

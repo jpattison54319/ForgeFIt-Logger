@@ -12,7 +12,7 @@ struct MyoRepTimerCard: View {
                     VStack(alignment: .leading, spacing: Space.xs) {
                         Text("MICRO-REST")
                             .font(.tag)
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                         Text(timer.label)
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textSecondary)

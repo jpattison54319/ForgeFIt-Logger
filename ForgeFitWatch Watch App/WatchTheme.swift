@@ -1,19 +1,30 @@
 import ForgeCore
 import SwiftUI
 
-/// Watch-sized slice of the ForgeFit design language: same sage / mint /
-/// gold family as the phone, tuned for small OLED screens.
+/// Watch-sized slice of the selected ForgeFit family, tuned for OLED. The
+/// palette is cached in-process and refreshed whenever a phone context lands.
+@MainActor
 enum WTheme {
     /// Apple's minimum comfortable touch dimension, including clear padding
     /// around compact glyphs whose visible size should stay unchanged.
     static let minimumTouchTarget: CGFloat = 44
 
-    static let accent = Color(red: 85 / 255, green: 179 / 255, blue: 116 / 255)       // 0x55B374 Active Sage
-    static let teal = Color(red: 52 / 255, green: 211 / 255, blue: 153 / 255)          // 0x34D399 Fresh Mint
-    static let gold = Color(red: 245 / 255, green: 185 / 255, blue: 58 / 255)          // 0xF5B93A
-    static let danger = Color(red: 255 / 255, green: 90 / 255, blue: 110 / 255)
-    static let success = Color(red: 53 / 255, green: 208 / 255, blue: 122 / 255)        // 0x35D07A aligned with phone
-    static let surface = Color(red: 24 / 255, green: 27 / 255, blue: 33 / 255)         // 0x181B21 neutral slate
+    private(set) static var family = ForgeThemePreferenceStore.load().family
+
+    private static var palette: ForgeThemePalette {
+        ForgeThemeCatalog.palette(for: family, appearance: .dark)
+    }
+
+    static var accent: Color { Color(themeHex: palette.accent) }
+    static var teal: Color { Color(themeHex: palette.secondaryAccent) }
+    static var gold: Color { Color(themeHex: palette.warmup) }
+    static var danger: Color { Color(themeHex: palette.danger) }
+    static var success: Color { Color(themeHex: palette.success) }
+    static var surface: Color { Color(themeHex: palette.surface) }
+
+    static func configure(family: ThemeFamily) {
+        self.family = family
+    }
 
     static func readinessColor(_ score: Int) -> Color {
         switch score {
@@ -21,6 +32,17 @@ enum WTheme {
         case ..<70: gold
         default: success
         }
+    }
+}
+
+private extension Color {
+    init(themeHex: UInt32) {
+        self.init(
+            .sRGB,
+            red: Double((themeHex >> 16) & 0xFF) / 255,
+            green: Double((themeHex >> 8) & 0xFF) / 255,
+            blue: Double(themeHex & 0xFF) / 255
+        )
     }
 }
 

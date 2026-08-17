@@ -14,7 +14,7 @@ struct YogaSafetyActionBar: View {
             Button(action: action) {
                 Label("I Understand · Start Class", systemImage: "play.fill")
                     .font(.bodyStrong)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onAccent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(theme.accent)

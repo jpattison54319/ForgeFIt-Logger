@@ -26,7 +26,10 @@ final class WorkoutActivityController {
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
-        let state = contentState(for: workout, exercises: exercises)
+        var state = contentState(for: workout, exercises: exercises)
+        let themePreference = ForgeThemePreferenceStore.load()
+        state.themeFamily = themePreference.family
+        state.themeMode = themePreference.mode
         if let current = activity ?? Activity<WorkoutActivityAttributes>.activities.first {
             activity = current
             Task {

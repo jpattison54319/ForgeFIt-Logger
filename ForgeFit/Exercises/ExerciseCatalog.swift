@@ -357,7 +357,7 @@ struct ExerciseThumbnail: View {
             theme.surfaceElevated
             Image(systemName: exercise.isCardio ? "figure.run" : "dumbbell.fill")
                 .font(.system(size: size * 0.4, weight: .semibold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
         }
     }
 }

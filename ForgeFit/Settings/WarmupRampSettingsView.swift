@@ -64,7 +64,7 @@ struct WarmupRampSettingsView: View {
                         Button(action: addStage) {
                             Label("Add warm-up set", systemImage: "plus.circle.fill")
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)

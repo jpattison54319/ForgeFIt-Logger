@@ -88,7 +88,7 @@ struct WorkoutCalendarView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .minimumTouchTarget()
                     }
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
             Spacer()
@@ -289,7 +289,7 @@ struct WorkoutCalendarView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "moon.zzz.fill")
                         .font(.title3)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityHidden(true)
                     Text("Rest day")
                         .font(.bodyStrong)

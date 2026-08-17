@@ -1661,7 +1661,7 @@ private struct ExperimentCustomTrackerResultCard: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tracker.label)
                             .font(.bodyStrong)

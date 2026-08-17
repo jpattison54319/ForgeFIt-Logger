@@ -22,7 +22,7 @@ struct PlanImportView: View {
                     if pending.isDuplicate {
                         Label("Already imported", systemImage: "checkmark.circle.fill")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(Space.md)
                             .background(theme.secondaryAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.card))
@@ -90,7 +90,7 @@ struct PlanImportView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: systemImage)
                     .font(.title2)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 48, height: 48)
                     .background(theme.surfaceElevated, in: Circle())
                     .accessibilityHidden(true)

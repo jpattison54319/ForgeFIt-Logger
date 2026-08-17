@@ -11,18 +11,28 @@ import WidgetKit
 struct WorkoutLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
+            let theme = ForgeWidgetTheme(
+                family: context.state.effectiveThemeFamily,
+                mode: context.state.effectiveThemeMode,
+                systemColorScheme: .dark
+            )
             LockScreenWorkoutView(context: context)
-                .activityBackgroundTint(WActivityTheme.background)
-                .activitySystemActionForegroundColor(WActivityTheme.accent)
+                .activityBackgroundTint(theme.background)
+                .activitySystemActionForegroundColor(theme.accentForeground)
                 // Tap from the lock screen drops straight into the logger.
                 .widgetURL(URL(string: "forgefit://workout"))
         } dynamicIsland: { context in
-            DynamicIsland {
+            let theme = ForgeWidgetTheme(
+                family: context.state.effectiveThemeFamily,
+                mode: .dark,
+                systemColorScheme: .dark
+            )
+            return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        Image(systemName: context.isStale ? "pause.circle.fill" : WActivityTheme.icon(for: context.state.mode))
+                        Image(systemName: context.isStale ? "pause.circle.fill" : theme.icon(for: context.state.mode))
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(WActivityTheme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Text(context.isStale ? "Workout paused" : headerTitle(context))
                             .font(.system(size: 14, weight: .bold))
                             .lineLimit(1)
@@ -32,22 +42,22 @@ struct WorkoutLiveActivity: Widget {
                     if context.isStale {
                         Text("Open app")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(WActivityTheme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     } else {
                         elapsedText(context)
                             .font(.system(size: 14, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(WActivityTheme.gold)
+                            .foregroundStyle(theme.warmup)
                     }
                 }
                 DynamicIslandExpandedRegion(.center) {
                     if context.isStale {
                         Text("ForgeFit stopped receiving workout updates")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(theme.textSecondary)
                             .multilineTextAlignment(.center)
                     } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
-                        restCountdown(until: restEndsAt, size: 30)
+                        restCountdown(until: restEndsAt, size: 30, theme: theme)
                     } else if context.state.mode == .yoga {
                         VStack(spacing: 1) {
                             Text(context.state.cardioMetric ?? "In session")
@@ -58,7 +68,7 @@ struct WorkoutLiveActivity: Widget {
                                     .font(.system(size: 14, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .multilineTextAlignment(.center)
-                                    .foregroundStyle(WActivityTheme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     } else if context.state.mode == .cardio || context.state.mode == .conditioning {
@@ -74,7 +84,7 @@ struct WorkoutLiveActivity: Widget {
                             if let next = context.state.nextExerciseName {
                                 Text("Next: \(next)")
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.55))
+                                    .foregroundStyle(theme.textTertiary)
                                     .lineLimit(1)
                             }
                         }
@@ -84,62 +94,62 @@ struct WorkoutLiveActivity: Widget {
                     HStack {
                         Text(context.isStale ? "Open ForgeFit to resume or finish" : detailLine(context))
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(WActivityTheme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .lineLimit(1)
                         Spacer()
                         if !context.isStale, let hr = context.state.heartRate {
                             Label("\(hr)", systemImage: "heart.fill")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(WActivityTheme.danger)
+                                .foregroundStyle(theme.danger)
                         }
                     }
                 }
             } compactLeading: {
                 if context.isStale {
                     Image(systemName: "pause.circle.fill")
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     Image(systemName: "timer")
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 } else {
-                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
-                        .foregroundStyle(WActivityTheme.accent)
+                    Image(systemName: theme.icon(for: context.state.mode))
+                        .foregroundStyle(theme.accentForeground)
                 }
             } compactTrailing: {
                 if context.isStale {
                     Text("Open")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
-                    restCountdown(until: restEndsAt, size: 14)
+                    restCountdown(until: restEndsAt, size: 14, theme: theme)
                         .frame(maxWidth: 44)
                 } else if context.state.mode == .yoga,
                           let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
                     // The current hold is the number a yogi glances for.
-                    restCountdown(until: poseEndsAt, size: 14)
+                    restCountdown(until: poseEndsAt, size: 14, theme: theme)
                         .frame(maxWidth: 44)
                 } else {
                     elapsedText(context)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(WActivityTheme.gold)
+                        .foregroundStyle(theme.warmup)
                         .frame(maxWidth: 52)
                 }
             } minimal: {
                 if context.isStale {
                     Image(systemName: "pause.circle.fill")
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 } else if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
-                    restCountdown(until: restEndsAt, size: 11)
+                    restCountdown(until: restEndsAt, size: 11, theme: theme)
                 } else if context.state.mode == .yoga,
                           let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
-                    restCountdown(until: poseEndsAt, size: 11)
+                    restCountdown(until: poseEndsAt, size: 11, theme: theme)
                 } else {
-                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
-                        .foregroundStyle(WActivityTheme.accent)
+                    Image(systemName: theme.icon(for: context.state.mode))
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
-            .keylineTint(WActivityTheme.accent)
+            .keylineTint(theme.accent)
         }
         // The wrist is where a lifter actually glances mid-set. Without this
         // the watch Smart Stack falls back to a generic presentation;
@@ -168,12 +178,16 @@ struct WorkoutLiveActivity: Widget {
         Text(context.state.startedAt, style: .timer)
     }
 
-    private func restCountdown(until endsAt: Date, size: CGFloat) -> some View {
+    private func restCountdown(
+        until endsAt: Date,
+        size: CGFloat,
+        theme: ForgeWidgetTheme
+    ) -> some View {
         Text(timerInterval: Date.now...endsAt, countsDown: true)
             .font(.system(size: size, weight: .bold, design: .rounded))
             .monospacedDigit()
             .multilineTextAlignment(.center)
-            .foregroundStyle(WActivityTheme.accent)
+            .foregroundStyle(theme.accentForeground)
     }
 }
 
@@ -182,6 +196,15 @@ struct WorkoutLiveActivity: Widget {
 private struct LockScreenWorkoutView: View {
     let context: ActivityViewContext<WorkoutActivityAttributes>
     @Environment(\.activityFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var theme: ForgeWidgetTheme {
+        ForgeWidgetTheme(
+            family: context.state.effectiveThemeFamily,
+            mode: context.state.effectiveThemeMode,
+            systemColorScheme: colorScheme
+        )
+    }
 
     private var isSessionMode: Bool {
         context.state.mode == .cardio || context.state.mode == .conditioning || context.state.mode == .yoga
@@ -202,10 +225,10 @@ private struct LockScreenWorkoutView: View {
         VStack(alignment: family == .small ? .center : .leading, spacing: 4) {
             Label("Workout paused", systemImage: "pause.circle.fill")
                 .font(.system(size: family == .small ? 13 : 16, weight: .bold))
-                .foregroundStyle(WActivityTheme.accent)
+                .foregroundStyle(theme.accentForeground)
             Text("Open ForgeFit to resume or finish")
                 .font(.system(size: family == .small ? 11 : 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(family == .small ? .center : .leading)
                 .lineLimit(2)
         }
@@ -219,29 +242,29 @@ private struct LockScreenWorkoutView: View {
     private var watchBody: some View {
         VStack(spacing: 1) {
             HStack(spacing: 4) {
-                Image(systemName: WActivityTheme.icon(for: context.state.mode))
+                Image(systemName: theme.icon(for: context.state.mode))
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(WActivityTheme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text(headline)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
-                watchTimer(until: restEndsAt, tint: WActivityTheme.accent)
+                watchTimer(until: restEndsAt, tint: theme.accentForeground)
             } else if context.state.mode == .yoga,
                       let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
-                watchTimer(until: poseEndsAt, tint: WActivityTheme.accent)
+                watchTimer(until: poseEndsAt, tint: theme.accentForeground)
             } else {
                 Text(context.state.startedAt, style: .timer)
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(WActivityTheme.gold)
+                    .foregroundStyle(theme.warmup)
             }
             Text(detailLine)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(WActivityTheme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .lineLimit(1)
         }
         .padding(.horizontal, 6)
@@ -267,40 +290,40 @@ private struct LockScreenWorkoutView: View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: WActivityTheme.icon(for: context.state.mode))
+                    Image(systemName: theme.icon(for: context.state.mode))
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text(isSessionMode ? (context.state.cardioTitle ?? context.attributes.workoutTitle) : context.attributes.workoutTitle)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                 }
                 if isSessionMode {
                     Text(context.state.cardioMetric ?? "Recording")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 } else if let exercise = context.state.exerciseName {
                     Text(exercise)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                     // What's coming, so the lifter can set up without
                     // reopening the app; the last exercise says so instead.
                     Text(context.state.nextExerciseName.map { "Next: \($0)" } ?? "Final exercise")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(theme.textTertiary)
                         .lineLimit(1)
                 }
                 HStack(spacing: 10) {
                     Text(detailLine)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .lineLimit(1)
                     if let hr = context.state.heartRate {
                         Label("\(hr)", systemImage: "heart.fill")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(WActivityTheme.danger)
+                            .foregroundStyle(theme.danger)
                     }
                 }
             }
@@ -309,12 +332,12 @@ private struct LockScreenWorkoutView: View {
                 if let restEndsAt = context.state.restEndsAt, restEndsAt > .now {
                     Text("REST")
                         .font(.system(size: 10, weight: .heavy))
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text(timerInterval: Date.now...restEndsAt, countsDown: true)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .multilineTextAlignment(.trailing)
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(maxWidth: 90)
                 } else if context.state.mode == .yoga,
                           let poseEndsAt = context.state.poseEndsAt, poseEndsAt > .now {
@@ -322,22 +345,22 @@ private struct LockScreenWorkoutView: View {
                     // timer — the number that matters on a locked phone.
                     Text("HOLD")
                         .font(.system(size: 10, weight: .heavy))
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text(timerInterval: Date.now...poseEndsAt, countsDown: true)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .multilineTextAlignment(.trailing)
-                        .foregroundStyle(WActivityTheme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(maxWidth: 90)
                 } else {
                     Text("ELAPSED")
                         .font(.system(size: 10, weight: .heavy))
-                        .foregroundStyle(WActivityTheme.gold.opacity(0.8))
+                        .foregroundStyle(theme.warmup.opacity(0.8))
                     Text(context.state.startedAt, style: .timer)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .multilineTextAlignment(.trailing)
-                        .foregroundStyle(WActivityTheme.gold)
+                        .foregroundStyle(theme.warmup)
                         .frame(maxWidth: 110)
                 }
             }
@@ -351,28 +374,6 @@ private struct LockScreenWorkoutView: View {
         case .conditioning: context.state.cardioDetail ?? "Conditioning"
         case .yoga: context.state.cardioDetail ?? "Yoga"
         case .strength: "\(context.state.completedSets)/\(context.state.totalSets) sets"
-        }
-    }
-}
-
-/// Sage palette for EVERY widget surface — the Live Activity and the
-/// launcher/lock-screen widgets (the extension has no app theme). Keep in
-/// sync with `AppTheme.sage`; nothing here may fall back to `.purple` /
-/// `.green` system colors (the launcher widget shipped the pre-sage purple
-/// brand for months because it didn't share this palette).
-enum WActivityTheme {
-    static let background = Color(red: 14 / 255, green: 17 / 255, blue: 22 / 255)    // 0x0E1116 slate obsidian
-    static let accent = Color(red: 85 / 255, green: 179 / 255, blue: 116 / 255)     // 0x55B374
-    static let gold = Color(red: 245 / 255, green: 185 / 255, blue: 58 / 255)       // 0xF5B93A
-    static let danger = Color(red: 255 / 255, green: 90 / 255, blue: 100 / 255)
-    static let recoveryHigh = Color(red: 53 / 255, green: 208 / 255, blue: 122 / 255) // 0x35D07A
-
-    static func icon(for mode: WorkoutActivityAttributes.WorkoutActivityMode) -> String {
-        switch mode {
-        case .strength: "dumbbell.fill"
-        case .cardio: "figure.run"
-        case .conditioning: "figure.cross.training"
-        case .yoga: "figure.yoga"
         }
     }
 }

@@ -56,7 +56,7 @@ struct YogaPoseArt: View {
             }
         }
         .frame(width: size, height: size)
-        .foregroundStyle(theme.accent)
+        .foregroundStyle(theme.accentForeground)
         .accessibilityHidden(true)
         .task(id: imageLoadKey, priority: .userInitiated) {
             await loadImage()
@@ -71,7 +71,7 @@ struct YogaPoseArt: View {
             }
         }
         .frame(width: size, height: size)
-        .foregroundStyle(theme.accent)
+        .foregroundStyle(theme.accentForeground)
         .accessibilityHidden(true)
         #endif
     }

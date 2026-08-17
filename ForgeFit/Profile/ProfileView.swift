@@ -14,15 +14,19 @@ struct ProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AppState.self) private var appState
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
+    @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse)
+    private var microcycleTrackings: [MicrocycleTrackingModel]
 
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
     @State private var showSettings = false
     @State private var showProfileEditor = false
+    @State private var navigationPath = NavigationPath()
     @State private var completedMemo = Memo<String, [WorkoutModel]>()
     @State private var statsMemo = Memo<String, ProfileStats>()
 
@@ -57,7 +61,7 @@ struct ProfileView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScreenScaffold("Profile", trailing: {
                 HStack(spacing: Space.sm) {
                     CircleIconButton(systemImage: "square.and.pencil", label: "Edit profile") { showProfileEditor = true }
@@ -86,7 +90,7 @@ struct ProfileView: View {
                             .minimumTouchTarget()
                         }
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .buttonStyle(.plain)
                         .accessibilityLabel("See all workouts")
                         .accessibilityIdentifier("profile-see-all-workouts")
@@ -116,6 +120,8 @@ struct ProfileView: View {
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
                 case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
+                case .microcycles:
+                    MicrocycleHistoryView(workouts: workouts, exercises: exercises)
                 case .community:
                     SocialHubView(makeSnapshot: {
                         SocialProfileComposer.snapshot(
@@ -134,8 +140,11 @@ struct ProfileView: View {
             .refreshable { await AppRefresh.run(in: modelContext) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showProfileEditor) { ProfileEditSheet() }
+            .onChange(of: appState.pendingProfileRoute, initial: true) { _, route in
+                openPendingRoute(route)
+            }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .interactiveBackSwipeEnabled()
     }
 
@@ -185,7 +194,7 @@ struct ProfileView: View {
             HStack(spacing: Space.xs) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .accessibilityHidden(true)
                 Text(value)
                     .font(.system(size: 17, weight: .bold))
@@ -256,12 +265,31 @@ struct ProfileView: View {
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
+            if hasStoppedMicrocycleTracking {
+                NavigationLink(value: ProfileRoute.microcycles) {
+                    DashboardTileLabel("Microcycles", "calendar.badge.checkmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("profile-microcycle-history")
+            }
             if FeatureFlags.social {
                 NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("dashboard-community")
             }
         }
+    }
+
+    private var hasStoppedMicrocycleTracking: Bool {
+        MicrocycleHistoryPresentation.hasStoppedRun(microcycleTrackings)
+    }
+
+    private func openPendingRoute(_ route: ProfileRoute?) {
+        guard let route else { return }
+        var path = NavigationPath()
+        path.append(route)
+        navigationPath = path
+        appState.pendingProfileRoute = nil
     }
 
 }
@@ -277,7 +305,7 @@ struct LevelBadge: View {
     var body: some View {
         Text("Level \(level)")
             .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(theme.onAccent)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(theme.accent)
@@ -314,13 +342,13 @@ struct XPProgressBar: View {
                     .foregroundStyle(theme.accentSoft)
                 Image(systemName: "hexagon")
                     .font(.system(size: 44, weight: .medium))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text("XP")
                     .font(.system(size: 13, weight: .heavy))
                     .foregroundStyle(theme.textPrimary)
             }
             VStack(alignment: .leading, spacing: Space.sm) {
-                Text("\(Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent))\(Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary))\(Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))")
+                Text("\(Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accentForeground))\(Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary))\(Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))")
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -389,7 +417,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, community
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, microcycles, community
     case workout(UUID)
 }
 
@@ -563,7 +591,7 @@ struct ExercisesListView: View {
                                 Spacer()
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                             .padding(Space.md)
                             .background(theme.surface)

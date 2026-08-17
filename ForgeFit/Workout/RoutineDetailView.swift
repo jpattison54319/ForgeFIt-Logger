@@ -51,7 +51,7 @@ struct RoutineDetailView: View {
                     Button { editing = true } label: {
                         Text("Edit Routine")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                 }
@@ -134,7 +134,7 @@ struct RoutineDetailView: View {
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
                                 .contentTransition(.numericText())
                             Text(last.date.formatted(.dateTime.month(.abbreviated).day()))
-                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentForeground)
                         } else {
                             Text("No data yet").font(.cardTitle).foregroundStyle(theme.textSecondary)
                         }
@@ -435,7 +435,7 @@ private struct RoutineExerciseSummary: View {
             }
             Spacer()
         }
-        .foregroundStyle(theme.accent)
+        .foregroundStyle(theme.accentForeground)
     }
 
     private var strengthSummary: some View {
@@ -444,7 +444,7 @@ private struct RoutineExerciseSummary: View {
                 Image(systemName: "timer").font(.system(size: 13, weight: .semibold))
                 Text("Rest Timer: \(restText)").font(.system(size: 14, weight: .semibold))
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
 
             HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
@@ -456,7 +456,7 @@ private struct RoutineExerciseSummary: View {
             .foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
-                let style = SetTypeStyle.of(set.setType)
+                let style = SetTypeStyle.of(set.setType, theme: theme)
                 HStack(alignment: .top, spacing: 8) {
                     Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sortedSets))
                         .font(.system(size: 15, weight: .bold))

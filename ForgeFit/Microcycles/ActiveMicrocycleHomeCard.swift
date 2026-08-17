@@ -88,7 +88,7 @@ struct ActiveMicrocycleHomeCard<Destination: Hashable>: View {
                         .accessibilityHidden(true)
                 }
                 .font(.subheadline.bold())
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .frame(minHeight: 44)
             }
             .buttonStyle(.plain)

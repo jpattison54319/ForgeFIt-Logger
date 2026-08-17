@@ -19,7 +19,7 @@ struct OnboardingWelcomeStep: View {
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text("ForgeFit")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Text("Train everything.\nLog it fast.")
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)

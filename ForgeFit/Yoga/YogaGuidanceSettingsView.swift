@@ -128,7 +128,7 @@ struct YogaSafetyView: View {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     Image(systemName: "figure.mind.and.body")
                         .font(.system(size: 38, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityHidden(true)
 
                     Text("Practice within your range")
@@ -187,7 +187,7 @@ struct YogaSafetyView: View {
     private func safetyPoint(icon: String, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: Space.md) {
             Image(systemName: icon)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)

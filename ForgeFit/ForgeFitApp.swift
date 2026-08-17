@@ -5,8 +5,21 @@ import SwiftData
 @main
 struct ForgeFitApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var themeManager = ThemeManager()
     @State private var persistenceState: PersistenceLaunchState
+
+    private var activeTheme: AppTheme {
+        .active(
+            family: themeManager.family,
+            mode: themeManager.mode,
+            system: systemColorScheme
+        )
+    }
+
+    private var resolvedColorScheme: ColorScheme {
+        themeManager.mode.resolvedColorScheme(system: systemColorScheme)
+    }
 
     init() {
         // Generous shared URL cache so exercise illustrations survive offline
@@ -66,6 +79,12 @@ struct ForgeFitApp: App {
                 }
             }
             .environmentObject(themeManager)
+            // Install the user's selection above the entire scene. This keeps
+            // every descendant presentation (including sheets hosted outside
+            // a view's local modifier chain) on the same resolved family.
+            .environment(\.theme, activeTheme)
+            .preferredColorScheme(resolvedColorScheme)
+            .tint(activeTheme.accent)
             .persistentChangeSaveAlert()
             // Dynamic Type is token-anchored (Theme.swift type ramp); the
             // ceiling keeps dense fixed-frame surfaces — the set-entry grid,

@@ -77,7 +77,7 @@ struct MyoRepMiniSetEditSheet: View {
                             Spacer()
                             Button("Done", action: dismissKeyboard)
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .buttonStyle(.glass)
                                 .buttonBorderShape(.capsule)
                                 .controlSize(.large)

@@ -74,7 +74,7 @@ enum MicrocycleTrackingService {
                 .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }
             for existing in active {
                 existing.stateRaw = "ended"
-                existing.endedAt = today
+                existing.endedAt = now
                 existing.updatedAt = now
             }
 

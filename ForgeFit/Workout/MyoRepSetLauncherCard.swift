@@ -15,7 +15,7 @@ struct MyoRepSetLauncherCard: View {
     let onSetType: (SetType) -> Void
     let onDelete: () -> Void
 
-    private var style: SetTypeStyle { SetTypeStyle.of(.myoRep) }
+    private var style: SetTypeStyle { SetTypeStyle.of(.myoRep, theme: theme) }
     // `self.` is required: a computed-property body whose first token is `set`
     // parses as a setter accessor.
     private var isCompleted: Bool { self.set.completedAt != nil }

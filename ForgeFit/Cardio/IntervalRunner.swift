@@ -540,7 +540,7 @@ struct IntervalRunnerStrip: View {
     private func targetChip(_ target: IntervalPlan.Target) -> some View {
         Text(IntervalTargetFormatting.text(for: target, cadenceUnit: cadenceUnit))
             .font(.system(size: 10, weight: .heavy))
-            .foregroundStyle(theme.secondaryAccent)
+            .foregroundStyle(theme.secondaryAccentForeground)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(theme.secondaryAccent.opacity(0.12))
             .clipShape(Capsule())

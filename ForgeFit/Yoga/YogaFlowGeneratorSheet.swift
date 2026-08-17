@@ -94,7 +94,7 @@ struct YogaFlowGeneratorSheet: View {
                             seed = UInt64.random(in: 0...UInt64.max)
                         } label: {
                             Label("Shuffle", systemImage: "shuffle")
-                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentForeground)
                         }
                     }
                     .listRowBackground(theme.surface)

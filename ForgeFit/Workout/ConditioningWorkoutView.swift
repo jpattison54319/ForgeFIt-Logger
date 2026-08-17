@@ -120,6 +120,7 @@ struct ConditioningWorkoutView: View {
                 }
             }
         }
+        .accessibilityIdentifier("conditioning-workout-theme-\(theme.family.rawValue)")
         .interactiveDismissDisabled()
         .task { await runClock() }
         .sheet(isPresented: $showScore) {
@@ -346,7 +347,7 @@ private struct ConditioningClockCard: View {
                     Text(clockText(elapsed: elapsed))
                         .font(.system(size: 52, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .contentTransition(.numericText(countsDown: countsDown))
                         .accessibilityLabel(clockAccessibility(elapsed: elapsed))
                     Text(phaseText(elapsed: elapsed))
@@ -418,7 +419,7 @@ private struct ConditioningMovementList: View {
             HStack {
                 Text(section.name).font(.sectionTitle).foregroundStyle(theme.textPrimary)
                 Spacer()
-                Text(roundLabel).font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(roundLabel).font(.bodyStrong).foregroundStyle(theme.accentForeground)
             }
             Card(padding: 0) {
                 VStack(spacing: 0) {
@@ -440,7 +441,7 @@ private struct ConditioningMovementList: View {
                                 Spacer()
                                 Text(targetLabel(movement))
                                     .font(.rowValue)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                             .padding(Space.md)
                             .contentShape(.rect)
@@ -552,7 +553,7 @@ private struct ConditioningScoreSheet: View {
                                     .font(.cardTitle)
                                 Text(score(result))
                                     .font(.metricValue)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                 if let status = statusText(for: result) {
                                     Text(status).font(.body).foregroundStyle(theme.textSecondary)
                                 }
@@ -565,7 +566,7 @@ private struct ConditioningScoreSheet: View {
                                 Text("Confirm Score").font(.cardTitle)
                                 Stepper(value: $rounds, in: 0...999) {
                                     LabeledContent(section.format == .emom ? "Intervals" : "Full rounds") {
-                                        Text("\(rounds)").font(.rowValue).foregroundStyle(theme.accent)
+                                        Text("\(rounds)").font(.rowValue).foregroundStyle(theme.accentForeground)
                                     }
                                 }
                             }

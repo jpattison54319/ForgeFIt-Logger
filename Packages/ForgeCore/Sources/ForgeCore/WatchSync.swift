@@ -51,6 +51,9 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     /// the `??` accessors below.
     public var distanceUnit: DistanceUnit?
     public var hrZoneConfig: HRZoneConfig?
+    /// Additive optionals keep mixed-version phone/watch pairs decodable.
+    public var themeFamily: ThemeFamily?
+    public var themeMode: ForgeThemeMode?
 
     public init(
         workout: WatchWorkoutSnapshot? = nil,
@@ -61,7 +64,9 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         unitSuffix: String = "lb",
         updatedAt: Date = Date(),
         distanceUnit: DistanceUnit? = nil,
-        hrZoneConfig: HRZoneConfig? = nil
+        hrZoneConfig: HRZoneConfig? = nil,
+        themeFamily: ThemeFamily? = nil,
+        themeMode: ForgeThemeMode? = nil
     ) {
         self.workout = workout
         self.routines = routines
@@ -72,12 +77,16 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.distanceUnit = distanceUnit
         self.hrZoneConfig = hrZoneConfig
+        self.themeFamily = themeFamily
+        self.themeMode = themeMode
     }
 
     /// The user's distance unit, defaulting to km when a peer hasn't sent one.
     public var effectiveDistanceUnit: DistanceUnit { distanceUnit ?? .km }
     /// The user's HR-zone config, defaulting to the classic model.
     public var effectiveHRZoneConfig: HRZoneConfig { hrZoneConfig ?? HRZoneConfig() }
+    public var effectiveThemeFamily: ThemeFamily { themeFamily ?? .sage }
+    public var effectiveThemeMode: ForgeThemeMode { themeMode ?? .dark }
 }
 
 public struct WatchRoutineSummary: Codable, Sendable, Equatable, Identifiable {

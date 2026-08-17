@@ -119,6 +119,7 @@ struct WorkoutSharePreviewSheet: View {
     /// renders so the carousel stays responsive. Route maps are snapshotted
     /// once up front (MapKit can't be rasterized by ImageRenderer).
     private func renderPages() async {
+        let exportTheme = AppTheme.export(family: theme.family)
         let awards = WorkoutAwards.all(
             for: workout,
             history: history,
@@ -130,7 +131,11 @@ struct WorkoutSharePreviewSheet: View {
                 .sorted { $0.timestamp < $1.timestamp }
                 .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
             if coordinates.count >= 2,
-               let map = await RouteMapSnapshot.image(coordinates: coordinates, size: WorkoutShareCard.routeMapSize, theme: theme) {
+               let map = await RouteMapSnapshot.image(
+                   coordinates: coordinates,
+                   size: WorkoutShareCard.routeMapSize,
+                   theme: exportTheme
+               ) {
                 routeMaps[session.id] = map
             }
         }
@@ -147,45 +152,46 @@ struct WorkoutSharePreviewSheet: View {
         routeMaps: [UUID: UIImage],
         awards: [WorkoutAward]
     ) -> UIImage? {
+        let exportTheme = AppTheme.export(family: theme.family)
         switch style {
         case .trainingLog:
             return ShareRenderer.image(
                 WorkoutShareCardTrainingLog(
                     workout: workout,
                     exercises: exercises,
-                    theme: theme,
+                    theme: exportTheme,
                     routeMaps: routeMaps,
                     awards: awards
                 ),
-                theme: theme
+                theme: exportTheme
             )
         case .metrics:
             return ShareRenderer.image(
                 WorkoutShareCardMetrics(
                     workout: workout,
                     exercises: exercises,
-                    theme: theme,
+                    theme: exportTheme,
                     hrSamples: hrSamples,
                     recoveryPoints: recoveryPoints,
                     awards: awards
                 ),
-                theme: theme
+                theme: exportTheme
             )
         case .minimal:
             return ShareRenderer.image(
                 WorkoutShareCardMinimal(
                     workout: workout,
                     exercises: exercises,
-                    theme: theme,
+                    theme: exportTheme,
                     awards: awards
                 ),
-                theme: theme
+                theme: exportTheme
             )
         case .full:
             return WorkoutShareRenderer.image(
                 for: workout,
                 exercises: exercises,
-                theme: theme,
+                theme: exportTheme,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints,
                 routeMaps: routeMaps,

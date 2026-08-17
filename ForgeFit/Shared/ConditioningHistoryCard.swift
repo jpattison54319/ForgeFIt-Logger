@@ -256,7 +256,7 @@ struct ConditioningHistoryCard: View {
             HStack(spacing: Space.sm) {
                 Image(systemName: "chart.xyaxis.line")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 28, height: 28)
                     .background(theme.accent.opacity(0.12))
                     .clipShape(Circle())

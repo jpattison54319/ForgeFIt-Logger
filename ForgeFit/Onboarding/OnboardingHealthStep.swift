@@ -17,7 +17,7 @@ struct OnboardingHealthStep: View {
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text("Step 2 of 2")
                             .font(.label)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Image(systemName: "heart.fill")
                             .font(.screenTitle)
                             .foregroundStyle(theme.success)
@@ -53,7 +53,7 @@ struct OnboardingHealthStep: View {
                         HStack(alignment: .top, spacing: Space.md) {
                             Image(systemName: "lock.shield.fill")
                                 .font(.cardTitle)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: Space.xs) {
                                 Text("Health data is processed on this device")

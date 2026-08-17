@@ -500,6 +500,10 @@ extension WatchSyncTests {
         #expect(decoded.readiness == 75)
         #expect(decoded.readinessAction == nil)
         #expect(decoded.readinessDetail == nil)
+        #expect(decoded.themeFamily == nil)
+        #expect(decoded.themeMode == nil)
+        #expect(decoded.effectiveThemeFamily == .sage)
+        #expect(decoded.effectiveThemeMode == .dark)
     }
 }
 

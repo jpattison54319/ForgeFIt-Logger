@@ -422,7 +422,7 @@ struct AICoachChatView: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.sm) {
                     Image(systemName: "sparkles")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Using your ForgeFit data")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -452,7 +452,7 @@ struct AICoachChatView: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: 6) {
                     Image(systemName: plan.action.systemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Today's call: \(plan.action.title)")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -522,7 +522,7 @@ struct AICoachChatView: View {
             Button { send() } label: {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(canSend ? theme.onAccent : theme.textTertiary)
                     .frame(width: 44, height: 44)   // HIG minimum touch target
                     .background(canSend ? theme.accent : theme.surfaceHighlight)
                     .clipShape(Circle())
@@ -592,7 +592,7 @@ struct AICoachCard: View {
         Card(fill: theme.accentSoft) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles").foregroundStyle(theme.accent)
+                    Image(systemName: "sparkles").foregroundStyle(theme.accentForeground)
                     Text("Coach").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     if AICoach.isSupported {

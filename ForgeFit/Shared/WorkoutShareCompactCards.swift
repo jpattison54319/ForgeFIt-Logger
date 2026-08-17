@@ -310,7 +310,7 @@ struct WorkoutShareCardTrainingLog: View {
                             }
                         }
                         ForEach(Array(block.lines.enumerated()), id: \.offset) { index, line in
-                            let style = SetTypeStyle.of(line.type)
+                            let style = SetTypeStyle.of(line.type, theme: theme)
                             HStack(spacing: 8) {
                                 Text(line.label)
                                     .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -354,7 +354,7 @@ struct WorkoutShareCardTrainingLog: View {
         if let hr = session.avgHR { parts.append("\(hr) bpm") }
         return HStack(spacing: 6) {
             Image(systemName: kind.systemImage)
-                .font(.system(size: 12, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                .font(.system(size: 12, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
             Text(exerciseName(for: session) ?? kind.title)
                 .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
@@ -383,7 +383,7 @@ struct WorkoutShareCardTrainingLog: View {
                     HStack(spacing: 8) {
                         let kind = CardioKind.from(modality: primary.modality)
                         Image(systemName: kind.systemImage)
-                            .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                            .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                         Text(exerciseName(for: primary) ?? kind.title)
                             .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.textPrimary)
                         Spacer(minLength: 0)
@@ -467,7 +467,7 @@ struct WorkoutShareCardTrainingLog: View {
         return chrome.surfaceBlock {
             HStack(spacing: 8) {
                 Image(systemName: "figure.yoga")
-                    .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                    .font(.system(size: 14, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                 Text(session.map {
                     YogaHistoryPresentation.title(session: $0, plan: plan, exercise: nil)
                 } ?? "Yoga")

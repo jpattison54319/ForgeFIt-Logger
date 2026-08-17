@@ -454,7 +454,7 @@ struct ConditioningShareBlock: View {
                 HStack(spacing: 7) {
                     Image(systemName: "figure.cross.training")
                         .font(.system(size: compact ? 12 : 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Conditioning")
                         .font(.system(size: compact ? 14 : 16, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
@@ -486,7 +486,7 @@ struct ConditioningShareBlock: View {
                             VStack(alignment: .trailing, spacing: 1) {
                                 Text(ConditioningSharePresentation.score(sectionResult))
                                     .font(.system(size: compact ? 13 : 15, weight: .bold, design: .rounded))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .lineLimit(1)
                                 let status = ConditioningSharePresentation.completionStatus(
                                     section: section,

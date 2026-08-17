@@ -17,6 +17,9 @@ final class AppState {
     /// Import completion hands the Workout tab an ID instead of a model from
     /// another ModelContext; the tab resolves it after its @Query refreshes.
     var pendingRoutineDetailID: UUID?
+    /// Cross-tab calls hand Profile a typed route; the keep-resident tab
+    /// consumes it after switching so navigation never races tab mounting.
+    var pendingProfileRoute: ProfileRoute?
 
     /// Guarded workout start: every "start a workout" action funnels through
     /// here so ContentView can warn before discarding an active session.
@@ -30,6 +33,11 @@ final class AppState {
     func requestStart(_ action: @escaping () -> Void) {
         pendingWorkoutStart = action
         startRequestID += 1
+    }
+
+    func openProfile(_ route: ProfileRoute) {
+        pendingProfileRoute = route
+        selectedTab = .profile
     }
 }
 
@@ -200,7 +208,11 @@ struct ContentView: View {
         themeManager.mode.resolvedColorScheme(system: systemColorScheme)
     }
     private var activeTheme: AppTheme {
-        .active(for: themeManager.mode, system: systemColorScheme)
+        .active(
+            family: themeManager.family,
+            mode: themeManager.mode,
+            system: systemColorScheme
+        )
     }
 
     /// Count of live completed workouts — changes when one is finished or
@@ -271,33 +283,41 @@ struct ContentView: View {
                 }
             }
             .fullScreenCover(isPresented: $appState.showingLogger) {
-            if let activeWorkout = activeWorkoutForPresentation() {
-                // No `injectedHistory:` — the logger snapshots history itself,
-                // so the per-save re-fetch of `workouts` never hands the
-                // logger a new array identity mid-session.
-                if activeWorkout.conditioningPlanSnapshotJSON != nil && activeWorkout.blocks.isEmpty {
-                    ConditioningWorkoutView(
-                        workout: activeWorkout,
-                        exercises: exercises,
-                        onMinimize: { appState.showingLogger = false },
-                        onFinished: { _ in
-                            appState.showingLogger = false
-                            Task { await syncCoordinator?.flushNow() }
+                Group {
+                    if let activeWorkout = activeWorkoutForPresentation() {
+                        // No `injectedHistory:` — the logger snapshots history itself,
+                        // so the per-save re-fetch of `workouts` never hands the
+                        // logger a new array identity mid-session.
+                        if activeWorkout.conditioningPlanSnapshotJSON != nil && activeWorkout.blocks.isEmpty {
+                            ConditioningWorkoutView(
+                                workout: activeWorkout,
+                                exercises: exercises,
+                                onMinimize: { appState.showingLogger = false },
+                                onFinished: { _ in
+                                    appState.showingLogger = false
+                                    Task { await syncCoordinator?.flushNow() }
+                                }
+                            )
+                        } else {
+                            ActiveWorkoutLoggerView(
+                                workout: activeWorkout,
+                                exercises: exercises,
+                                setupNotes: setupNotes,
+                                onMinimize: { appState.showingLogger = false },
+                                // The finish save already queued the share via the change
+                                // feed; skipping the debounce makes it appear immediately.
+                                onFinished: { _ in Task { await syncCoordinator?.flushNow() } }
+                            )
+                            .environment(social)
                         }
-                    )
-                } else {
-                    ActiveWorkoutLoggerView(
-                        workout: activeWorkout,
-                        exercises: exercises,
-                        setupNotes: setupNotes,
-                        onMinimize: { appState.showingLogger = false },
-                        // The finish save already queued the share via the change
-                        // feed; skipping the debounce makes it appear immediately.
-                        onFinished: { _ in Task { await syncCoordinator?.flushNow() } }
-                    )
-                    .environment(social)
+                    }
                 }
-            }
+                // Presentation content can be hosted outside this modifier's
+                // environment chain. Pin the resolved selection so every live
+                // workout path and its nested sheets receive the active family.
+                .environment(\.theme, activeTheme)
+                .preferredColorScheme(resolvedColorScheme)
+                .tint(activeTheme.accent)
             }
             .fullScreenCover(isPresented: Binding(
                 get: { isOnboardingCoverPresented },
@@ -492,6 +512,12 @@ struct ContentView: View {
                 schedulePlanDeduplication()
             }
             .onChange(of: exercises.count) { schedulePlanDeduplication() }
+            .onChange(of: themeManager.family) { _, _ in
+                handleThemePreferenceChange()
+            }
+            .onChange(of: themeManager.mode) { _, _ in
+                handleThemePreferenceChange()
+            }
             .onChange(of: conditioningPresetRevision) {
                 guard didFinishLaunchTasks, activeWorkout == nil else { return }
                 reconcileConditioningPresetHistory()
@@ -751,6 +777,17 @@ struct ContentView: View {
         updateWidgetSnapshot()
         WatchLink.shared.publishState(force: true)
         ReadinessDelivery.shared.refreshMorningNotification()
+    }
+
+    /// Theme changes are rare user actions. Refresh each external surface once
+    /// here rather than making individual views observe preferences or perform
+    /// cross-process writes during normal rendering.
+    private func handleThemePreferenceChange() {
+        WatchLink.shared.publishState(force: true)
+        WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
+        #endif
     }
 
     private func handleCompletedWorkoutCountChange(oldCount: Int, newCount: Int) {
@@ -1783,6 +1820,9 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-routine-reorder") {
                 try RoutineReorderUITestFixture.seed(in: modelContext)
             }
+            if ProcessInfo.processInfo.arguments.contains("--seed-microcycle-tracking") {
+                try MicrocycleTrackingUITestFixture.seed(in: modelContext)
+            }
             try RoutineHierarchyUITestFixture.seedIfRequested(
                 arguments: ProcessInfo.processInfo.arguments,
                 in: modelContext
@@ -1973,7 +2013,7 @@ struct ContentView: View {
         InsightDataCoordinator.shared.invalidate()
         cleanedOnboardingSlate = false
         showOnboarding = true
-        themeManager.mode = .dark
+        themeManager.reset()
         updateWidgetSnapshot()
     }
 

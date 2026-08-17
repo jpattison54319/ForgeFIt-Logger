@@ -80,7 +80,7 @@ struct InsightsView: View {
                         NavigationLink(value: InsightsRoute.records) {
                             Card(padding: Space.md) {
                                 HStack {
-                                    Text("See all records").font(.bodyStrong).foregroundStyle(theme.accent)
+                                    Text("See all records").font(.bodyStrong).foregroundStyle(theme.accentForeground)
                                     Spacer()
                                     Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
                                 }
@@ -118,7 +118,7 @@ struct InsightsView: View {
                 InsightsInfoSheet(topic: topic)
             }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { path.removeAll() }
         .onAppear(perform: consumeExperimentRoute)
         .onReceive(
             NotificationCenter.default.publisher(
@@ -272,7 +272,7 @@ private struct RecordRow: View {
                 // only the chevron signals tappable (design rule).
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
         }
     }
@@ -759,7 +759,7 @@ struct ExerciseDetailView: View {
                     } label: {
                         Text(showFullHistory ? "Show Recent Only" : "Show All \(sessions.count) Sessions")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                             .minimumTouchTarget()
@@ -803,7 +803,7 @@ struct ExerciseDetailView: View {
                             Spacer(minLength: Space.sm)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                         }
                         .contentShape(Rectangle())
                         .minimumTouchTarget()
@@ -818,7 +818,7 @@ struct ExerciseDetailView: View {
                     } label: {
                         Text(showFullHistory ? "Show Recent Only" : "Show All \(sessionEntries.count) Sessions")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                             .minimumTouchTarget()
@@ -844,7 +844,7 @@ struct ExerciseDetailView: View {
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
             ForEach(sets, id: \.id) { set in
                 setHistoryRow(set)
@@ -853,7 +853,7 @@ struct ExerciseDetailView: View {
     }
 
     private func setHistoryRow(_ set: SetModel) -> some View {
-        let style = SetTypeStyle.of(set.setType)
+        let style = SetTypeStyle.of(set.setType, theme: theme)
         return HStack(spacing: Space.sm) {
             Text(style.badge.isEmpty ? "•" : style.badge)
                 .font(.system(size: 12, weight: .bold))

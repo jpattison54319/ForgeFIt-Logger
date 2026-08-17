@@ -20,7 +20,7 @@ struct MyInsightsEntryCard: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 38, height: 38)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -37,7 +37,7 @@ struct MyInsightsEntryCard: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
         }
     }
@@ -226,7 +226,7 @@ struct MyInsightsView: View {
                     HStack(spacing: Space.md) {
                         Image(systemName: template.systemImage)
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(width: 36, height: 36)
                             .background(theme.surfaceElevated)
                             .clipShape(Circle())

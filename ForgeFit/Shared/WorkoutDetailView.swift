@@ -593,7 +593,7 @@ struct WorkoutDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "figure.strengthtraining.traditional")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Muscles worked").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 VStack(spacing: 8) {
@@ -694,7 +694,7 @@ struct WorkoutDetailView: View {
     }
 
     private func historicalSetRow(_ set: SetModel, index: Int, sets: [SetModel], unit: WeightUnit) -> some View {
-        let style = SetTypeStyle.of(set.setType)
+        let style = SetTypeStyle.of(set.setType, theme: theme)
         let label = historicalSetLabel(for: set, index: index, sets: sets)
         let isPlainWorking = set.setType == .working
         let isCompleted = HistoricalSetPresentation.isCompleted(set)
@@ -754,7 +754,7 @@ struct WorkoutDetailView: View {
     private func autoIntervalBanner(_ cardio: CardioSessionModel) -> some View {
         let workCount = cardio.splits.filter { $0.autoDetected && ($0.label?.hasPrefix("Work") == true) }.count
         HStack(spacing: 8) {
-            Image(systemName: "wand.and.stars").foregroundStyle(theme.secondaryAccent)
+            Image(systemName: "wand.and.stars").foregroundStyle(theme.secondaryAccentForeground)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Detected \(workCount) interval\(workCount == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
@@ -770,7 +770,7 @@ struct WorkoutDetailView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .minimumTouchTarget()
             }
-            .foregroundStyle(theme.secondaryAccent)
+            .foregroundStyle(theme.secondaryAccentForeground)
             Button {
                 CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext)
             } label: {
@@ -794,7 +794,7 @@ struct WorkoutDetailView: View {
         if let ef = analytics.efficiencyFactor(for: cardio, averageHeartRate: averageHeartRate),
            analytics.isAerobicSession(cardio, config: config, averageHeartRate: averageHeartRate) {
             HStack(spacing: 8) {
-                Image(systemName: "bolt.heart.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent)
+                Image(systemName: "bolt.heart.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accentForeground)
                 Text("Efficiency \(ef.formatted(.number.precision(.fractionLength(2))))")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 if let baseline = aerobicEFBaseline(kind: CardioKind.from(modality: cardio.modality)), baseline > 0 {
@@ -855,7 +855,7 @@ struct WorkoutDetailView: View {
                 } else {
                     if !integratesWorkoutSummary {
                         HStack(spacing: Space.sm) {
-                            Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                            Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccentForeground)
                                 .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                             if let exercise {
                                 NavigationLink(value: exercise.id) {
@@ -909,12 +909,12 @@ struct WorkoutDetailView: View {
             }
         } label: {
             HStack(spacing: Space.sm) {
-                Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccentForeground)
                     .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text(CardioBlockSupport.compactTitle(durationSeconds: cardio.durationSeconds, name: name))
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     if let subtitle = CardioBlockSupport.compactSubtitle(
                         distance: cardio.distanceMeters.map { Fmt.cardioDistance($0, kind: kind) },
                         avgHR: blockAverageHR,
@@ -954,7 +954,7 @@ struct WorkoutDetailView: View {
                     .font(.system(size: 10, weight: .bold))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(theme.secondaryAccent)
+            .foregroundStyle(theme.secondaryAccentForeground)
             .contentShape(Rectangle())
             .frame(minHeight: 44)
         }
@@ -1290,11 +1290,11 @@ struct WorkoutDetailView: View {
                     if let label = split.label {
                         Text(label)
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                     } else {
                         Text("\(split.index + 1)")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .frame(width: 24, alignment: .leading)
                         Text(Fmt.distance(split.distanceMeters))
                             .font(.system(size: 13, weight: .semibold))

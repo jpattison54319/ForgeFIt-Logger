@@ -156,7 +156,7 @@ struct YogaExerciseCard: View {
                     Image(systemName: plan?.hasSteps == true ? "play.fill" : "slider.horizontal.3")
                     Text(plan?.hasSteps == true ? "Start Guided Class" : "Configure Flow")
                 }
-                .font(.bodyStrong).foregroundStyle(.white)
+                .font(.bodyStrong).foregroundStyle(theme.onAccent)
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(theme.accent)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
@@ -193,7 +193,7 @@ struct YogaExerciseCard: View {
                 } label: {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
             }
@@ -201,7 +201,7 @@ struct YogaExerciseCard: View {
                 let elapsed = max(0, Int(ctx.date.timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
                 HStack(spacing: Space.sm) {
                     Circle().fill(theme.accent).frame(width: 10, height: 10)
-                    Text("In session").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accent)
+                    Text("In session").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accentForeground)
                     Spacer()
                     if let hr = LiveMetricsHub.shared.liveMetrics?.heartRate {
                         Label("\(hr)", systemImage: "heart.fill")
@@ -246,7 +246,7 @@ struct YogaExerciseCard: View {
                 } label: {
                     Text(showManual ? "Done" : "Edit")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
             }
@@ -267,7 +267,7 @@ struct YogaExerciseCard: View {
         HStack(spacing: 8) {
             Image(systemName: style.systemImage)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Flow").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 Text(flowSummary)
@@ -280,7 +280,7 @@ struct YogaExerciseCard: View {
             } label: {
                 Text("Edit")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.accentSoft)
                     .clipShape(Capsule())
@@ -322,7 +322,7 @@ struct YogaExerciseCard: View {
                         Spacer()
                         Text(Fmt.durationShort(split.durationSeconds))
                             .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                 }
             }
@@ -543,7 +543,7 @@ struct YogaManualEditor: View {
                     }
                 } label: {
                     Text(Fmt.durationShort(session.durationSeconds))
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
             }
@@ -563,7 +563,7 @@ struct YogaManualEditor: View {
                     }
                 } label: {
                     Text(session.resolvedYogaStyle.title)
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                         .minimumTouchTarget()
                 }
             }
@@ -633,7 +633,7 @@ struct YogaRunnerStrip: View {
                         Text(timerInterval: Date.now...max(Date.now, runner.stepEndsAt), countsDown: true)
                             .font(.system(size: 34, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                     Button {
                         runner.isPaused ? runner.resume() : runner.pause()
@@ -796,7 +796,7 @@ struct YogaPlayerView: View {
                     Text(timerInterval: Date.now...max(Date.now, runner.stepEndsAt), countsDown: true)
                         .font(.system(size: 44, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
 
                 // Slim hold-progress bar — replaces the old ring around the
@@ -895,7 +895,7 @@ struct YogaPlayerView: View {
             } label: {
                 Image(systemName: runner.isPaused ? "play.fill" : "pause.fill")
                     .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onAccent)
                     .frame(width: 72, height: 72)
                     .background(theme.accent)
                     .clipShape(Circle())

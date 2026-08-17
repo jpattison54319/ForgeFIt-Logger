@@ -29,6 +29,8 @@ struct MicrocycleDetailView: View {
     @State private var showingRestSheet = false
     @State private var showingEndConfirmation = false
     @State private var showingEditTracking = false
+    @State private var showingHistoryEducation = false
+    @State private var opensHistoryAfterEducation = false
     @State private var actionError: String?
     @State private var selectedDay: MicrocycleDaySelection?
 
@@ -129,6 +131,24 @@ struct MicrocycleDetailView: View {
                     windows: trackingWindows,
                     workouts: workouts,
                     restDays: restDays,
+                    exercises: exercises
+                )
+            }
+        }
+        .sheet(isPresented: $showingHistoryEducation, onDismiss: finishStopEducation) {
+            MicrocycleHistoryEducationSheet(
+                onViewHistory: viewHistoryAfterStop,
+                onDone: dismissHistoryEducation
+            )
+            .onAppear(perform: markHistoryEducationShown)
+        }
+        .navigationDestination(for: MicrocycleHistoryRoute.self) { route in
+            switch route {
+            case .window(let trackingID, let windowID):
+                MicrocycleHistoryWindowDetailView(
+                    trackingID: trackingID,
+                    windowID: windowID,
+                    workouts: workouts,
                     exercises: exercises
                 )
             }
@@ -306,7 +326,7 @@ struct MicrocycleDetailView: View {
                 .glassEffect(.regular.interactive(), in: Capsule())
         } else {
             label
-                .foregroundStyle(.white)
+                .foregroundStyle(theme.onAccent)
                 .glassEffect(.regular.tint(theme.accent).interactive(), in: Capsule())
         }
     }
@@ -340,31 +360,24 @@ struct MicrocycleDetailView: View {
                 }
             } else {
                 ForEach(past) { window in
-                    let progress = MicrocycleTrackingService.progress(
-                        for: window,
+                    if let presentation = MicrocycleHistoryPresentation.windowPresentation(
+                        tracking: tracking,
+                        window: window,
                         windows: trackingWindows,
                         workouts: workouts
-                    )
-                    Card(padding: Space.md) {
-                        HStack(spacing: Space.md) {
-                            Image(systemName: progress.isComplete ? "checkmark.circle.fill" : "calendar.badge.clock")
-                                .foregroundStyle(progress.isComplete ? theme.accent : theme.textSecondary)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Cycle \(window.index + 1)")
-                                    .font(.bodyStrong)
-                                    .foregroundStyle(theme.textPrimary)
-                                Text("\(window.startsAt.formatted(date: .abbreviated, time: .omitted))–\(window.endsAt.addingTimeInterval(-1).formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.caption)
-                                    .foregroundStyle(theme.textSecondary)
+                    ) {
+                        NavigationLink(
+                            value: MicrocycleHistoryRoute.window(
+                                trackingID: tracking.id,
+                                windowID: window.id
+                            )
+                        ) {
+                            Card(padding: Space.md) {
+                                MicrocycleHistoryWindowRow(window: presentation)
                             }
-                            Spacer()
-                            Text("\(progress.completedCount)/\(progress.requiredCount)")
-                                .font(.bodyStrong)
-                                .foregroundStyle(theme.textPrimary)
                         }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("Cycle \(window.index + 1), \(progress.completedCount) of \(progress.requiredCount) workouts completed")
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("microcycle-previous-window-\(window.index + 1)")
                     }
                 }
             }
@@ -401,9 +414,37 @@ struct MicrocycleDetailView: View {
         guard let tracking else { return }
         do {
             try MicrocycleTrackingService.end(tracking, in: modelContext)
-            dismiss()
+            let defaults = UserDefaults.standard
+            if defaults.bool(forKey: AppPreferenceKeys.microcycleHistoryEducationShownKey) {
+                dismiss()
+            } else {
+                showingHistoryEducation = true
+            }
         } catch {
             actionError = error.localizedDescription
+        }
+    }
+
+    private func viewHistoryAfterStop() {
+        opensHistoryAfterEducation = true
+        showingHistoryEducation = false
+    }
+
+    private func dismissHistoryEducation() {
+        showingHistoryEducation = false
+    }
+
+    private func markHistoryEducationShown() {
+        UserDefaults.standard.set(
+            true,
+            forKey: AppPreferenceKeys.microcycleHistoryEducationShownKey
+        )
+    }
+
+    private func finishStopEducation() {
+        dismiss()
+        if opensHistoryAfterEducation {
+            appState.openProfile(.microcycles)
         }
     }
 

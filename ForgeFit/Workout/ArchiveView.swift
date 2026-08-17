@@ -214,7 +214,7 @@ struct ArchiveView: View {
                 HStack(alignment: .center, spacing: Space.md) {
                     Image(systemName: icon(for: item))
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 36, height: 36)
                         .background(theme.surfaceElevated)
                         .clipShape(Circle())

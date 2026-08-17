@@ -168,7 +168,7 @@ struct YogaFlowBuilderView: View {
                         Image(systemName: style.systemImage).font(.system(size: 13, weight: .semibold))
                         Text(style.title).font(.bodyStrong)
                     }
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
                 }
             }
@@ -218,7 +218,7 @@ struct YogaFlowBuilderView: View {
             } label: {
                 Label("Add Pose", systemImage: "plus.circle.fill")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
             .listRowBackground(theme.surface)
             .accessibilityIdentifier("add-pose-to-flow")
@@ -263,7 +263,7 @@ struct YogaFlowBuilderView: View {
                     showSaveAsFlow = true
                 } label: {
                     Label("Save as My Flow…", systemImage: "bookmark.fill")
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentForeground)
                 }
                 .listRowBackground(theme.surface)
             }
@@ -370,7 +370,7 @@ private struct PoseStepRow: View {
                             } label: {
                                 Text(sideLabel)
                                     .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .minimumTouchTarget()
                             }
                         }
@@ -393,7 +393,7 @@ private struct PoseStepRow: View {
                     // per the design rule: white names, accent disclosure only.
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
             .buttonStyle(.plain)

@@ -1998,6 +1998,81 @@ final class ForgeFitUITests: XCTestCase {
         }
     }
 
+    /// The approved theme gallery is the only color-customization surface in
+    /// v1: every option has a named, tappable two-color swatch, selection is
+    /// immediate, and the choice survives a fresh launch.
+    @MainActor
+    func testThemeGalleryShowsApprovedThemesAndPersistsSelection() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "-didOnboard", "YES", "-initialTab", "profile",
+            "-themeFamilyRaw", "sage",
+        ]
+        app.launch()
+
+        func openThemeGallery(expectedFamily: String) {
+            let settings = app.buttons["Settings"].firstMatch
+            XCTAssertTrue(settings.waitForExistence(timeout: 8))
+            tapWhenReady(settings)
+            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+            XCTAssertTrue(
+                app.descendants(matching: .any)["settings-theme-\(expectedFamily)"].firstMatch
+                    .waitForExistence(timeout: 3),
+                "Expected the Settings sheet to receive the \(expectedFamily) theme."
+            )
+
+            let themeLink = app.descendants(matching: .any)["theme-picker-link"].firstMatch
+            XCTAssertTrue(themeLink.waitForExistence(timeout: 3))
+            tapWhenReady(themeLink)
+            XCTAssertTrue(app.navigationBars["Theme"].waitForExistence(timeout: 3))
+        }
+
+        openThemeGallery(expectedFamily: "sage")
+
+        let approvedThemes = ["sage", "rose", "ocean", "violet", "ember", "graphite"]
+        for family in approvedThemes {
+            let option = app.buttons["theme-option-\(family)"].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 3), "Expected the \(family) theme option.")
+            assertMinimumTouchTarget(option, named: "\(family) theme swatch")
+        }
+
+        let sage = app.buttons["theme-option-sage"].firstMatch
+        let rose = app.buttons["theme-option-rose"].firstMatch
+        XCTAssertEqual(sage.value as? String, "Selected")
+        tapWhenReady(rose)
+        XCTAssertEqual(rose.value as? String, "Selected")
+        XCTAssertEqual(sage.value as? String, "Not selected")
+        attachScreenshot(app, name: "theme-gallery-rose-selected")
+
+        app.terminate()
+        app.launchArguments = ["-didOnboard", "YES", "-initialTab", "profile"]
+        app.launch()
+        openThemeGallery(expectedFamily: "rose")
+
+        let persistedRose = app.buttons["theme-option-rose"].firstMatch
+        XCTAssertTrue(persistedRose.waitForExistence(timeout: 3))
+        XCTAssertEqual(persistedRose.value as? String, "Selected")
+    }
+
+    /// A full-screen presentation owns the live logger. Keep the chosen theme
+    /// explicit at that boundary so it cannot fall back to the default family.
+    @MainActor
+    func testLiveWorkoutUsesSelectedTheme() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding", "--auto-start-routine",
+            "-themeFamilyRaw", "rose", "-themeModeRaw", "dark", "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let themedLogger = app.descendants(matching: .any)["active-workout-theme-rose"].firstMatch
+        XCTAssertTrue(
+            themedLogger.waitForExistence(timeout: 10),
+            "Expected the live logger to receive the selected Rose theme."
+        )
+        attachScreenshot(app, name: "live-workout-rose-theme")
+    }
+
     /// Regression: the keyboard accessory's Complete button used to stop
     /// rendering after the accessory's own dismiss chevron was used (the old
     /// UIKit toolbar was reused blank on refocus). Drives the reported flow —
@@ -2569,6 +2644,52 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Workout"].waitForExistence(timeout: 5))
         tapWhenReady(app.descendants(matching: .any)["tab-home"].firstMatch)
         XCTAssertTrue(homeCalendar.waitForExistence(timeout: 5), "Returning to Home should reveal its root, not Calendar.")
+    }
+
+    /// Bound NavigationStacks must clear their stored paths when their app-bar
+    /// destination is tapped, matching Home's established root behavior.
+    @MainActor
+    func testNonHomeAppBarTabsReturnToRoot() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--reset-store", "-didOnboard", "YES", "-initialTab", "workout", "-weightUnitRaw", "kg",
+        ]
+        app.launch()
+
+        let workoutTab = app.descendants(matching: .any)["tab-workout"].firstMatch
+        XCTAssertTrue(workoutTab.waitForExistence(timeout: 10))
+        tapWhenReady(workoutTab)
+        let newRoutine = app.descendants(matching: .any)["new-routine-button"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 10), "Expected the create action on the Workout root.")
+        tapWhenReady(newRoutine)
+        let saveRoutine = app.buttons["Save"].firstMatch
+        XCTAssertTrue(saveRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(saveRoutine)
+
+        let routineCard = app.descendants(matching: .any)["routine-card-Full Body A"].firstMatch
+        XCTAssertTrue(routineCard.waitForExistence(timeout: 5), "Expected the saved routine on the Workout root.")
+        tapWhenReady(routineCard)
+        XCTAssertTrue(app.buttons["Back"].firstMatch.waitForExistence(timeout: 5))
+        tapWhenReady(workoutTab)
+        XCTAssertTrue(routineCard.waitForExistence(timeout: 5), "Reselecting Workout should return to the Workout root.")
+
+        let insightsTab = app.descendants(matching: .any)["tab-insights"].firstMatch
+        tapWhenReady(insightsTab)
+        let experimentsEntry = app.descendants(matching: .any)["insight-experiments-entry"].firstMatch
+        XCTAssertTrue(experimentsEntry.waitForExistence(timeout: 5), "Expected Experiments on the Insights root.")
+        tapWhenReady(experimentsEntry)
+        XCTAssertTrue(app.buttons["Back"].firstMatch.waitForExistence(timeout: 5))
+        tapWhenReady(insightsTab)
+        XCTAssertTrue(experimentsEntry.waitForExistence(timeout: 5), "Reselecting Insights should return to the Insights root.")
+
+        let profileTab = app.descendants(matching: .any)["tab-profile"].firstMatch
+        tapWhenReady(profileTab)
+        let exercisesEntry = app.descendants(matching: .any)["profile-exercises"].firstMatch
+        XCTAssertTrue(exercisesEntry.waitForExistence(timeout: 5), "Expected Exercises on the Profile root.")
+        tapWhenReady(exercisesEntry)
+        XCTAssertTrue(app.buttons["Back"].firstMatch.waitForExistence(timeout: 5))
+        tapWhenReady(profileTab)
+        XCTAssertTrue(exercisesEntry.waitForExistence(timeout: 5), "Reselecting Profile should return to the Profile root.")
     }
 
     /// Every compact Home metric opens a focused page with the same Today /

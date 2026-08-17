@@ -215,10 +215,10 @@ struct HRVBaselineBandChart: View {
             ForEach(points) { point in
                 LineMark(x: .value("Date", point.date), y: .value("HRV", point.value))
                     .interpolationMethod(.catmullRom)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .lineStyle(StrokeStyle(lineWidth: 2))
                 PointMark(x: .value("Date", point.date), y: .value("HRV", point.value))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .symbolSize(24)
                     .accessibilityLabel(point.date.formatted(date: .abbreviated, time: .omitted))
                     .accessibilityValue("\(Int(point.value.rounded())) ms")
@@ -234,7 +234,7 @@ struct HRVBaselineBandChart: View {
                         )
                     }
                 PointMark(x: .value("Selected date", selectedPoint.date), y: .value("HRV", selectedPoint.value))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .symbolSize(90)
                     .accessibilityHidden(true)
             }
@@ -312,11 +312,11 @@ struct CriticalPaceCurveView: View {
                 LineMark(x: .value("Window", windowLabel(point.windowSeconds)),
                          y: .value("Pace", unitPace(point.paceSecPerKm)),
                          series: .value("Period", "Now"))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                 PointMark(x: .value("Window", windowLabel(point.windowSeconds)),
                           y: .value("Pace", unitPace(point.paceSecPerKm)))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .symbolSize(60)
             }
             if let selectedLabel {

@@ -408,7 +408,7 @@ struct ExercisePickerView: View {
                         Text("Suggested").font(.system(size: 13, weight: .bold))
                         Spacer()
                     }
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .padding(.horizontal, Space.lg)
 
                     ForEach(picks) { exercise in
@@ -494,7 +494,7 @@ struct ExercisePickerView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
             .padding(Space.md)
             .frame(maxWidth: .infinity)
             .background(theme.accentSoft)
@@ -576,7 +576,7 @@ private struct ExerciseRowLabel: View {
                                         .fixedSize(horizontal: false, vertical: true)
                                     Image(systemName: "chevron.right")
                                         .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(theme.accent)
+                                        .foregroundStyle(theme.accentForeground)
                                 }
                                 .minimumTouchTarget()
                             }
@@ -627,7 +627,7 @@ private struct ExerciseRowLabel: View {
                                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
                                 if exercise.isCardio {
                                     Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
-                                        .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
+                                        .font(.system(size: 12)).foregroundStyle(theme.secondaryAccentForeground).lineLimit(1)
                                 }
                             }
                             Spacer()
@@ -644,7 +644,7 @@ private struct ExerciseRowLabel: View {
                     Button(action: onInfo) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(width: 44, height: 44)   // HIG minimum touch target
                     }
                     .buttonStyle(.plain)
@@ -851,12 +851,12 @@ struct CreateExerciseView: View {
                                                         .fixedSize(horizontal: false, vertical: true)
                                                     Text("Use this instead")
                                                         .font(.system(size: 11, weight: .semibold))
-                                                        .foregroundStyle(theme.accent)
+                                                        .foregroundStyle(theme.accentForeground)
                                                 }
                                                 Spacer(minLength: 0)
                                                 Image(systemName: "plus.circle.fill")
                                                     .font(.system(size: 18))
-                                                    .foregroundStyle(theme.accent)
+                                                    .foregroundStyle(theme.accentForeground)
                                             }
                                             .padding(8)
                                             .background(theme.surfaceElevated)
@@ -962,7 +962,7 @@ struct CreateExerciseView: View {
                         }
                     } label: {
                         Text(WeightModeOption.from(weightMode).label)
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                 }
@@ -980,7 +980,7 @@ struct CreateExerciseView: View {
                         Button("Unilateral") { isUnilateral = true }
                     } label: {
                         Text(isUnilateral ? "Unilateral" : "Bilateral")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                 }
@@ -1027,7 +1027,7 @@ struct CreateExerciseView: View {
                             Text(cardioKindChoice == nil ? "Auto · \(resolvedKind.title)" : resolvedKind.title)
                                 .font(.bodyStrong)
                         }
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                         .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("cardio-type-picker")
@@ -1071,7 +1071,7 @@ struct CreateExerciseView: View {
                         }
                     } label: {
                         Text(Self.holdLabel(defaultHoldSeconds))
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("yoga-default-hold")
@@ -1090,7 +1090,7 @@ struct CreateExerciseView: View {
                         Button("One side at a time") { isUnilateral = true }
                     } label: {
                         Text(isUnilateral ? "One at a time" : "Both at once")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                             .minimumTouchTarget()
                     }
                 }
@@ -1211,7 +1211,7 @@ struct CreateExerciseView: View {
                 }
             } label: {
                 Text(MuscleTaxonomy.displayName(selection.wrappedValue))
-                    .font(.bodyStrong).foregroundStyle(theme.accent)
+                    .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
             }
             .accessibilityIdentifier("primary-muscle-picker")
@@ -1229,7 +1229,7 @@ struct CreateExerciseView: View {
             } label: {
                 Text(selection.wrappedValue.capitalized)
                     .font(.bodyStrong)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
             }
         }

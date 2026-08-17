@@ -47,7 +47,7 @@ struct FolderShareCard: View {
                         // Mesocycle: a microcycle heading with its routines.
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 8) {
-                                Image(systemName: "calendar").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                                Image(systemName: "calendar").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                                 Text(title).font(.system(size: 18, weight: .bold)).foregroundStyle(theme.textPrimary)
                                 Spacer(minLength: 0)
                                 Text("\(section.routines.count) routine\(section.routines.count == 1 ? "" : "s")")
@@ -89,7 +89,7 @@ struct FolderShareCard: View {
         let setCount = sortedExercises.reduce(0) { $0 + $1.sets.count }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "list.bullet").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accent)
+                Image(systemName: "list.bullet").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accentForeground)
                 Text(routine.name).font(.system(size: 16, weight: .bold)).foregroundStyle(theme.textPrimary)
                 Spacer(minLength: 0)
                 Text("\(orderedItems.count) items · \(setCount) sets")
@@ -108,7 +108,7 @@ struct FolderShareCard: View {
                         Spacer(minLength: 8)
                         Text(itemSummary(item))
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
             }
@@ -173,9 +173,16 @@ enum FolderShareRenderer {
         exercises: [ExerciseLibraryModel],
         theme: AppTheme
     ) -> UIImage? {
-        ShareRenderer.image(
-            FolderShareCard(name: name, isMesocycle: isMesocycle, sections: sections, exercises: exercises, theme: theme),
-            theme: theme
+        let exportTheme = AppTheme.export(family: theme.family)
+        return ShareRenderer.image(
+            FolderShareCard(
+                name: name,
+                isMesocycle: isMesocycle,
+                sections: sections,
+                exercises: exercises,
+                theme: exportTheme
+            ),
+            theme: exportTheme
         )
     }
 }

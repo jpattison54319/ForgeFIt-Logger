@@ -20,8 +20,7 @@ struct SetTypeStyle {
     /// Whether this type consumes a numbered working-set slot.
     let numbered: Bool
 
-    static func of(_ type: SetType) -> SetTypeStyle {
-        let t = AppTheme.sage
+    static func of(_ type: SetType, theme t: AppTheme = .sage) -> SetTypeStyle {
         switch type {
         case .warmup: return SetTypeStyle(badge: "W", color: t.warmup, label: "Warm-up", numbered: false)
         case .working: return SetTypeStyle(badge: "", color: t.textPrimary, label: "Working", numbered: true)
@@ -151,6 +150,7 @@ struct ActiveWorkoutLoggerView: View {
                     .allowsHitTesting(false)
             }
         }
+        .accessibilityIdentifier("active-workout-theme-\(theme.family.rawValue)")
         // The header lives in the safe area, so content can never slide
         // underneath it or collide with the stats bar.
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -189,14 +189,14 @@ struct ActiveWorkoutLoggerView: View {
                     if let onNext = actions.onNext {
                         Button("Next", action: onNext)
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .buttonStyle(.glass)
                             .buttonBorderShape(.capsule)
                             .controlSize(.large)
                     }
                     Button(actions.completeTitle, action: actions.onComplete)
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .buttonStyle(.glass)
                         .buttonBorderShape(.capsule)
                         .controlSize(.large)
@@ -1782,7 +1782,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "figure.strengthtraining.traditional")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("What this trained").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 ForEach(trainedMuscleRows, id: \.muscle) { row in
@@ -1847,7 +1847,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.turn.up.right")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Next time").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 ForEach(nextTimeEntries, id: \.name) { entry in
@@ -1869,7 +1869,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -1918,7 +1918,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(alignment: .center, spacing: Space.md) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onAccent)
                         .frame(width: 38, height: 38)
                         .background(theme.accent)
                         .clipShape(Circle())
@@ -2025,7 +2025,7 @@ private struct PostWorkoutSummaryView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: icon)
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -2453,7 +2453,7 @@ private struct ExerciseLogCard: View {
                                 .font(.system(size: 15, weight: .semibold))
                             Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
                         }
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     }
                 }
 
@@ -2739,7 +2739,7 @@ private struct ExerciseLogCard: View {
                     if showsPreviousTapHint {
                         Image(systemName: "hand.tap")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .accessibilityHidden(true)
                     }
                 }
@@ -2758,7 +2758,7 @@ private struct ExerciseLogCard: View {
                     .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .accessibilityLabel("Switch \(exercise?.name ?? "exercise") weight unit")
 	            }
 	            if isCardio { Text("MIN").frame(width: grid.weight) } else { Text("REPS").frame(width: grid.reps) }
@@ -2879,7 +2879,7 @@ private struct ExerciseLogCard: View {
         HStack(spacing: 8) {
             Image(systemName: progressionIcon(suggestion.kindRaw))
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             Text(suggestion.rationale)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
@@ -3402,7 +3402,7 @@ private struct SetRow: View {
         self.onDelete = onDelete
     }
 
-    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
+    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType, theme: theme) }
     private var isDone: Bool { self.set.completedAt != nil }
     private var isDrop: Bool { self.set.setType == .drop }
     private var suggestedWeightText: String {

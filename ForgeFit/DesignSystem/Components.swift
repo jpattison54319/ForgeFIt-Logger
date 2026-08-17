@@ -233,7 +233,7 @@ struct SegmentedPills<T: Hashable>: View {
                     } label: {
                         Text(title(option))
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(isSelected ? Color.white : theme.textSecondary)
+                            .foregroundStyle(isSelected ? theme.onAccent : theme.textSecondary)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 9)
                             .frame(minHeight: 44)
@@ -270,7 +270,7 @@ struct ExerciseNameLabel: View {
                 .foregroundStyle(theme.textPrimary)
             Image(systemName: "chevron.right")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
         }
     }
 }

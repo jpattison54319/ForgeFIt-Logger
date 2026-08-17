@@ -271,7 +271,7 @@ struct SleepDetailView: View {
                     HStack {
                         Text("See all sleep")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .bold))

@@ -16,6 +16,7 @@ struct HomeView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var healthMetrics = HealthMetricsStore.shared
     @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+    @State private var navigationPath = NavigationPath()
     @State private var showSettings = false
     // Coach surfaces remain implemented and testable, but are intentionally
     // dormant while the Home header uses its more useful calendar shortcut.
@@ -390,7 +391,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScreenScaffold(
                 greeting,
                 subtitle: Date().formatted(.dateTime.weekday(.wide).month().day()),
@@ -532,7 +533,7 @@ struct HomeView: View {
                                 .minimumTouchTarget()
                             }
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .buttonStyle(.plain)
                             .accessibilityLabel("See all workouts")
                             .accessibilityIdentifier("home-see-all-workouts")
@@ -693,7 +694,7 @@ struct HomeView: View {
                 )
             }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .interactiveBackSwipeEnabled()
     }
 
@@ -765,7 +766,7 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "sparkle.magnifyingglass")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -823,7 +824,7 @@ struct HomeView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "heart.fill")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 36, height: 36)
                     .background(theme.accentSoft)
                     .clipShape(Circle())
@@ -862,7 +863,7 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -932,12 +933,12 @@ struct HomeView: View {
                             .frame(width: 44, height: 44)
                         Image(systemName: "sparkles")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(report.isMonthly ? "Monthly" : "Yearly") Report Available")
                             .font(.tag)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Text("Your \(WrappedReportService.title(for: report)) is ready.")
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
@@ -1247,7 +1248,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Up next")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .textCase(.uppercase)
                     Text(routine.name)
                         .font(.cardTitle)
@@ -1262,7 +1263,7 @@ struct HomeView: View {
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityIdentifier("home-alternating-routine")
                     }
                     // No readiness action line here: the RecoveryHeroCard above
@@ -1417,7 +1418,7 @@ struct HomeView: View {
             .minimumTouchTarget()
         }
         .font(.system(size: 13, weight: .bold))
-        .foregroundStyle(theme.accent)
+        .foregroundStyle(theme.accentForeground)
         .accessibilityIdentifier("home-quick-start-edit")
     }
 
@@ -1844,7 +1845,7 @@ private struct QuickStartAddSheet: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: systemImage)
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 36, height: 36)
                         .background(theme.surfaceElevated)
                         .clipShape(Circle())
@@ -2008,7 +2009,7 @@ struct WorkoutFeedRow: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
                     Image(systemName: shape.systemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 34, height: 34)
                         .background(theme.surfaceElevated).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 1) {

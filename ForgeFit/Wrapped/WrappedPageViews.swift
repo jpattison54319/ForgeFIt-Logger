@@ -24,7 +24,7 @@ struct WrappedPageView: View {
             VStack(spacing: Space.lg) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 44, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text(cover.title)
                     .font(.system(size: 44, weight: .black, design: .rounded))
                     .multilineTextAlignment(.center)
@@ -194,7 +194,7 @@ struct WrappedPageView: View {
                 if let identity = recap.identityLabel {
                     Text(identity)
                         .font(.cardTitle)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
                 VStack(spacing: Space.md) {
                     statRow("Workouts", "\(recap.workouts)")
@@ -237,7 +237,7 @@ struct WrappedPageView: View {
                         HStack(spacing: Space.md) {
                             Text("\(index + 1)")
                                 .font(.system(size: 20, weight: .black, design: .rounded))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .frame(width: 28)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -292,7 +292,7 @@ struct WrappedPageView: View {
         Text(text.uppercased())
             .font(.tag)
             .kerning(1.4)
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
     }
 
     private func heroNumber(_ value: String, unit: String, tint: Color? = nil) -> some View {

@@ -196,22 +196,22 @@ struct WorkoutHistoryView: View {
         HStack(spacing: Space.md) {
             switch suggestion {
             case .exercise(let facet):
-                Image(systemName: "dumbbell").foregroundStyle(theme.accent).frame(width: 22)
+                Image(systemName: "dumbbell").foregroundStyle(theme.accentForeground).frame(width: 22)
                 Text(facet.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("\(facet.count)×").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
             case .muscle(let facet):
-                Image(systemName: "figure.arms.open").foregroundStyle(theme.accent).frame(width: 22)
+                Image(systemName: "figure.arms.open").foregroundStyle(theme.accentForeground).frame(width: 22)
                 Text(facet.muscle.capitalized).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("muscle").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
             case .month(let facet):
-                Image(systemName: "calendar").foregroundStyle(theme.accent).frame(width: 22)
+                Image(systemName: "calendar").foregroundStyle(theme.accentForeground).frame(width: 22)
                 Text(facet.title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("\(facet.count) workout\(facet.count == 1 ? "" : "s")").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
             case .prs:
-                Image(systemName: "trophy").foregroundStyle(theme.accent).frame(width: 22)
+                Image(systemName: "trophy").foregroundStyle(theme.accentForeground).frame(width: 22)
                 Text("Workouts with PRs").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Spacer()
             }
@@ -502,7 +502,7 @@ private struct WorkoutHistoryRow: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
                     Image(systemName: entry.kindSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 34, height: 34)
                         .background(theme.surfaceElevated).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 1) {

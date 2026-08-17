@@ -90,12 +90,12 @@ struct YogaHistoryCard: View {
     private func headerContent(showsChevron: Bool) -> some View {
         HStack(spacing: Space.sm) {
             Image(systemName: style.systemImage)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .frame(width: 34, height: 34)
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(title).font(.bodyStrong).foregroundStyle(theme.accentForeground)
                 Text(session.map {
                     collapsible
                         ? YogaHistoryPresentation.compactSummary(
@@ -160,7 +160,7 @@ struct YogaHistoryCard: View {
                         Text(Fmt.durationShort(pose.durationSeconds))
                             .font(.system(size: 13, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                 }
             }
@@ -219,7 +219,7 @@ struct YogaHistoryCard: View {
                     Spacer(minLength: 0)
                 }
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .contentShape(Rectangle())
                 .frame(minHeight: 44)
             }

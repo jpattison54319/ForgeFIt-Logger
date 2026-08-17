@@ -103,7 +103,7 @@ struct ExperimentDetailView: View {
                                     .foregroundStyle(theme.textPrimary)
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -117,7 +117,7 @@ struct ExperimentDetailView: View {
                             HStack(spacing: Space.md) {
                                 Image(systemName: "chart.bar.fill")
                                     .font(.system(size: 20, weight: .bold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .frame(width: 42, height: 42)
                                     .background(theme.surfaceElevated)
                                     .clipShape(Circle())
@@ -131,7 +131,7 @@ struct ExperimentDetailView: View {
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -377,7 +377,7 @@ struct ExperimentDetailView: View {
                         }
                         HStack(alignment: .top, spacing: Space.md) {
                             Image(systemName: item.systemImage)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
@@ -406,7 +406,7 @@ struct ExperimentDetailView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityIdentifier("experiment-full-timeline")
                     }
                 }
@@ -487,7 +487,7 @@ private struct ExperimentFullTimelineView: View {
                         Card(padding: Space.md) {
                             HStack(alignment: .top, spacing: Space.md) {
                                 Image(systemName: item.systemImage)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title)
@@ -643,7 +643,7 @@ private struct ExperimentManageSheet: View {
                         Card(padding: Space.md) {
                             HStack(spacing: Space.md) {
                                 Image(systemName: "chart.bar.xaxis")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Headline Outcomes")
                                         .font(.bodyStrong)
@@ -654,7 +654,7 @@ private struct ExperimentManageSheet: View {
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -972,7 +972,7 @@ private struct ExperimentManageSheet: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.md) {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tracker.label)
@@ -1380,7 +1380,7 @@ private struct ExperimentEntryHistorySheet: View {
                             ?? tracker?.type.experimentSystemImage
                             ?? "note.text"
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(label)

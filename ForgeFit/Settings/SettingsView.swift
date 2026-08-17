@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 
 /// Settings: connect Apple Health & Fitness (read + write), Apple Watch live-sync
@@ -54,6 +55,8 @@ struct SettingsView: View {
             }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
+                case .theme:
+                    ThemePickerView()
                 case .heartRateZones:
                     HRZoneSettingsView()
                 case .warmupRamp:
@@ -71,6 +74,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .accessibilityIdentifier("settings-theme-\(theme.family.rawValue)")
         .sheet(isPresented: $showHistoryImporter) {
             WorkoutHistoryImportView()
         }

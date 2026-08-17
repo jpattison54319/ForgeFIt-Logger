@@ -171,7 +171,7 @@ struct SleepIntegrityCard: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white)
             } else {
-                QuestionSleepGlyph(size: 19).foregroundStyle(.white)
+                QuestionSleepGlyph(size: 19).foregroundStyle(theme.onAccent)
             }
         }
     }
@@ -242,7 +242,7 @@ struct SleepIntegrityCard: View {
     private var editingPanel: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             HStack(spacing: Space.sm) {
-                EditSleepGlyph(size: 20).foregroundStyle(theme.accent)
+                EditSleepGlyph(size: 20).foregroundStyle(theme.accentForeground)
                 Text("Edit last night's sleep")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(theme.textPrimary)

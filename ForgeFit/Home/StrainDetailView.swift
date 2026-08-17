@@ -87,7 +87,7 @@ struct StrainDetailView: View {
                     strainTrendChart
                     HStack(spacing: Space.lg) {
                         Label("Daily strain", systemImage: "line.diagonal")
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                         Label("Usual range", systemImage: "rectangle.fill")
                             .foregroundStyle(theme.accent.opacity(0.55))
                     }
@@ -243,10 +243,10 @@ struct StrainDetailView: View {
             }
             LineMark(x: .value("Date", point.date), y: .value("Strain", point.score))
                 .interpolationMethod(.catmullRom)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
             PointMark(x: .value("Date", point.date), y: .value("Strain", point.score))
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .symbolSize(20)
             if selectedTrendDate != nil,
                point.id == selectedTrendPoint?.id {

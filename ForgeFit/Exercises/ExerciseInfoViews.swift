@@ -88,7 +88,7 @@ struct ExerciseAnimationView: View {
     private var fallback: some View {
         Image(systemName: exercise.isCardio ? "figure.run" : "dumbbell.fill")
             .font(.system(size: 46, weight: .semibold))
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
     }
 }
 
@@ -169,7 +169,7 @@ struct ExerciseInfoCard: View {
                                 HStack(alignment: .top, spacing: Space.md) {
                                     Text("\(index + 1)")
                                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(theme.onAccent)
                                         .frame(width: 24, height: 24)
                                         .background(theme.accent)
                                         .clipShape(Circle())

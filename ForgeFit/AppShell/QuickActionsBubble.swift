@@ -79,7 +79,7 @@ struct QuickActionsBubble: View {
         ) {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: expandedMirror)
         .sensoryFeedback(.selection, trigger: actionTick)

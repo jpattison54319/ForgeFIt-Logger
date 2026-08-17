@@ -29,6 +29,10 @@ struct AccountResetServiceTests {
         #expect(localKeys.contains(WrappedReportService.lastAutomaticAttemptKey))
         #expect(localKeys.contains(ImportedExerciseBackfill.didRunKey))
         #expect(localKeys.contains(WeightModeBackfill.convertKey))
+        #expect(localKeys.contains(AppPreferenceKeys.microcycleHistoryEducationShownKey))
+        #expect(!AppPreferenceKeys.backedUp.contains(
+            AppPreferenceKeys.microcycleHistoryEducationShownKey
+        ))
     }
 
     @Test

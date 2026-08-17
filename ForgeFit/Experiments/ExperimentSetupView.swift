@@ -396,7 +396,7 @@ struct ExperimentSetupView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: tracker.kind.systemImage)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -803,7 +803,7 @@ struct ExperimentTrackerEditor: View {
                     } label: {
                         Text(String(symbol.prefix(1)))
                             .font(.tag)
-                            .foregroundStyle(selected ? Color.white : theme.textSecondary)
+                            .foregroundStyle(selected ? theme.onAccent : theme.textSecondary)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(selected ? theme.accent : theme.surface)
                             .clipShape(Circle())

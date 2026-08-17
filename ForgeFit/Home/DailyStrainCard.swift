@@ -14,7 +14,7 @@ struct DailyStrainCard: View {
                 HStack(spacing: Space.sm) {
                     Image(systemName: "flame.fill")
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     Text("Daily strain")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)

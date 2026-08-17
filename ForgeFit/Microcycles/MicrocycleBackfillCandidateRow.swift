@@ -12,7 +12,7 @@ struct MicrocycleBackfillCandidateRow: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.headline)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 36, height: 36)
                     .background(theme.accent.opacity(0.12))
                     .clipShape(Circle())
@@ -32,7 +32,7 @@ struct MicrocycleBackfillCandidateRow: View {
 
                 Text("Use")
                     .font(.subheadline.bold())
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
             .padding(Space.md)
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)

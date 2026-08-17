@@ -258,7 +258,7 @@ struct CoachCornerView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Suggested session")
                                 .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .textCase(.uppercase)
                             Text(suggestion.routine.name)
                                 .font(.cardTitle)
@@ -649,7 +649,7 @@ struct CoachCornerView: View {
                     HStack(spacing: Space.md) {
                         Image(systemName: "bubble.left.and.text.bubble.right.fill")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(width: 38, height: 38)
                             .background(theme.accentSoft)
                             .clipShape(Circle())

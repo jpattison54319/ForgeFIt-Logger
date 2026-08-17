@@ -128,7 +128,7 @@ struct WrappedStoryView: View {
         if let image = WrappedShareRenderer.image(
             page: payload.pages[pageIndex],
             periodLabel: payload.periodLabel,
-            theme: .sageDark
+            theme: .export(family: theme.family)
         ) {
             sharePayload = ShareImagePayload(image: image)
         }
