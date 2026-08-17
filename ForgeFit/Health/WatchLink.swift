@@ -38,6 +38,9 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var modelContext: ModelContext?
     @ObservationIgnored private let interactionPublisher = DeferredInteractionWork()
     @ObservationIgnored private var routineSummaryCache: [WatchRoutineSummary]?
+    @ObservationIgnored private let complicationDeliveryDefaults = UserDefaults.standard
+
+    private static let complicationDeliverySignatureKey = "watch.complication.readiness-delivery-signature"
 
     func activate() {
         #if canImport(WatchConnectivity)
@@ -118,7 +121,8 @@ final class WatchLink: NSObject {
         } else {
             readContext = context
         }
-        guard let data = WatchWire.encode(buildContext(in: readContext)) else { return }
+        let watchContext = buildContext(in: readContext)
+        guard let data = WatchWire.encode(watchContext) else { return }
         let payload = [WatchWire.contextKey: data]
         try? WCSession.default.updateApplicationContext(payload)
         // Application context can coalesce; when the watch is live, message it
@@ -126,8 +130,39 @@ final class WatchLink: NSObject {
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
         }
+        transferCurrentReadinessToComplicationIfNeeded(
+            watchContext,
+            payload: payload,
+            session: WCSession.default
+        )
         #endif
     }
+
+    #if canImport(WatchConnectivity)
+    /// Application context is latest-wins but doesn't prioritize waking the
+    /// Watch app that owns the complication's app-group data. Apple's
+    /// complication transfer channel does, and is intentionally used only
+    /// when the idle daily readiness payload changes.
+    private func transferCurrentReadinessToComplicationIfNeeded(
+        _ context: WatchAppContext,
+        payload: [String: Any],
+        session: WCSession
+    ) {
+        guard session.isComplicationEnabled,
+              session.remainingComplicationUserInfoTransfers > 0,
+              let signature = WatchComplicationDeliverySignature(context: context),
+              let encodedSignature = WatchWire.encode(signature),
+              encodedSignature != complicationDeliveryDefaults.data(
+                forKey: Self.complicationDeliverySignatureKey
+              ) else { return }
+
+        session.transferCurrentComplicationUserInfo(payload)
+        complicationDeliveryDefaults.set(
+            encodedSignature,
+            forKey: Self.complicationDeliverySignatureKey
+        )
+    }
+    #endif
 
     private func buildContext(in context: ModelContext) -> WatchAppContext {
         let active = (try? context.fetch(FetchDescriptor<WorkoutModel>(
@@ -212,8 +247,11 @@ final class WatchLink: NSObject {
 
         // Home's widget payload is the lightweight cross-surface cache. Watch
         // activation must never rebuild workout history on MainActor.
+        let now = Date.now
         let idleReadiness = active == nil
-            ? ForgeFitWidgetSnapshotStore.load().flatMap { $0.mode == .idle ? $0 : nil }
+            ? ForgeFitWidgetSnapshotStore.load().flatMap {
+                $0.mode == .idle && $0.isCurrent(at: now) ? $0 : nil
+            }
             : nil
         let readiness = active?.readinessAtStart ?? idleReadiness?.readinessScore
 

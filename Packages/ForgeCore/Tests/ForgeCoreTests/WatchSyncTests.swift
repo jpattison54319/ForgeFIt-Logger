@@ -269,6 +269,90 @@ struct WatchSyncTests {
         #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) == snapshot)
     }
 
+    @Test func idleWidgetSnapshotExpiresAtCalendarDayBoundary() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let late = Date(timeIntervalSince1970: 1_800_057_540)
+        let sameDay = late.addingTimeInterval(30)
+        let nextDay = try #require(calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: late)
+        ))
+
+        let idle = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: late,
+            readinessScore: 74
+        )
+        let workout = ForgeFitWidgetSnapshot(
+            mode: .activeWorkout,
+            updatedAt: late,
+            workoutTitle: "Legs"
+        )
+
+        #expect(idle.isCurrent(at: sameDay, calendar: calendar))
+        #expect(!idle.isCurrent(at: nextDay, calendar: calendar))
+        #expect(workout.isCurrent(at: nextDay, calendar: calendar))
+    }
+
+    @Test func complicationDeliverySignatureChangesForNewDayAndNewReadiness() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let dayOne = calendar.startOfDay(
+            for: Date(timeIntervalSince1970: 1_800_057_540)
+        ).addingTimeInterval(12 * 60 * 60)
+        let dayTwo = try #require(calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: dayOne)
+        ))
+
+        let first = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                updatedAt: dayOne
+            ),
+            calendar: calendar
+        ))
+        let duplicate = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                updatedAt: dayOne.addingTimeInterval(60)
+            ),
+            calendar: calendar
+        ))
+        let clearedNextDay = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(updatedAt: dayTwo),
+            calendar: calendar
+        ))
+        let freshNextDay = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 78,
+                readinessAction: "Train",
+                updatedAt: dayTwo.addingTimeInterval(60)
+            ),
+            calendar: calendar
+        ))
+        let workout = WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                workout: WatchWorkoutSnapshot(
+                    workoutID: UUID(),
+                    title: "Legs",
+                    startedAt: dayTwo
+                )
+            ),
+            calendar: calendar
+        )
+
+        #expect(first == duplicate)
+        #expect(first != clearedNextDay)
+        #expect(clearedNextDay != freshNextDay)
+        #expect(workout == nil)
+    }
+
     private func expectCommand(
         _ command: WatchCommand,
         matches: (WatchCommand) -> Bool

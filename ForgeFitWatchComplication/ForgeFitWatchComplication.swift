@@ -21,6 +21,12 @@ struct ForgeFitComplicationEntry: TimelineEntry {
 }
 
 struct ForgeFitComplicationProvider: TimelineProvider {
+    private func currentSnapshot(at date: Date = .now) -> ForgeFitWidgetSnapshot? {
+        ForgeFitWidgetSnapshotStore.load().flatMap { snapshot in
+            snapshot.isCurrent(at: date) ? snapshot : nil
+        }
+    }
+
     func placeholder(in context: Context) -> ForgeFitComplicationEntry {
         ForgeFitComplicationEntry(
             date: Date(),
@@ -32,22 +38,39 @@ struct ForgeFitComplicationProvider: TimelineProvider {
     func getSnapshot(in context: Context, completion: @escaping (ForgeFitComplicationEntry) -> Void) {
         completion(ForgeFitComplicationEntry(
             date: Date(),
-            snapshot: ForgeFitWidgetSnapshotStore.load(),
+            snapshot: currentSnapshot(),
             themePreference: ForgeThemePreferenceStore.load()
         ))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ForgeFitComplicationEntry>) -> Void) {
-        let snapshot = ForgeFitWidgetSnapshotStore.load()
+        let now = Date.now
+        let snapshot = currentSnapshot(at: now)
         // Mid-workout state goes stale fast; idle readiness is good for an hour.
         let refresh: TimeInterval = snapshot?.mode == .activeWorkout ? 5 * 60 : 60 * 60
-        completion(Timeline(
-            entries: [ForgeFitComplicationEntry(
-                date: Date(),
-                snapshot: snapshot,
+        let periodicRefresh = now.addingTimeInterval(refresh)
+        let nextDay = Calendar.current.date(
+            byAdding: .day,
+            value: 1,
+            to: Calendar.current.startOfDay(for: now)
+        ) ?? periodicRefresh
+        var entries = [ForgeFitComplicationEntry(
+            date: now,
+            snapshot: snapshot,
+            themePreference: ForgeThemePreferenceStore.load()
+        )]
+        if snapshot?.mode != .activeWorkout {
+            // Carry the expiry in the timeline itself so yesterday's score is
+            // cleared at midnight even when watchOS delays the next reload.
+            entries.append(ForgeFitComplicationEntry(
+                date: nextDay,
+                snapshot: nil,
                 themePreference: ForgeThemePreferenceStore.load()
-            )],
-            policy: .after(Date().addingTimeInterval(refresh))
+            ))
+        }
+        completion(Timeline(
+            entries: entries,
+            policy: .after(min(periodicRefresh, nextDay))
         ))
     }
 }

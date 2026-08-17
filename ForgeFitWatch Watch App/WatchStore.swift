@@ -638,6 +638,7 @@ final class WatchStore: NSObject {
         if let workout = context.workout {
             snapshot = ForgeFitWidgetSnapshot(
                 mode: .activeWorkout,
+                updatedAt: context.updatedAt,
                 workoutTitle: workout.title,
                 workoutStartedAt: workout.startedAt,
                 currentExerciseName: workout.exercises.first(where: { ex in
@@ -650,6 +651,7 @@ final class WatchStore: NSObject {
         } else {
             snapshot = ForgeFitWidgetSnapshot(
                 mode: .idle,
+                updatedAt: context.updatedAt,
                 readinessScore: context.readiness,
                 readinessAction: context.readinessAction,
                 readinessDetail: context.readinessDetail
@@ -809,8 +811,13 @@ extension WatchStore: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        guard let data = userInfo[WatchWire.commandKey] as? Data,
-              let command = WatchWire.decode(WatchCommand.self, from: data) else { return }
-        Task { @MainActor in self.handle(command) }
+        if let data = userInfo[WatchWire.contextKey] as? Data,
+           let context = WatchWire.decode(WatchAppContext.self, from: data) {
+            Task { @MainActor in self.apply(context: context) }
+        }
+        if let data = userInfo[WatchWire.commandKey] as? Data,
+           let command = WatchWire.decode(WatchCommand.self, from: data) {
+            Task { @MainActor in self.handle(command) }
+        }
     }
 }

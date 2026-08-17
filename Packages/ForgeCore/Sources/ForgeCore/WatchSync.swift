@@ -89,6 +89,24 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     public var effectiveThemeMode: ForgeThemeMode { themeMode ?? .dark }
 }
 
+/// Stable, small comparison key for the scarce complication-priority channel.
+/// The day changes at local midnight; intra-day transfers occur only when the
+/// readiness presentation actually changes (including clearing stale data).
+public struct WatchComplicationDeliverySignature: Codable, Equatable, Sendable {
+    public let day: Date
+    public let readiness: Int?
+    public let readinessAction: String?
+    public let readinessDetail: String?
+
+    public init?(context: WatchAppContext, calendar: Calendar = .current) {
+        guard context.workout == nil else { return nil }
+        day = calendar.startOfDay(for: context.updatedAt)
+        readiness = context.readiness
+        readinessAction = context.readinessAction
+        readinessDetail = context.readinessDetail
+    }
+}
+
 public struct WatchRoutineSummary: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
@@ -529,6 +547,12 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         self.totalSets = totalSets
         self.restEndsAt = restEndsAt
         self.heartRate = heartRate
+    }
+
+    /// Idle readiness belongs to one calendar day. Active-workout snapshots
+    /// remain valid across midnight because their own lifecycle ends them.
+    public func isCurrent(at date: Date = .now, calendar: Calendar = .current) -> Bool {
+        mode == .activeWorkout || calendar.isDate(updatedAt, inSameDayAs: date)
     }
 }
 
