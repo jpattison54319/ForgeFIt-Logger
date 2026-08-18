@@ -219,20 +219,34 @@ enum WorkoutFinisher {
             prepareLiveYogaRunnerBeforeSave: false
         )
         guard failure == nil else { return failure }
-
-        // The isolated transaction is the durable source of truth, but the
-        // app's long-lived context may still hold the pre-finish instance.
-        // Mirror only terminal identity into that instance so its active
-        // @Query disappears immediately and can never republish a finished
-        // workout back to the Watch as a new live session.
-        if let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
-            predicate: #Predicate { $0.id == workoutID }
-        )).first {
-            callerWorkout.endedAt = workout.endedAt
-            callerWorkout.deletedAt = workout.deletedAt
-            callerWorkout.updatedAt = workout.updatedAt
-        }
+        mirrorTerminalIdentity(of: workout, workoutID: workoutID, into: callerContext)
         return nil
+    }
+
+    /// Mirrors terminal identity from an isolated transaction back into the
+    /// caller's long-lived instance.
+    ///
+    /// The isolated context is the durable source of truth, but the app's
+    /// long-lived context can still hold the pre-transaction instance — and
+    /// `ContentView`'s active-workout `@Query` (`endedAt == nil &&
+    /// deletedAt == nil`) plus `WatchLink.buildContext` both observe *that*
+    /// instance. Leaving it non-terminal is what makes an ended workout keep
+    /// looking live: the sheet minimizes instead of dismissing, the workout
+    /// never reaches history, and the Watch receives it again as a new live
+    /// session. Every isolated path that ends a workout — finishing or
+    /// discarding — must come back through here.
+    @MainActor
+    private static func mirrorTerminalIdentity(
+        of workout: WorkoutModel,
+        workoutID: UUID,
+        into callerContext: ModelContext
+    ) {
+        guard let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first, callerWorkout !== workout else { return }
+        callerWorkout.endedAt = workout.endedAt
+        callerWorkout.deletedAt = workout.deletedAt
+        callerWorkout.updatedAt = workout.updatedAt
     }
 
     @MainActor
@@ -603,7 +617,9 @@ enum WorkoutFinisher {
         )).first else {
             return "The active workout could not be found."
         }
-        return discard(workout, in: transaction)
+        if let failure = discard(workout, in: transaction) { return failure }
+        mirrorTerminalIdentity(of: workout, workoutID: workoutID, into: callerContext)
+        return nil
     }
 
     @MainActor

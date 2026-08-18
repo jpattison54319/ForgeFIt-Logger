@@ -9,6 +9,10 @@ struct MyoRepSetEditorView: View {
     let displayUnit: WeightUnit
     let showsWeight: Bool
     let isUnilateral: Bool
+    /// Resolved by the logger from name AND equipment; deriving it here from
+    /// the name alone would miss exercises tagged `bands` without "band" in
+    /// their name, offering the picker on the row but not in this editor.
+    let supportsResistanceBands: Bool
     let onSave: () -> Void
 
     @State private var draft: MyoRepEditDraft
@@ -22,6 +26,7 @@ struct MyoRepSetEditorView: View {
         displayUnit: WeightUnit,
         showsWeight: Bool,
         isUnilateral: Bool,
+        supportsResistanceBands: Bool = false,
         onSave: @escaping () -> Void
     ) {
         self.set = set
@@ -29,6 +34,7 @@ struct MyoRepSetEditorView: View {
         self.displayUnit = displayUnit
         self.showsWeight = showsWeight
         self.isUnilateral = isUnilateral
+        self.supportsResistanceBands = supportsResistanceBands
         self.onSave = onSave
         _draft = State(initialValue: MyoRepEditDraft(set: set, displayUnit: displayUnit))
     }
@@ -42,7 +48,7 @@ struct MyoRepSetEditorView: View {
                         if showsWeight {
                             Card(padding: Space.lg) {
                                 VStack(alignment: .leading, spacing: Space.md) {
-                                    if ResistanceBandSupport.isBandExercise(name: exerciseName, equipment: nil) {
+                                    if supportsResistanceBands {
                                         HStack {
                                             Text("Band color")
                                                 .font(.bodyStrong)

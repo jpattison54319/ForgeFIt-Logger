@@ -144,21 +144,24 @@ struct ResistanceBandLoadMenu: View {
         profile.matching(weightKilograms: selectedWeightKilograms)
     }
 
+    /// `ScrollSafeMenu`, never SwiftUI's `Menu`: this sits inside set rows on
+    /// the logger, routine editor, Myo, and conditioning scroll surfaces, and
+    /// a `Menu` label claims the touch stream the instant a finger lands on
+    /// it — a scroll that happens to start on the swatch would dead-stop.
+    private var sections: [[ScrollSafeMenuItem]] {
+        [profile.presets.map { preset in
+            ScrollSafeMenuItem(
+                title: "\(preset.name) · \(Fmt.loadUnit(preset.weightKilograms, unit: unit))",
+                systemImage: "circle.fill",
+                iconColor: preset.hue.color,
+                isChecked: selected?.id == preset.id,
+                action: { onSelect(preset.weightKilograms) }
+            )
+        }]
+    }
+
     var body: some View {
-        Menu {
-            ForEach(profile.presets) { preset in
-                Button {
-                    onSelect(preset.weightKilograms)
-                } label: {
-                    Label {
-                        Text("\(preset.name) · \(Fmt.loadUnit(preset.weightKilograms, unit: unit))")
-                    } icon: {
-                        Image(systemName: selected?.id == preset.id ? "checkmark.circle.fill" : "circle.fill")
-                            .foregroundStyle(preset.hue.color)
-                    }
-                }
-            }
-        } label: {
+        ScrollSafeMenu(sections: sections) {
             HStack(spacing: 2) {
                 ResistanceBandSwatch(hue: selected?.hue ?? .gray)
                     .frame(width: 14, height: 14)

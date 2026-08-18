@@ -261,6 +261,28 @@ struct WorkoutFinishIdempotencyTests {
         #expect(!gate.isActive)
     }
 
+    /// Symmetric to the finish path: `discard(workoutID:)` also commits in an
+    /// isolated transaction, so the caller's long-lived instance must come
+    /// back tombstoned too. ContentView's active-workout query filters on
+    /// `deletedAt == nil` against exactly that instance.
+    @Test func isolatedDiscardTombstonesCallerInstance() throws {
+        let (container, context) = try TestStore.make()
+        let workout = substantiveLiveWorkout(in: context)
+        let workoutID = workout.id
+        try context.save()
+
+        let failure = WorkoutFinisher.discard(workoutID: workoutID, in: context)
+        #expect(failure == nil)
+
+        let verificationContext = ModelContext(container)
+        let persisted = try #require(try verificationContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.deletedAt != nil)
+
+        #expect(workout.deletedAt != nil)
+    }
+
     @Test func isolatedTerminalFailurePreservesUnrelatedPendingEditAndRetryCommitsOnce() throws {
         let (container, context) = try TestStore.make()
         let recorder = FinishRecorder()

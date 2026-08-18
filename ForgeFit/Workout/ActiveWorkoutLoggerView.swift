@@ -2270,6 +2270,7 @@ private struct ExerciseLogCard: View {
                         displayUnit: displayUnit,
                         showsWeight: weightHeader != nil,
                         isUnilateral: exercise?.isUnilateral == true,
+                        supportsResistanceBands: supportsResistanceBands,
                         onSave: {
                             editedSuggestionSetIDs.insert(presentation.set.id)
                             recompute(changedSet: presentation.set)
@@ -2280,6 +2281,7 @@ private struct ExerciseLogCard: View {
                         set: presentation.set,
                         workoutExercise: workoutExercise,
                         exerciseName: exercise?.name ?? "Exercise",
+                        supportsResistanceBands: supportsResistanceBands,
                         blockNumber: myoRepNumber(upTo: index, in: sets),
                         previous: blockTemplate(for: presentation.set, index: index, in: sets),
                         showsWeight: weightHeader != nil,

@@ -8,6 +8,8 @@ struct MyoRepActiveSetView: View {
     @Bindable var set: SetModel
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exerciseName: String
+    /// Resolved by the logger from name AND equipment — see the editor.
+    let supportsResistanceBands: Bool
     let blockNumber: Int
     let previous: SetModel?
     let showsWeight: Bool
@@ -51,6 +53,7 @@ struct MyoRepActiveSetView: View {
         set: SetModel,
         workoutExercise: WorkoutExerciseModel,
         exerciseName: String,
+        supportsResistanceBands: Bool = false,
         blockNumber: Int,
         previous: SetModel?,
         showsWeight: Bool,
@@ -69,6 +72,7 @@ struct MyoRepActiveSetView: View {
         self.set = set
         self.workoutExercise = workoutExercise
         self.exerciseName = exerciseName
+        self.supportsResistanceBands = supportsResistanceBands
         self.blockNumber = blockNumber
         self.previous = previous
         self.showsWeight = showsWeight
@@ -160,8 +164,7 @@ struct MyoRepActiveSetView: View {
                             }
                         }
 
-                        if showsWeight,
-                           ResistanceBandSupport.isBandExercise(name: exerciseName, equipment: nil) {
+                        if showsWeight, supportsResistanceBands {
                             Card {
                                 HStack {
                                     Text("Band color")
