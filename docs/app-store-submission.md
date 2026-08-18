@@ -232,7 +232,10 @@ All four read well and match what the app does — no edits needed:
 
 - `NSHealthShareUsageDescription`, `NSHealthUpdateUsageDescription`
 - `NSLocationWhenInUseUsageDescription` (outdoor cardio routes, saved on device)
-- `NSBluetoothAlwaysUsageDescription` (heart-rate monitors)
+- `NSBluetoothAlwaysUsageDescription` — retained but currently unused: Bluetooth
+  heart-rate monitors are gated off behind `FeatureFlags.bluetoothHeartRate` for
+  1.0, and no `CBCentralManager` is ever constructed, so the prompt never fires.
+  The string stays so re-enabling the flag cannot crash on launch.
 - `NSPhotoLibraryAddUsageDescription` (saving share images)
 
 ### Accessibility declarations on the product page
@@ -255,14 +258,47 @@ qualify for the Larger Text declaration:
 ```
 ForgeFit needs no account and no sign-in. Everything is usable immediately.
 
-Apple Health and Location are both optional. On the "Apple Health" onboarding
-screen, "Continue without Health" reaches the full app. A simulator or a device
-with no Health history will show "Building your baseline" instead of a recovery
-score — that is the intended honest-evidence behaviour, not an error.
+APPLE HEALTH
+The last onboarding screen explains what Apple Health is used for, and its
+single "Continue" button always opens Apple's own permission sheet. Allowing or
+declining there both lead into the full app — the decision belongs to Apple's
+sheet. Health access can be granted or reviewed later from Settings → Apple
+Health, or from the "Readiness needs Apple Health" card on Home.
 
-To see the app with data, tap "Import or restore data" on the welcome screen and
-import any Hevy, Strong, or CSV export, or use Explore on the Workout tab to
-install a bundled program and log a session.
+RECOVERY SCORE — where to find it, and why it may read "Building"
+Home tab → the "Recovery" tile (top-left of the four-tile grid). Tapping it
+opens "Recovery Today" with the full breakdown: the index ring, the HRV,
+sleeping-heart-rate and sleep signals behind it, and a data-coverage row. The
+same score appears as per-day rings on Profile → Calendar and on the Watch
+complication.
+
+The score is deliberately withheld until the athlete's own baseline supports
+it. It needs Apple Health access plus at least 21 comparable readings spanning
+at least 28 days, across two signal domains, one of which must be autonomic
+(HRV or heart rate). Until then the tile reads "Building" and the detail screen
+states exactly what is missing: "Baseline building — needs 21 comparable
+readings spanning at least 28 days."
+
+A review device or simulator cannot meet that condition, so the tile will read
+"Building" there. That is the intended honest-evidence behaviour, not an error —
+ForgeFit does not invent a number it cannot support. The attached screen
+recording shows the populated score on a device with real Health history.
+
+The calculation is in RecoveryIndexV2.swift (index math), RecoveryScores.swift
+(HRV / heart-rate / sleep assessments and their evidence gates), and
+RecoveryEngine.swift (report assembly).
+
+BACKGROUND AUDIO
+The "audio" background mode carries spoken cardio cues — split announcements,
+pace-band and heart-rate-zone guards — while the athlete is on the Home Screen
+or has pocketed the phone mid-session. The attached screen recording shows a
+cardio session speaking cues from the Home Screen. The session is only active
+around an utterance; there is no silent keep-alive.
+
+SEEING THE APP WITH DATA
+Tap "Import or restore data" on the welcome screen and import any Hevy, Strong,
+or CSV export, or use Explore on the Workout tab to install a bundled program
+and log a session.
 
 The Apple Watch app is a companion for logging and live heart rate. It is not
 required.
@@ -274,6 +310,10 @@ ForgeFit is a training tool, not a medical device. Recovery and training-load
 scores describe the user's own recorded data and are labelled as descriptive; no
 screen offers diagnosis, treatment, or injury prediction.
 ```
+
+**Attach both screen recordings** in App Review Information → Notes: the
+background-audio clip (Guideline 2.5.4) and the recovery-score clip
+(Guideline 2.1). Both were requested by name in the 2026-08-18 rejection.
 
 **Demo account:** not applicable — leave "Sign-in required" unchecked.
 
@@ -304,11 +344,27 @@ All captured on an **iPhone 17 Pro Max simulator (iOS 26.5)** at native
 **1320 × 2868**, which is the required 6.9" App Store size. Apple scales this
 set down to every other iPhone size, so no second set is needed.
 
+**Regenerated 2026-08-18 for build 74.** Xcode ships no iPhone 17 Pro Max on the
+26.5 runtime — only on the 27.0 beta, which is the runtime that stalls in
+"collecting diagnostics". Create the device first:
+
+```bash
+xcrun simctl create "iPhone 17 Pro Max Capture" \
+  com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max \
+  com.apple.CoreSimulator.SimRuntime.iOS-26-5
+```
+
+Then pin `-destination 'platform=iOS Simulator,id=<udid>'`. Two things moved
+between the 2026-08-10 set and this one, both from shipped product changes
+rather than capture drift: the "Today's recommendation" card is gone
+(`FeatureFlags.homeDailyRecommendation` defaults off), and the fourth Home tile
+is now `VitalsSummaryTile` instead of the old "Within usual bands" text.
+
 ### Screenshots — `artifacts/appstore/screenshots-6.9/`
 
 | # | File | What it sells |
 |---|---|---|
-| 1 | `01-home-readiness.png` | The morning glance: one recovery score, sleep, strain, health bands, and today's call |
+| 1 | `01-home-readiness.png` | The morning glance: one recovery score, sleep, strain, and the vitals tile |
 | 2 | `02-recovery-detail.png` | The receipts — HRV, sleep, sleeping HR vs your own median, and data coverage |
 | 3 | `03-live-logger.png` | Mid-session logging with last session's numbers prefilled and the rest timer running |
 | 4 | `04-routines.png` | Programs, not a pile of routines |
@@ -376,8 +432,39 @@ and the trim/encode step.
 
 ## 12. Still open before you press Submit
 
-Carried forward from `artifacts/release-audit-2026-08-09/FINAL-AUDIT.md`, plus
-what this pass found:
+### Rejection of 1.0 (59) — 2026-08-18
+
+Submission `5bd534d8-1577-41f8-b489-a9cd772002fa`, reviewed on iPhone 17 Pro Max,
+Apple Watch, and iPad Air 11-inch (M3). Four items; build 74 answers all four.
+
+| Guideline | Issue | Resolution |
+|---|---|---|
+| 5.1.1(iv) | Health priming screen used a "Connect" button and a "Continue without Health" escape hatch | **Fixed in code.** One "Continue" button that always opens Apple's sheet; every outcome finishes onboarding. |
+| 2.5.4 | `bluetooth-central` declared, no BLE functionality found | **Fixed in code.** Background mode removed and the feature gated off behind `FeatureFlags.bluetoothHeartRate` — no strap was available to record. |
+| 2.5.4 | `audio` declared, no background audio observed | **Reply + recording.** Mode retained; it carries spoken cardio cues from the Home Screen. Record on a physical device and attach. |
+| 2.1 | Recovery score in screenshots, not locatable in the binary | **Reply + recording.** Explain the 21-readings / 28-day baseline gate and where the score lives; attach a clip from a device with real history. |
+
+**Before uploading build 74:**
+
+- [ ] Record the background-audio clip (outdoor cardio with a pace band → Home
+      Screen → two spoken cues). Screen Recording captures app audio on its own;
+      use the speaker, not earbuds.
+- [ ] Record the recovery-score clip (Home → Recovery tile → Recovery Today).
+- [x] **Screenshots regenerated 2026-08-18** against build 74. All ten in
+      `screenshots-6.9/` were recaptured; see §11 for the simulator-creation step
+      the runtime list now requires.
+- [x] **Three app previews regenerated 2026-08-18.** The capture scripts now
+      resolve the dedicated Pro Max simulator and use a stable temporary output
+      directory. The Train cut begins on the live logger; Recover and Progress
+      show the current recovery, sleep, profile, calendar, chart, muscle-balance,
+      and records UI without the hidden recovery-action line or a cold History
+      loading state.
+- [ ] Paste the §9 review notes and attach both recordings.
+
+### Carried forward
+
+From `artifacts/release-audit-2026-08-09/FINAL-AUDIT.md`, plus what the earlier
+pass found:
 
 1. **Support contact.** Apple requires a support URL where a user can reach you.
    The live support page currently points at a GitHub Issues tracker, which

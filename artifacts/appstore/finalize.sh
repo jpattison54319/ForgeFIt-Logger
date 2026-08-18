@@ -15,7 +15,12 @@ IN=$1
 OUT=$2
 LEN=${3:-28}
 
-BASE=/private/tmp/claude-501/-Users-jamespattison-Developer-ForgeFit/2e067cfb-590d-46ab-b579-4093130facd1/scratchpad/video
+if [[ -z "$IN" || -z "$OUT" ]]; then
+  echo "usage: $0 <raw.mov> <output.mp4> [seconds]" >&2
+  exit 64
+fi
+
+BASE=${FORGEFIT_CAPTURE_BASE:-/tmp/forgefit-appstore-capture}/video
 DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 $BASE/$IN)
 
 # Average luma once per second over the final 70 s.

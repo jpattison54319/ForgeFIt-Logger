@@ -4,7 +4,8 @@ import SwiftUI
 
 /// First-launch flow. Each screen has one job: establish ForgeFit's value,
 /// collect the two preferences needed to personalize logging, then explain
-/// the optional Apple Health boundary before the system permission sheet.
+/// the Apple Health boundary before handing off to the system permission
+/// sheet, which owns the allow/decline decision.
 struct OnboardingView: View {
     @Environment(\.modelContext) private var modelContext
     @Binding var isPresented: Bool
@@ -30,9 +31,7 @@ struct OnboardingView: View {
                 case .health:
                     OnboardingHealthStep(
                         authorizationState: healthAuthorization.state,
-                        onConnect: connectHealth,
-                        onOpenSettings: HealthAuthorizationRecovery.openSettings,
-                        onContinueWithoutHealth: finish
+                        onContinue: requestHealthThenFinish
                     )
                 }
             }
@@ -66,16 +65,22 @@ struct OnboardingView: View {
         showHistoryImporter = true
     }
 
-    /// Leaves onboarding as soon as Apple's permission sheet resolves. The
-    /// 60-day catch-up scan that follows can take a while on a phone with years
-    /// of Health workouts, and holding the last onboarding screen for it — under
-    /// a button that just says "Connecting…" — reads as a hang on first launch.
-    /// The scan finishes in the background and Home fills in as it lands.
-    private func connectHealth() {
+    /// Guideline 5.1.1(iv) requires the explainer screen to always lead to
+    /// Apple's permission sheet, so this is onboarding's only exit — and it
+    /// therefore has to survive every outcome. Granted, denied, HealthKit
+    /// unavailable, or an infrastructure failure all finish: Home and Settings
+    /// both carry a reconnect affordance, whereas holding someone on the last
+    /// onboarding screen after a failed request leaves them no way into the app.
+    ///
+    /// Leaving early also keeps first launch honest. The 60-day catch-up scan
+    /// that follows can take a while on a phone with years of Health workouts,
+    /// and waiting it out under a spinner reads as a hang. The scan finishes in
+    /// the background and Home fills in as it lands.
+    private func requestHealthThenFinish() {
         guard !healthAuthorization.state.isRequesting else { return }
         let container = modelContext.container
         Task {
-            guard await healthAuthorization.connect() else { return }
+            _ = await healthAuthorization.connect()
             finish()
             await HealthWorkoutImporter.shared.importRecent(in: container)
             HealthMetricsStore.shared.refresh(force: true)

@@ -354,6 +354,62 @@ enum MicrocycleTrackingService {
         }
     }
 
+    /// Ends the interrupted window at the start of today and begins the same
+    /// tracked microcycle again at Day 1. The plan, history, and repeating day
+    /// target remain intact; a temporary extension on this window is retained.
+    static func restartCurrentCycle(
+        _ tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+
+        try withMutationRollback(in: context) {
+            let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+                .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+            guard let current = currentWindow(for: tracking, windows: windows, now: now) else {
+                throw ServiceError.windowUnavailable
+            }
+            let calendar = try MicrocycleEngine.calendar(
+                timeZoneIdentifier: tracking.timeZoneIdentifier
+            )
+            let restartDate = calendar.startOfDay(for: now)
+            guard restartDate > current.startsAt else { return }
+            guard !windows.contains(where: { $0.index > current.index }) else {
+                throw ServiceError.windowUnavailable
+            }
+
+            let durationDays = windowDurationDays(for: current)
+            guard let restartedEnd = calendar.date(
+                byAdding: .day,
+                value: durationDays,
+                to: restartDate
+            ) else {
+                throw ServiceError.windowUnavailable
+            }
+
+            current.endsAt = restartDate
+            current.updatedAt = now
+            let restarted = MicrocycleWindowModel(
+                userID: tracking.userID,
+                trackingID: tracking.id,
+                folderID: tracking.folderID,
+                folderName: current.folderName,
+                index: current.index + 1,
+                startsAt: restartDate,
+                endsAt: restartedEnd,
+                timeZoneIdentifier: current.timeZoneIdentifier,
+                routines: current.routines,
+                createdAt: now,
+                updatedAt: now
+            )
+            context.insert(restarted)
+            tracking.updatedAt = now
+            try save(context)
+        }
+    }
+
     static func activeTracking(_ trackings: [MicrocycleTrackingModel]) -> MicrocycleTrackingModel? {
         trackings
             .filter { ($0.isActive || $0.needsAttention) && $0.deletedAt == nil }

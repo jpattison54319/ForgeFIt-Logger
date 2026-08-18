@@ -698,6 +698,143 @@ struct MicrocycleTrackingServiceTests {
         #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 9)
     }
 
+    @Test func restartingCurrentCycleBeginsDayOneAndPreservesPlanHistoryAndLength() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Restart Plan")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        let secondRoutine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Lower",
+            folderID: folder.id,
+            position: 1
+        )
+        context.insert(folder)
+        context.insert(routine)
+        context.insert(secondRoutine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine, secondRoutine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        tracking.showsOnHome = false
+        let firstWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let assignment = MicrocycleDayAssignment(
+            day: date(2026, 8, 3),
+            workoutID: UUID(),
+            assignedAt: date(2026, 8, 3, 13)
+        )
+        firstWindow.dayAssignments = [assignment]
+        let workoutBeforeRestart = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: routine.id,
+            startedAt: date(2026, 8, 3),
+            endedAt: date(2026, 8, 3, 13)
+        )
+        let workoutOnRestartDay = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: secondRoutine.id,
+            startedAt: date(2026, 8, 5),
+            endedAt: date(2026, 8, 5, 13)
+        )
+        context.insert(workoutBeforeRestart)
+        context.insert(workoutOnRestartDay)
+        try context.save()
+        try MicrocycleTrackingService.addDayToCurrentWindow(
+            tracking,
+            in: context,
+            now: date(2026, 8, 3)
+        )
+
+        try MicrocycleTrackingService.restartCurrentCycle(
+            tracking,
+            in: context,
+            now: date(2026, 8, 5, 13)
+        )
+
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id }
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 2)
+        #expect(windows[0].id == firstWindow.id)
+        #expect(windows[0].startsAt == date(2026, 8, 1, 0))
+        #expect(windows[0].endsAt == date(2026, 8, 5, 0))
+        #expect(windows[0].dayAssignments == [assignment])
+        #expect(windows[1].index == 1)
+        #expect(windows[1].startsAt == date(2026, 8, 5, 0))
+        #expect(windows[1].endsAt == date(2026, 8, 15, 0))
+        #expect(windows[1].routines == firstWindow.routines)
+        #expect(MicrocycleTrackingService.dayNumber(
+            for: windows[1],
+            now: date(2026, 8, 5, 13)
+        ) == 1)
+        #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 10)
+        let restartedProgress = MicrocycleTrackingService.progress(
+            for: windows[1],
+            windows: windows,
+            workouts: [workoutBeforeRestart, workoutOnRestartDay]
+        )
+        #expect(restartedProgress.completedCount == 1)
+        #expect(restartedProgress.routines.first(where: {
+            $0.routine.id == routine.id
+        })?.isCompleted == false)
+        #expect(restartedProgress.routines.first(where: {
+            $0.routine.id == secondRoutine.id
+        })?.isCompleted == true)
+        #expect(tracking.durationDays == 9)
+        #expect(folder.defaultMicrocycleLengthDays == 9)
+        #expect(!tracking.showsOnHome)
+        #expect(MicrocycleTrackingService.currentWindow(
+            for: tracking,
+            windows: windows,
+            now: date(2026, 8, 5, 13)
+        )?.id == windows[1].id)
+    }
+
+    @Test func restartingOnDayOneDoesNotCreateAnotherWindow() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Day One")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+
+        try MicrocycleTrackingService.restartCurrentCycle(
+            tracking,
+            in: context,
+            now: date(2026, 8, 1, 13)
+        )
+
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
+    }
+
     @Test func failedStartLeavesNoTrackingWindowOrFolderMutation() throws {
         let (container, context) = try TestStore.make()
         let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
@@ -739,7 +876,7 @@ struct MicrocycleTrackingServiceTests {
         #expect(persistedFolder.defaultMicrocycleLengthDays == nil)
     }
 
-    @Test func failedEndAndAddDayRestoreTheActiveRunBeforeAnyLaterSave() throws {
+    @Test func failedEndAddDayAndRestartRestoreTheActiveRunBeforeAnyLaterSave() throws {
         let (container, context) = try TestStore.make()
         let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
         let routine = RoutineModel(
@@ -776,6 +913,18 @@ struct MicrocycleTrackingServiceTests {
         }
         #expect(window.endsAt == originalEnd)
         #expect(tracking.updatedAt == originalTrackingUpdatedAt)
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.restartCurrentCycle(
+                tracking,
+                in: context,
+                now: date(2026, 8, 3),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(window.endsAt == originalEnd)
+        #expect(tracking.updatedAt == originalTrackingUpdatedAt)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
 
         #expect(throws: ForcedSaveFailure.self) {
             try MicrocycleTrackingService.end(

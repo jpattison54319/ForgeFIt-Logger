@@ -83,12 +83,13 @@ page look assembled rather than captured.
 ## Regenerating the previews
 
 Two scripts drive this — `record.sh` and `finalize.sh`, both in this directory.
-They contain absolute paths from the machine they were written on; adjust `BASE`
-and `UDID` before rerunning.
+They use the available simulator named `iPhone 17 Pro Max Capture` and write
+intermediates under `/tmp/forgefit-appstore-capture`. Override those defaults
+with `FORGEFIT_CAPTURE_UDID` and `FORGEFIT_CAPTURE_BASE` when needed.
 
 ```bash
 ./record.sh   testPreviewTourTrain preview-1-train
-./finalize.sh preview-1-train-raw.mov ForgeFit-preview-1-train.mp4 27.2
+./finalize.sh preview-1-train-raw.mov ForgeFit-preview-1-train.mp4 18
 ```
 
 `record.sh <testName> <outputBase>` starts `simctl io recordVideo`, runs one
@@ -100,6 +101,10 @@ spends ~15 s tearing down, all of it recorded as springboard wallpaper.
 ForgeFit's UI is near-black and the springboard wallpaper is not, so the last
 frame whose average luma is dark is the last frame of the app. It then trims the
 requested number of seconds ending there and encodes.
+
+The Train preview is intentionally 18 seconds so its submitted cut begins on
+the live logger after the capture fixture resolves any stale-workout
+confirmation. The Recover and Progress previews remain 27.9 and 28.5 seconds.
 
 Three things in `finalize.sh` are load-bearing and each one cost a wasted
 recording to find:

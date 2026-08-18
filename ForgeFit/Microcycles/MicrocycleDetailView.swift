@@ -28,6 +28,7 @@ struct MicrocycleDetailView: View {
 
     @State private var showingRestSheet = false
     @State private var showingEndConfirmation = false
+    @State private var showingRestartConfirmation = false
     @State private var showingEditTracking = false
     @State private var showingHistoryEducation = false
     @State private var opensHistoryAfterEducation = false
@@ -96,10 +97,27 @@ struct MicrocycleDetailView: View {
                                 Text("This cycle only")
                                 Image(systemName: "calendar.badge.plus")
                             }
+                            if let currentWindow,
+                               MicrocycleTrackingService.dayNumber(for: currentWindow) > 1 {
+                                Button("Restart at Day 1", systemImage: "arrow.counterclockwise") {
+                                    showingRestartConfirmation = true
+                                }
+                                .accessibilityIdentifier("restart-microcycle-at-day-one")
+                            }
                         }
                     }
                     .labelStyle(.iconOnly)
                     .accessibilityIdentifier("microcycle-options")
+                    .confirmationDialog(
+                        "Restart this cycle at Day 1?",
+                        isPresented: $showingRestartConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Restart Cycle", role: .destructive, action: restartCurrentCycle)
+                        Button("Cancel", role: .cancel) { }
+                    } message: {
+                        Text("Today becomes Day 1. Activity from before today stays in your history but no longer counts toward the restarted cycle.")
+                    }
                 }
             }
         }
@@ -452,6 +470,18 @@ struct MicrocycleDetailView: View {
         guard let tracking else { return }
         do {
             try MicrocycleTrackingService.addDayToCurrentWindow(
+                tracking,
+                in: modelContext
+            )
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func restartCurrentCycle() {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.restartCurrentCycle(
                 tracking,
                 in: modelContext
             )

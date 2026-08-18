@@ -330,6 +330,26 @@ nonisolated final class HealthService: @unchecked Sendable {
     private let store = HKHealthStore()
     #endif
 
+    /// True when this launch must never present Apple's permission sheet.
+    ///
+    /// UI test automation reinstalls the app fresh, so HealthKit authorization
+    /// has never been decided; requesting it would pop the real system sheet
+    /// full-screen over whatever the test is driving, and no test drives
+    /// through that sheet (it covers dozens of data-type toggles, not a
+    /// one-tap "Allow"). `--reset-store` is already this codebase's signal for
+    /// an automation launch. `--stub-health-authorization` is the seam for
+    /// suites that need a fresh, un-reset store — onboarding's Continue always
+    /// requests, so walking that flow in a test would otherwise hang on the
+    /// sheet. Real users pass neither, and the stub flag is DEBUG-only.
+    static var suppressesAuthorizationPrompt: Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--reset-store") { return true }
+        #if DEBUG
+        if arguments.contains("--stub-health-authorization") { return true }
+        #endif
+        return false
+    }
+
     var isAvailable: Bool {
         #if canImport(HealthKit)
         HKHealthStore.isHealthDataAvailable()
@@ -425,14 +445,7 @@ nonisolated final class HealthService: @unchecked Sendable {
         // workout write access was denied. Return an explicit recovery state
         // so callers show the Health-app affordance instead of silently no-op.
         guard current != .denied else { return .denied }
-        // UI test automation reinstalls the app fresh, so HealthKit
-        // authorization has never been decided; requesting it would pop the
-        // real system permission sheet full-screen over whatever the test is
-        // driving, and no test drives through that sheet (it covers dozens of
-        // data-type toggles, not a one-tap "Allow"). --reset-store is already
-        // this codebase's signal for an automation launch; real users never
-        // pass it, so this only ever short-circuits test runs.
-        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return .notDetermined }
+        guard !Self.suppressesAuthorizationPrompt else { return .notDetermined }
         return await HealthAuthorizationRequestRunner.run(timeout: timeout) { [self] complete in
             store.requestAuthorization(toShare: shareTypes, read: readTypes) { success, error in
                 if let error {
@@ -462,7 +475,7 @@ nonisolated final class HealthService: @unchecked Sendable {
     func requestAuthorizationIfNeeded() async -> Bool {
         #if canImport(HealthKit)
         guard isAvailable else { return false }
-        guard !ProcessInfo.processInfo.arguments.contains("--reset-store") else { return false }
+        guard !Self.suppressesAuthorizationPrompt else { return false }
         // Starting a workout is not a permission-management surface. In
         // particular, a newly reported Workout Routes read type must not
         // reopen the full sheet for an already-connected user.

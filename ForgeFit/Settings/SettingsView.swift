@@ -23,7 +23,7 @@ struct SettingsView: View {
                 SettingsHeroSection(
                     healthConnected: healthAuthorization.state.isConnected,
                     watchPaired: watch.isPaired,
-                    hrmConnected: ble.state == .connected
+                    hrmConnected: FeatureFlags.bluetoothHeartRate ? ble.state == .connected : nil
                 )
                 SettingsAppearanceSection()
                 SettingsAppSection()
@@ -31,7 +31,9 @@ struct SettingsView: View {
                     showHistoryImporter: $showHistoryImporter
                 )
                 SettingsWatchSection()
-                SettingsHRMSection(showHRMPairing: $showHRMPairing)
+                if FeatureFlags.bluetoothHeartRate {
+                    SettingsHRMSection(showHRMPairing: $showHRMPairing)
+                }
                 SettingsTrainingSection()
                 SettingsUnitsSection()
                 SettingsEquipmentSection()
@@ -79,7 +81,9 @@ struct SettingsView: View {
             WorkoutHistoryImportView()
         }
         .sheet(isPresented: $showHRMPairing) {
-            HRMPairingSheet()
+            if FeatureFlags.bluetoothHeartRate {
+                HRMPairingSheet()
+            }
         }
         .sheet(isPresented: $showExportSheet) {
             ExportDataSheet()

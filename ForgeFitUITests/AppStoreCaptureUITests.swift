@@ -407,7 +407,11 @@ final class AppStoreCaptureUITests: XCTestCase {
 
     /// Preview 1 — the daily loop: readiness, then train.
     func testPreviewTourTrain() throws {
-        let app = launchDemoApp(resetStore: false)
+        // Start the preview sequence from a clean store. A prior screenshot
+        // capture deliberately leaves a seeded workout active; reusing that
+        // state opens the destructive "Discard Current & Start New" sheet in
+        // the recording instead of starting the routine.
+        let app = launchDemoApp()
         // Open on the readiness dashboard and let it read; the *why* behind
         // the score is preview 2's job, so this tour stays on the daily loop
         // and keeps its whole arc inside the 30-second ceiling.
@@ -418,6 +422,9 @@ final class AppStoreCaptureUITests: XCTestCase {
         _ = tap(app, "tab-workout")
         settle(3)
         _ = tap(app, "start-routine-Push Day")
+        if app.buttons["Discard Current & Start New"].firstMatch.waitForExistence(timeout: 2) {
+            app.buttons["Discard Current & Start New"].firstMatch.tap()
+        }
         settle(3)
 
         // Log the opening sets at a readable pace.
@@ -454,21 +461,20 @@ final class AppStoreCaptureUITests: XCTestCase {
         settle(4)
     }
 
-    /// Preview 3 — progress: charts, records, and searchable history.
+    /// Preview 3 — progress: profile, charts, muscle balance, and records.
     func testPreviewTourProgress() throws {
         let app = launchDemoApp(resetStore: false)
         settle(2)
 
-        // History first, charts last: reaching the Workouts header costs a
-        // dozen swipes down the Profile screen, and putting that at the front
-        // keeps the expensive navigation outside the 30-second window that
-        // actually ships.
+        // Keep the tour on dashboards whose seeded summaries are ready at
+        // launch. The full History index is intentionally built on demand and
+        // can spend most of a 30-second preview showing a loading state on a
+        // cold simulator, even though the populated screen is captured as a
+        // dedicated product-page screenshot.
         _ = tap(app, "tab-profile")
-        settle(1.5)
-        _ = scrollToAndTap(app, "profile-see-all-workouts", maxSwipes: 14)
+        settle(4)
+        slowScroll(app, distance: 0.3)
         settle(3.5)
-        slowScroll(app, distance: 0.4)
-        settle(3)
 
         _ = tap(app, "tab-insights")
         settle(4)

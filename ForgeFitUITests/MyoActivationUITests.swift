@@ -33,11 +33,14 @@ final class MyoActivationUITests: XCTestCase {
     /// Myo-reps. Ends on the compact ready card, before the focused runner.
     @MainActor
     private func makeReadyMyoSet(in app: XCUIApplication) {
-        let getStarted = app.buttons["Get started"].firstMatch
+        // --reset-store can re-arm the onboarding cover after the shell has
+        // already rendered, so walk it if it appears. Identifiers, not labels:
+        // the setup and Health steps both label their action "Continue".
+        let getStarted = app.buttons["onboarding-get-started"].firstMatch
         if getStarted.waitForExistence(timeout: 1) {
             tapWhenHittable(getStarted)
-            tapWhenHittable(app.buttons["Continue"].firstMatch)
-            tapWhenHittable(app.buttons["Continue without Health"].firstMatch)
+            tapWhenHittable(app.buttons["onboarding-setup-continue"].firstMatch)
+            tapWhenHittable(app.buttons["onboarding-continue-health"].firstMatch)
         }
 
         let emptyAction = element(app, "start-empty-workout")

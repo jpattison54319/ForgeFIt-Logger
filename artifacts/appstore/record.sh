@@ -15,14 +15,24 @@ set -e
 TEST=$1          # e.g. testPreviewTourTrain
 OUT=$2           # e.g. preview-1-train
 
+if [[ -z "$TEST" || -z "$OUT" ]]; then
+  echo "usage: $0 <testName> <outputBase>" >&2
+  exit 64
+fi
+
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-UDID=49F5EAFA-7FC0-4914-8735-161A7B9F3E20
-BASE=/private/tmp/claude-501/-Users-jamespattison-Developer-ForgeFit/2e067cfb-590d-46ab-b579-4093130facd1/scratchpad
+REPO_ROOT=${0:A:h:h:h}
+UDID=${FORGEFIT_CAPTURE_UDID:-$(xcrun simctl list devices available | awk -F '[()]' '/iPhone 17 Pro Max Capture/ { print $2; exit }')}
+if [[ -z "$UDID" ]]; then
+  echo "No available 'iPhone 17 Pro Max Capture' simulator. Set FORGEFIT_CAPTURE_UDID." >&2
+  exit 69
+fi
+BASE=${FORGEFIT_CAPTURE_BASE:-/tmp/forgefit-appstore-capture}
 DD=$BASE/dd
 VID=$BASE/video
 APP_PATTERN="ForgeFit.app/ForgeFit"
 mkdir -p $VID
-cd /Users/jamespattison/Developer/ForgeFit/ForgeFit
+cd $REPO_ROOT
 
 rm -f $VID/$OUT-raw.mov $VID/$OUT.log
 touch $VID/$OUT.log

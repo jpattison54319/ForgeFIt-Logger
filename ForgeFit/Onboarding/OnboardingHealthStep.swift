@@ -1,11 +1,13 @@
 import SwiftUI
 
+/// Explains what Apple Health buys the athlete, then hands off to Apple's own
+/// permission sheet. Guideline 5.1.1(iv) requires that a pre-permission screen
+/// always lead to the request, so `onContinue` is the only control here — the
+/// choice itself belongs to Apple's sheet, not to ForgeFit's UI.
 struct OnboardingHealthStep: View {
     @Environment(\.theme) private var theme
     let authorizationState: HealthAuthorizationState
-    let onConnect: () -> Void
-    let onOpenSettings: () -> Void
-    let onContinueWithoutHealth: () -> Void
+    let onContinue: () -> Void
 
     private var connecting: Bool { authorizationState.isRequesting }
 
@@ -90,27 +92,17 @@ struct OnboardingHealthStep: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Space.sm) {
-                if authorizationState.requiresPermissionReview {
-                    PrimaryButton(
-                        title: "Open Settings",
-                        systemImage: "gearshape.fill",
-                        action: onOpenSettings
-                    )
-                    .accessibilityIdentifier("onboarding-open-health-settings")
-                } else {
-                    PrimaryButton(
-                        title: connecting ? "Connecting…" : authorizationState == .notDetermined
-                            ? "Connect Apple Health" : "Try Apple Health Again",
-                        systemImage: "heart.fill",
-                        action: onConnect
-                    )
-                    .disabled(connecting || authorizationState == .unavailable)
-                    .accessibilityIdentifier("onboarding-connect-health")
-                }
-
-                SecondaryButton(title: "Continue without Health", action: onContinueWithoutHealth)
-                    .disabled(connecting)
-                    .accessibilityIdentifier("onboarding-continue-without-health")
+                // Disabled only while a request is in flight. A device without
+                // HealthKit still gets a working Continue: this is the last
+                // onboarding step and the only way into the app, so a
+                // permanently disabled button would strand the athlete here.
+                PrimaryButton(
+                    title: connecting ? "Opening Apple Health…" : "Continue",
+                    systemImage: "heart.fill",
+                    action: onContinue
+                )
+                .disabled(connecting)
+                .accessibilityIdentifier("onboarding-continue-health")
             }
             .padding(.horizontal, Space.xl)
             .padding(.top, Space.md)

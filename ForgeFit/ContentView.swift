@@ -1235,8 +1235,12 @@ struct ContentView: View {
             quickActionsExpanded = false
             LiveMetricsHub.shared.beginSession()
             // Latch onto a paired heart-rate monitor (Garmin broadcast /
-            // strap) for the session; no-op when none is remembered.
-            BLEHeartRateService.shared.reconnectIfRemembered()
+            // strap) for the session; no-op when none is remembered. Skipped
+            // entirely while the feature is gated off so CBCentralManager is
+            // never constructed and iOS never asks for Bluetooth permission.
+            if FeatureFlags.bluetoothHeartRate {
+                BLEHeartRateService.shared.reconnectIfRemembered()
+            }
             WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
         }
         updateWidgetSnapshot()
@@ -1428,7 +1432,9 @@ struct ContentView: View {
         // that was already active before the first render.
         if activeWorkout != nil {
             LiveMetricsHub.shared.beginSession()
-            BLEHeartRateService.shared.reconnectIfRemembered()
+            if FeatureFlags.bluetoothHeartRate {
+                BLEHeartRateService.shared.reconnectIfRemembered()
+            }
         }
         if performanceGate.allowsNonWorkoutWork {
             await seedLaunchData()
