@@ -1,7 +1,7 @@
 # Reply to App Review — 1.0 (59) rejection, 2026-08-18
 
 Submission ID `5bd534d8-1577-41f8-b489-a9cd772002fa`. Paste the block below into
-the App Store Connect message thread once build 73 is uploaded, with the two
+the App Store Connect message thread once build 74 is uploaded, with the two
 video links filled in.
 
 **Before sending:**
@@ -15,7 +15,7 @@ video links filled in.
 ---
 
 ```
-Thank you for the detailed review. Build 73 addresses all four items.
+Thank you for the detailed review. Build 74 addresses all four items.
 
 
 GUIDELINE 5.1.1(iv) — HEALTHKIT PERMISSION REQUEST
@@ -33,7 +33,7 @@ outcomes continue into the app.
 
 GUIDELINE 2.5.4 — bluetooth-central
 
-Removed from UIBackgroundModes in build 73.
+Removed from UIBackgroundModes in build 74.
 
 ForgeFit does contain a Core Bluetooth implementation for chest-strap heart rate
 monitors, but we do not currently have the hardware to record it working as you
