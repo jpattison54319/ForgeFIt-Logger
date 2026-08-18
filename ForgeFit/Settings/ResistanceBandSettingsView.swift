@@ -76,33 +76,33 @@ private struct ResistanceBandPresetRow: View {
 
     var body: some View {
         HStack(spacing: Space.sm) {
-            Menu {
-                ForEach(ResistanceBandHue.allCases) { hue in
-                    Button {
-                        preset.hue = hue
-                    } label: {
-                        Label(hue.title, systemImage: preset.hue == hue ? "checkmark.circle.fill" : "circle.fill")
-                    }
-                }
-            } label: {
+            // ScrollSafeMenu, not SwiftUI's `Menu`: a `Menu` renders every
+            // `systemImage` in the accent tint, so all ten swatches came out
+            // the same yellow. `iconColor` survives into UIMenu as an
+            // always-original template, the way superset dots keep theirs —
+            // and the label stops claiming this ScrollView's scroll gesture.
+            ScrollSafeMenu(sections: [hueItems]) {
                 ResistanceBandSwatch(hue: preset.hue)
                     .frame(width: 28, height: 28)
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("Color for \(preset.name)")
 
-            TextField("Band name", text: $preset.name)
-                .font(.bodyStrong)
-                .foregroundStyle(theme.textPrimary)
-                .textFieldStyle(.plain)
-                .accessibilityIdentifier("resistance-band-name-\(preset.id.uuidString)")
+            DarkTextField(
+                text: $preset.name,
+                placeholder: "Band name",
+                accessibilityIdentifier: "resistance-band-name-\(preset.id.uuidString)"
+            )
 
-            TextField("Weight", value: displayWeight, format: .number)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .font(.bodyStrong)
-                .frame(width: 68)
-                .accessibilityIdentifier("resistance-band-weight-\(preset.id.uuidString)")
+            // The filled field container is the affordance that says
+            // "editable" — a bare value read as static label text.
+            OptionalLoadField(
+                placeholder: "0",
+                value: weightKilograms,
+                unit: unit,
+                width: 84
+            )
+            .accessibilityIdentifier("resistance-band-weight-\(preset.id.uuidString)")
 
             Text(unit.suffix)
                 .font(.label)
@@ -115,10 +115,25 @@ private struct ResistanceBandPresetRow: View {
         }
     }
 
-    private var displayWeight: Binding<Double> {
+    private var hueItems: [ScrollSafeMenuItem] {
+        ResistanceBandHue.allCases.map { hue in
+            ScrollSafeMenuItem(
+                title: hue.title,
+                systemImage: "circle.fill",
+                iconColor: hue.color,
+                isChecked: preset.hue == hue,
+                action: { preset.hue = hue }
+            )
+        }
+    }
+
+    /// `OptionalLoadField` owns the kg↔display conversion through `Fmt` and
+    /// the focus-aware draft, so a fractional band load can be typed without
+    /// the trailing "." being eaten mid-keystroke.
+    private var weightKilograms: Binding<Double?> {
         Binding(
-            get: { unit.displayValue(fromKilograms: preset.weightKilograms) },
-            set: { preset.weightKilograms = unit.kilograms(fromDisplayValue: max(0, $0)) }
+            get: { preset.weightKilograms },
+            set: { preset.weightKilograms = max(0, $0 ?? 0) }
         )
     }
 }
