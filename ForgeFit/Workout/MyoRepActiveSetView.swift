@@ -160,6 +160,23 @@ struct MyoRepActiveSetView: View {
                             }
                         }
 
+                        if showsWeight,
+                           ResistanceBandSupport.isBandExercise(name: exerciseName, equipment: nil) {
+                            Card {
+                                HStack {
+                                    Text("Band color")
+                                        .font(.bodyStrong)
+                                        .foregroundStyle(theme.textPrimary)
+                                    Spacer()
+                                    ResistanceBandLoadMenu(
+                                        selectedWeightKilograms: selectedBandWeight,
+                                        unit: displayUnit,
+                                        onSelect: applyBandWeight
+                                    )
+                                }
+                            }
+                        }
+
                         MyoRepActivationCard(
                             side: selectedSide,
                             isLogged: activationIsLogged,
@@ -357,6 +374,18 @@ struct MyoRepActiveSetView: View {
                 ownerID: set.id
             )
         }
+    }
+
+    private var selectedBandWeight: Double? {
+        self.set.modeWeight ?? displayUnit.kilograms(fromDisplayValue: weightDraft)
+    }
+
+    private func applyBandWeight(_ kilograms: Double) {
+        focusedInput = nil
+        weightDraft = displayUnit.displayValue(fromKilograms: kilograms)
+        set.setModeWeight(kilograms)
+        set.recomputeDerivedMetrics()
+        onChange()
     }
 
     private func beginEditingMiniSet(_ index: Int) {

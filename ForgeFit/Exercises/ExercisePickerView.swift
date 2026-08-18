@@ -56,6 +56,12 @@ struct ExercisePickerView: View {
     @State private var modalityFilter: Modality?
     @State private var replacementEquipmentFilter: ExerciseSwapSuggester.EquipmentFilter?
     @State private var selected: Set<UUID> = []
+    /// Exercises created while a selection was in flight — a fallback for
+    /// resolving them before the `@Query` republishes. See `selectedExercises`.
+    @State private var createdDuringSelection: [ExerciseLibraryModel] = []
+    /// Set to a just-created exercise so the list scrolls it into view.
+    /// Cleared as soon as the scroll is issued.
+    @State private var scrollTarget: UUID?
     @State private var showCreate = false
     @State private var showConditioningBuilder = false
     @State private var showYogaBuilder = false
@@ -239,7 +245,7 @@ struct ExercisePickerView: View {
 
                 if !selected.isEmpty {
                     PrimaryButton(title: "Add \(selected.count) exercise\(selected.count == 1 ? "" : "s")") {
-                        commit(exercises.filter { selected.contains($0.id) })
+                        commit(selectedExercises)
                     }
                     .padding(.horizontal, Space.lg)
                     .padding(.bottom, Space.sm)
@@ -262,7 +268,7 @@ struct ExercisePickerView: View {
                 CreateExerciseView(
                     initialName: search.trimmingCharacters(in: .whitespacesAndNewlines),
                     initialModality: modalityFilter ?? .strength
-                ) { created in commit([created]) }
+                ) { created in absorbCreated(created) }
             }
             .sheet(isPresented: $showConditioningBuilder) {
                 ConditioningBlockBuilderView(
@@ -399,19 +405,49 @@ struct ExercisePickerView: View {
     }
 
     private var list: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: Space.sm) {
-                let picks = suggested
-                if !picks.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles").font(.tag)
-                        Text("Suggested").font(.system(size: 13, weight: .bold))
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: Space.sm) {
+                    let picks = suggested
+                    if !picks.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles").font(.tag)
+                            Text("Suggested").font(.system(size: 13, weight: .bold))
+                            Spacer()
+                        }
+                        .foregroundStyle(theme.accentForeground)
+                        .padding(.horizontal, Space.lg)
+
+                        ForEach(picks) { exercise in
+                            Group {
+                                if replacementTarget != nil {
+                                    ReplacementExerciseRow(
+                                        exercise: exercise,
+                                        onShowDetails: { detailExercise = exercise },
+                                        onSwap: { commit([exercise]) }
+                                    )
+                                } else {
+                                    ExerciseRowLabel(
+                                        exercise: exercise,
+                                        selected: selected.contains(exercise.id),
+                                        onSelect: { toggle(exercise) },
+                                        onInfo: { detailExercise = exercise }
+                                    )
+                                }
+                            }
+                            .padding(.horizontal, Space.lg)
+                        }
+                    }
+
+                    HStack {
+                        Text(picks.isEmpty ? "\(filtered.count) exercises" : "All exercises")
+                            .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                     }
-                    .foregroundStyle(theme.accentForeground)
                     .padding(.horizontal, Space.lg)
+                    .padding(.top, picks.isEmpty ? 0 : Space.sm)
 
-                    ForEach(picks) { exercise in
+                    ForEach(filtered) { exercise in
                         Group {
                             if replacementTarget != nil {
                                 ReplacementExerciseRow(
@@ -430,46 +466,29 @@ struct ExercisePickerView: View {
                         }
                         .padding(.horizontal, Space.lg)
                     }
-                }
 
-                HStack {
-                    Text(picks.isEmpty ? "\(filtered.count) exercises" : "All exercises")
-                        .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, Space.lg)
-                .padding(.top, picks.isEmpty ? 0 : Space.sm)
-
-                ForEach(filtered) { exercise in
-                    Group {
-                        if replacementTarget != nil {
-                            ReplacementExerciseRow(
-                                exercise: exercise,
-                                onShowDetails: { detailExercise = exercise },
-                                onSwap: { commit([exercise]) }
-                            )
-                        } else {
-                            ExerciseRowLabel(
-                                exercise: exercise,
-                                selected: selected.contains(exercise.id),
-                                onSelect: { toggle(exercise) },
-                                onInfo: { detailExercise = exercise }
-                            )
-                        }
+                    // Escape hatch under the results: if none of the matches is the
+                    // exercise being searched for, create it with the name prefilled.
+                    if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        createFromSearchButton
+                            .padding(.horizontal, Space.lg)
+                            .padding(.top, Space.sm)
                     }
-                    .padding(.horizontal, Space.lg)
                 }
-
-                // Escape hatch under the results: if none of the matches is the
-                // exercise being searched for, create it with the name prefilled.
-                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    createFromSearchButton
-                        .padding(.horizontal, Space.lg)
-                        .padding(.top, Space.sm)
-                }
+                .padding(.vertical, Space.sm)
+                .padding(.bottom, 90)
             }
-            .padding(.vertical, Space.sm)
-            .padding(.bottom, 90)
+            // A just-created exercise joins the selection immediately, so
+            // bring it on screen — in a name-sorted catalog this size it
+            // would otherwise be counted in "Add N" from somewhere the
+            // user can't see.
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                scrollTarget = nil
+            }
         }
     }
 
@@ -539,6 +558,59 @@ struct ExercisePickerView: View {
             mechanic: exercise.mechanic,
             force: exercise.force
         )
+    }
+
+    /// Exercises behind the "Add N" button, in the library's display order.
+    ///
+    /// Selection is tracked by id and resolved against the raw `@Query`, so an
+    /// exercise created while a selection is in flight can be selected a beat
+    /// before the query republishes. Without the second pass it would be
+    /// counted in "Add N" and then silently dropped from what's added.
+    private var selectedExercises: [ExerciseLibraryModel] {
+        var list = exercises.filter { selected.contains($0.id) }
+        let present = Set(list.map(\.id))
+        list += createdDuringSelection.filter {
+            selected.contains($0.id) && !present.contains($0.id)
+        }
+        return list
+    }
+
+    /// Creating an exercise must never discard a selection already in flight.
+    /// With nothing selected, "create" is a one-shot add and still commits
+    /// straight through to the caller. With a selection in flight the new
+    /// exercise joins it and the picker stays open, so the whole set goes in
+    /// as one bulk add.
+    private func absorbCreated(_ created: ExerciseLibraryModel) {
+        guard !selected.isEmpty else { commit([created]); return }
+        reveal(created)
+        createdDuringSelection.append(created)
+        selected.insert(created.id)
+        scrollTarget = created.id
+    }
+
+    /// Keeps the promise the selection count makes. The new exercise is
+    /// counted in "Add N" immediately, so relax exactly the narrowing state
+    /// that would hide it from the list — and nothing else. Constraints the
+    /// caller imposed (preset modality, exclusions) are never touched.
+    private func reveal(_ created: ExerciseLibraryModel) {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        // `contains` is the search scorer's strongest match, so a name that
+        // contains the query is guaranteed to rank; anything else is cleared
+        // rather than guessed at.
+        if !query.isEmpty, !created.name.lowercased().contains(query.lowercased()) {
+            search = ""
+        }
+        if let muscle,
+           !created.primaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }),
+           !created.secondaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }) {
+            self.muscle = nil
+        }
+        if let equipment, created.equipment != equipment {
+            self.equipment = nil
+        }
+        if presetModality == nil, let modalityFilter, created.modality != modalityFilter {
+            self.modalityFilter = nil
+        }
     }
 
     private func commit(_ list: [ExerciseLibraryModel]) {

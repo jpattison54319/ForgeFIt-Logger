@@ -914,6 +914,84 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertFalse(suggestion.waitForExistence(timeout: 1), "Duplicate suggestions should be off for the search-origin path.")
     }
 
+    /// Creating an exercise mid-selection must keep what's already ticked.
+    /// The picker stays open, the new exercise joins the selection, and one
+    /// bulk add carries the whole set into the routine.
+    @MainActor
+    func testCreateExerciseKeepsExistingSelection() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.launch()
+
+        app.descendants(matching: .any)["tab-workout"].firstMatch.tap()
+        let newRoutine = app.buttons["New Routine"].firstMatch
+        XCTAssertTrue(newRoutine.waitForExistence(timeout: 5))
+        newRoutine.tap()
+        let addToRoutine = app.buttons["add-to-routine"].firstMatch
+        XCTAssertTrue(addToRoutine.waitForExistence(timeout: 5))
+        addToRoutine.tap()
+
+        // Tick the first three rows. Taken by position rather than by name so
+        // the test doesn't pin itself to the seeded catalog's contents.
+        let rows = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'exercise-row-'")
+        )
+        XCTAssertTrue(rows.element(boundBy: 2).waitForExistence(timeout: 5), "Expected at least three exercises.")
+        var picked: [String] = []
+        for index in 0..<3 {
+            let row = rows.element(boundBy: index)
+            XCTAssertTrue(row.waitForExistence(timeout: 3))
+            picked.append(String(row.identifier.dropFirst("exercise-row-".count)))
+            row.tap()
+        }
+
+        let addThree = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Add 3 exercises'")
+        ).firstMatch
+        XCTAssertTrue(addThree.waitForExistence(timeout: 3), "Expected three exercises selected.")
+
+        // Create a fourth from the picker toolbar.
+        let createButton = app.descendants(matching: .any)["create-exercise-button"].firstMatch
+        XCTAssertTrue(createButton.waitForExistence(timeout: 5))
+        createButton.tap()
+
+        let nameField = app.textFields["create-exercise-name"].firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "Expected the create form.")
+        nameField.tap()
+        nameField.typeText("Atlantis Leg Press")
+        app.buttons["Create"].firstMatch.tap()
+
+        // The picker is still open — creation did NOT commit and dismiss.
+        XCTAssertTrue(
+            createButton.waitForExistence(timeout: 5),
+            "Expected to land back on the picker, not the routine editor."
+        )
+
+        // The selection survived and the new exercise joined it.
+        let addFour = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Add 4 exercises'")
+        ).firstMatch
+        XCTAssertTrue(
+            addFour.waitForExistence(timeout: 5),
+            "Expected the three prior picks plus the new exercise."
+        )
+        let createdRow = app.descendants(matching: .any)["exercise-row-Atlantis Leg Press"].firstMatch
+        XCTAssertTrue(
+            createdRow.waitForExistence(timeout: 5),
+            "Expected the new exercise visible in the results."
+        )
+
+        // One bulk add carries all four into the routine.
+        addFour.tap()
+        XCTAssertTrue(app.buttons["add-to-routine"].firstMatch.waitForExistence(timeout: 5))
+        for name in picked + ["Atlantis Leg Press"] {
+            let inRoutine = app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS[c] %@", name)
+            ).firstMatch
+            XCTAssertTrue(inRoutine.waitForExistence(timeout: 3), "Expected \(name) in the routine.")
+        }
+    }
+
     /// Creating an exercise whose name matches an existing one surfaces a
     /// "use this instead" suggestion; tapping it adds the existing exercise to
     /// the routine and abandons creation (no duplicate is made).

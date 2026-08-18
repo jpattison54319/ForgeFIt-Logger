@@ -2507,6 +2507,7 @@ private struct ExerciseLogCard: View {
                                 previous: blockTemplate(for: set, index: index, in: sets),
                                 showWeight: weightHeader != nil,
                                 displayUnit: displayUnit,
+                                supportsResistanceBands: supportsResistanceBands,
                                 isUnilateral: exercise?.isUnilateral == true,
                                 completionDate: completionDate,
                                 usesSuggestedValues: usesSuggestedValues(for: set),
@@ -2547,6 +2548,7 @@ private struct ExerciseLogCard: View {
 	                            defaultsToFailure: failureTrainingEnabled && set.setType != .warmup,
 	                            effortScale: effortScale,
 	                            displayUnit: displayUnit,
+                                supportsResistanceBands: supportsResistanceBands,
                                 focusedInput: $focusedInput,
                                 openSwipeSetID: $openSwipeSetID,
 	                            onChange: { recompute(changedSet: set) },
@@ -3268,6 +3270,13 @@ private struct ExerciseLogCard: View {
     private func saveNow() {
         modelContext.saveUserChanges { onWorkoutChanged() }
     }
+
+    private var supportsResistanceBands: Bool {
+        ResistanceBandSupport.isBandExercise(
+            name: exercise?.name,
+            equipment: exercise?.equipment
+        )
+    }
 }
 
 // MARK: - Swipe-to-delete
@@ -3309,6 +3318,7 @@ private struct SetRow: View {
     let defaultsToFailure: Bool
     let effortScale: EffortScale
     let displayUnit: WeightUnit
+    let supportsResistanceBands: Bool
     let focusedInput: FocusState<SetInputFocus?>.Binding
     /// The set whose swipe-to-delete tray is open, shared across sibling rows so
     /// only one opens at a time.
@@ -3348,6 +3358,7 @@ private struct SetRow: View {
         defaultsToFailure: Bool,
         effortScale: EffortScale = .rpe,
         displayUnit: WeightUnit,
+        supportsResistanceBands: Bool,
         focusedInput: FocusState<SetInputFocus?>.Binding,
         openSwipeSetID: Binding<UUID?>,
         onChange: @escaping () -> Void,
@@ -3380,6 +3391,7 @@ private struct SetRow: View {
         self.defaultsToFailure = defaultsToFailure
         self.effortScale = effortScale
         self.displayUnit = displayUnit
+        self.supportsResistanceBands = supportsResistanceBands
         self.focusedInput = focusedInput
         self._openSwipeSetID = openSwipeSetID
         self.onChange = onChange
@@ -4083,7 +4095,7 @@ private struct SetRow: View {
     ) -> some View {
         let label = accessibilityLabel(for: field)
 
-        return ZStack {
+        return ZStack(alignment: .leading) {
             if text.wrappedValue.isEmpty {
                 Text(placeholder)
                     .font(.bodyStrong)
@@ -4093,6 +4105,16 @@ private struct SetRow: View {
                     // large Dynamic Type sizes.
                     .minimumScaleFactor(0.8)
                     .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity)
+            }
+
+            if field == .weight, supportsResistanceBands {
+                ResistanceBandLoadMenu(
+                    selectedWeightKilograms: effectiveBandWeight,
+                    unit: displayUnit,
+                    onSelect: applyBandWeight
+                )
+                .zIndex(1)
             }
 
             TextField("", text: text)
@@ -4103,6 +4125,7 @@ private struct SetRow: View {
                 .font(.bodyStrong)
                 .foregroundStyle(theme.textPrimary)
                 .textFieldStyle(.plain)
+                .padding(.leading, field == .weight && supportsResistanceBands ? 22 : 0)
                 .accessibilityLabel(label)
                 .onSubmit {
                     if let next = nextInputField(after: field) {
@@ -4116,6 +4139,22 @@ private struct SetRow: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var effectiveBandWeight: Double? {
+        isShowingSuggestion(for: .weight) ? suggestedWeight : set.modeWeight
+    }
+
+    private func applyBandWeight(_ kilograms: Double) {
+        clearFocus()
+        weightDraft = Fmt.load(kilograms, unit: displayUnit)
+        editedDraftFields.insert(.weight)
+        set.setModeWeight(kilograms)
+        if usesSuggestedValues {
+            suggestionFieldOverrides[.weight] = true
+            onSuggestionFieldEdited(.weight, true)
+        }
+        onChange()
     }
 
     private func rpePickerField(width: CGFloat) -> some View {

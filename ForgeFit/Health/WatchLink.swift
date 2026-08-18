@@ -463,6 +463,17 @@ final class WatchLink: NSObject {
         let active = try? context.fetch(activeDescriptor).first
 
         switch command {
+        case .requestContext:
+            // The watch asking to be brought up to date (foreground, or a
+            // fresh WCSession activation). Deliberately publishes what the
+            // phone already knows rather than triggering an analytics
+            // rebuild: readiness the phone hasn't computed for today comes
+            // back absent, which is honest, instead of yesterday's number.
+            // Use a fresh context: an isolated workout finish can have
+            // committed while the long-lived UI context still retains its
+            // pre-finish model. Republishing that cached row would make the
+            // Watch immediately start the completed session again.
+            publishDurableState()
         case .startRoutine(let routineID):
             guard active == nil else { publishState(policy: .immediate); return }
             let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []

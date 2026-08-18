@@ -41,14 +41,33 @@ struct MyoRepSetEditorView: View {
                     LazyVStack(alignment: .leading, spacing: Space.lg) {
                         if showsWeight {
                             Card(padding: Space.lg) {
-                                MyoRepWeightStepper(
-                                    value: $draft.weightDisplay,
-                                    displayUnit: displayUnit,
-                                    focus: $focusedInput,
-                                    focusValue: .editorWeight,
-                                    onSubmit: focusFirstActivation,
-                                    accessibilityIdentifier: "edit-myo-activation-weight"
-                                )
+                                VStack(alignment: .leading, spacing: Space.md) {
+                                    if ResistanceBandSupport.isBandExercise(name: exerciseName, equipment: nil) {
+                                        HStack {
+                                            Text("Band color")
+                                                .font(.bodyStrong)
+                                                .foregroundStyle(theme.textPrimary)
+                                            Spacer()
+                                            ResistanceBandLoadMenu(
+                                                selectedWeightKilograms: displayUnit.kilograms(fromDisplayValue: draft.weightDisplay),
+                                                unit: displayUnit,
+                                                onSelect: { kilograms in
+                                                    focusedInput = nil
+                                                    draft.weightDisplay = displayUnit.displayValue(fromKilograms: kilograms)
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    MyoRepWeightStepper(
+                                        value: $draft.weightDisplay,
+                                        displayUnit: displayUnit,
+                                        focus: $focusedInput,
+                                        focusValue: .editorWeight,
+                                        onSubmit: focusFirstActivation,
+                                        accessibilityIdentifier: "edit-myo-activation-weight"
+                                    )
+                                }
                             }
                         }
 

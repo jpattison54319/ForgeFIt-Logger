@@ -646,14 +646,19 @@ private struct ConditioningMovementEditor: View {
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
-                    TextField("Optional", value: $movement.targetLoad, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .minimumTouchTarget()
-                        .onChange(of: movement.targetLoad) { _, _ in onChange() }
-                    Text(exercise?.effectiveWeightUnit.suffix ?? Fmt.unit.suffix)
+                    let unit = exercise?.effectiveWeightUnit ?? Fmt.unit
+                    OptionalLoadField(
+                        placeholder: "Optional",
+                        value: $movement.targetLoad,
+                        unit: unit,
+                        width: 104,
+                        supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                            name: exercise?.name,
+                            equipment: exercise?.equipment
+                        ),
+                        onChange: onChange
+                    )
+                    Text(unit.suffix)
                         .foregroundStyle(theme.textSecondary)
                 }
             }

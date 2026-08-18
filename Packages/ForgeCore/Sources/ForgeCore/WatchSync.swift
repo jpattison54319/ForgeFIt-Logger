@@ -82,6 +82,34 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     }
 
     /// The user's distance unit, defaulting to km when a peer hasn't sent one.
+    /// Readiness belongs to one calendar day.
+    ///
+    /// WCSession retains the last application context indefinitely, and the
+    /// phone only publishes while its app is running — so a watch that hasn't
+    /// heard from the phone since yesterday is still holding yesterday's
+    /// score. Reading it through this gate is what stops that number from
+    /// being shown (and re-published to the complication) as if it were
+    /// today's. Mirrors `ForgeFitWidgetSnapshot.isCurrent`: an active workout
+    /// stays valid across midnight because its own lifecycle ends it.
+    public func isReadinessCurrent(at date: Date = .now, calendar: Calendar = .current) -> Bool {
+        workout != nil || calendar.isDate(updatedAt, inSameDayAs: date)
+    }
+
+    /// `readiness`, or nil once it belongs to a previous day.
+    public func currentReadiness(at date: Date = .now, calendar: Calendar = .current) -> Int? {
+        isReadinessCurrent(at: date, calendar: calendar) ? readiness : nil
+    }
+
+    /// `readinessAction`, or nil once it belongs to a previous day.
+    public func currentReadinessAction(at date: Date = .now, calendar: Calendar = .current) -> String? {
+        isReadinessCurrent(at: date, calendar: calendar) ? readinessAction : nil
+    }
+
+    /// `readinessDetail`, or nil once it belongs to a previous day.
+    public func currentReadinessDetail(at date: Date = .now, calendar: Calendar = .current) -> String? {
+        isReadinessCurrent(at: date, calendar: calendar) ? readinessDetail : nil
+    }
+
     public var effectiveDistanceUnit: DistanceUnit { distanceUnit ?? .km }
     /// The user's HR-zone config, defaulting to the classic model.
     public var effectiveHRZoneConfig: HRZoneConfig { hrZoneConfig ?? HRZoneConfig() }
@@ -617,6 +645,10 @@ public enum WatchCommand: Codable, Sendable {
 
     // phone → watch
     case workoutFinished
+    /// watch → phone: "publish a fresh context". The watch can't refresh
+    /// day-scoped data on its own — without this it shows whatever the phone
+    /// last pushed until the user opens the phone app.
+    case requestContext
 }
 
 // MARK: - Terminal-command identity policy (FF-002)

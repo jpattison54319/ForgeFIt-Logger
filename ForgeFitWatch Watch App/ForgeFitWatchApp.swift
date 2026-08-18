@@ -27,6 +27,9 @@ struct ForgeFitWatch_Watch_AppApp: App {
                     // or relaunched mid-workout.
                     if phase == .active {
                         WatchStore.shared.refreshComplication()
+                        // Republishing the retained context can't refresh
+                        // day-scoped data — pull a current one from the phone.
+                        WatchStore.shared.requestFreshContext()
                         Task { await WatchStore.shared.recoverOrStartWorkoutSession() }
                     }
                 }

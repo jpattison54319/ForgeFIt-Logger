@@ -65,6 +65,8 @@ struct SettingsView: View {
                     WarmupRampSettingsView()
                 case .platesAndBars:
                     PlatesAndBarsDetailView()
+                case .resistanceBands:
+                    ResistanceBandSettingsView()
                 case .reminders:
                     RemindersDetailView()
                 case .yogaGuidance:

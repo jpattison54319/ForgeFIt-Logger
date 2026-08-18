@@ -7,6 +7,7 @@ enum SettingsRoute: Hashable {
     case heartRateZones
     case warmupRamp
     case platesAndBars
+    case resistanceBands
     case reminders
     case yogaGuidance
     case iCloudBackup

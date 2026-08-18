@@ -74,6 +74,7 @@ struct SetBlockView: View {
     let previous: SetModel?
     let showWeight: Bool
     let displayUnit: WeightUnit
+    var supportsResistanceBands = false
     /// Unilateral exercises run the whole block once per limb: the flow
     /// renders twice ("Side 1" → "Side 2"), same weight and micro-rests,
     /// and only the single complete checkbox finishes the set.
@@ -907,23 +908,35 @@ struct SetBlockView: View {
     /// still parses per keystroke so dependent UI stays live — and re-formats
     /// only on blur, so "62.5" survives being typed.
     private var weightField: some View {
-        blockField(
-            text: Binding(
-                get: { weightFocused && weightDraftActive ? weightDraft : displayedWeightText },
-                set: { text in
-                    weightDraft = text
-                    weightDraftActive = true
-                    let weight = Fmt.loadKilograms(from: text, unit: displayUnit)
-                    set.setModeWeight(weight)
-                    if usesSuggestedValues {
-                        recordSuggestionField(.weight, isEdited: weight != nil)
+        ZStack(alignment: .leading) {
+            if supportsResistanceBands {
+                ResistanceBandLoadMenu(
+                    selectedWeightKilograms: visibleBandWeight,
+                    unit: displayUnit,
+                    onSelect: applyBandWeight
+                )
+                .zIndex(1)
+            }
+
+            blockField(
+                text: Binding(
+                    get: { weightFocused && weightDraftActive ? weightDraft : displayedWeightText },
+                    set: { text in
+                        weightDraft = text
+                        weightDraftActive = true
+                        let weight = Fmt.loadKilograms(from: text, unit: displayUnit)
+                        set.setModeWeight(weight)
+                        if usesSuggestedValues {
+                            recordSuggestionField(.weight, isEdited: weight != nil)
+                        }
+                        onChange()
                     }
-                    onChange()
-                }
-            ),
-            placeholder: suggestedWeightPlaceholder
-        )
-        .focused($weightFocused)
+                ),
+                placeholder: suggestedWeightPlaceholder
+            )
+            .focused($weightFocused)
+            .padding(.leading, supportsResistanceBands ? 22 : 0)
+        }
         .accessibilityLabel("Activation weight")
         .accessibilityIdentifier("activation-weight")
         .onChange(of: weightFocused) { _, focused in
@@ -956,6 +969,23 @@ struct SetBlockView: View {
                 onChange()
             }
         )
+    }
+
+    private var visibleBandWeight: Double? {
+        isShowingSuggestion(for: .weight)
+            ? suggestedWeight
+            : (set.modeWeight ?? previous?.modeWeight)
+    }
+
+    private func applyBandWeight(_ kilograms: Double) {
+        weightFocused = false
+        weightDraftActive = false
+        weightDraft = Fmt.load(kilograms, unit: displayUnit)
+        set.setModeWeight(kilograms)
+        if usesSuggestedValues {
+            recordSuggestionField(.weight, isEdited: true)
+        }
+        onChange()
     }
 
     private var displayedWeightText: String {

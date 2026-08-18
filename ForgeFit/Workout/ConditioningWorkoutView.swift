@@ -127,6 +127,7 @@ struct ConditioningWorkoutView: View {
             ConditioningScoreSheet(
                 plan: plan,
                 progress: $progress,
+                exerciseByID: exerciseByID,
                 completionContext: completionContext,
                 isSaving: finishGate.isActive,
                 onKeepLogging: { showScore = false },
@@ -409,6 +410,7 @@ private struct ConditioningClockCard: View {
 
 private struct ConditioningMovementList: View {
     @Environment(\.theme) private var theme
+    @AppStorage(ResistanceBandProfileStore.key) private var storedBandProfile = Data()
     let section: ConditioningSection
     let progress: ConditioningProgress
     let exerciseByID: [UUID: ExerciseLibraryModel]
@@ -434,9 +436,15 @@ private struct ConditioningMovementList: View {
                                     Text(exerciseByID[movement.exerciseID]?.name ?? "Exercise")
                                         .font(.bodyStrong)
                                         .foregroundStyle(theme.textPrimary)
-                                    Text(loadLabel(movement))
-                                        .font(.label)
-                                        .foregroundStyle(theme.textSecondary)
+                                    HStack(spacing: Space.xs) {
+                                        if let preset = bandPreset(for: movement) {
+                                            ResistanceBandSwatch(hue: preset.hue)
+                                                .frame(width: 12, height: 12)
+                                        }
+                                        Text(loadLabel(movement))
+                                            .font(.label)
+                                            .foregroundStyle(theme.textSecondary)
+                                    }
                                 }
                                 Spacer()
                                 Text(targetLabel(movement))
@@ -476,10 +484,27 @@ private struct ConditioningMovementList: View {
         guard let load = movement.targetLoad else {
             return movement.weightMode == .bodyweight ? "Bodyweight" : "No load"
         }
-        let unit = exerciseByID[movement.exerciseID]?.effectiveWeightUnit.suffix ?? Fmt.unit.suffix
+        let exercise = exerciseByID[movement.exerciseID]
+        let unit = exercise?.effectiveWeightUnit ?? Fmt.unit
+        let loadText = Fmt.loadUnit(load, unit: unit)
+        let bandName = bandPreset(for: movement)?.name
+        let resolvedLoad = bandName.map { "\($0) · \(loadText)" } ?? loadText
         return movement.weightMode == .bodyweightAssisted
-            ? "Assisted · \(load.formatted(.number)) \(unit)"
-            : "\(load.formatted(.number)) \(unit)"
+            ? "Assisted · \(resolvedLoad)"
+            : resolvedLoad
+    }
+
+    private var bandProfile: ResistanceBandProfile {
+        (try? JSONDecoder().decode(ResistanceBandProfile.self, from: storedBandProfile))
+            ?? ResistanceBandProfileStore.load()
+    }
+
+    private func bandPreset(for movement: ConditioningMovement) -> ResistanceBandPreset? {
+        guard let exercise = exerciseByID[movement.exerciseID],
+              ResistanceBandSupport.isBandExercise(name: exercise.name, equipment: exercise.equipment) else {
+            return nil
+        }
+        return bandProfile.matching(weightKilograms: movement.targetLoad)
     }
 }
 
@@ -512,6 +537,7 @@ private struct ConditioningScoreSheet: View {
     @Environment(\.theme) private var theme
     let plan: ConditioningPlan
     @Binding var progress: ConditioningProgress
+    let exerciseByID: [UUID: ExerciseLibraryModel]
     let completionContext: ConditioningCompletionContext
     /// True while a finish is committing: the commit control disables and
     /// reads "Saving…" so a rapid second tap cannot re-enter (FF-006).
@@ -525,6 +551,7 @@ private struct ConditioningScoreSheet: View {
     init(
         plan: ConditioningPlan,
         progress: Binding<ConditioningProgress>,
+        exerciseByID: [UUID: ExerciseLibraryModel],
         completionContext: ConditioningCompletionContext,
         isSaving: Bool,
         onKeepLogging: @escaping () -> Void,
@@ -532,6 +559,7 @@ private struct ConditioningScoreSheet: View {
     ) {
         self.plan = plan
         _progress = progress
+        self.exerciseByID = exerciseByID
         self.completionContext = completionContext
         self.isSaving = isSaving
         self.onKeepLogging = onKeepLogging
@@ -577,11 +605,18 @@ private struct ConditioningScoreSheet: View {
                             VStack(alignment: .leading, spacing: Space.md) {
                                 Text("Confirm Score").font(.cardTitle)
                                 LabeledContent("Best load") {
-                                    TextField("0", value: $load, format: .number)
-                                        .keyboardType(.decimalPad)
-                                        .multilineTextAlignment(.trailing)
-                                        .frame(width: 90)
-                                        .minimumTouchTarget()
+                                    OptionalLoadField(
+                                        placeholder: "0",
+                                        value: $load,
+                                        unit: scoreExercise?.effectiveWeightUnit ?? Fmt.unit,
+                                        width: 112,
+                                        supportsResistanceBands: scoreExercise.map {
+                                            ResistanceBandSupport.isBandExercise(
+                                                name: $0.name,
+                                                equipment: $0.equipment
+                                            )
+                                        } ?? false
+                                    )
                                 }
                             }
                         }
@@ -620,6 +655,11 @@ private struct ConditioningScoreSheet: View {
 
     private var currentSection: ConditioningSection? {
         plan.sections.indices.contains(progress.sectionIndex) ? plan.sections[progress.sectionIndex] : nil
+    }
+
+    private var scoreExercise: ExerciseLibraryModel? {
+        guard let movement = currentSection?.movements.first else { return nil }
+        return exerciseByID[movement.exerciseID]
     }
 
     private var requiredRoundsRemaining: Int {

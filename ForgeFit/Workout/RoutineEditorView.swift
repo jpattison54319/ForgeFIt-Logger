@@ -799,6 +799,10 @@ private struct ExerciseEditRow: View {
                         set: set,
                         workingNumber: workingNumber(upTo: index),
                         displayUnit: displayUnit,
+                        supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                            name: exercise?.name,
+                            equipment: exercise?.equipment
+                        ),
                         onChange: save,
                         onSetType: { changeType(of: set, to: $0, index: index) },
                         onAddDrop: { addDropSet(below: set, index: index) },
@@ -1035,6 +1039,7 @@ private struct SetTargetEditRow: View {
     @Bindable var set: RoutineSetModel
     let workingNumber: Int
     let displayUnit: WeightUnit
+    let supportsResistanceBands: Bool
     let onChange: () -> Void
     let onSetType: (SetType) -> Void
     let onAddDrop: () -> Void
@@ -1064,14 +1069,26 @@ private struct SetTargetEditRow: View {
 
             if set.setType == .amrap {
                 amrapTimeField
-                OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+                OptionalLoadField(
+                    placeholder: displayUnit.suffix,
+                    value: $set.targetWeight,
+                    unit: displayUnit,
+                    supportsResistanceBands: supportsResistanceBands,
+                    onChange: onChange
+                )
             } else {
                 OptionalRepsTargetField(
                     low: $set.targetRepsLow,
                     high: $set.targetRepsHigh,
                     onChange: onChange
                 )
-                OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+                OptionalLoadField(
+                    placeholder: displayUnit.suffix,
+                    value: $set.targetWeight,
+                    unit: displayUnit,
+                    supportsResistanceBands: supportsResistanceBands,
+                    onChange: onChange
+                )
                     .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
                 OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
             }
@@ -1189,7 +1206,13 @@ private struct SetTargetEditRow: View {
     }
 
     private var weightField: some View {
-        OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+        OptionalLoadField(
+            placeholder: displayUnit.suffix,
+            value: $set.targetWeight,
+            unit: displayUnit,
+            supportsResistanceBands: supportsResistanceBands,
+            onChange: onChange
+        )
             .frame(width: 64)
     }
 
@@ -1458,6 +1481,7 @@ struct OptionalLoadField: View {
     @Binding var value: Double?
     let unit: WeightUnit
     var width: CGFloat? = nil
+    var supportsResistanceBands = false
     var onChange: () -> Void = {}
 
     /// Raw text while focused; formatted from the model otherwise. A
@@ -1469,26 +1493,46 @@ struct OptionalLoadField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField(placeholder, text: Binding(
-            get: { focused && draftActive ? draft : (value.map { Fmt.load($0, unit: unit) } ?? "") },
-            set: { text in
-                draft = text
-                draftActive = true
-                value = Fmt.loadKilograms(from: text, unit: unit)
-                onChange()
+        ZStack(alignment: .leading) {
+            if supportsResistanceBands {
+                ResistanceBandLoadMenu(
+                    selectedWeightKilograms: value,
+                    unit: unit,
+                    onSelect: selectBand
+                )
+                .zIndex(1)
             }
-        ))
-        .focused($focused)
-        .onChange(of: focused) { _, isFocused in
-            if !isFocused { draftActive = false }
+
+            TextField(placeholder, text: Binding(
+                get: { focused && draftActive ? draft : (value.map { Fmt.load($0, unit: unit) } ?? "") },
+                set: { text in
+                    draft = text
+                    draftActive = true
+                    value = Fmt.loadKilograms(from: text, unit: unit)
+                    onChange()
+                }
+            ))
+            .focused($focused)
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { draftActive = false }
+            }
+            .padding(.leading, supportsResistanceBands ? 24 : 0)
+            .keyboardType(.decimalPad)
+            .font(.bodyStrong)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(theme.textPrimary)
         }
-        .keyboardType(.decimalPad)
-        .font(.bodyStrong)
-        .multilineTextAlignment(.center)
-        .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func selectBand(_ kilograms: Double) {
+        focused = false
+        draftActive = false
+        value = kilograms
+        draft = Fmt.load(kilograms, unit: unit)
+        onChange()
     }
 }

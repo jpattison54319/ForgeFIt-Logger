@@ -208,7 +208,7 @@ enum WorkoutFinisher {
         )).first else {
             return "The active workout could not be found."
         }
-        return finish(
+        let failure = finish(
             workout,
             in: transaction,
             liveMetrics: liveMetrics,
@@ -218,6 +218,21 @@ enum WorkoutFinisher {
             terminalSave: terminalSave,
             prepareLiveYogaRunnerBeforeSave: false
         )
+        guard failure == nil else { return failure }
+
+        // The isolated transaction is the durable source of truth, but the
+        // app's long-lived context may still hold the pre-finish instance.
+        // Mirror only terminal identity into that instance so its active
+        // @Query disappears immediately and can never republish a finished
+        // workout back to the Watch as a new live session.
+        if let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first {
+            callerWorkout.endedAt = workout.endedAt
+            callerWorkout.deletedAt = workout.deletedAt
+            callerWorkout.updatedAt = workout.updatedAt
+        }
+        return nil
     }
 
     @MainActor

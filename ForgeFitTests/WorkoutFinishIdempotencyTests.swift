@@ -300,6 +300,11 @@ struct WorkoutFinishIdempotencyTests {
             effects: recorder.effects()
         )
         #expect(retry == nil)
+        // The isolated save must also make the caller's long-lived instance
+        // terminal immediately. ContentView's active-workout query and the
+        // Watch publisher both observe this instance after a Cindy save.
+        #expect(workout.endedAt != nil)
+        #expect(workout.deletedAt == nil)
         #expect(routine.name == "Still pending")
         #expect(context.hasChanges)
         #expect(recorder.healthKitSaveCount == 1)

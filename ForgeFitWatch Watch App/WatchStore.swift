@@ -649,12 +649,14 @@ final class WatchStore: NSObject {
                 restEndsAt: workout.restEndsAt
             )
         } else {
+            // Day-gated: a context retained from yesterday must publish an
+            // empty readiness, not yesterday's score with yesterday's stamp.
             snapshot = ForgeFitWidgetSnapshot(
                 mode: .idle,
                 updatedAt: context.updatedAt,
-                readinessScore: context.readiness,
-                readinessAction: context.readinessAction,
-                readinessDetail: context.readinessDetail
+                readinessScore: context.currentReadiness(),
+                readinessAction: context.currentReadinessAction(),
+                readinessDetail: context.currentReadinessDetail()
             )
         }
         ForgeFitWidgetSnapshotStore.save(snapshot)
@@ -669,6 +671,20 @@ final class WatchStore: NSObject {
     func refreshComplication() {
         guard let context else { return }
         publishComplicationSnapshot(context)
+    }
+
+    /// Ask the phone to publish a fresh context.
+    ///
+    /// Republishing what we already hold can't fix day-scoped data: WCSession
+    /// hands us the last application context the phone sent — possibly
+    /// yesterday's, since the phone only publishes while its own app runs.
+    /// Without this the watch shows yesterday's readiness until the user
+    /// opens the phone app. `sendMessage` also background-launches the phone
+    /// app to answer, so it works with the phone in a pocket.
+    func requestFreshContext() {
+        guard WCSession.isSupported(),
+              WCSession.default.activationState == .activated else { return }
+        send(.requestContext)
     }
 
     /// Buzz the wrist when the phone's rest timer hits zero.
@@ -780,6 +796,9 @@ extension WatchStore: WCSessionDelegate {
                let ctx = WatchWire.decode(WatchAppContext.self, from: data) {
                 self.apply(context: ctx)
             }
+            // What the phone last published can be arbitrarily old; ask for
+            // today's before the retained copy is all the user ever sees.
+            self.requestFreshContext()
         }
     }
 

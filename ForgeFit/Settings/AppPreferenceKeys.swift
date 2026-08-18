@@ -50,6 +50,7 @@ enum AppPreferenceKeys {
         YogaInstructor.preferenceKey,
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
+        ResistanceBandProfileStore.key,
     ] + StatisticsSectionPreference.allCases.map(\.defaultsKey)
 
     static let localOnly: [String] = [
