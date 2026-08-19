@@ -953,4 +953,77 @@ extension WatchSyncTests {
         defaults.set("not-a-uuid", forKey: WatchSessionIdentityStore.key)
         #expect(WatchSessionIdentityStore.load(defaults: defaults) == nil)
     }
+
+    // MARK: - Complication reload gating
+
+    @Test func rendersSameContentIgnoresOnlyTheTimestamp() {
+        let base = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            readinessScore: 74,
+            readinessAction: "Train as planned",
+            readinessDetail: "No restriction detected."
+        )
+        var republished = base
+        republished.updatedAt = Date(timeIntervalSince1970: 1_800_003_600)
+
+        #expect(base.rendersSameContent(as: republished))
+        #expect(republished.rendersSameContent(as: base))
+    }
+
+    @Test func rendersSameContentDetectsAChangedScore() {
+        let base = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            readinessScore: 74
+        )
+        var rescored = base
+        rescored.readinessScore = 61
+
+        #expect(!base.rendersSameContent(as: rescored))
+    }
+
+    @Test func rendersSameContentDetectsSetProgress() {
+        let base = ForgeFitWidgetSnapshot(
+            mode: .activeWorkout,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            workoutTitle: "Push Day",
+            completedSets: 3,
+            totalSets: 12
+        )
+        var advanced = base
+        advanced.completedSets = 4
+
+        #expect(!base.rendersSameContent(as: advanced))
+    }
+
+    @Test func rendersSameContentDetectsAModeChange() {
+        let readiness = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            readinessScore: 74
+        )
+        let workout = ForgeFitWidgetSnapshot(
+            mode: .activeWorkout,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            workoutTitle: "Push Day",
+            totalSets: 12
+        )
+
+        #expect(!readiness.rendersSameContent(as: workout))
+    }
+
+    /// A score carried over midnight is a different face even though the
+    /// stored fields match: the complication's own day gate clears it.
+    @Test func staleReadinessStopsBeingCurrentTheNextDay() {
+        let yesterday = Date(timeIntervalSince1970: 1_800_000_000)
+        let snapshot = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: yesterday,
+            readinessScore: 74
+        )
+
+        #expect(snapshot.isCurrent(at: yesterday.addingTimeInterval(60)))
+        #expect(!snapshot.isCurrent(at: yesterday.addingTimeInterval(60 * 60 * 24)))
+    }
 }

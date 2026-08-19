@@ -11,6 +11,13 @@ import ForgeCore
 @MainActor
 @Observable
 final class WatchStore: NSObject {
+    /// Live set progress is worth a reload, but not one per completed set.
+    /// WidgetKit budgets a widget to roughly 40-70 reloads a day and only
+    /// exempts them while the CONTAINING app is foregrounded — which the
+    /// watch app is not, mid-set. Spacing mid-workout reloads keeps a long
+    /// session from spending the budget that tomorrow's readiness needs.
+    private static let activeWorkoutReloadInterval: TimeInterval = 60
+
     static let shared = WatchStore()
 
     private(set) var context: WatchAppContext?
@@ -43,6 +50,7 @@ final class WatchStore: NSObject {
     @ObservationIgnored private var restHapticTask: Task<Void, Never>?
     @ObservationIgnored private var intervalHapticTask: Task<Void, Never>?
     @ObservationIgnored private var lastIntervalStepEndsAt: Date?
+    @ObservationIgnored private var lastComplicationReloadAt: Date?
     @ObservationIgnored private var recoveryBootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var recoveryBootstrapComplete = false
     @ObservationIgnored private var deferredSummaryWorkout: WatchWorkoutSnapshot?
@@ -633,7 +641,7 @@ final class WatchStore: NSObject {
     /// suite name resolves to the watch's own group container, so the watch
     /// widget extension must join the `group.org.xpetsllc.ForgeFit` app group
     /// too. A no-op reload before the complication target exists is harmless.
-    private func publishComplicationSnapshot(_ context: WatchAppContext) {
+    private func publishComplicationSnapshot(_ context: WatchAppContext, force: Bool = false) {
         let snapshot: ForgeFitWidgetSnapshot
         if let workout = context.workout {
             snapshot = ForgeFitWidgetSnapshot(
@@ -659,8 +667,38 @@ final class WatchStore: NSObject {
                 readinessDetail: context.currentReadinessDetail()
             )
         }
+        let previous = ForgeFitWidgetSnapshotStore.load()
+        // The write is cheap and keeps `updatedAt` — which the complication's
+        // own day gate reads — accurate for whenever WidgetKit next asks.
+        // Only the reload request is budgeted, so only the reload is rationed.
         ForgeFitWidgetSnapshotStore.save(snapshot)
+        guard shouldReloadComplication(for: snapshot, previous: previous, force: force) else { return }
+        lastComplicationReloadAt = Date()
         WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitWatchComplication")
+    }
+
+    /// Whether this snapshot has earned one of the day's reload requests.
+    ///
+    /// The phone's publish path fires up to ~3x/s while a workout is being
+    /// logged, and every one of those lands here. Reloading for each spent an
+    /// entire day's budget inside one session, after which WidgetKit stopped
+    /// honouring reloads at all — including the next morning's readiness.
+    private func shouldReloadComplication(
+        for snapshot: ForgeFitWidgetSnapshot,
+        previous: ForgeFitWidgetSnapshot?,
+        force: Bool,
+        now: Date = Date()
+    ) -> Bool {
+        // Foregrounding asks for a reload the system may have deferred while
+        // the app was in the background, so it must not be content-gated.
+        if force { return true }
+        guard let previous else { return true }
+        guard !snapshot.rendersSameContent(as: previous) else { return false }
+        // Readiness changes and mode transitions are rare and always shown;
+        // only set-by-set progress within a live workout waits out the floor.
+        guard snapshot.mode == .activeWorkout, previous.mode == .activeWorkout else { return true }
+        guard let lastComplicationReloadAt else { return true }
+        return now.timeIntervalSince(lastComplicationReloadAt) >= Self.activeWorkoutReloadInterval
     }
 
     /// Reassert the latest received state whenever the watch app becomes
@@ -670,7 +708,7 @@ final class WatchStore: NSObject {
     /// chance to consume the already-current context.
     func refreshComplication() {
         guard let context else { return }
-        publishComplicationSnapshot(context)
+        publishComplicationSnapshot(context, force: true)
     }
 
     /// Ask the phone to publish a fresh context.

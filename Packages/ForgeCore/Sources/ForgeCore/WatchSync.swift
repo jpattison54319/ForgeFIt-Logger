@@ -582,6 +582,18 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
     public func isCurrent(at date: Date = .now, calendar: Calendar = .current) -> Bool {
         mode == .activeWorkout || calendar.isDate(updatedAt, inSameDayAs: date)
     }
+
+    /// True when both snapshots would draw the same widget or complication.
+    ///
+    /// `updatedAt` advances on every publish, so raw equality reports a change
+    /// even when nothing on the face moved. Reload requests are the scarce
+    /// resource — WidgetKit budgets them to roughly 40-70 a day per widget —
+    /// so the decision to spend one has to be made on rendered content alone.
+    public func rendersSameContent(as other: ForgeFitWidgetSnapshot) -> Bool {
+        var comparison = self
+        comparison.updatedAt = other.updatedAt
+        return comparison == other
+    }
 }
 
 public enum ForgeFitWidgetSnapshotStore {

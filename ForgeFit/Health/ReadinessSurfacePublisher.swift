@@ -99,14 +99,50 @@ enum ReadinessSurfacePublisher {
     }
 
     static func publish(_ snapshot: ForgeFitWidgetSnapshot) {
-        if let existing = ForgeFitWidgetSnapshotStore.load() {
-            var comparison = snapshot
-            comparison.updatedAt = existing.updatedAt
-            guard comparison != existing else { return }
+        if let existing = ForgeFitWidgetSnapshotStore.load(),
+           snapshot.rendersSameContent(as: existing) {
+            return
         }
         ForgeFitWidgetSnapshotStore.save(snapshot)
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
         #endif
+    }
+
+    /// Return the widget surfaces to idle without discarding a score that is
+    /// still today's.
+    ///
+    /// Callers reach here when they have no dashboard cache to render from —
+    /// a workout just ended, or the app foregrounded before Home has run its
+    /// analytics. Publishing a bare idle snapshot in that state overwrote a
+    /// real score that another producer (the pre-dawn background refresh) had
+    /// already computed, and the Watch complication then had nothing to show
+    /// for the rest of the day. Staleness is handled where it belongs, by the
+    /// `isCurrent` day gate every reader already applies; this only has to
+    /// avoid destroying data it cannot replace.
+    static func publishIdle(now: Date = .now) {
+        if let dashboard = currentDashboard(now: now) {
+            publish(idleSnapshot(from: dashboard))
+            return
+        }
+        // The dashboard cache only exists once Home has rendered. The
+        // background refresh records the day's channels without it, and a
+        // finishing workout has just overwritten the published snapshot with
+        // its own live-set payload — so the day's recorded score, not the
+        // snapshot, is what can still be recovered here. No action text is
+        // invented for it; the readers already have a caption for that.
+        if let score = RecoverySnapshotStore.shared.snapshot(for: now)?.displayScore {
+            publish(ForgeFitWidgetSnapshot(
+                mode: .idle,
+                readinessScore: Int((score * 100).rounded())
+            ))
+            return
+        }
+        if let existing = ForgeFitWidgetSnapshotStore.load(),
+           existing.mode == .idle,
+           existing.isCurrent(at: now) {
+            return
+        }
+        publish(ForgeFitWidgetSnapshot(mode: .idle))
     }
 }

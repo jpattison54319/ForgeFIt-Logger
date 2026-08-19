@@ -53,6 +53,17 @@ final class WatchLink: NSObject {
         #endif
     }
 
+    /// Wire the link only if the app hasn't already.
+    ///
+    /// Background wake-ups (the readiness refresh) can run in a process that
+    /// never presented a scene, where `configure` was never called and every
+    /// publish silently no-ops on the nil context. Foreground configuration
+    /// stays authoritative when it exists.
+    func configureIfNeeded(container: ModelContainer) {
+        guard modelContext == nil else { return }
+        configure(context: container.mainContext)
+    }
+
     /// Give the link data access; called once from ContentView.
     func configure(context: ModelContext) {
         modelContext = context

@@ -69,6 +69,12 @@ nonisolated struct RecoverySnapshot: Codable, Equatable, Sendable {
 
     /// A reading worth storing has at least one real score.
     var hasData: Bool { daily != nil || trend != nil || strain != nil }
+
+    /// The score a surface should show for this day: the acute index when its
+    /// gate passed, otherwise the seven-day trend. Mirrors
+    /// `RecoveryEngine.Report.displayScore` so the calendar, the widget, and
+    /// the Watch complication can never disagree about the day's number.
+    var displayScore: Double? { daily ?? trend }
 }
 
 /// On-device history of daily recovery and strain scores, keyed by the calendar
