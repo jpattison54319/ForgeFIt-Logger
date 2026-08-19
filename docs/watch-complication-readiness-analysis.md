@@ -5,24 +5,31 @@ the analysis container is Linux with no Swift toolchain.
 
 ## Verdict
 
-The complication code is not the bug. Entitlements, app group, target
-embedding, and family coverage are all correct. When it draws a dumbbell it is
-taking the `else` branch at `ForgeFitWatchComplication.swift:68` — "the snapshot
-has no readiness score." That is a truthful report of its input.
+**This is a sync failure, not a WidgetKit failure.** The watch app renders
+`context?.readiness` (watch `ContentView.swift:33`) and the complication renders
+the same value copied into the app group. Confirmed on device: the watch *app*
+shows a stale score after the iPhone computed a fresh one, so the break is at or
+before the WatchConnectivity hop. Everything downstream — the widget extension,
+its entitlements, its app group, its family coverage — is correct and is
+faithfully reporting bad input.
 
-Seven defects sit upstream, in three groups:
+Nine defects sit upstream, in three groups:
 
 1. The score is **overwritten with `nil`** on the iPhone.
 2. The score is **only ever produced while HomeView is on screen**.
-3. Even a good score **cannot reach the watch face** — the only delivery channel
-   needs the watch app running, and the wrist has spent its daily WidgetKit
-   reload budget during the last workout.
+3. **No lifecycle event on either device refreshes the wrist** — opening the
+   iPhone app does not push, opening the watch app does not pull — and every
+   path that does refresh re-reads the same blankable store.
+
+The WidgetKit reload budget (defect 5) is a real defect but is *not* the current
+cause; it is what will keep the complication frozen on an old frame once the sync
+is fixed.
 
 "Always outdated score" and "dumbbell today" are the same bug at two stages.
 Commit `c98cc28` fixed the stale number by clearing it, without adding any
 mechanism to produce a fresh one. Absence replaced staleness.
 
-## The seven defects
+## The nine defects
 
 ### Stage 1 — Produce
 
@@ -72,8 +79,13 @@ context. `apply(context:)` (:414) runs on every `didReceiveApplicationContext`
 comment (`WatchLink.swift:124`) puts the publish rate at "up to ~3×/s during
 logging." Apple's budget is 40–70 reloads per widget per 24 h, exempt only while
 the *containing app* is in the foreground. Once spent, WidgetKit stops honouring
-reloads — which is exactly "it never updates to the new day's score, even after
-opening the watch app."
+reloads.
+
+This is *not* the primary cause of the current symptom — the watch app is stale
+too, which is upstream of WidgetKit entirely. It is what will keep the
+complication frozen on an old frame after the sync is fixed, and it explains how
+the watch app and the complication can disagree: the app shows the value it last
+*applied*, the complication shows the value it last *rendered*.
 
 **6. Opening the watch app cannot pull a fresh context.** `WatchStore.activate()`
 (:32–43) is called from `.task` on the root view — once per process. The received
@@ -84,9 +96,29 @@ does nothing. The `scenePhase == .active` handler
 `didReceiveUserInfo` (:610) handles commands only. And `WatchCommand` has no
 state-request case, so the wrist cannot ask the phone for anything.
 
+**7. Opening the iPhone app doesn't push either.** `handleScenePhaseChange`
+(`ForgeFit/ContentView.swift`:973–1000) calls `updateWidgetSnapshot()` in its
+`.active` branch — which writes the *iPhone's* app-group snapshot, feeding the
+iPhone widget — and never calls `WatchLink.shared.publishState()`. The one
+`publishState` in that handler (:1015) sits in the `.background` branch. Combined
+with defect 6: **opening the iPhone app does not push, and opening the watch app
+does not pull.** The wrist is refreshed only by HomeView finishing its analytics,
+by the phone backgrounding, and by the phone's own WCSession activation and
+reachability callbacks — all of which require the iPhone app to already be
+running. None of them is "the user opened something."
+
+**8. Every path that does refresh the wrist re-reads the same blankable store.**
+Activation, reachability, and backgrounding all route through `buildContext`,
+which takes idle readiness from `ForgeFitWidgetSnapshotStore.load()` — the store
+defects 1 and 2 blank. Backgrounding is the sharpest case: `ContentView.swift`
+:1013–1015 runs `flushStructuralLiveSurfaceUpdate()` (→ `updateWidgetSnapshot()`)
+and *then* `publishState(policy: .immediate)`, so on a day with no dashboard cache
+it writes the blank snapshot and immediately pushes it to the watch. A refresh
+that can only transmit `nil` is why the wrist stays wrong once it goes wrong.
+
 ### Stage 3 — Render
 
-**7. The complication never expires its own claim.** `ForgeFitWidgetSnapshot`
+**9. The complication never expires its own claim.** `ForgeFitWidgetSnapshot`
 carries `updatedAt`; `getTimeline`
 (`ForgeFitWatchComplication/ForgeFitWatchComplication.swift`:31–39) ignores it —
 one entry, `.after(1 h)`, same number forever. This produced the original "always
@@ -145,16 +177,20 @@ and PRs 832/1217; nightscout/nightguard.
 
 | Step | Change | Closes | Notes |
 |---|---|---|---|
-| A | Expire the score in `getTimeline`: no score when `updatedAt` isn't today; end the timeline at next local midnight instead of `.after(1 h)` | 7 | Needs no other process; satisfies honest framing at the surface making the claim |
-| B | Stop publishing all-`nil` idle snapshots — preserve readiness fields, change only `mode`; reorder `finish()`/`discard()` so cleanup precedes the debounced publish (or make it `.immediate`) | 1, 2 | Safe once A judges staleness |
-| C | Wire the existing background recompute into the surfaces: hoist `computeReport()` above the notification gating, then `recordToday(...)` + `publishFresh(report)` + `publishState(policy: .immediate)` | 3, 4 | Highest value — makes a new day produce a new score with the phone pocketed |
-| D | Govern the wrist's `reloadTimelines`: reload only on real content change (normalise `updatedAt`, as `ReadinessSurfacePublisher.publish` already does) plus a hard floor between reloads | 5 | Without this the budget stays exhausted and every other fix is invisible |
-| E | Re-apply `WCSession.default.receivedApplicationContext` on `scenePhase == .active` when its `updatedAt` beats what's held | 6 | Makes "open the watch app" finally do something |
-| F | Add a watch→phone `requestState` `WatchCommand`, answered with `publishState(policy: .immediate)` | 6 | Closes the loop when the watch app opens and the phone is reachable |
+| A | Stop publishing all-`nil` idle snapshots — preserve readiness fields, change only `mode`; reorder `finish()`/`discard()` so cleanup precedes the debounced publish; stop the `.background` branch blanking the store right before it pushes | 1, 2, 8 | Nothing else matters while every push can transmit `nil` |
+| B | Refresh the wrist on app open, both directions: `publishState(policy: .immediate)` in the phone's `.active` branch; re-read `receivedApplicationContext` on the watch's `scenePhase == .active` and `sessionReachabilityDidChange` | 6, 7 | Two small changes that make the reported reproduction work |
+| C | Expire the score in `getTimeline`: no score when `updatedAt` isn't today; end the timeline at next local midnight instead of `.after(1 h)` | 9 | Needs no other process; satisfies honest framing at the surface making the claim |
+| D | Wire the existing background recompute into the surfaces: hoist `computeReport()` above the notification gating, then `recordToday(...)` + `publishFresh(report)` + `publishState(policy: .immediate)` | 3, 4 | With A and B in place, a new day produces a new score untouched |
+| E | Govern the wrist's `reloadTimelines`: reload only on real content change (normalise `updatedAt`, as `ReadinessSurfacePublisher.publish` already does) plus a hard floor between reloads | 5 | Not the current cause; keeps the complication from freezing later |
+| F | Add a watch→phone `requestState` `WatchCommand`, answered with `publishState(policy: .immediate)` | 6 | Stronger than B's pull — a `sendMessage` from the watch launches a terminated iPhone app in the background; a reachability change does not |
 | G | Adopt `transferCurrentComplicationUserInfo` Loop-style: gate on `isComplicationEnabled`, add a change+time governor, fall back to `updateApplicationContext`, teach `didReceiveUserInfo` to accept a context payload | latency | Last — least reliable link, and the likeliest place earlier attempts stalled |
 
 ## How to confirm on device
 
+- **Decisive test:** show `updatedAt` next to the score in the watch app. Older
+  than the moment the iPhone computed today's score ⇒ the context never arrived
+  (defects 6, 7, 8). Current, but the complication still shows a dumbbell ⇒ the
+  data is fine and the reload was refused (defect 5).
 - Show `readiness` and `updatedAt` from `WatchStore.context` in a temporary watch
   app row — separates "the phone sent `nil`" from "the extension can't read the
   app group."
@@ -167,3 +203,6 @@ and PRs 832/1217; nightscout/nightguard.
 - Reproduce the day boundary directly: no active workout, clear today's
   `RecoverySnapshotStore` entry, foreground the app, read the app-group snapshot.
   That is defect 1 in isolation and should reproduce every time.
+- Background the iPhone app on a day with no dashboard cache and watch what the
+  wrist receives. `ContentView.swift:1013–1015` blanks the store and pushes it in
+  the same breath — that is defect 8 in isolation.
