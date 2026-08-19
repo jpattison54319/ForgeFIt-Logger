@@ -1493,14 +1493,16 @@ struct OptionalLoadField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        // Keep the band picker beside the field instead of laying it over the
+        // text. The explicit slot preserves its touch target and leaves the
+        // empty "Optional" placeholder readable in narrow conditioning rows.
+        HStack(spacing: supportsResistanceBands ? 2 : 0) {
             if supportsResistanceBands {
                 ResistanceBandLoadMenu(
                     selectedWeightKilograms: value,
                     unit: unit,
                     onSelect: selectBand
                 )
-                .zIndex(1)
             }
 
             TextField(placeholder, text: Binding(
@@ -1516,10 +1518,11 @@ struct OptionalLoadField: View {
             .onChange(of: focused) { _, isFocused in
                 if !isFocused { draftActive = false }
             }
-            .padding(.leading, supportsResistanceBands ? 24 : 0)
+            .frame(maxWidth: .infinity)
             .keyboardType(.decimalPad)
             .font(.bodyStrong)
-            .multilineTextAlignment(.center)
+            .multilineTextAlignment(supportsResistanceBands ? .trailing : .center)
+            .padding(.trailing, supportsResistanceBands ? 4 : 0)
             .foregroundStyle(theme.textPrimary)
         }
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)
