@@ -20,6 +20,89 @@ struct AccountResetServiceTests {
         ))
     }
 
+    @Test
+    func resetOwnsDeviceAndMaintenancePreferences() {
+        let localKeys = Set(AppPreferenceKeys.localOnly)
+
+        #expect(localKeys.contains(BLEHeartRateService.rememberedIDKey))
+        #expect(localKeys.contains(BLEHeartRateService.rememberedNameKey))
+        #expect(localKeys.contains(WrappedReportService.lastAutomaticAttemptKey))
+        #expect(localKeys.contains(ImportedExerciseBackfill.didRunKey))
+        #expect(localKeys.contains(WeightModeBackfill.convertKey))
+        #expect(localKeys.contains(AppPreferenceKeys.microcycleHistoryEducationShownKey))
+        #expect(!AppPreferenceKeys.backedUp.contains(
+            AppPreferenceKeys.microcycleHistoryEducationShownKey
+        ))
+    }
+
+    @Test
+    func resetOwnsSocialIntentQueuesWithoutBackingThemUp() {
+        let localKeys = Set(AppPreferenceKeys.localOnly)
+        let backupKeys = Set(AppPreferenceKeys.backedUp)
+        let queueKeys = [
+            SocialService.shareOutboxKey,
+            SocialService.legacyPendingUnpublishKey,
+        ]
+
+        #expect(queueKeys.allSatisfy(localKeys.contains))
+        #expect(queueKeys.allSatisfy { !backupKeys.contains($0) })
+    }
+
+    @Test
+    func resetOwnsLocalHealthCachesWithoutBackingThemUp() {
+        let localKeys = Set(AppPreferenceKeys.localOnly)
+        let backupKeys = Set(AppPreferenceKeys.backedUp)
+        let healthKeys = [
+            SleepOverrideStore.defaultsKey,
+            SleepOverrideStore.eagerDeleteRepairKey,
+            RecoverySnapshotStore.defaultsKey,
+            RecoverySnapshotStore.backfillKey,
+        ]
+
+        #expect(healthKeys.allSatisfy(localKeys.contains))
+        #expect(healthKeys.allSatisfy { !backupKeys.contains($0) })
+    }
+
+    @Test
+    func resetOwnsEveryStatisticsExpansionPreference() {
+        let statisticsKeys = StatisticsSectionPreference.allCases.map(\.defaultsKey)
+        let expectedKeys: Set<String> = [
+            "statsSectionExpanded.muscleDistribution",
+            "statsSectionExpanded.trainingSplit",
+            "statsSectionExpanded.setsPerMuscle",
+            "statsSectionExpanded.topExercises",
+            "statsSectionExpanded.repRanges",
+            "statsSectionExpanded.trainingDays",
+            "statsSectionExpanded.strengthGainers",
+            "statsSectionExpanded.cardioTrend",
+            "statsSectionExpanded.cardioModality",
+            "statsSectionExpanded.cardioZones",
+            "statsSectionExpanded.cardioEfficiency",
+            "statsSectionExpanded.criticalPace",
+            "statsSectionExpanded.cardioPace",
+            "statsSectionExpanded.cardioBests",
+        ]
+
+        #expect(Set(statisticsKeys) == expectedKeys)
+        #expect(Set(statisticsKeys).count == statisticsKeys.count)
+        #expect(statisticsKeys.allSatisfy(AppPreferenceKeys.backedUp.contains))
+        #expect(statisticsKeys.allSatisfy(AppPreferenceKeys.allResettable.contains))
+    }
+
+    @Test
+    func preferenceClassificationsAreUniqueAndDisjoint() {
+        let backedUp = Set(AppPreferenceKeys.backedUp)
+        let localOnly = Set(AppPreferenceKeys.localOnly)
+        let deprecated = Set(AppPreferenceKeys.deprecated)
+
+        #expect(backedUp.count == AppPreferenceKeys.backedUp.count)
+        #expect(localOnly.count == AppPreferenceKeys.localOnly.count)
+        #expect(deprecated.count == AppPreferenceKeys.deprecated.count)
+        #expect(backedUp.isDisjoint(with: localOnly))
+        #expect(backedUp.isDisjoint(with: deprecated))
+        #expect(localOnly.isDisjoint(with: deprecated))
+    }
+
     @Test func deleteAllLocalModelsRemovesUserDataAndProgress() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }

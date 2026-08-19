@@ -20,7 +20,7 @@ struct MyInsightsEntryCard: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 38, height: 38)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -37,7 +37,7 @@ struct MyInsightsEntryCard: View {
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
         }
     }
@@ -226,7 +226,7 @@ struct MyInsightsView: View {
                     HStack(spacing: Space.md) {
                         Image(systemName: template.systemImage)
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .frame(width: 36, height: 36)
                             .background(theme.surfaceElevated)
                             .clipShape(Circle())
@@ -278,31 +278,23 @@ struct MyInsightsView: View {
             persistError = "Couldn't encode the duplicated insight."
             return
         }
-        let copy = SavedInsightModel(
-            userID: card.userID,
-            name: recipe.name,
-            recipeJSON: encoded,
-            position: liveCards.count
-        )
-        modelContext.insert(copy)
         do {
-            try modelContext.save()
+            _ = try SavedInsightPersistence.create(
+                userID: card.userID,
+                name: recipe.name,
+                recipeJSON: encoded,
+                position: liveCards.count,
+                in: modelContext
+            )
         } catch {
-            modelContext.delete(copy)
             persistError = "Couldn't duplicate the insight: \(error.localizedDescription)"
         }
     }
 
     private func delete(_ card: SavedInsightModel) {
-        let previous = (card.deletedAt, card.updatedAt)
-        let now = Date()
-        card.deletedAt = now
-        card.updatedAt = now
         do {
-            try modelContext.save()
+            try SavedInsightPersistence.delete(id: card.id, in: modelContext)
         } catch {
-            card.deletedAt = previous.0
-            card.updatedAt = previous.1
             persistError = "Couldn't delete the insight: \(error.localizedDescription)"
         }
     }
@@ -313,24 +305,13 @@ struct MyInsightsView: View {
         var cards = liveCards
         guard let index = cards.firstIndex(where: { $0.id == card.id }),
               cards.indices.contains(index + offset) else { return }
-        let previous = Dictionary(
-            uniqueKeysWithValues: cards.map { ($0.id, ($0.position, $0.updatedAt)) }
-        )
         cards.swapAt(index, index + offset)
-        let now = Date()
-        for (position, row) in cards.enumerated() where row.position != position {
-            row.position = position
-            row.updatedAt = now
-        }
         do {
-            try modelContext.save()
+            try SavedInsightPersistence.reorder(
+                ids: cards.map(\.id),
+                in: modelContext
+            )
         } catch {
-            for row in cards {
-                if let old = previous[row.id] {
-                    row.position = old.0
-                    row.updatedAt = old.1
-                }
-            }
             persistError = "Couldn't reorder insights: \(error.localizedDescription)"
         }
     }
@@ -354,6 +335,12 @@ private struct SavedInsightCard: View {
     var onMoveDown: (() -> Void)?
 
     @State private var result: InsightResult?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
 
     private var recipe: InsightRecipe? {
         InsightRecipe.decode(from: card.recipeJSON)
@@ -456,16 +443,19 @@ private struct SavedInsightCard: View {
                 result = nil
                 return
             }
-            result = await InsightDataCoordinator.shared.result(
+            guard !pausesForLiveWorkout else { return }
+            let nextResult = await InsightDataCoordinator.shared.result(
                 for: recipe, workouts: workouts, exercises: exercises, checkins: checkins,
                 routines: routines
             )
+            guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+            result = nextResult
         }
     }
 
     /// Re-evaluates only when the recipe or the underlying data changes.
     private var taskKey: String {
-        (recipe?.analysisSignature ?? "corrupt") + "|" +
+        (recipe?.analysisSignature ?? "corrupt") + "|live:\(pausesForLiveWorkout)|" +
             InsightDataCoordinator.shared.fingerprint(
                 workouts: workouts, checkins: checkins, exercises: exercises, routines: routines
             )
@@ -501,6 +491,16 @@ private struct SavedInsightDetailSheet: View {
     var onDuplicate: (() -> Void)?
 
     @State private var result: InsightResult?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
+
+    private var performanceTaskKey: String {
+        "\(decodedRecipe?.analysisSignature ?? "corrupt")|live:\(pausesForLiveWorkout)"
+    }
 
     private var decodedRecipe: InsightRecipe? {
         InsightRecipe.decode(from: card.recipeJSON)
@@ -581,12 +581,15 @@ private struct SavedInsightDetailSheet: View {
                     Button("Done") { dismiss() }.font(.bodyStrong)
                 }
             }
-            .task {
-                guard let recipe = decodedRecipe, recipeIsValid else { return }
-                result = await InsightDataCoordinator.shared.result(
+            .task(id: performanceTaskKey) {
+                guard let recipe = decodedRecipe, recipeIsValid,
+                      !pausesForLiveWorkout else { return }
+                let nextResult = await InsightDataCoordinator.shared.result(
                     for: recipe, workouts: workouts, exercises: exercises, checkins: checkins,
                     routines: routines
                 )
+                guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+                result = nextResult
             }
         }
     }

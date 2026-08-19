@@ -16,6 +16,7 @@ struct YogaExerciseCard: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -34,7 +35,9 @@ struct YogaExerciseCard: View {
     @State private var importing = false
     @State private var showFlowBuilder = false
     @State private var showPlayer = false
+    @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var activeSegmentMessage: String?
+    @State private var noteFocusRequested = false
 
     private var plan: YogaFlowPlan? {
         YogaFlowPlan.resolved(for: workoutExercise, exercise: exercise)
@@ -52,7 +55,10 @@ struct YogaExerciseCard: View {
                     StickyNoteView(
                         workoutExercise: workoutExercise,
                         exerciseID: workoutExercise.exerciseID,
-                        pinnedNote: pinnedNote
+                        pinnedNote: pinnedNote,
+                        focusRequested: noteFocusRequested,
+                        onFocusHandled: { noteFocusRequested = false },
+                        onPinnedNoteChanged: onPinnedNoteChanged
                     )
                 }
                 if let session {
@@ -65,18 +71,24 @@ struct YogaExerciseCard: View {
         .onAppear(perform: ensureSession)
         .sheet(isPresented: $showFlowBuilder) {
             YogaFlowBuilderView(
-                planJSON: workoutExercise.yogaFlowJSON ?? plan?.encodedJSON()
-            ) { json in
-                workoutExercise.yogaFlowJSON = json
-                workoutExercise.updatedAt = Date()
-                if let updated = YogaFlowPlan.decode(from: json) {
-                    session?.yogaStyleRaw = updated.styleRaw
-                    if session?.endedAt == nil {
-                        session?.durationSeconds = updated.totalSeconds > 0 ? updated.totalSeconds : nil
-                    }
+                planJSON: workoutExercise.yogaFlowJSON ?? plan?.encodedJSON(),
+                commit: { json in
+                    WorkoutYogaPlanPersistence.apply(
+                        json,
+                        to: workoutExercise,
+                        session: session,
+                        in: modelContext,
+                        onCommit: { WatchLink.shared.publishState() }
+                    )
                 }
-                try? modelContext.save()
-                WatchLink.shared.publishState()
+            )
+        }
+        .sheet(item: $yogaSafetyPresentation) { presentation in
+            switch presentation {
+            case .startClass:
+                YogaSafetyView(startAction: { beginAfterSafety() })
+            case .information:
+                YogaSafetyView()
             }
         }
         .fullScreenCover(isPresented: $showPlayer) {
@@ -135,7 +147,7 @@ struct YogaExerciseCard: View {
 
             Button {
                 if plan?.hasSteps == true {
-                    start(session)
+                    requestStart(session)
                 } else {
                     showFlowBuilder = true
                 }
@@ -144,7 +156,7 @@ struct YogaExerciseCard: View {
                     Image(systemName: plan?.hasSteps == true ? "play.fill" : "slider.horizontal.3")
                     Text(plan?.hasSteps == true ? "Start Guided Class" : "Configure Flow")
                 }
-                .font(.bodyStrong).foregroundStyle(.white)
+                .font(.bodyStrong).foregroundStyle(theme.onAccent)
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(theme.accent)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
@@ -152,14 +164,15 @@ struct YogaExerciseCard: View {
             .buttonStyle(PressableButtonStyle())
             .accessibilityIdentifier("start-yoga-class")
 
-            Text("Spoken cues guide each pose. Time, heart rate & calories auto-fill from Apple Watch.")
-                .font(.system(size: 12)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
-
-            contraindicationNote
+            VStack(spacing: 4) {
+                Text("Spoken cues guide each pose. Time, heart rate & calories auto-fill from Apple Watch.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary).multilineTextAlignment(.center)
+            }
 
             Button { withAnimation { showManual.toggle() } } label: {
                 Text(showManual ? "Hide manual entry" : "Log without guide")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    .minimumTouchTarget()
             }
             if showManual {
                 YogaManualEditor(session: session, onChange: persist)
@@ -180,14 +193,15 @@ struct YogaExerciseCard: View {
                 } label: {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let elapsed = max(0, Int(ctx.date.timeIntervalSince(session.liveStartedAt ?? session.startedAt)))
                 HStack(spacing: Space.sm) {
                     Circle().fill(theme.accent).frame(width: 10, height: 10)
-                    Text("In session").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accent)
+                    Text("In session").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accentForeground)
                     Spacer()
                     if let hr = LiveMetricsHub.shared.liveMetrics?.heartRate {
                         Label("\(hr)", systemImage: "heart.fill")
@@ -205,6 +219,9 @@ struct YogaExerciseCard: View {
             }
             .buttonStyle(PressableButtonStyle())
             .accessibilityIdentifier("complete-yoga-session")
+            Text("Completing counts the hold you're in.")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -224,8 +241,14 @@ struct YogaExerciseCard: View {
                 Text(filled ? "Auto-filled from Apple Health" : "No Health data for this session")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.accent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
+                }
             }
             if showManual {
                 YogaManualEditor(session: session, onChange: persist)
@@ -244,7 +267,7 @@ struct YogaExerciseCard: View {
         HStack(spacing: 8) {
             Image(systemName: style.systemImage)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Flow").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 Text(flowSummary)
@@ -252,12 +275,17 @@ struct YogaExerciseCard: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button("Edit") { showFlowBuilder = true }
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(theme.accent)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(theme.accentSoft)
-                .clipShape(Capsule())
+            Button {
+                showFlowBuilder = true
+            } label: {
+                Text("Edit")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.accentForeground)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(theme.accentSoft)
+                    .clipShape(Capsule())
+                    .minimumTouchTarget()
+            }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("yoga-flow-menu")
         }
@@ -271,30 +299,10 @@ struct YogaExerciseCard: View {
         return "\(plan.structureSummary) · \(style.title)"
     }
 
-    /// Safety surface: any contraindication note on any pose in the flow.
-    @ViewBuilder
-    private var contraindicationNote: some View {
-        let notes = (plan?.steps ?? [])
-            .compactMap { YogaPoseCatalog.pose(forSlug: $0.poseSlug) }
-            .flatMap(\.contraindications)
-        let unique = Array(Set(notes)).sorted()
-        if !unique.isEmpty {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(theme.warmup)
-                Text("Take care with: \(unique.joined(separator: ", ")). Skip any pose that hurts.")
-                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
     private func summaryStats(_ session: CardioSessionModel) -> some View {
         HStack {
             StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
-            StatColumn(label: "Poses", value: session.posesCompleted.map(String.init) ?? "—")
+            StatColumn(label: "Poses", value: session.logicalYogaPosesCompleted.map(String.init) ?? "—")
             StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
             StatColumn(label: "kcal", value: session.activeEnergyKcal.map { String(Int($0)) } ?? "—")
         }
@@ -314,7 +322,7 @@ struct YogaExerciseCard: View {
                         Spacer()
                         Text(Fmt.durationShort(split.durationSeconds))
                             .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                 }
             }
@@ -335,6 +343,7 @@ struct YogaExerciseCard: View {
                         onShowExerciseDetail(exercise)
                     } label: {
                         ExerciseNameLabel(name: headerTitle, font: .system(size: 18, weight: .bold))
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -381,7 +390,8 @@ struct YogaExerciseCard: View {
             actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
-                try? modelContext.save()
+                noteFocusRequested = true
+                modelContext.saveUserChanges()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -423,8 +433,9 @@ struct YogaExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        try? modelContext.save()
-        session = new
+        modelContext.saveUserChanges {
+            session = new
+        }
     }
 
     private func start(_ session: CardioSessionModel) {
@@ -436,55 +447,75 @@ struct YogaExerciseCard: View {
             activeSegmentMessage = "\(active) is already recording. Complete it before starting Yoga."
             return
         }
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
-        session.liveStartedAt = now
-        session.startedAt = now
-        try? modelContext.save()
-        YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
-        showPlayer = true
-        WatchLink.shared.publishState()
+        CardioSessionStartPersistence.perform(
+            session: session,
+            startedAt: now,
+            context: modelContext,
+            onCommit: {
+                Task { await HealthService.shared.requestAuthorizationIfNeeded() }
+                YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
+                showPlayer = true
+                WatchLink.shared.publishState()
+            }
+        )
+    }
+
+    private func requestStart(_ session: CardioSessionModel) {
+        guard YogaSafetyAcknowledgement.isAccepted else {
+            yogaSafetyPresentation = .startClass
+            return
+        }
+        start(session)
+    }
+
+    private func beginAfterSafety() {
+        guard let session else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            start(session)
+        }
     }
 
     private func complete(_ session: CardioSessionModel) {
-        YogaFlowRunnerHub.shared.stop(for: session.id)
-        showPlayer = false
+        // Snapshot the live hold without touching the shared SwiftData graph.
+        // The isolated transaction derives partial credit from this checkpoint.
+        YogaFlowRunnerHub.shared.captureCheckpointForTerminalAttempt(sessionID: session.id)
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
-        YogaSessionCompletion.complete(
-            session: session,
-            workoutExercise: workoutExercise,
-            exercise: exercise,
-            context: modelContext,
+        CardioSessionTerminalPersistence.perform(
+            container: modelContext.container,
+            sessionID: session.id,
             endedAt: end,
-            useClockDuration: true
-        )
-        try? modelContext.save()
-        importing = true
-        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: .other)
-            await MainActor.run {
-                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // No distance on the mat — deliberately not filled.
-                // Provisional estimate; finalize() replaces it with the
-                // measured distribution when the HR series has coverage.
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
-                importing = false
-                persist()
-            }
-            // Store the HR series so zones are measured, not estimated
-            // (interval detection never runs for yoga sessions).
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: modelContext)
+            completesYoga: true,
+            useClockDuration: true,
+            stagesRoute: false
+        ) { outcome in
+            YogaFlowRunnerHub.shared.stop(for: outcome.sessionID, clearCheckpoint: true)
+            showPlayer = false
+            let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
+                    sessionID: outcome.sessionID,
+                    start: outcome.start,
+                    end: outcome.end,
+                    modality: .other,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: false,
+                    providesGPSDistance: false,
+                    hadManualIntervalPlan: false
+                ),
+                container: modelContext.container
+            )
+            importing = false
+            WatchLink.shared.publishDurableState()
         }
-        WatchLink.shared.publishState()
     }
 
     private func persist() {
         workoutExercise.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 
@@ -512,7 +543,8 @@ struct YogaManualEditor: View {
                     }
                 } label: {
                     Text(Fmt.durationShort(session.durationSeconds))
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                 }
             }
             Divider().overlay(theme.separator)
@@ -531,7 +563,8 @@ struct YogaManualEditor: View {
                     }
                 } label: {
                     Text(session.resolvedYogaStyle.title)
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                        .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                 }
             }
         }
@@ -587,6 +620,7 @@ struct YogaRunnerStrip: View {
                                     .foregroundStyle(theme.textSecondary)
                             }
                         }
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     Spacer()
@@ -599,7 +633,7 @@ struct YogaRunnerStrip: View {
                         Text(timerInterval: Date.now...max(Date.now, runner.stepEndsAt), countsDown: true)
                             .font(.system(size: 34, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                     Button {
                         runner.isPaused ? runner.resume() : runner.pause()
@@ -660,6 +694,7 @@ struct YogaPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var breathingIn = false
+    @State private var guidanceAudio = YogaGuidanceAudio.shared
     let session: CardioSessionModel
     let workoutExercise: WorkoutExerciseModel
     let onComplete: () -> Void
@@ -761,7 +796,7 @@ struct YogaPlayerView: View {
                     Text(timerInterval: Date.now...max(Date.now, runner.stepEndsAt), countsDown: true)
                         .font(.system(size: 44, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
 
                 // Slim hold-progress bar — replaces the old ring around the
@@ -781,24 +816,26 @@ struct YogaPlayerView: View {
                 }
             }
 
-            // Visual transcript of the full entry script — how to actually
-            // get into the pose — so the class works with cues muted or
-            // VoiceOver running, and the art has words to back it up.
-            if let pose = runner.currentPose, !pose.cues.entry.isEmpty {
-                VStack(spacing: 3) {
-                    ForEach(pose.cues.entry, id: \.self) { line in
-                        Text(line)
-                            .font(.system(size: 14))
-                            .foregroundStyle(theme.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            // Transcript-identical caption for the cue currently playing (or
+            // most recently delivered). Muting narration never removes the
+            // words, so the guide remains usable without audio.
+            if let caption = guidanceAudio.currentCaption {
+                VStack(spacing: 4) {
+                    Text(guidanceAudio.isSpeaking ? "Now guiding" : "Last guidance")
+                        .font(.tag)
+                        .foregroundStyle(theme.textTertiary)
+                    Text(caption)
+                        .font(.system(size: 16))
+                        .foregroundStyle(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, Space.lg)
+                .accessibilityElement(children: .combine)
             } else if let cue = runner.currentStep?.poseStep.transitionCue {
                 // Custom poses have no catalog script; show the author's cue.
                 Text(cue)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -813,12 +850,6 @@ struct YogaPlayerView: View {
                     Text(next.displayName)
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
                 }
-            }
-
-            if let contraindications = runner.currentPose?.contraindications, !contraindications.isEmpty {
-                Label(contraindications.joined(separator: " · "), systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.warmup)
             }
         }
     }
@@ -864,7 +895,7 @@ struct YogaPlayerView: View {
             } label: {
                 Image(systemName: runner.isPaused ? "play.fill" : "pause.fill")
                     .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onAccent)
                     .frame(width: 72, height: 72)
                     .background(theme.accent)
                     .clipShape(Circle())

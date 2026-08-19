@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import ForgeData
 import SwiftUI
 
@@ -199,8 +200,8 @@ struct AICoachContext {
         let cardio = recovery.recovery.cardio
         let cardioLine: String = {
             if let value = cardio.state.value {
-                let domain = cardio.dominantDomain.map { " Last effort \($0.rawValue.lowercased())." } ?? ""
-                return "Cardio freshness index: \(Int((value * 100).rounded())).\(domain) \(cardio.guidance)"
+                let evidence = cardio.evidence.map { " Based on \($0.coachDescription)." } ?? ""
+                return "Cardio freshness index: \(Int((value * 100).rounded())).\(evidence) This is modeled recent cardiovascular load, not percent recovered."
             }
             if case .building(let need) = cardio.state { return "Cardio freshness: still building — \(need)." }
             return "Cardio freshness: not available yet."
@@ -208,13 +209,14 @@ struct AICoachContext {
 
         // Recent modeled exposure by muscle. Never translate this into a
         // measured recovery state or a time-to-ready promise.
+        let freshnessRegions = Set(MuscleTaxonomy.freshnessGroups.map(\.name))
         let ranked = recovery.recovery.muscles
-            .filter { $0.state.value != nil }
+            .filter { freshnessRegions.contains($0.muscle) && $0.state.value != nil }
             .sorted { ($0.state.value ?? 1) < ($1.state.value ?? 1) }
         let stillRecovering = ranked
             .filter { ($0.state.value ?? 1) < 0.75 }
             .prefix(4)
-            .map { "\($0.muscle.capitalized) \($0.statusLabel.lowercased())" }
+            .map { "\(MuscleTaxonomy.freshnessDisplayName($0.muscle)) \($0.statusLabel.lowercased())" }
         let muscleRecoveryLine = stillRecovering.isEmpty
             ? "Muscle freshness: no high recent exposure is modeled."
             : "Muscle recent exposure: \(stillRecovering.joined(separator: ", "))."
@@ -420,7 +422,7 @@ struct AICoachChatView: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.sm) {
                     Image(systemName: "sparkles")
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Using your ForgeFit data")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -450,7 +452,7 @@ struct AICoachChatView: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: 6) {
                     Image(systemName: plan.action.systemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Today's call: \(plan.action.title)")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -494,6 +496,7 @@ struct AICoachChatView: View {
                             .padding(.vertical, 8)
                             .background(theme.surfaceElevated)
                             .clipShape(Capsule())
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .disabled(isAnswering)
@@ -514,11 +517,12 @@ struct AICoachChatView: View {
                 .padding(.vertical, 11)
                 .background(theme.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .minimumTouchTarget()
 
             Button { send() } label: {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(canSend ? theme.onAccent : theme.textTertiary)
                     .frame(width: 44, height: 44)   // HIG minimum touch target
                     .background(canSend ? theme.accent : theme.surfaceHighlight)
                     .clipShape(Circle())
@@ -588,7 +592,7 @@ struct AICoachCard: View {
         Card(fill: theme.accentSoft) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles").foregroundStyle(theme.accent)
+                    Image(systemName: "sparkles").foregroundStyle(theme.accentForeground)
                     Text("Coach").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
                     if AICoach.isSupported {

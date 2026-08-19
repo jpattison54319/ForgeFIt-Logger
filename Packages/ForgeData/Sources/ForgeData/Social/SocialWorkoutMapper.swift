@@ -46,7 +46,7 @@ public enum SocialWorkoutMapper {
             inclinePercent: session.inclinePercent,
             elevationGainMeters: session.elevationGainMeters,
             yogaStyleRaw: session.yogaStyleRaw,
-            posesCompleted: session.posesCompleted,
+            posesCompleted: session.logicalYogaPosesCompleted,
             splits: session.splits.sorted { $0.index < $1.index }.map(sharedSplit(from:))
         )
     }

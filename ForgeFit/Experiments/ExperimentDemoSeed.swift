@@ -394,6 +394,7 @@ enum ExperimentDemoSeed {
             sourceDevice: "iphone",
             durationSeconds: duration,
             distanceMeters: distance,
+            distanceSource: .userEntered,
             activeEnergyKcal: 320,
             avgHR: 151,
             maxHR: 174,

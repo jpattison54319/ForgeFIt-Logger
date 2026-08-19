@@ -10,14 +10,49 @@ import Foundation
 /// Apple's all-day HRV mean and daytime-derived resting HR are noisier proxies.
 nonisolated enum NocturnalAggregator {
     /// A merged sleep period, tagged with the morning it belongs to.
-    struct SleepWindow: Equatable {
+    struct SleepWindow: Equatable, Sendable {
         let start: Date
         let end: Date
         /// `startOfDay(end)` — the readiness day this night feeds.
         let day: Date
     }
 
-    struct NightlyMetric: Equatable {
+    /// Sorted-window point index: replaces the O(windows) `first(where:)`
+    /// scan that every sample used to pay with an O(log n) lookup.
+    /// `windows(fromAsleepSegments:)` merges until gaps exceed the tolerance,
+    /// so produced windows are pairwise disjoint: each date falls inside at
+    /// most one window, which makes the index exactly equivalent to the scan
+    /// it replaces. Bounds are inclusive (`>= start && <= end`), matching the
+    /// scan's semantics.
+    struct SleepWindowIndex: Equatable {
+        let windows: [SleepWindow]
+
+        init(_ windows: [SleepWindow]) {
+            self.windows = windows.sorted { $0.start < $1.start }
+        }
+
+        var count: Int { windows.count }
+
+        /// The window containing `date`, or nil when it lies in a gap.
+        func window(containing date: Date) -> SleepWindow? {
+            var low = 0
+            var high = windows.count - 1
+            while low <= high {
+                let mid = low + (high - low) / 2
+                let window = windows[mid]
+                if date < window.start {
+                    high = mid - 1
+                } else if date > window.end {
+                    low = mid + 1
+                } else {
+                    return window
+                }
+            }
+            return nil
+        }
+    }
+
+    struct NightlyMetric: Equatable, Sendable {
         var hrv: Double?
         var sleepingHR: Int?
         var hrvSampleCount: Int
@@ -65,17 +100,20 @@ nonisolated enum NocturnalAggregator {
         hr: [(date: Date, bpm: Int)]
     ) -> [Date: NightlyMetric] {
         guard !windows.isEmpty else { return [:] }
+        let index = SleepWindowIndex(windows)
         var hrvByDay: [Date: [(date: Date, value: Double)]] = [:]
         var hrByDay: [Date: [(date: Date, value: Int)]] = [:]
 
         for sample in hrv {
-            if let window = windows.first(where: { sample.date >= $0.start && sample.date <= $0.end }) {
+            guard !Task.isCancelled else { return [:] }
+            if let window = index.window(containing: sample.date) {
                 guard sample.value > 0 else { continue }
                 hrvByDay[window.day, default: []].append(sample)
             }
         }
         for sample in hr {
-            if let window = windows.first(where: { sample.date >= $0.start && sample.date <= $0.end }) {
+            guard !Task.isCancelled else { return [:] }
+            if let window = index.window(containing: sample.date) {
                 guard sample.bpm > 0 else { continue }
                 hrByDay[window.day, default: []].append((sample.date, sample.bpm))
             }
@@ -109,6 +147,32 @@ nonisolated enum NocturnalAggregator {
             )
         }
         return out
+    }
+
+    /// Bundle IDs of nocturnal HR samples grouped by the morning the
+    /// containing sleep window ended — the value backing
+    /// `DailyHealthMetric.sleepingHRSourceBundleID`. One indexed pass per
+    /// sample; the prebucketed replacement for the per-day × per-sample ×
+    /// per-window scan that used to re-filter every sample for every day.
+    /// Mirrors the old filter exactly: EVERY windowed sample counts
+    /// (including `bpm == 0` readings — only nightly *binning* skips those),
+    /// and samples outside every window are ignored.
+    static func sourcesByDay(
+        windows: [SleepWindow],
+        hr: [(date: Date, sourceBundleID: String)]
+    ) -> [Date: [String]] {
+        guard !hr.isEmpty else { return [:] }
+        let index = SleepWindowIndex(windows)
+        var byDay: [Date: [String]] = [:]
+        for sample in hr {
+            // Cancellation yields nothing, never a partial bucket — the caller
+            // treats a cancelled run as "no data", not as a shortened night.
+            guard !Task.isCancelled else { return [:] }
+            if let window = index.window(containing: sample.date) {
+                byDay[window.day, default: []].append(sample.sourceBundleID)
+            }
+        }
+        return byDay
     }
 
     private static func binnedValues(

@@ -22,6 +22,7 @@ struct YogaBlockCard: View {
     @State private var workoutExercise: WorkoutExerciseModel?
     @State private var session: CardioSessionModel?
     @State private var showPlayer = false
+    @State private var yogaSafetyPresentation: YogaSafetyPresentation?
     @State private var importing = false
     @State private var activeSegmentMessage: String?
 
@@ -60,6 +61,14 @@ struct YogaBlockCard: View {
                 )
             }
         }
+        .sheet(item: $yogaSafetyPresentation) { presentation in
+            switch presentation {
+            case .startClass:
+                YogaSafetyView(startAction: { beginAfterSafety() })
+            case .information:
+                YogaSafetyView()
+            }
+        }
         .alert("Another Segment Is Active", isPresented: Binding(
             get: { activeSegmentMessage != nil },
             set: { if !$0 { activeSegmentMessage = nil } }
@@ -76,7 +85,7 @@ struct YogaBlockCard: View {
                 theme.surfaceElevated
                 Image(systemName: style.systemImage)
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
             }
             .frame(width: 38, height: 38)
             .clipShape(Circle())
@@ -143,11 +152,11 @@ struct YogaBlockCard: View {
             flowSummary
             YogaInstructorPicker()
             Button {
-                startOrResume(session)
+                requestStartOrResume(session)
             } label: {
                 Label(plan?.hasSteps == true ? "Start Guided Class" : "Configure Flow", systemImage: plan?.hasSteps == true ? "play.fill" : "slider.horizontal.3")
                     .font(.bodyStrong)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onAccent)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(theme.accent)
@@ -168,13 +177,14 @@ struct YogaBlockCard: View {
                 } label: {
                     Label("Resume guided class", systemImage: "figure.yoga")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                 }
             }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 HStack(spacing: Space.sm) {
                     Circle().fill(theme.accent).frame(width: 10, height: 10)
-                    Text("In session").font(.label).foregroundStyle(theme.accent)
+                    Text("In session").font(.label).foregroundStyle(theme.accentForeground)
                     Spacer()
                     Text(Fmt.elapsed(max(0, Int(context.date.timeIntervalSince(session.liveStartedAt ?? session.startedAt)))))
                         .font(.metricValue)
@@ -193,6 +203,9 @@ struct YogaBlockCard: View {
             }
             .buttonStyle(PressableButtonStyle())
             .accessibilityIdentifier("complete-yoga-block")
+            Text("Completing counts the hold you're in.")
+                .font(.label)
+                .foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -205,7 +218,7 @@ struct YogaBlockCard: View {
             }
             HStack {
                 StatColumn(label: "Duration", value: Fmt.durationShort(session.durationSeconds), valueColor: theme.accent)
-                StatColumn(label: "Poses", value: session.posesCompleted.map(String.init) ?? "—")
+                StatColumn(label: "Poses", value: session.logicalYogaPosesCompleted.map(String.init) ?? "—")
                 StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
                 StatColumn(label: "kcal", value: session.activeEnergyKcal.map { String(Int($0)) } ?? "—")
             }
@@ -218,7 +231,7 @@ struct YogaBlockCard: View {
     private var flowSummary: some View {
         HStack(spacing: Space.sm) {
             Image(systemName: style.systemImage)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Flow")
                     .font(.bodyStrong)
@@ -228,9 +241,12 @@ struct YogaBlockCard: View {
                     .foregroundStyle(theme.textSecondary)
             }
             Spacer()
-            Button("Edit", action: onEdit)
-                .font(.bodyStrong)
-                .foregroundStyle(theme.accent)
+            Button(action: onEdit) {
+                Text("Edit")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accentForeground)
+                    .minimumTouchTarget()
+            }
                 .disabled(hasStarted)
         }
         .padding(Space.sm)
@@ -301,9 +317,10 @@ struct YogaBlockCard: View {
             linkedSession.durationSeconds = plan.flatMap { $0.totalSeconds > 0 ? $0.totalSeconds : nil }
             linkedSession.yogaStyleRaw = plan?.styleRaw
         }
-        try? modelContext.save()
-        workoutExercise = anchor
-        session = linkedSession
+        modelContext.saveUserChanges {
+            workoutExercise = anchor
+            session = linkedSession
+        }
     }
 
     private func startOrResume(_ session: CardioSessionModel) {
@@ -315,53 +332,76 @@ struct YogaBlockCard: View {
             activeSegmentMessage = "\(active) is already recording. Complete it before starting Yoga."
             return
         }
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
-        if session.liveStartedAt == nil {
-            let now = Date()
-            session.liveStartedAt = now
-            session.startedAt = now
+        let now = Date()
+        let blockUpdatedAtBeforeStart = block.updatedAt
+        CardioSessionStartPersistence.perform(
+            session: session,
+            startedAt: session.liveStartedAt ?? now,
+            updatedAt: now,
+            resetsStartedAt: session.liveStartedAt == nil,
+            context: modelContext,
+            applyAdditionalMutation: { block.updatedAt = now },
+            restoreAdditionalMutation: { block.updatedAt = blockUpdatedAtBeforeStart },
+            onCommit: {
+                Task { await HealthService.shared.requestAuthorizationIfNeeded() }
+                YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
+                showPlayer = true
+                WatchLink.shared.publishState()
+            }
+        )
+    }
+
+    private func requestStartOrResume(_ session: CardioSessionModel) {
+        // An already-running class was gated when it first started; resume it
+        // directly instead of interrupting recovery from an app relaunch.
+        if session.liveStartedAt != nil || YogaSafetyAcknowledgement.isAccepted {
+            startOrResume(session)
+            return
         }
-        block.updatedAt = .now
-        try? modelContext.save()
-        YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: modelContext)
-        showPlayer = true
-        WatchLink.shared.publishState()
+        yogaSafetyPresentation = .startClass
+    }
+
+    private func beginAfterSafety() {
+        guard let session else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            startOrResume(session)
+        }
     }
 
     private func complete(_ session: CardioSessionModel) {
-        guard let workoutExercise else { return }
-        YogaFlowRunnerHub.shared.stop(for: session.id)
-        showPlayer = false
+        guard workoutExercise != nil else { return }
+        YogaFlowRunnerHub.shared.captureCheckpointForTerminalAttempt(sessionID: session.id)
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
-        let exercise = YogaPoseCatalog.sessionExercise(in: modelContext)
-        YogaSessionCompletion.complete(
-            session: session,
-            workoutExercise: workoutExercise,
-            exercise: exercise,
-            context: modelContext,
+        CardioSessionTerminalPersistence.perform(
+            container: modelContext.container,
+            sessionID: session.id,
+            blockID: block.id,
             endedAt: end,
-            useClockDuration: true
-        )
-        block.updatedAt = end
-        try? modelContext.save()
-        importing = true
-        let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snapshot = await HealthService.shared.importSnapshot(from: start, to: end, modality: .other)
-            await MainActor.run {
-                if let heartRate = snapshot.avgHR ?? bleStats?.avgHR { session.avgHR = heartRate }
-                if let maxHeartRate = snapshot.maxHR ?? bleStats?.maxHR { session.maxHR = maxHeartRate }
-                if let energy = snapshot.activeEnergyKcal { session.activeEnergyKcal = energy }
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(
-                    avgHR: session.avgHR,
-                    durationSeconds: session.durationSeconds
-                )
-                importing = false
-                try? modelContext.save()
-            }
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: false, in: modelContext)
+            completesYoga: true,
+            useClockDuration: true,
+            stagesRoute: false
+        ) { outcome in
+            YogaFlowRunnerHub.shared.stop(for: outcome.sessionID, clearCheckpoint: true)
+            showPlayer = false
+            let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
+                    sessionID: outcome.sessionID,
+                    start: outcome.start,
+                    end: outcome.end,
+                    modality: .other,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: false,
+                    providesGPSDistance: false,
+                    hadManualIntervalPlan: false
+                ),
+                container: modelContext.container
+            )
+            importing = false
+            WatchLink.shared.publishDurableState()
         }
-        WatchLink.shared.publishState()
     }
 }

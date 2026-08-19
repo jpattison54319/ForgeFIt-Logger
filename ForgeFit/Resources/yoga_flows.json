@@ -21,7 +21,7 @@
    },
    {
     "poseSlug": "extended-side-angle",
-    "holdSeconds": 30,
+    "holdSeconds": 35,
     "side": "bothSides"
    },
    {
@@ -67,7 +67,7 @@
    },
    {
     "poseSlug": "boat-pose",
-    "holdSeconds": 20
+    "holdSeconds": 25
    },
    {
     "poseSlug": "hero-pose",
@@ -98,7 +98,7 @@
    },
    {
     "poseSlug": "extended-side-angle",
-    "holdSeconds": 30,
+    "holdSeconds": 35,
     "side": "bothSides"
    },
    {

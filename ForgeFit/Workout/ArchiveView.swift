@@ -214,7 +214,7 @@ struct ArchiveView: View {
                 HStack(alignment: .center, spacing: Space.md) {
                     Image(systemName: icon(for: item))
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 36, height: 36)
                         .background(theme.surfaceElevated)
                         .clipShape(Circle())
@@ -235,7 +235,12 @@ struct ArchiveView: View {
 
                     Spacer(minLength: Space.sm)
 
-                    Button("Restore") { restore(item) }
+                    Button {
+                        restore(item)
+                    } label: {
+                        Text("Restore")
+                            .minimumTouchTarget()
+                    }
                         .buttonStyle(.glassProminent)
                         .tint(theme.accent)
                         .controlSize(.small)
@@ -252,8 +257,7 @@ struct ArchiveView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 36, height: 44)
-                            .contentShape(Rectangle())
+                            .minimumTouchTarget()
                     }
                     .accessibilityLabel("Archive options for \(item.name)")
                 }
@@ -329,11 +333,13 @@ struct ArchiveView: View {
     // MARK: - Actions
 
     private func restore(_ item: ArchiveItem) {
-        switch item {
-        case .folder(let folder): try? RoutineArchiver.restore(folder, in: modelContext)
-        case .routine(let routine): try? RoutineArchiver.restore(routine, in: modelContext)
+        PersistentChangeSaveCenter.shared.perform {
+            switch item {
+            case .folder(let folder): try RoutineArchiver.restore(folder, in: modelContext)
+            case .routine(let routine): try RoutineArchiver.restore(routine, in: modelContext)
+            }
+            try modelContext.save()
         }
-        try? modelContext.save()
     }
 
     /// Same soft-delete semantics as the Workout tab: a hard delete would
@@ -342,7 +348,7 @@ struct ArchiveView: View {
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func delete(_ folder: RoutineFolderModel) {
@@ -357,7 +363,7 @@ struct ArchiveView: View {
         }
         folder.updatedAt = now
         folder.deletedAt = now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

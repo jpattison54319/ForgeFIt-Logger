@@ -309,6 +309,279 @@ struct WorkoutHistorySearchTests {
         _ = container
     }
 
+    // MARK: Relative-window memo policy (FF-017)
+
+    @Test func relativeMemoKeysShiftAtMidnightButNotWithinADay() {
+        let laterToday = calendar.date(byAdding: .hour, value: 11, to: now)!
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: now)!
+        let filters: [WorkoutHistoryQuery.DateFilter] = [
+            .last7Days, .last30Days, .last90Days, .thisYear,
+        ]
+        for filter in filters {
+            var query = WorkoutHistoryQuery()
+            query.date = filter
+            let atNow = WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: "fp", query: query, now: now, calendar: calendar
+            )
+            // Stable within the calendar day — unrelated interactions must not churn.
+            #expect(
+                WorkoutHistoryQueryEngine.memoKey(
+                    fingerprint: "fp", query: query, now: laterToday, calendar: calendar
+                ) == atNow
+            )
+            // Moves at the local day boundary — the memo must turn over without any
+            // query or data change.
+            #expect(
+                WorkoutHistoryQueryEngine.memoKey(
+                    fingerprint: "fp", query: query, now: nextDay, calendar: calendar
+                ) != atNow
+            )
+        }
+    }
+
+    @Test func staticMemoKeysAreClockIndependent() {
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: now)!
+
+        var monthQuery = WorkoutHistoryQuery()
+        monthQuery.date = .month(
+            title: "January 2027",
+            interval: DateInterval(
+                start: calendar.date(from: DateComponents(year: 2027, month: 1, day: 1))!,
+                end: calendar.date(from: DateComponents(year: 2027, month: 2, day: 1))!
+            )
+        )
+        var customQuery = WorkoutHistoryQuery()
+        customQuery.date = .custom(start: now.addingTimeInterval(-86_400), end: now)
+
+        let queries: [WorkoutHistoryQuery] = [.init(), monthQuery, customQuery]
+        for query in queries {
+            let before = WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: "fp", query: query, now: now, calendar: calendar
+            )
+            let after = WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: "fp", query: query, now: nextDay, calendar: calendar
+            )
+            #expect(before == after)
+        }
+    }
+
+    @Test func nextDayBoundaryLandsOnTheFollowingLocalMidnight() {
+        let boundary = WorkoutHistoryQueryEngine.nextDayBoundary(after: now, calendar: calendar)
+        let expected = calendar.date(from: DateComponents(year: 2027, month: 1, day: 16))!
+        #expect(boundary == expected)
+    }
+
+    @Test func nextDayBoundarySurvivesDSTFallBack() {
+        let newYork = TimeZone(identifier: "America/New_York")!
+        var nyCalendar = Calendar(identifier: .gregorian)
+        nyCalendar.timeZone = newYork
+
+        // Start before the repeated hour on the fall-back day and ask for the
+        // following midnight. The interval is 24.5 hours in absolute time;
+        // a fixed 24-hour step would land at 23:30 instead of midnight.
+        let beforeFallback = nyCalendar.date(
+            from: DateComponents(timeZone: newYork, year: 2027, month: 11, day: 7, hour: 0, minute: 30)
+        )!
+        let expectedMidnight = nyCalendar.date(
+            from: DateComponents(timeZone: newYork, year: 2027, month: 11, day: 8)
+        )!
+        #expect(
+            WorkoutHistoryQueryEngine.nextDayBoundary(after: beforeFallback, calendar: nyCalendar)
+            == expectedMidnight
+        )
+    }
+
+    @Test func relativeFilterRecomputesAcrossMidnightWithoutQueryOrFingerprintChange() async throws {
+        let (container, context) = try TestStore.make()
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        context.insert(bench)
+
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: now)!
+        let boundary = calendar.date(byAdding: .day, value: -7, to: now)!
+
+        let morning = strength(daysAgo: 0, title: "Morning", exercise: bench, weight: 100)
+        morning.startedAt = now.addingTimeInterval(-60)         // 07:59 — inside the old day's window
+        let fresh = strength(daysAgo: 0, title: "Fresh", exercise: bench, weight: 100)
+        fresh.startedAt = nextDay.addingTimeInterval(-60)       // only visible after the boundary
+        let onBoundary = strength(daysAgo: 7, title: "Boundary", exercise: bench, weight: 100)  // exactly 7*24h back
+        let inside = strength(daysAgo: 7, title: "Inside", exercise: bench, weight: 100)
+        inside.startedAt = boundary.addingTimeInterval(1)
+        let outside = strength(daysAgo: 7, title: "Outside", exercise: bench, weight: 100)
+        outside.startedAt = boundary.addingTimeInterval(-1)
+
+        let index = await WorkoutHistoryIndexer.build(
+            workouts: [morning, fresh, onBoundary, inside, outside],
+            exercises: [bench],
+            calendar: calendar
+        )
+
+        var query = WorkoutHistoryQuery()
+        query.date = .last7Days
+        let fingerprint = "fp"   // deliberately frozen — the memo must not need it
+
+        // Mirrors WorkoutHistoryView.filtered: one injected now/calendar drives
+        // both the memo key and the engine.
+        let memo = Memo<String, [WorkoutHistoryEntry]>()
+        var computeCount = 0
+        func value(at date: Date) -> [WorkoutHistoryEntry] {
+            memo(WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: fingerprint, query: query, now: date, calendar: calendar
+            )) {
+                computeCount += 1
+                return WorkoutHistoryQueryEngine.apply(query, to: index, now: date, calendar: calendar)
+            }
+        }
+
+        let beforeMidnight = value(at: now)
+        let afterMidnight = value(at: nextDay)
+
+        #expect(beforeMidnight.map(\.title) == ["Morning", "Inside", "Boundary"])
+        #expect(afterMidnight.map(\.title) == ["Fresh", "Morning"])
+        #expect(computeCount == 2)   // crossed the day boundary with zero query/fingerprint change
+        _ = container
+    }
+
+    @Test func staticFilterMemoHoldsAcrossBodyReevaluationsAndMidnight() async throws {
+        let (container, context) = try TestStore.make()
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        context.insert(bench)
+
+        let today = strength(daysAgo: 0, title: "Today", exercise: bench, weight: 100)
+        today.startedAt = now.addingTimeInterval(-60)
+        let index = await WorkoutHistoryIndexer.build(
+            workouts: [today], exercises: [bench], calendar: calendar
+        )
+
+        var query = WorkoutHistoryQuery()
+        query.date = .custom(start: now.addingTimeInterval(-86_400), end: now)
+
+        let memo = Memo<String, [WorkoutHistoryEntry]>()
+        var computeCount = 0
+        func value(at date: Date) -> [WorkoutHistoryEntry] {
+            memo(WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: "fp", query: query, now: date, calendar: calendar
+            )) {
+                computeCount += 1
+                return WorkoutHistoryQueryEngine.apply(query, to: index, now: date, calendar: calendar)
+            }
+        }
+
+        let first = value(at: now)
+        let laterSameDay = value(at: now.addingTimeInterval(3_600))
+        let nextDay = value(at: calendar.date(byAdding: .day, value: 1, to: now)!)
+
+        #expect(computeCount == 1)   // one compute, two hits — no churn at midnight
+        #expect(first == laterSameDay)
+        #expect(laterSameDay == nextDay)
+        _ = container
+    }
+
+    @Test func relativeFilterStaysMemoizedWithinACalendarDay() async throws {
+        let (container, context) = try TestStore.make()
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        context.insert(bench)
+
+        let index = await WorkoutHistoryIndexer.build(
+            workouts: [strength(daysAgo: 1, title: "Recent", exercise: bench, weight: 100)],
+            exercises: [bench],
+            calendar: calendar
+        )
+
+        var query = WorkoutHistoryQuery()
+        query.date = .last90Days
+
+        let memo = Memo<String, [WorkoutHistoryEntry]>()
+        var computeCount = 0
+        func value(at date: Date) -> [WorkoutHistoryEntry] {
+            memo(WorkoutHistoryQueryEngine.memoKey(
+                fingerprint: "fp", query: query, now: date, calendar: calendar
+            )) {
+                computeCount += 1
+                return WorkoutHistoryQueryEngine.apply(query, to: index, now: date, calendar: calendar)
+            }
+        }
+
+        let first = value(at: now)
+        let laterSameDay = value(at: now.addingTimeInterval(3_600))
+
+        #expect(computeCount == 1)   // unrelated interactions within a day hit the memo
+        #expect(first == laterSameDay)
+        _ = container
+    }
+
+    @Test func last30And90DayWindowsMoveWithTheDay() async throws {
+        let (container, context) = try TestStore.make()
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        context.insert(bench)
+
+        let nextDay = calendar.date(byAdding: .day, value: 1, to: now)!
+        let recent = strength(daysAgo: 1, title: "Recent", exercise: bench, weight: 100)
+
+        for days in [30, 90] {
+            let boundary = calendar.date(byAdding: .day, value: -days, to: now)!
+            let onBoundary = strength(daysAgo: days, title: "On-\(days)", exercise: bench, weight: 100)
+            let inside = strength(daysAgo: days, title: "Inside-\(days)", exercise: bench, weight: 100)
+            inside.startedAt = boundary.addingTimeInterval(1)
+            let outside = strength(daysAgo: days, title: "Outside-\(days)", exercise: bench, weight: 100)
+            outside.startedAt = boundary.addingTimeInterval(-1)
+
+            let index = await WorkoutHistoryIndexer.build(
+                workouts: [recent, onBoundary, inside, outside],
+                exercises: [bench],
+                calendar: calendar
+            )
+
+            var query = WorkoutHistoryQuery()
+            query.date = days == 30 ? .last30Days : .last90Days
+
+            let today = WorkoutHistoryQueryEngine.apply(query, to: index, now: now, calendar: calendar).map(\.title)
+            let tomorrow = WorkoutHistoryQueryEngine.apply(query, to: index, now: nextDay, calendar: calendar).map(\.title)
+
+            // The exact trailing boundary (now − N days) is included before
+            // midnight and excluded after; everything inside stays.
+            #expect(today == ["Recent", "Inside-\(days)", "On-\(days)"])
+            #expect(tomorrow == ["Recent"])
+            _ = container
+        }
+    }
+
+    @Test func thisYearWindowTracksTheYearBoundary() async throws {
+        let (container, context) = try TestStore.make()
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        context.insert(bench)
+
+        let jan1_2027 = calendar.date(from: DateComponents(year: 2027, month: 1, day: 1))!
+        let jan1_2028 = calendar.date(from: DateComponents(year: 2028, month: 1, day: 1))!
+
+        let prevYear = strength(daysAgo: 360, title: "PrevYear", exercise: bench, weight: 100)
+        prevYear.startedAt = calendar.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 12))!
+        let newYear = strength(daysAgo: 359, title: "NewYear", exercise: bench, weight: 100)
+        newYear.startedAt = jan1_2027
+        let yearEnd = strength(daysAgo: 2, title: "YearEnd", exercise: bench, weight: 100)
+        yearEnd.startedAt = calendar.date(from: DateComponents(year: 2027, month: 12, day: 31, hour: 12))!
+        let nextYearJan1 = strength(daysAgo: 1, title: "NextYearJan1", exercise: bench, weight: 100)
+        nextYearJan1.startedAt = jan1_2028
+
+        let index = await WorkoutHistoryIndexer.build(
+            workouts: [prevYear, newYear, yearEnd, nextYearJan1],
+            exercises: [bench],
+            calendar: calendar
+        )
+
+        var query = WorkoutHistoryQuery()
+        query.date = .thisYear
+
+        let in2027 = WorkoutHistoryQueryEngine.apply(query, to: index, now: now, calendar: calendar).map(\.title)
+        let in2028 = WorkoutHistoryQueryEngine.apply(query, to: index, now: jan1_2028, calendar: calendar).map(\.title)
+
+        // Half-open year window: Jan 1 00:00:00 belongs to the new year (start
+        // inclusive, end exclusive); Dec 31 of the prior year and Jan 1 of the
+        // next year fall outside, and the window itself moves with `now`.
+        #expect(in2027 == ["YearEnd", "NewYear"])
+        #expect(in2028 == ["NextYearJan1"])
+        _ = container
+    }
+
     // MARK: Fixtures
 
     private func exercise(_ name: String, muscles: [String]) -> ExerciseLibraryModel {

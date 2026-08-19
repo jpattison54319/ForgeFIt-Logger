@@ -147,6 +147,8 @@ private struct WatchConditioningWorkoutView: View {
                                 }
                                 Spacer(minLength: 0)
                             }
+                            .frame(minHeight: WTheme.minimumTouchTarget)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -184,7 +186,7 @@ private struct WatchConditioningWorkoutView: View {
                 }
             }
                 .buttonStyle(.borderedProminent).tint(WTheme.teal)
-                .disabled(requiredRoundsRemaining > 0)
+                .disabled(requiredRoundsRemaining > 0 || store.isAwaitingWorkoutIdentity)
             if requiredRoundsRemaining > 0 {
                 Text("\(requiredRoundsRemaining) round\(requiredRoundsRemaining == 1 ? "" : "s") left")
                     .font(.system(size: 11, weight: .semibold))
@@ -625,6 +627,8 @@ struct WatchSetListView: View {
                                         .font(.system(size: 18))
                                         .foregroundStyle(set.completed ? WTheme.success : .secondary)
                                 }
+                                .frame(minHeight: WTheme.minimumTouchTarget)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             // Long-press stays as a shortcut — the pencil is
@@ -642,7 +646,8 @@ struct WatchSetListView: View {
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(WTheme.accent)
                                     .frame(width: 28, height: 28)
-                                    .contentShape(Circle())
+                                    .frame(minWidth: WTheme.minimumTouchTarget, minHeight: WTheme.minimumTouchTarget)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Edit load and reps")
@@ -746,10 +751,15 @@ struct WatchControlsPage: View {
             }
             .tint(WTheme.success)
             .buttonStyle(.borderedProminent)
-            .disabled(store.conditioningFinishBlocker != nil)
+            .disabled(store.conditioningFinishBlocker != nil || store.isAwaitingWorkoutIdentity)
 
             if let blocker = store.conditioningFinishBlocker {
                 Text(blocker)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else if store.isAwaitingWorkoutIdentity {
+                Text("Syncing workout…")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -762,6 +772,7 @@ struct WatchControlsPage: View {
                     .font(.system(size: 15, weight: .semibold))
             }
             .tint(WTheme.danger)
+            .disabled(store.isAwaitingWorkoutIdentity)
         }
         .padding(.horizontal, 4)
         .confirmationDialog("Finish workout?", isPresented: $confirmFinish) {

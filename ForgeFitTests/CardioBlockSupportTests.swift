@@ -118,4 +118,29 @@ struct CardioBlockSupportTests {
         let window = base.addingTimeInterval(3_600)...base.addingTimeInterval(7_200)
         #expect(CardioBlockSupport.hrSlice(samples: samples, window: window).isEmpty)
     }
+
+    // MARK: heartRateSummary
+
+    @Test func heartRateSummaryUsesOnlySamplesInsideBlockWindow() throws {
+        let samples: [(date: Date, bpm: Int)] = [
+            (base, 90),
+            (base.addingTimeInterval(60), 140),
+            (base.addingTimeInterval(120), 151),
+            (base.addingTimeInterval(180), 160),
+            (base.addingTimeInterval(240), 100),
+        ]
+        let window = base.addingTimeInterval(60)...base.addingTimeInterval(180)
+
+        let summary = try #require(CardioBlockSupport.heartRateSummary(samples: samples, window: window))
+
+        #expect(summary.averageBPM == 150)
+        #expect(summary.maximumBPM == 160)
+    }
+
+    @Test func heartRateSummaryIsNilWithoutSamplesInsideBlockWindow() {
+        let samples = [(date: base, bpm: 130)]
+        let window = base.addingTimeInterval(60)...base.addingTimeInterval(120)
+
+        #expect(CardioBlockSupport.heartRateSummary(samples: samples, window: window) == nil)
+    }
 }

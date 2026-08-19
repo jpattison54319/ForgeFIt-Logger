@@ -7,6 +7,7 @@ struct MicrocycleSetupView: View {
 
     let folder: RoutineFolderModel
     let routines: [RoutineModel]
+    let replacingTrackingName: String?
     let onStart: (Date, Int) throws -> Void
 
     @State private var startDate: Date
@@ -16,10 +17,12 @@ struct MicrocycleSetupView: View {
     init(
         folder: RoutineFolderModel,
         routines: [RoutineModel],
+        replacingTrackingName: String? = nil,
         onStart: @escaping (Date, Int) throws -> Void
     ) {
         self.folder = folder
         self.routines = routines.sorted { $0.position < $1.position }
+        self.replacingTrackingName = replacingTrackingName
         self.onStart = onStart
         _startDate = State(initialValue: .now)
         _durationDays = State(initialValue: folder.defaultMicrocycleLengthDays ?? 7)
@@ -29,6 +32,17 @@ struct MicrocycleSetupView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
+                    if let replacingTrackingName {
+                        Card(fill: theme.warmup.opacity(0.12)) {
+                            Label(
+                                "Starting this tracker stops \(replacingTrackingName). Its history stays saved.",
+                                systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(theme.textPrimary)
+                        }
+                    }
+
                     Card {
                         VStack(alignment: .leading, spacing: Space.md) {
                             LabeledContent("Day target") {
@@ -38,10 +52,14 @@ struct MicrocycleSetupView: View {
                                     in: 1...31
                                 )
                                 .labelsHidden()
+                                .frame(minHeight: TouchTarget.minimum)
                                 Text("\(durationDays) days")
                                     .font(.bodyStrong)
                                     .foregroundStyle(theme.textPrimary)
                             }
+                            Text("Each cycle lasts this many calendar days before the next one begins.")
+                                .font(.subheadline)
+                                .foregroundStyle(theme.textSecondary)
                             DatePicker(
                                 "Start date",
                                 selection: $startDate,

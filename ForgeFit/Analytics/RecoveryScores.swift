@@ -76,11 +76,13 @@ nonisolated extension RecoveryEngine {
     }
 
     struct MuscleRecoveryScore: Identifiable {
+        static let analyticsVersion = "muscle_exposure_v3"
+
         var id: String { muscle }
         let muscle: String
         let state: ScoreState         // building = never logged for this muscle
         let lastTrainedDaysAgo: Int?
-        /// Retained for decoding/UI migration only. V2 never presents this as
+        /// Retained for decoding/UI migration only. V3 never presents this as
         /// time until physiological recovery.
         let readyInHours: Int?
         let isProvisional: Bool
@@ -88,9 +90,10 @@ nonisolated extension RecoveryEngine {
         /// UI can explain why two muscle rows differ without reverse-
         /// engineering the score.
         let recentExposure: Double?
-        /// One user-level reference shared by every muscle row. A common
-        /// denominator makes the rows directly comparable with one another.
+        /// The row's personal typical session dose. Region and child rows use
+        /// separate references so one low-volume muscle cannot distort another.
         let referenceDose: Double?
+        let methodID: String
 
         init(
             muscle: String,
@@ -99,7 +102,8 @@ nonisolated extension RecoveryEngine {
             readyInHours: Int?,
             isProvisional: Bool = false,
             recentExposure: Double? = nil,
-            referenceDose: Double? = nil
+            referenceDose: Double? = nil,
+            methodID: String = Self.analyticsVersion
         ) {
             self.muscle = muscle
             self.state = state
@@ -108,49 +112,57 @@ nonisolated extension RecoveryEngine {
             self.isProvisional = isProvisional
             self.recentExposure = recentExposure
             self.referenceDose = referenceDose
+            self.methodID = methodID
         }
 
         var statusLabel: String {
             guard let value = state.value else { return "No data" }
             switch value {
-            case 0.75...: return "Lower recent exposure"
-            case 0.4..<0.75: return "Moderate recent exposure"
-            default: return "High recent exposure"
+            case 0.75...: return "Low load"
+            case 0.4..<0.75: return "Moderate load"
+            default: return "High load"
             }
         }
     }
 
-    enum CardioDomain: String {
-        case easy = "Low intensity"
-        case threshold = "Threshold"
-        case severe = "High intensity"
+    enum CardioEvidence: String, Hashable {
+        case measuredHeartRate
+        case perceivedEffort
+        case mixedHistory
+
+        var coachDescription: String {
+            switch self {
+            case .measuredHeartRate: "measured heart-rate zones"
+            case .perceivedEffort: "cardio or conditioning session effort"
+            case .mixedHistory: "measured heart-rate zones and session effort"
+            }
+        }
     }
 
     struct CardioRecovery {
+        static let analyticsVersion = "cardio_exposure_v3"
+
         var state: ScoreState
         var lastSessionText: String?
-        var dominantDomain: CardioDomain?
         var readyInHours: Int?
-        var guidance: String
         var isProvisional: Bool = false
-        var methodLabel: String? = nil
+        var evidence: CardioEvidence? = nil
+        var methodID: String = Self.analyticsVersion
 
         init(
             state: ScoreState,
             lastSessionText: String?,
-            dominantDomain: CardioDomain?,
             readyInHours: Int?,
-            guidance: String,
             isProvisional: Bool = false,
-            methodLabel: String? = nil
+            evidence: CardioEvidence? = nil,
+            methodID: String = Self.analyticsVersion
         ) {
             self.state = state
             self.lastSessionText = lastSessionText
-            self.dominantDomain = dominantDomain
             self.readyInHours = readyInHours
-            self.guidance = guidance
             self.isProvisional = isProvisional
-            self.methodLabel = methodLabel
+            self.evidence = evidence
+            self.methodID = methodID
         }
     }
 
@@ -1014,10 +1026,9 @@ nonisolated extension RecoveryEngine {
 
     // MARK: - Per-muscle
 
-    private static let trackedMuscles = [
-        "chest", "back", "lats", "upper back", "middle back", "lower back", "traps",
-        "shoulders", "biceps", "triceps", "quadriceps", "hamstrings", "glutes",
-    ]
+    private static let trackedMuscles = MuscleTaxonomy.freshnessGroups.flatMap { group in
+        [group.name] + group.children
+    }
 
     private func muscleRecoveryScores() -> [MuscleRecoveryScore] {
         let byID = exerciseByID
@@ -1033,11 +1044,19 @@ nonisolated extension RecoveryEngine {
                 let done = we.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
                 guard !done.isEmpty else { continue }
                 for set in done {
-                    let effortFactor = min(1.2, 1 + 0.1 * max(0, (set.rpe ?? 8) - 8))
-                    // Exact muscles and taxonomy parents are credited once per
-                    // set at their strongest role. A row tagged as both lats
-                    // and upper back therefore contributes one Back set, not
-                    // two, while both child rows retain their exact exposure.
+                    let effort = TrainingEffortMath.resolved(
+                        rpe: set.rpe,
+                        rir: set.rir,
+                        defaultEffort: 8
+                    )
+                    let setDose = VolumeMath.effectiveSetCount(set.domainEntry)
+                        * TrainingEffortMath.weight(for: effort)
+                    guard setDose > 0 else { continue }
+
+                    // Exact muscles and freshness regions are credited once
+                    // per set at their strongest role. A squat tagged for both
+                    // quads and glutes therefore contributes one Legs set,
+                    // while both child rows retain their exact exposure.
                     var credited: [String: Double] = [:]
                     for muscle in exercise.secondaryMuscles {
                         credited[MuscleTaxonomy.canonical(muscle)] = 0.5
@@ -1045,17 +1064,18 @@ nonisolated extension RecoveryEngine {
                     for muscle in exercise.primaryMuscles {
                         credited[MuscleTaxonomy.canonical(muscle)] = 1
                     }
-                    var parentCredits: [String: Double] = [:]
+                    var groupCredits: [String: Double] = [:]
                     for (muscle, weight) in credited {
-                        let parent = MuscleTaxonomy.parent(of: muscle)
-                        guard MuscleTaxonomy.children[parent] != nil else { continue }
-                        parentCredits[parent] = max(parentCredits[parent] ?? 0, weight)
+                        for group in MuscleTaxonomy.freshnessGroups
+                        where group.name == muscle || group.children.contains(muscle) {
+                            groupCredits[group.name] = max(groupCredits[group.name] ?? 0, weight)
+                        }
                     }
-                    for (parent, weight) in parentCredits {
-                        credited[parent] = max(credited[parent] ?? 0, weight)
+                    for (group, weight) in groupCredits {
+                        credited[group] = max(credited[group] ?? 0, weight)
                     }
                     for (muscle, weight) in credited {
-                        sessionDose[muscle, default: 0] += weight * effortFactor
+                        sessionDose[muscle, default: 0] += weight * setDose
                     }
                 }
             }
@@ -1063,21 +1083,6 @@ nonisolated extension RecoveryEngine {
                 perMuscle[muscle, default: []].append(SessionExposure(endedAt: endedAt, dose: dose))
             }
         }
-
-        let latestSessionEnd = perMuscle.values.flatMap { $0 }.map(\.endedAt).max()
-        var priorComparableDoses: [Double] = []
-        for (muscle, sessions) in perMuscle where muscle != "back" {
-            for session in sessions where latestSessionEnd.map({ session.endedAt < $0 }) ?? false {
-                priorComparableDoses.append(session.dose)
-            }
-        }
-        let allComparableDoses = perMuscle
-            .filter { $0.key != "back" }
-            .flatMap { $0.value.map(\.dose) }
-        let sharedReference = robustMedian(priorComparableDoses)
-            ?? robustMedian(allComparableDoses)
-            ?? 1
-        let referenceIsProvisional = priorComparableDoses.count < 6
 
         return Self.trackedMuscles.map { muscle in
             guard let sessions = perMuscle[muscle],
@@ -1089,19 +1094,22 @@ nonisolated extension RecoveryEngine {
                     readyInHours: nil
                 )
             }
-            let decayedExposure = sessions.reduce(0.0) { total, session in
+            let ordered = sessions.sorted { $0.endedAt < $1.endedAt }
+            let referenceSessions = ordered.count >= 7 ? Array(ordered.dropLast()) : ordered
+            let reference = robustMedian(referenceSessions.map(\.dose)) ?? 1
+            let decayedExposure = ordered.reduce(0.0) { total, session in
                 let hoursAgo = max(0, now.timeIntervalSince(session.endedAt) / 3600)
                 return total + session.dose * pow(2, -hoursAgo / 36)
             }
-            let score = min(1, max(0, pow(2, -decayedExposure / max(sharedReference, 0.001))))
+            let score = min(1, max(0, pow(2, -decayedExposure / max(reference, 0.001))))
             return MuscleRecoveryScore(
                 muscle: muscle,
                 state: .ready(score),
                 lastTrainedDaysAgo: calendarDaysBetween(lastTrained, and: now),
                 readyInHours: nil,
-                isProvisional: referenceIsProvisional,
+                isProvisional: ordered.count < 7,
                 recentExposure: decayedExposure,
-                referenceDose: sharedReference
+                referenceDose: reference
             )
         }
     }
@@ -1109,87 +1117,102 @@ nonisolated extension RecoveryEngine {
     // MARK: - Cardio
 
     private func cardioRecovery() -> CardioRecovery {
-        enum Method: String {
-            case sessionRPE = "Session RPE load"
-            case measuredZones = "Measured zone-duration load"
-        }
         struct Exposure {
             let endedAt: Date
             let minutes: Double
             let load: Double
-            let method: Method
+            let evidence: CardioEvidence
         }
 
         var exposures: [Exposure] = []
-        var everLoggedCardio = false
+        var everEligible = false
         for workout in completed {
-            let cardioSessions = workout.cardioSessions.filter {
-                !$0.isYogaSession || !$0.resolvedYogaStyle.isRestorative
+            let endedAt = workout.endedAt ?? workout.startedAt
+            guard endedAt <= now, now.timeIntervalSince(endedAt) <= 56 * 86_400 else { continue }
+
+            let duration = durationMinutes(workout)
+            if let measuredLoad = measuredCardioLoad(
+                zones: workout.hrZoneSeconds,
+                durationMinutes: duration
+            ) {
+                everEligible = true
+                exposures.append(Exposure(
+                    endedAt: endedAt,
+                    minutes: duration,
+                    load: measuredLoad,
+                    evidence: .measuredHeartRate
+                ))
+                continue
             }
+
+            let explicitSessions = workout.cardioSessions.filter { !$0.isYogaSession }
             let importedCardio = workout.hkWorkoutUUID != nil
                 && workout.cardioSessions.isEmpty
                 && workout.exercises.flatMap(\.sets).isEmpty
                 && !healthWorkoutLooksStrengthLike(workout)
-            guard !cardioSessions.isEmpty || importedCardio else { continue }
-            everLoggedCardio = true
-            let endedAt = workout.endedAt ?? workout.startedAt
-            guard endedAt <= now, now.timeIntervalSince(endedAt) <= 56 * 86_400 else { continue }
+            guard !explicitSessions.isEmpty || importedCardio else { continue }
+            everEligible = true
 
-            let hasStrengthWork = workout.exercises.flatMap(\.sets).contains {
-                $0.completedAt != nil && $0.setType.countsAsWorkingVolume
-            }
-            if !hasStrengthWork, let rpe = workout.wholeSessionRPE {
-                let minutes = durationMinutes(workout)
-                if minutes > 0 {
-                    exposures.append(Exposure(
-                        endedAt: endedAt,
-                        minutes: minutes,
-                        load: minutes * min(10, max(0, rpe)),
-                        method: .sessionRPE
-                    ))
+            var sessionMinutes = 0.0
+            var sessionLoad = 0.0
+            var evidenceKinds = Set<CardioEvidence>()
+            for session in explicitSessions {
+                let minutes = max(0, Double(session.durationSeconds ?? 0) / 60)
+                guard minutes > 0 else { continue }
+                if session.sampleSeriesJSON != nil,
+                   let measuredLoad = measuredCardioLoad(zones: session.hrZoneSeconds, durationMinutes: minutes) {
+                    sessionMinutes += minutes
+                    sessionLoad += measuredLoad
+                    evidenceKinds.insert(.measuredHeartRate)
+                } else if let effort = session.effort.map(Double.init) ?? workout.wholeSessionRPE {
+                    sessionMinutes += minutes
+                    sessionLoad += minutes * TrainingEffortMath.clamped(effort) / 2
+                    evidenceKinds.insert(.perceivedEffort)
                 }
-                continue
             }
-
-            for cardio in cardioSessions where cardio.sampleSeriesJSON != nil {
-                let zones = cardio.hrZoneSeconds
-                guard zones.count == 5, zones.contains(where: { $0 > 0 }) else { continue }
-                let minutes = Double(cardio.durationSeconds ?? zones.reduce(0, +)) / 60
-                let load = zip(zones, 1...5).reduce(0.0) { total, pair in
-                    total + Double(pair.0) / 60 * Double(pair.1)
-                }
-                exposures.append(Exposure(endedAt: cardio.endedAt ?? endedAt, minutes: minutes, load: load, method: .measuredZones))
+            if explicitSessions.isEmpty, importedCardio,
+               let rpe = workout.wholeSessionRPE, duration > 0 {
+                sessionMinutes = duration
+                sessionLoad = duration * TrainingEffortMath.clamped(rpe) / 2
+                evidenceKinds.insert(.perceivedEffort)
             }
+            guard sessionLoad > 0 else { continue }
+            let scale = duration > 0 && sessionMinutes > duration ? duration / sessionMinutes : 1
+            exposures.append(Exposure(
+                endedAt: endedAt,
+                minutes: sessionMinutes * scale,
+                load: sessionLoad * scale,
+                evidence: evidenceKinds.count > 1 ? .mixedHistory : (evidenceKinds.first ?? .perceivedEffort)
+            ))
         }
 
-        guard everLoggedCardio else {
+        guard everEligible else {
             return CardioRecovery(
-                state: .building("Log a cardio session to track this"),
+                state: .building("Record cardio, conditioning, or workout heart rate to build this score."),
                 lastSessionText: nil,
-                dominantDomain: nil,
-                readyInHours: nil,
-                guidance: "Cardio freshness is a recency-weighted exposure index, not measured physiological recovery."
+                readyInHours: nil
             )
         }
 
         guard !exposures.isEmpty else {
             return CardioRecovery(
-                state: .building("Rate overall session effort after cardio, or record measured zone time."),
+                state: .building("Record measured heart-rate zones or rate cardio or conditioning effort."),
                 lastSessionText: nil,
-                dominantDomain: nil,
-                readyInHours: nil,
-                guidance: "Average-heart-rate estimates and synthetic zone distributions do not feed cardio freshness."
+                readyInHours: nil
             )
         }
 
-        let selectedMethod: Method = exposures.contains { $0.method == .sessionRPE } ? .sessionRPE : .measuredZones
-        let sameMethod = exposures.filter { $0.method == selectedMethod }.sorted { $0.endedAt < $1.endedAt }
-        guard let last = sameMethod.last else {
-            return CardioRecovery(state: .building("No comparable cardio load is available."), lastSessionText: nil, dominantDomain: nil, readyInHours: nil, guidance: "Load methods are never mixed.")
+        let ordered = exposures.sorted { $0.endedAt < $1.endedAt }
+        guard let last = ordered.last else {
+            return CardioRecovery(
+                state: .building("No cardiovascular load is available."),
+                lastSessionText: nil,
+                readyInHours: nil
+            )
         }
-        let referenceLoads = sameMethod.dropLast().map(\.load)
-        let reference = robustMedian(referenceLoads) ?? robustMedian(sameMethod.map(\.load)) ?? 1
-        let decayed = sameMethod.reduce(0.0) { total, exposure in
+        let referenceSessions = ordered.count >= 7 ? Array(ordered.dropLast()) : ordered
+        let reference = robustMedian(referenceSessions.map(\.load)) ?? 1
+        let decayed = ordered.reduce(0.0) { total, exposure in
             let hoursAgo = max(0, now.timeIntervalSince(exposure.endedAt) / 3600)
             return total + exposure.load * pow(2, -hoursAgo / 24)
         }
@@ -1197,32 +1220,34 @@ nonisolated extension RecoveryEngine {
         let days = calendarDaysBetween(last.endedAt, and: now)
         let when = days == 0 ? "today" : (days == 1 ? "yesterday" : "\(days)d ago")
         let lastText = "\(Int(last.minutes.rounded()))min · \(when)"
+        let evidenceKinds = Set(ordered.map(\.evidence))
+        let evidence: CardioEvidence = evidenceKinds.count > 1
+            ? .mixedHistory
+            : (evidenceKinds.first ?? .perceivedEffort)
         return CardioRecovery(
             state: .ready(score),
             lastSessionText: lastText,
-            dominantDomain: nil,
             readyInHours: nil,
-            guidance: "A score of 50 means the remaining modeled exposure equals one typical same-method session; it is not percent recovered.",
-            isProvisional: referenceLoads.count < 6,
-            methodLabel: selectedMethod.rawValue
+            isProvisional: ordered.count < 7,
+            evidence: evidence
         )
     }
 
-    private func cardioGuidance(score: Double, domain: CardioDomain?) -> String {
-        switch domain {
-        case .severe:
-            return score >= 0.8
-                ? "Recent high-intensity work has largely cleared."
-                : "Recent high-intensity work is still contributing to local cardiovascular fatigue."
-        case .threshold:
-            return score >= 0.8
-                ? "Recent threshold work has largely cleared."
-                : "Recent threshold work remains a meaningful part of your recovery context."
-        case .easy:
-            return "Recent cardio was low intensity and usually clears quickly."
-        case nil:
-            return "No cardio sessions were logged in the last week."
+    /// Returns a common zone-minute dose only when measured coverage is dense
+    /// enough to represent the session. Average HR never reconstructs zones.
+    private func measuredCardioLoad(
+        zones: [Int],
+        durationMinutes: Double
+    ) -> Double? {
+        guard zones.count == 5, durationMinutes > 0 else { return nil }
+        let observedSeconds = zones.reduce(0) { $0 + max(0, $1) }
+        guard observedSeconds > 0,
+              Double(observedSeconds) / (durationMinutes * 60) >= 0.5 else { return nil }
+        let load = zones.enumerated().reduce(0.0) { total, pair in
+            total + Double(max(0, pair.element)) / 60 * Double(pair.offset + 1)
         }
+        guard load > 0 else { return nil }
+        return load
     }
 
     // MARK: - Small math helpers

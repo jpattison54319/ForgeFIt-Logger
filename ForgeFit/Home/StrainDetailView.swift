@@ -10,6 +10,7 @@ struct StrainDetailView: View {
     @State private var selectedTab: MetricDetailTab = .today
     @State private var showingInfo = false
     @State private var snapshots = RecoverySnapshotStore.shared
+    @State private var selectedTrendDate: Date?
 
     private struct TrendPoint: Identifiable {
         var id: Date { date }
@@ -86,7 +87,7 @@ struct StrainDetailView: View {
                     strainTrendChart
                     HStack(spacing: Space.lg) {
                         Label("Daily strain", systemImage: "line.diagonal")
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                         Label("Usual range", systemImage: "rectangle.fill")
                             .foregroundStyle(theme.accent.opacity(0.55))
                     }
@@ -242,28 +243,54 @@ struct StrainDetailView: View {
             }
             LineMark(x: .value("Date", point.date), y: .value("Strain", point.score))
                 .interpolationMethod(.catmullRom)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
             PointMark(x: .value("Date", point.date), y: .value("Strain", point.score))
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .symbolSize(20)
+            if selectedTrendDate != nil,
+               point.id == selectedTrendPoint?.id {
+                RuleMark(x: .value("Selected date", point.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: point.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [("Strain", "\(point.score.formatted(.number.precision(.fractionLength(1)))) / 10")]
+                        )
+                    }
+            }
         }
         .chartYScale(domain: 0...10)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .foregroundStyle(theme.textTertiary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 5, 10]) { _ in
+            AxisMarks(position: .leading, values: [0, 2, 4, 6, 8, 10]) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text("Strain (/10)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedTrendDate)
         .frame(height: 190)
         .accessibilityLabel("Daily strain over the last 30 days")
         .accessibilityValue("Average \(averageStrain.formatted(.number.precision(.fractionLength(1)))); \(daysInTarget) days within the usual range.")
+    }
+
+    private var selectedTrendPoint: TrendPoint? {
+        guard let selectedTrendDate else { return nil }
+        return trendPoints.min {
+            abs($0.date.timeIntervalSince(selectedTrendDate)) < abs($1.date.timeIntervalSince(selectedTrendDate))
+        }
     }
 
     private func trendStat(_ label: String, _ value: String) -> some View {

@@ -3,8 +3,8 @@ import UIKit
 
 /// A single Wrapped page rendered as a social-friendly 9:16 card: the page
 /// exactly as it appears in the story, plus ForgeFit branding and the period
-/// label. Pinned to `.sageDark` like every other share export so a shared
-/// card looks the same regardless of the sharer's in-app appearance.
+/// label. Renderers pass the selected family's dark export variant so a shared
+/// card stays stable regardless of the sharer's in-app appearance.
 struct WrappedShareCard: View {
     @Environment(\.theme) private var theme
     let page: WrappedPage
@@ -19,7 +19,7 @@ struct WrappedShareCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "dumbbell.fill")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("ForgeFit")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)

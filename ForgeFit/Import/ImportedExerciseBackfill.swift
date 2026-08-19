@@ -5,10 +5,15 @@ import SwiftData
 
 @MainActor
 enum ImportedExerciseBackfill {
-    private static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
+    static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
 
-    static func runIfNeeded(in context: ModelContext) async {
-        guard !UserDefaults.standard.bool(forKey: didRunKey) else { return }
+    static func runIfNeeded(
+        in context: ModelContext,
+        defaults: UserDefaults = .standard,
+        save: @escaping @MainActor @Sendable (ModelContext) throws -> Void = { try $0.save() }
+    ) async {
+        guard LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !defaults.bool(forKey: didRunKey) else { return }
 
         let descriptor = FetchDescriptor<ExerciseLibraryModel>(
             predicate: #Predicate { exercise in
@@ -21,19 +26,47 @@ enum ImportedExerciseBackfill {
             .filter { $0.primaryMuscles.isEmpty }
 
         guard !candidates.isEmpty else {
-            UserDefaults.standard.set(true, forKey: didRunKey)
+            defaults.set(true, forKey: didRunKey)
             return
         }
 
         let seedCorpus = WorkoutHistoryImportService.seedCorpus()
         let namesByID = Dictionary(candidates.map { ($0.id, $0.importedRawName ?? $0.name) }, uniquingKeysWith: { first, _ in first })
-        let classifications = await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
             let classifier = ExerciseClassifier(seedCorpus: seedCorpus)
-            return namesByID.mapValues { classifier.classify(name: $0) }
-        }.value
+            var classifications: [UUID: ExerciseClassification] = [:]
+            classifications.reserveCapacity(namesByID.count)
+            for (id, name) in namesByID {
+                guard !Task.isCancelled else { return classifications }
+                classifications[id] = classifier.classify(name: name)
+            }
+            return classifications
+        }
+        let classifications = await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
+        guard !Task.isCancelled,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
+
+        let candidateIDs = candidates.map(\.id)
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        let transactionCandidates: [ExerciseLibraryModel]
+        do {
+            let ids = candidateIDs
+            transactionCandidates = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { ids.contains($0.id) }
+            ))
+        } catch {
+            transaction.rollback()
+            return
+        }
 
         var didChange = false
-        for exercise in candidates {
+        for exercise in transactionCandidates {
+            guard !Task.isCancelled,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
             guard let classification = classifications[exercise.id] else { continue }
             exercise.primaryMuscles = classification.primaryMuscles
             exercise.secondaryMuscles = classification.secondaryMuscles
@@ -50,14 +83,22 @@ enum ImportedExerciseBackfill {
         }
 
         if didChange {
-            try? context.save()
-        }
-        UserDefaults.standard.set(true, forKey: didRunKey)
-
-        if candidates.contains(where: \.needsReview) {
-            Task { @MainActor in
-                await ExerciseAIClassifier.refineFlaggedExercises(in: context)
+            do {
+                try save(transaction)
+            } catch {
+                transaction.rollback()
+                // Do not stamp the migration. A later launch/idle window must
+                // retry rather than permanently suppressing unsaved changes.
+                return
             }
+        }
+        defaults.set(true, forKey: didRunKey)
+
+        if classifications.values.contains(where: {
+            $0.confidence < ExerciseClassifier.reviewConfidenceThreshold
+        }),
+           LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork {
+            ExerciseAIClassifier.scheduleRefinement(in: transaction)
         }
     }
 }

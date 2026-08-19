@@ -4,32 +4,31 @@ import SwiftData
 import SwiftUI
 
 private struct ProfileStats {
-    var importedHealthWorkouts: Int
     var lifetimeHours: Int
 }
 
-/// Hevy-style profile: identity + lifetime stats, a weekly activity chart with a
-/// metric toggle, a dashboard grid, and the workout feed.
+/// Hevy-style profile: identity + lifetime stats, a dashboard grid, and the
+/// workout feed. Training trends live in Insights so analytics have one home.
 struct ProfileView: View {
     @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AppState.self) private var appState
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
+    @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse)
+    private var microcycleTrackings: [MicrocycleTrackingModel]
 
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
-    @State private var metric: TrainingAnalytics.Metric = .duration
-    @State private var activityRange: TimeChartRange = .twelveWeeks
     @State private var showSettings = false
     @State private var showProfileEditor = false
+    @State private var navigationPath = NavigationPath()
     @State private var completedMemo = Memo<String, [WorkoutModel]>()
     @State private var statsMemo = Memo<String, ProfileStats>()
-    @State private var activitySeriesMemo = Memo<String, [MetricPoint]>()
-    @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var profileKey: String { AnalyticsFingerprint.of(workouts) }
@@ -41,7 +40,6 @@ struct ProfileView: View {
             let completed = analytics.completed
             let totalSeconds = completed.reduce(0) { $0 + analytics.summary(for: $1).durationSeconds }
             return ProfileStats(
-                importedHealthWorkouts: completed.filter { $0.sourceDevice?.hasPrefix("healthkit") == true }.count,
                 lifetimeHours: totalSeconds / 3600
             )
         }
@@ -63,7 +61,7 @@ struct ProfileView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScreenScaffold("Profile", trailing: {
                 HStack(spacing: Space.sm) {
                     CircleIconButton(systemImage: "square.and.pencil", label: "Edit profile") { showProfileEditor = true }
@@ -75,7 +73,6 @@ struct ProfileView: View {
                     importedExerciseReviewCard
                         .transition(Motion.scaleIn(0.98, reduceMotion: reduceMotion))
                 }
-                activityCard
 
                 SectionHeader("Dashboard")
                 dashboardGrid
@@ -83,7 +80,22 @@ struct ProfileView: View {
                 SectionHeader("Trophy case")
                 TrophyCaseCard(trophies: trophies)
 
-                SectionHeader("Workouts")
+                SectionHeader("Workouts") {
+                    if completed.count > 10 {
+                        NavigationLink(value: ProfileRoute.history) {
+                            HStack(spacing: Space.xs) {
+                                Text("See all")
+                                Image(systemName: "chevron.right")
+                            }
+                            .minimumTouchTarget()
+                        }
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(theme.accentForeground)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("See all workouts")
+                        .accessibilityIdentifier("profile-see-all-workouts")
+                    }
+                }
                 if completed.isEmpty {
                     EmptyStateCard(title: "No workouts yet", message: "Your completed sessions will show up here.", systemImage: "dumbbell")
                 } else {
@@ -92,18 +104,7 @@ struct ProfileView: View {
                             WorkoutFeedRow(workout: workout, analytics: analytics)
                         }
                         .buttonStyle(.plain)
-                    }
-                    if completed.count > 10 {
-                        NavigationLink(value: ProfileRoute.history) {
-                            Card(padding: Space.md) {
-                                HStack {
-                                    Text("See all workouts").font(.bodyStrong).foregroundStyle(theme.accent)
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(theme.textTertiary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("profile-workout-\(workout.title ?? "Workout")")
                     }
                 }
             }
@@ -119,6 +120,8 @@ struct ProfileView: View {
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
                 case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .wrapped: WrappedListView()
+                case .microcycles:
+                    MicrocycleHistoryView(workouts: workouts, exercises: exercises)
                 case .community:
                     SocialHubView(makeSnapshot: {
                         SocialProfileComposer.snapshot(
@@ -137,8 +140,11 @@ struct ProfileView: View {
             .refreshable { await AppRefresh.run(in: modelContext) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showProfileEditor) { ProfileEditSheet() }
+            .onChange(of: appState.pendingProfileRoute, initial: true) { _, route in
+                openPendingRoute(route)
+            }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .interactiveBackSwipeEnabled()
     }
 
@@ -163,22 +169,6 @@ struct ProfileView: View {
                     }
                 }
                 XPProgressBar(progress: xpProgress)
-                if completed.count > 0 {
-                    Divider().overlay(theme.separator)
-                    HStack(spacing: Space.md) {
-                        Image(systemName: "heart")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 36, height: 36)
-                            .background(theme.surfaceElevated)
-                            .clipShape(RoundedRectangle(cornerRadius: Radius.tag))
-                            .accessibilityHidden(true)
-                        Text(historyScopeText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
             }
         }
     }
@@ -204,7 +194,7 @@ struct ProfileView: View {
             HStack(spacing: Space.xs) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .accessibilityHidden(true)
                 Text(value)
                     .font(.system(size: 17, weight: .bold))
@@ -228,45 +218,6 @@ struct ProfileView: View {
         let parts = displayName.split(separator: " ")
         let initials = parts.prefix(2).compactMap(\.first).map(String.init).joined()
         return initials.isEmpty ? "You" : initials.uppercased()
-    }
-
-    private var historyScopeText: String {
-        if profileStats.importedHealthWorkouts > 0 {
-            "Includes \(profileStats.importedHealthWorkouts) Apple Health imports from the last 60 days, plus workouts logged in ForgeFit."
-        } else {
-            "Completed workouts logged in ForgeFit."
-        }
-    }
-
-    private var activityCard: some View {
-        let series = activitySeriesMemo("\(profileKey)|\(metric.rawValue)|\(activityRange.rawValue)") {
-            analytics.weeklySeries(metric, weeks: activityRange.weekCount)
-        }
-        let week = weekMemo(profileKey) { analytics.thisWeek() }
-        let headline: String = switch metric {
-        case .duration: Fmt.durationShort(week.durationSeconds)
-        case .volume: Fmt.volume(week.volume)
-        case .reps: "\(week.reps) reps"
-        }
-        return Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(alignment: .top) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(headline).font(.metricValue).foregroundStyle(theme.textPrimary)
-                        Text("this week").font(.system(size: 14)).foregroundStyle(theme.textSecondary)
-                    }
-                    Spacer(minLength: Space.md)
-                    TimeChartRangePicker(selection: $activityRange)
-                }
-                if series.contains(where: { $0.value > 0 }) {
-                    BarTrendChart(points: series)
-                } else {
-                    Text("Train this week to fill in your activity chart.")
-                        .font(.system(size: 14)).foregroundStyle(theme.textSecondary).frame(height: 80)
-                }
-                SegmentedPills(options: TrainingAnalytics.Metric.allCases, title: { $0.rawValue }, selection: $metric)
-            }
-        }
     }
 
     private var importedExerciseReviewCard: some View {
@@ -306,16 +257,39 @@ struct ProfileView: View {
         let columns = [GridItem(.flexible(), spacing: Space.md), GridItem(.flexible(), spacing: Space.md)]
         return LazyVGrid(columns: columns, spacing: Space.md) {
             NavigationLink(value: ProfileRoute.statistics) { DashboardTileLabel("Statistics", "chart.line.uptrend.xyaxis") }.buttonStyle(.plain)
-            NavigationLink(value: ProfileRoute.exercises) { DashboardTileLabel("Exercises", "dumbbell") }.buttonStyle(.plain)
+            NavigationLink(value: ProfileRoute.exercises) {
+                DashboardTileLabel("Exercises", "dumbbell")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("profile-exercises")
             NavigationLink(value: ProfileRoute.measures) { DashboardTileLabel("Measures", "figure") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.calendar) { DashboardTileLabel("Calendar", "calendar") }.buttonStyle(.plain)
             NavigationLink(value: ProfileRoute.wrapped) { DashboardTileLabel("Wrapped", "sparkles") }.buttonStyle(.plain)
+            if hasStoppedMicrocycleTracking {
+                NavigationLink(value: ProfileRoute.microcycles) {
+                    DashboardTileLabel("Microcycles", "calendar.badge.checkmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("profile-microcycle-history")
+            }
             if FeatureFlags.social {
                 NavigationLink(value: ProfileRoute.community) { DashboardTileLabel("Community", "person.2.fill") }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("dashboard-community")
             }
         }
+    }
+
+    private var hasStoppedMicrocycleTracking: Bool {
+        MicrocycleHistoryPresentation.hasStoppedRun(microcycleTrackings)
+    }
+
+    private func openPendingRoute(_ route: ProfileRoute?) {
+        guard let route else { return }
+        var path = NavigationPath()
+        path.append(route)
+        navigationPath = path
+        appState.pendingProfileRoute = nil
     }
 
 }
@@ -331,7 +305,7 @@ struct LevelBadge: View {
     var body: some View {
         Text("Level \(level)")
             .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(theme.onAccent)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(theme.accent)
@@ -368,15 +342,13 @@ struct XPProgressBar: View {
                     .foregroundStyle(theme.accentSoft)
                 Image(systemName: "hexagon")
                     .font(.system(size: 44, weight: .medium))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text("XP")
                     .font(.system(size: 13, weight: .heavy))
                     .foregroundStyle(theme.textPrimary)
             }
             VStack(alignment: .leading, spacing: Space.sm) {
-                (Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accent)
-                    + Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary)
-                    + Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))
+                Text("\(Text("\(progress.xpIntoLevel)").foregroundStyle(theme.accentForeground))\(Text(" / \(progress.xpNeededForNextLevel) XP ").foregroundStyle(theme.textPrimary))\(Text("to Level \(progress.level + 1)").foregroundStyle(theme.textSecondary))")
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -445,7 +417,7 @@ private struct ProfileEditSheet: View {
 }
 
 enum ProfileRoute: Hashable {
-    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, community
+    case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, microcycles, community
     case workout(UUID)
 }
 
@@ -481,7 +453,10 @@ struct ExercisesListView: View {
     @State private var equipment: String?
     @State private var customOnly = false
     @State private var showCreate = false
+    @State private var showConditioningPresets = false
+    @State private var showYogaFlows = false
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
+    @State private var searchSnapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
 
     private var filtered: [ExerciseLibraryModel] {
         var count = 0
@@ -490,21 +465,36 @@ struct ExercisesListView: View {
             count += 1
             latest = max(latest, exercise.updatedAt)
         }
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let key = "\(count)|\(latest.timeIntervalSince1970)|\(normalizedQuery)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filterKey = "\(count)|\(latest.timeIntervalSince1970)|\(muscle ?? "")|\(equipment ?? "")|\(customOnly)"
+        let key = "\(filterKey)|\(trimmedQuery.lowercased())"
         return filteredMemo(key) {
             // Dedupe by id: CloudKit duplicates would corrupt ForEach layout.
             var seen = Set<UUID>()
-            return exercises
+            // Profile is the complete library browser. Do not apply the yoga
+            // exclusions used by routine and live-workout pickers here.
+            let base = exercises
                 .filter { ex in
                     guard ex.deletedAt == nil, seen.insert(ex.id).inserted else { return false }
-                    if !normalizedQuery.isEmpty, !ex.name.lowercased().contains(normalizedQuery) { return false }
                     if let muscle, !ex.primaryMuscles.contains(muscle), !ex.secondaryMuscles.contains(muscle) { return false }
                     if let equipment, ex.equipment != equipment { return false }
                     if customOnly, ex.ownerID == nil { return false }
                     return true
                 }
-                .sorted { $0.name < $1.name }
+            guard !trimmedQuery.isEmpty else {
+                return base.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            }
+
+            let snapshot = searchSnapshotMemo(filterKey) {
+                ExerciseLibrarySnapshot(
+                    exercises: base.map(\.domainInfo),
+                    aliases: GlobalExerciseLibrary.snapshot.aliases
+                )
+            }
+            let byID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            return snapshot.search(trimmedQuery, limit: base.count).compactMap {
+                byID[$0.exercise.id]
+            }
         }
     }
 
@@ -519,6 +509,24 @@ struct ExercisesListView: View {
             }
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
+
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    libraryAction(
+                        title: "Conditioning Presets",
+                        systemImage: "stopwatch",
+                        color: theme.warmup
+                    ) { showConditioningPresets = true }
+                    Divider().overlay(theme.separator)
+                    libraryAction(
+                        title: "Yoga Flows",
+                        systemImage: "figure.yoga",
+                        color: theme.secondaryAccent
+                    ) { showYogaFlows = true }
+                }
+            }
+            .padding(.horizontal, Space.lg)
+            .padding(.top, Space.md)
 
             DarkTextField(text: $query, placeholder: "Search exercises")
                 .padding(.horizontal, Space.lg)
@@ -583,7 +591,7 @@ struct ExercisesListView: View {
                                 Spacer()
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                             .padding(Space.md)
                             .background(theme.surface)
@@ -603,9 +611,41 @@ struct ExercisesListView: View {
         .sheet(isPresented: $showCreate) {
             CreateExerciseView { _ in }
         }
+        .sheet(isPresented: $showConditioningPresets) {
+            ConditioningPresetManagerView(workouts: workouts, exercises: exercises)
+        }
+        .sheet(isPresented: $showYogaFlows) {
+            YogaFlowManagerView()
+        }
         .navigationDestination(for: UUID.self) { id in
             ExerciseDetailView(exerciseID: id, workouts: workouts, exercises: exercises)
         }
+    }
+
+    private func libraryAction(
+        title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: Space.md) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(color)
+                    .frame(width: 28)
+                Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, Space.md)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(title == "Conditioning Presets" ? "manage-conditioning-presets" : "manage-yoga-flows")
     }
 }
 
@@ -657,7 +697,16 @@ struct MeasuresView: View {
                         Text("Updated \(latest.date.formatted(.relative(presentation: .named)))")
                             .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                         if chartSeries.count >= 2 {
-                            LineTrendChart(points: chartSeries)
+                            LineTrendChart(
+                                points: chartSeries,
+                                yLabel: "Bodyweight",
+                                valueFormatter: { Fmt.load($0) },
+                                axisValueFormatter: {
+                                    Fmt.unit.displayValue(fromKilograms: $0)
+                                        .formatted(.number.precision(.fractionLength(0...1)))
+                                },
+                                yAxisUnitLabel: "Bodyweight (\(Fmt.unit.shortSuffix))"
+                            )
                         }
                     }
                 }

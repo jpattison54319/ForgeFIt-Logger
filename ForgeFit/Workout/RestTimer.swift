@@ -119,8 +119,15 @@ final class RestTimerController {
         onStateChange?()
     }
 
-    func skip() {
-        fireCompletionCallback()
+    func skip(reportElapsedTime: Bool = true) {
+        if reportElapsedTime {
+            fireCompletionCallback()
+        } else {
+            // A remote stop command already supplied its authoritative elapsed
+            // duration. Drop the timer callback so it cannot overwrite that
+            // committed value with phone wall-clock latency.
+            onComplete = nil
+        }
         completionTask?.cancel()
         cancelLockScreenNotification()
         endsAt = nil

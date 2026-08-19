@@ -103,7 +103,7 @@ struct ExperimentDetailView: View {
                                     .foregroundStyle(theme.textPrimary)
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -117,7 +117,7 @@ struct ExperimentDetailView: View {
                             HStack(spacing: Space.md) {
                                 Image(systemName: "chart.bar.fill")
                                     .font(.system(size: 20, weight: .bold))
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .frame(width: 42, height: 42)
                                     .background(theme.surfaceElevated)
                                     .clipShape(Circle())
@@ -131,7 +131,7 @@ struct ExperimentDetailView: View {
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -377,7 +377,7 @@ struct ExperimentDetailView: View {
                         }
                         HStack(alignment: .top, spacing: Space.md) {
                             Image(systemName: item.systemImage)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
@@ -406,7 +406,7 @@ struct ExperimentDetailView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityIdentifier("experiment-full-timeline")
                     }
                 }
@@ -487,7 +487,7 @@ private struct ExperimentFullTimelineView: View {
                         Card(padding: Space.md) {
                             HStack(alignment: .top, spacing: Space.md) {
                                 Image(systemName: item.systemImage)
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title)
@@ -605,6 +605,7 @@ private struct ExperimentManageSheet: View {
                                     .foregroundStyle(theme.textSecondary)
                                 TextField("Experiment name", text: $name)
                                     .textFieldStyle(.roundedBorder)
+                                    .minimumTouchTarget()
                                     .accessibilityIdentifier("experiment-edit-name")
                             }
                             VStack(alignment: .leading, spacing: Space.xs) {
@@ -617,6 +618,7 @@ private struct ExperimentManageSheet: View {
                                     axis: .vertical
                                 )
                                 .textFieldStyle(.roundedBorder)
+                                .minimumTouchTarget()
                             }
                             VStack(alignment: .leading, spacing: Space.xs) {
                                 Text("Question")
@@ -628,6 +630,7 @@ private struct ExperimentManageSheet: View {
                                     axis: .vertical
                                 )
                                 .textFieldStyle(.roundedBorder)
+                                .minimumTouchTarget()
                             }
                         }
                     }
@@ -640,7 +643,7 @@ private struct ExperimentManageSheet: View {
                         Card(padding: Space.md) {
                             HStack(spacing: Space.md) {
                                 Image(systemName: "chart.bar.xaxis")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Headline Outcomes")
                                         .font(.bodyStrong)
@@ -651,7 +654,7 @@ private struct ExperimentManageSheet: View {
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right")
-                                    .foregroundStyle(theme.accent)
+                                    .foregroundStyle(theme.accentForeground)
                             }
                         }
                     }
@@ -969,7 +972,7 @@ private struct ExperimentManageSheet: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.md) {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tracker.label)
@@ -1071,65 +1074,30 @@ private struct ExperimentManageSheet: View {
         _ draft: ExperimentSetupTrackerDraft,
         replacing trackerID: UUID?
     ) {
-        let now = Date.now
         do {
-            var addedTracker: ExperimentTrackerModel?
-            if let trackerID,
-               let tracker = managedTrackers.first(where: { $0.id == trackerID }) {
-                guard !trackerDefinitionMatches(draft, tracker: tracker) else { return }
-                let hasEntries = entries.contains {
-                    $0.deletedAt == nil && $0.trackerID == tracker.id
-                }
-                if hasEntries {
-                    tracker.archivedAt = now
-                    tracker.updatedAt = now
-                    let replacement = makeTracker(
-                        from: draft,
-                        position: tracker.position,
-                        definitionVersion: tracker.definitionVersion + 1,
-                        now: now
-                    )
-                    modelContext.insert(replacement)
-                    addedTracker = replacement
-                } else {
-                    apply(draft, to: tracker)
-                    tracker.definitionVersion += 1
-                    tracker.updatedAt = now
-                }
-            } else {
-                let nextPosition = (activeManagedTrackers.map(\.position).max() ?? -1) + 1
-                let tracker = makeTracker(
-                    from: draft,
-                    position: nextPosition,
-                    definitionVersion: 1,
-                    now: now
-                )
-                modelContext.insert(tracker)
-                addedTracker = tracker
-            }
-
-            let prospectiveTrackers = managedTrackers + (addedTracker.map { [$0] } ?? [])
-            disableUnavailableReminder(using: prospectiveTrackers)
-            try modelContext.save()
-            if let addedTracker {
-                managedTrackers.append(addedTracker)
-            }
-            rescheduleReminders()
+            let result = try ExperimentUIStore.upsertTracker(
+                draft,
+                replacing: trackerID,
+                for: experiment,
+                in: modelContext
+            )
+            managedTrackers = result.trackers
+            reminderEnabled = result.reminderEnabled
         } catch {
-            modelContext.rollback()
             self.error = error.localizedDescription
         }
     }
 
     private func archive(_ tracker: ExperimentTrackerModel) {
         do {
-            tracker.archivedAt = .now
-            tracker.updatedAt = .now
-            disableUnavailableReminder(using: managedTrackers)
-            try modelContext.save()
-            rescheduleReminders()
+            let result = try ExperimentUIStore.archiveTracker(
+                tracker,
+                for: experiment,
+                in: modelContext
+            )
+            managedTrackers = result.trackers
+            reminderEnabled = result.reminderEnabled
         } catch {
-            modelContext.rollback()
             self.error = error.localizedDescription
         }
     }
@@ -1142,95 +1110,26 @@ private struct ExperimentManageSheet: View {
                 position: (activeManagedTrackers.map(\.position).max() ?? -1) + 1,
                 in: modelContext
             )
-            managedTrackers.append(replacement)
-            rescheduleReminders()
+            if !managedTrackers.contains(where: { $0.id == replacement.id }) {
+                managedTrackers.append(replacement)
+            }
         } catch {
-            modelContext.rollback()
             self.error = error.localizedDescription
         }
     }
 
     private func moveTracker(_ tracker: ExperimentTrackerModel, offset: Int) {
-        var ordered = activeManagedTrackers
-        guard let source = ordered.firstIndex(where: { $0.id == tracker.id }) else { return }
-        let destination = source + offset
-        guard ordered.indices.contains(destination) else { return }
-        ordered.swapAt(source, destination)
         do {
-            for (position, item) in ordered.enumerated() {
-                item.position = position
-                item.updatedAt = .now
-            }
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func makeTracker(
-        from draft: ExperimentSetupTrackerDraft,
-        position: Int,
-        definitionVersion: Int,
-        now: Date
-    ) -> ExperimentTrackerModel {
-        ExperimentTrackerModel(
-            userID: experiment.userID,
-            experimentID: experiment.id,
-            label: draft.trimmedLabel,
-            type: ExperimentUIStore.trackerType(draft.kind),
-            unit: optionalText(draft.unit),
-            scaleMinimumLabel: optionalText(draft.lowLabel),
-            scaleMaximumLabel: optionalText(draft.highLabel),
-            options: normalizedChoices(draft.choices),
-            cadence: ExperimentUIStore.trackerCadence(draft.cadence),
-            selectedWeekdays: draft.weekdays.sorted(),
-            position: position,
-            definitionVersion: definitionVersion,
-            createdAt: now,
-            updatedAt: now
-        )
-    }
-
-    private func apply(
-        _ draft: ExperimentSetupTrackerDraft,
-        to tracker: ExperimentTrackerModel
-    ) {
-        tracker.label = draft.trimmedLabel
-        tracker.type = ExperimentUIStore.trackerType(draft.kind)
-        tracker.unit = optionalText(draft.unit)
-        tracker.scaleMinimumLabel = optionalText(draft.lowLabel)
-        tracker.scaleMaximumLabel = optionalText(draft.highLabel)
-        tracker.options = normalizedChoices(draft.choices)
-        tracker.cadence = ExperimentUIStore.trackerCadence(draft.cadence)
-        tracker.selectedWeekdays = draft.weekdays.sorted()
-    }
-
-    private func trackerDefinitionMatches(
-        _ draft: ExperimentSetupTrackerDraft,
-        tracker: ExperimentTrackerModel
-    ) -> Bool {
-        tracker.label == draft.trimmedLabel
-            && tracker.type == ExperimentUIStore.trackerType(draft.kind)
-            && tracker.unit == optionalText(draft.unit)
-            && tracker.scaleMinimumLabel == optionalText(draft.lowLabel)
-            && tracker.scaleMaximumLabel == optionalText(draft.highLabel)
-            && tracker.options == normalizedChoices(draft.choices)
-            && tracker.cadence == ExperimentUIStore.trackerCadence(draft.cadence)
-            && tracker.selectedWeekdays == draft.weekdays.sorted()
-    }
-
-    private func normalizedChoices(_ choices: [String]) -> [String] {
-        var seen = Set<String>()
-        return choices.compactMap { choice in
-            let trimmed = choice.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            let key = trimmed.folding(
-                options: [.caseInsensitive, .diacriticInsensitive],
-                locale: .current
+            let result = try ExperimentUIStore.moveTracker(
+                tracker,
+                offset: offset,
+                for: experiment,
+                in: modelContext
             )
-            guard seen.insert(key).inserted else { return nil }
-            return trimmed
+            managedTrackers = result.trackers
+            reminderEnabled = result.reminderEnabled
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 
@@ -1244,31 +1143,6 @@ private struct ExperimentManageSheet: View {
         }
     }
 
-    private func disableUnavailableReminder(
-        using trackers: [ExperimentTrackerModel]
-    ) {
-        guard !hasScheduledCheckInTracker(in: trackers) else { return }
-        reminderEnabled = false
-        experiment.reminderEnabled = false
-        experiment.reminderTimeMinutes = nil
-        experiment.updatedAt = .now
-    }
-
-    private func optionalText(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private func rescheduleReminders() {
-        guard experiment.isActive else { return }
-        let notificationSchedule = ExperimentNotificationScheduler.ScheduleSnapshot(
-            experiment: experiment,
-            trackers: managedTrackers
-        )
-        Task {
-            _ = await ExperimentNotificationScheduler.schedule(notificationSchedule)
-        }
-    }
 
     private func refreshNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
@@ -1294,48 +1168,27 @@ private struct ExperimentManageSheet: View {
             return
         }
         do {
-            try ExperimentUIStore.updateMetadata(
-                name: name,
-                protocolDescription: protocolDescription,
-                question: question,
-                for: experiment,
-                in: modelContext
-            )
             let knownMetricIDs = Set(ExperimentHeadlineMetricOption.all.map(\.id))
             let selections = originalHeadlineSelections.filter {
                 !knownMetricIDs.contains($0.metricID)
             } + ExperimentHeadlineMetricOption.all
                 .filter { headlineMetricIDs.contains($0.id) }
                 .map(\.selection)
-            let encodedSelections = try JSONEncoder().encode(selections)
-            experiment.headlineMetricSelectionsJSON = String(
-                decoding: encodedSelections,
-                as: UTF8.self
-            )
-            experiment.updatedAt = .now
-            try modelContext.save()
-            if experiment.isActive, plannedEnd != experiment.plannedEndAt {
-                try ExperimentUIStore.updatePlannedEnd(
-                    plannedEnd,
-                    for: experiment,
-                    trackers: managedTrackers,
-                    in: modelContext,
-                    scheduleNotifications: false
-                )
-            }
-            if experiment.isActive {
-                try ExperimentUIStore.updateReminder(
-                    enabled: notificationsAuthorized
+            try ExperimentUIStore.updateManagement(
+                .init(
+                    name: name,
+                    protocolDescription: protocolDescription,
+                    question: question,
+                    headlineMetricSelections: selections,
+                    plannedEndAt: plannedEnd,
+                    reminderEnabled: notificationsAuthorized
                         && hasScheduledCheckInTracker
                         && reminderEnabled,
-                    time: reminderTime,
-                    for: experiment,
-                    trackers: managedTrackers,
-                    in: modelContext,
-                    scheduleNotifications: false
-                )
-                rescheduleReminders()
-            }
+                    reminderTime: reminderTime
+                ),
+                for: experiment,
+                in: modelContext
+            )
             dismiss()
         } catch {
             self.error = error.localizedDescription
@@ -1527,7 +1380,7 @@ private struct ExperimentEntryHistorySheet: View {
                             ?? tracker?.type.experimentSystemImage
                             ?? "note.text"
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(label)

@@ -7,7 +7,7 @@ final class RoutineReorderingUITests: XCTestCase {
     }
 
     @MainActor
-    func testRoutineLibraryShowsDedicatedReorderHandlesAndEditOrderFallback() throws {
+    func testRoutineLibraryUsesOneOrganizerForFoldersAndRoutines() throws {
         let app = XCUIApplication()
         app.launchArguments = [
             "-didOnboard", "YES",
@@ -18,36 +18,103 @@ final class RoutineReorderingUITests: XCTestCase {
         ]
         app.launch()
 
-        let ungroupedHandle = handle("Ungrouped One", in: app)
-        XCTAssertTrue(ungroupedHandle.waitForExistence(timeout: 8))
-        XCTAssertTrue(ungroupedHandle.isHittable)
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["reorder-routine-Ungrouped One"].exists)
+        XCTAssertFalse(app.buttons["reorder-folder-Folder One"].exists)
 
-        let folderRoutineHandle = handle("One A", in: app)
-        scrollUntilHittable(folderRoutineHandle, in: app)
-        XCTAssertTrue(
-            folderRoutineHandle.exists && folderRoutineHandle.isHittable,
-            "Expected a visible hold-to-reorder handle on a routine inside a folder."
-        )
-
-        // The UIKit continuous hold is intentionally verified on physical
-        // hardware: XCUITest cannot reliably synthesize the handle gesture
-        // inside this vertical scroll (the same limitation as exercise rows).
-        let editOrder = app.buttons["edit-routine-order-button"].firstMatch
-        app.swipeDown(velocity: .fast)
-        XCTAssertTrue(editOrder.waitForExistence(timeout: 3))
-        editOrder.tap()
-        XCTAssertTrue(app.navigationBars["Edit Order"].firstMatch.waitForExistence(timeout: 3))
+        organize.tap()
+        XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.otherElements["routine-organizer"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Ungrouped One"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["One A"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Folder One"].firstMatch.exists)
+        let moveRoutine = app.buttons["Placement options for routine Ungrouped One"].firstMatch
+        XCTAssertTrue(moveRoutine.exists)
+        XCTAssertGreaterThanOrEqual(moveRoutine.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(moveRoutine.frame.height, 44)
+        moveRoutine.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+        let folderOneDestination = app.buttons["Move to Folder One"].firstMatch
+        XCTAssertTrue(folderOneDestination.waitForExistence(timeout: 2))
+        folderOneDestination.tap()
+
+        let save = app.buttons["save-routine-organization"].firstMatch
+        XCTAssertTrue(save.exists)
+        save.tap()
+        XCTAssertTrue(app.buttons["organize-routines-button"].firstMatch.waitForExistence(timeout: 3))
+
+        app.buttons["organize-routines-button"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
+        let anotherMove = app.buttons["Placement options for routine Ungrouped Two"].firstMatch
+        anotherMove.tap()
+        let folderTwoDestination = app.buttons["Move to Folder Two"].firstMatch
+        XCTAssertTrue(folderTwoDestination.waitForExistence(timeout: 2))
+        folderTwoDestination.tap()
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(app.sheets["Discard organization changes?"].firstMatch.waitForExistence(timeout: 2))
     }
 
-    private func handle(_ routineName: String, in app: XCUIApplication) -> XCUIElement {
-        app.descendants(matching: .any)["reorder-routine-\(routineName)"].firstMatch
+    @MainActor
+    func testRoutineDragKeepsNewOrderInsideFolder() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-didOnboard", "YES",
+            "-initialTab", "workout",
+            "-workoutUngroupedCollapsed", "NO",
+            "--reset-store",
+            "--seed-routine-reorder",
+        ]
+        app.launch()
+
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        organize.tap()
+
+        let firstHandle = app.buttons["Reorder One A"].firstMatch
+        let lastHandle = app.buttons["Reorder One C"].firstMatch
+        XCTAssertTrue(firstHandle.waitForExistence(timeout: 3))
+        XCTAssertTrue(lastHandle.exists)
+        firstHandle.press(forDuration: 0.5, thenDragTo: lastHandle)
+
+        assertRoutine("One A", appearsAfter: "One B", in: app)
+        app.buttons["save-routine-organization"].firstMatch.tap()
+        XCTAssertTrue(organize.waitForExistence(timeout: 3))
+        organize.tap()
+        assertRoutine("One A", appearsAfter: "One C", in: app)
+
+        // Reopening the sheet exercises only the live ModelContext. Relaunch
+        // without reseeding to prove the order crossed the durable store
+        // boundary that failed for users after process termination.
+        app.buttons["Cancel"].firstMatch.tap()
+        app.terminate()
+        app.launchArguments = [
+            "-didOnboard", "YES",
+            "-initialTab", "workout",
+            "-workoutUngroupedCollapsed", "NO",
+        ]
+        app.launch()
+
+        let relaunchedOrganize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(relaunchedOrganize.waitForExistence(timeout: 8))
+        relaunchedOrganize.tap()
+        XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
+        assertRoutine("One A", appearsAfter: "One C", in: app)
     }
 
-    private func scrollUntilHittable(_ element: XCUIElement, in app: XCUIApplication) {
-        for _ in 0..<6 where !element.isHittable {
-            app.swipeUp(velocity: .slow)
+    @MainActor
+    private func assertRoutine(
+        _ laterName: String,
+        appearsAfter earlierName: String,
+        in app: XCUIApplication
+    ) {
+        let cells = app.cells.allElementsBoundByIndex
+        let laterIndex = cells.firstIndex { $0.staticTexts[laterName].exists }
+        let earlierIndex = cells.firstIndex { $0.staticTexts[earlierName].exists }
+        XCTAssertNotNil(laterIndex)
+        XCTAssertNotNil(earlierIndex)
+        if let laterIndex, let earlierIndex {
+            XCTAssertGreaterThan(laterIndex, earlierIndex)
         }
     }
+
 }

@@ -4,14 +4,20 @@ import SwiftUI
 struct SleepDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
+    @State private var healthMetrics = HealthMetricsStore.shared
 
     let metrics: [RecoveryEngine.DailyHealthMetric]
     @State private var selectedTab: MetricDetailTab = .today
     @State private var showingInfo = false
     @State private var showingHistory = false
+    @State private var showingTargetEditor = false
 
     private var latest: RecoveryEngine.DailyHealthMetric? {
         metrics.max { $0.date < $1.date }
+    }
+
+    private var sleepTargetMinutes: Int {
+        healthMetrics.sleepTargetMinutes
     }
 
     private var trend: MetricTrendSeries? {
@@ -68,12 +74,21 @@ struct SleepDetailView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showingTargetEditor) {
+            SleepTargetEditorView(
+                initialMinutes: sleepTargetMinutes,
+                onSave: updateSleepTarget
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     @ViewBuilder
     private var todayContent: some View {
         if let latest {
             sleepSummary(latest)
+            SleepTargetCard(minutes: sleepTargetMinutes, action: showTargetEditor)
 
             if let deep = latest.sleepDeepMinutes,
                let rem = latest.sleepREMMinutes,
@@ -95,6 +110,7 @@ struct SleepDetailView: View {
                 message: "Connect Apple Health to see last night's duration and your personal trend.",
                 systemImage: "moon.zzz"
             )
+            SleepTargetCard(minutes: sleepTargetMinutes, action: showTargetEditor)
         }
     }
 
@@ -144,6 +160,7 @@ struct SleepDetailView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(theme.textSecondary)
                             .textCase(.uppercase)
+                            .accessibilityIdentifier("sleep-today-summary")
                         Text(SleepMetricPresentation.value(for: metric))
                             .font(.system(size: 40, weight: .bold, design: .rounded))
                             .foregroundStyle(metric.sleepLikelyPartial && !metric.sleepUserCorrected ? theme.warmup : theme.zone2)
@@ -158,11 +175,11 @@ struct SleepDetailView: View {
                 if metric.sleepOverrideStatus != .notTracked, let minutes = metric.sleepTotalMinutes {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Sleep target")
+                            Text("Toward sleep target")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)
                             Spacer()
-                            Text(SleepMetricPresentation.duration(metric.sleepNeedMinutes))
+                            Text(SleepMetricPresentation.duration(sleepTargetMinutes))
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(theme.textPrimary)
                         }
@@ -171,7 +188,7 @@ struct SleepDetailView: View {
                                 Capsule().fill(theme.surfaceElevated)
                                 Capsule()
                                     .fill(theme.zone2)
-                                    .frame(width: max(6, proxy.size.width * min(1, Double(minutes) / Double(max(1, metric.sleepNeedMinutes)))))
+                                    .frame(width: max(6, proxy.size.width * min(1, Double(minutes) / Double(max(1, sleepTargetMinutes)))))
                             }
                         }
                         .frame(height: 8)
@@ -188,7 +205,6 @@ struct SleepDetailView: View {
                 }
             }
         }
-        .accessibilityIdentifier("sleep-today-summary")
     }
 
     private func sleepStages(total: Int, deep: Int, rem: Int, awake: Int?) -> some View {
@@ -255,7 +271,7 @@ struct SleepDetailView: View {
                     HStack {
                         Text("See all sleep")
                             .font(.bodyStrong)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .bold))
@@ -274,17 +290,25 @@ struct SleepDetailView: View {
         showingHistory = true
     }
 
+    private func showTargetEditor() {
+        showingTargetEditor = true
+    }
+
+    private func updateSleepTarget(_ minutes: Int) {
+        healthMetrics.setSleepTarget(minutes: minutes)
+    }
+
     private func summaryIcon(_ metric: RecoveryEngine.DailyHealthMetric) -> String {
         if metric.sleepOverrideStatus == .notTracked { return "eye.slash.fill" }
         if metric.sleepLikelyPartial && !metric.sleepUserCorrected { return "exclamationmark.triangle.fill" }
         guard let minutes = metric.sleepTotalMinutes else { return "minus.circle.fill" }
-        return minutes >= metric.sleepNeedMinutes ? "checkmark.circle.fill" : "clock.fill"
+        return minutes >= sleepTargetMinutes ? "checkmark.circle.fill" : "clock.fill"
     }
 
     private func summaryTint(_ metric: RecoveryEngine.DailyHealthMetric) -> Color {
         if metric.sleepLikelyPartial && !metric.sleepUserCorrected { return theme.warmup }
         if metric.sleepOverrideStatus == .notTracked { return theme.textSecondary }
         guard let minutes = metric.sleepTotalMinutes else { return theme.textSecondary }
-        return minutes >= metric.sleepNeedMinutes ? theme.success : theme.textSecondary
+        return minutes >= sleepTargetMinutes ? theme.success : theme.textSecondary
     }
 }

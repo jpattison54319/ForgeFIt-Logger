@@ -21,7 +21,7 @@ struct OnboardingFocusButton: View {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .padding(Space.sm)
                         .accessibilityHidden(true)
                 }

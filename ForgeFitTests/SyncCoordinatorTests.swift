@@ -22,7 +22,10 @@ import Testing
 
     private let userID = UUID()
 
-    private func makePipeline(_ name: String) async throws -> Pipeline {
+    private func makePipeline(
+        _ name: String,
+        saveContext: @escaping SyncCoordinator.SaveOperation = { try $0.save() }
+    ) async throws -> Pipeline {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)
         let backend = InstrumentedSocialBackend()
@@ -33,7 +36,13 @@ import Testing
             handle: "james", displayName: "James", visibility: .everyone,
             stats: ProfileSnapshot(totalXP: 0, workoutCount: 0, lifetimeHours: 0, stats: SocialStats(), now: Date(timeIntervalSince1970: 1_700_000_000))
         )
-        let coordinator = SyncCoordinator(social: service, container: container, debounce: .zero)
+        let coordinator = SyncCoordinator(
+            social: service,
+            container: container,
+            debounce: .zero,
+            postWorkoutDelay: .zero,
+            saveContext: saveContext
+        )
         coordinator.start(monitorConnectivity: false)
         return Pipeline(container: container, context: context, backend: backend, service: service, coordinator: coordinator)
     }
@@ -115,6 +124,45 @@ import Testing
         #expect(await remoteRefs(pipeline.backend).first?.publishedAt == workout.endedAt)
     }
 
+    @Test func failedWatermarkSaveDoesNotPublishAndRetryIsExact() async throws {
+        struct InjectedFailure: Error {}
+        var saveAttempts = 0
+        let pipeline = try await makePipeline(
+            "sync-pipeline-save-retry",
+            saveContext: { context in
+                saveAttempts += 1
+                if saveAttempts == 1 { throw InjectedFailure() }
+                try context.save()
+            }
+        )
+        defer { _ = pipeline.container }
+        let originalStamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let workout = insertFinishedWorkout(
+            in: pipeline.context,
+            endedAt: originalStamp
+        )
+        workout.updatedAt = originalStamp
+        try pipeline.context.save()
+
+        #expect(await settles { saveAttempts == 1 })
+        #expect(await remoteRefs(pipeline.backend).isEmpty)
+        var verification = ModelContext(pipeline.container)
+        #expect(
+            try verification.fetch(FetchDescriptor<WorkoutModel>()).first?.updatedAt
+                == originalStamp
+        )
+
+        await pipeline.coordinator.flushNow()
+        #expect(await settles { await remoteRefs(pipeline.backend).map(\.id) == [workout.id] })
+        #expect(saveAttempts == 2)
+        verification = ModelContext(pipeline.container)
+        #expect(
+            (try verification.fetch(FetchDescriptor<WorkoutModel>()).first?.updatedAt
+                ?? .distantPast) > originalStamp
+        )
+        #expect(await pipeline.backend.publishCount == 1)
+    }
+
     @Test func importedAndInProgressWorkoutsNeverPublish() async throws {
         let pipeline = try await makePipeline("sync-pipeline-ineligible")
         defer { _ = pipeline.container }
@@ -129,5 +177,23 @@ import Testing
 
         let settled = await settles { await remoteRefs(pipeline.backend).map(\.id) == [live.id] }
         #expect(settled, "only the live completed workout may publish — imported and in-progress stay local")
+    }
+
+    @Test func liveWorkoutDefersSaveResolutionAndPublishesOnceAfterResume() async throws {
+        let pipeline = try await makePipeline("sync-pipeline-live-priority")
+        defer { _ = pipeline.container }
+        pipeline.coordinator.setLiveWorkoutActive(true)
+
+        let workout = insertFinishedWorkout(in: pipeline.context)
+        try pipeline.context.save()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(await remoteRefs(pipeline.backend).isEmpty)
+
+        pipeline.coordinator.setLiveWorkoutActive(false)
+        let published = await settles {
+            await remoteRefs(pipeline.backend).map(\.id) == [workout.id]
+        }
+        #expect(published)
+        #expect(await pipeline.backend.publishCount == 1)
     }
 }

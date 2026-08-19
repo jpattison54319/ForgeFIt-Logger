@@ -9,6 +9,11 @@ import SwiftUI
 @MainActor
 @Observable
 final class SocialService {
+    private struct BootstrapOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     enum Status: Equatable {
         case loading
         /// Backend reachable, but the user hasn't created a public profile yet.
@@ -30,6 +35,11 @@ final class SocialService {
     var pendingFollowHandle: String?
 
     private var didBootstrap = false
+    private var bootstrapOperation: BootstrapOperation?
+    private var cancelledBootstrapTask: Task<Void, Never>?
+    private var bootstrapResumeTask: Task<Void, Never>?
+    private var isLiveWorkoutActive = false
+    private var bootstrapPendingAfterWorkout = false
     private let defaults: UserDefaults
     private var reconcileInFlight = false
     private var drainInFlight = false
@@ -82,37 +92,127 @@ final class SocialService {
     /// profile were somehow present locally.
     var isOptedIn: Bool { isEnabled && myProfile != nil }
 
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            bootstrapPendingAfterWorkout = bootstrapPendingAfterWorkout || !didBootstrap
+            if let task = bootstrapOperation?.task {
+                cancelledBootstrapTask = task
+                task.cancel()
+            }
+            bootstrapOperation = nil
+            bootstrapResumeTask?.cancel()
+            bootstrapResumeTask = nil
+        } else if bootstrapPendingAfterWorkout, !didBootstrap {
+            bootstrapResumeTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let cancelledBootstrapTask {
+                    await cancelledBootstrapTask.value
+                    self.cancelledBootstrapTask = nil
+                }
+                guard !Task.isCancelled, !isLiveWorkoutActive else { return }
+                await bootstrap()
+                guard !Task.isCancelled, !isLiveWorkoutActive else { return }
+                bootstrapResumeTask = nil
+            }
+        }
+    }
+
     func bootstrap() async {
         guard isEnabled else { return }
+        guard !isLiveWorkoutActive else {
+            bootstrapPendingAfterWorkout = true
+            return
+        }
         guard !didBootstrap else { return }
-        didBootstrap = true
+        if let bootstrapOperation {
+            await bootstrapOperation.task.value
+            return
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performBootstrap()
+        }
+        bootstrapOperation = BootstrapOperation(id: id, task: task)
+        await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
+        if bootstrapOperation?.id == id {
+            bootstrapOperation = nil
+        }
+    }
+
+    private func performBootstrap() async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            bootstrapPendingAfterWorkout = true
+            return
+        }
         if isDemo, let mock = backend as? MockSocialBackend {
             await SocialDemoData.seed(into: mock)
+            guard !isLiveWorkoutActive, !Task.isCancelled else {
+                bootstrapPendingAfterWorkout = true
+                return
+            }
             #if DEBUG
             // `--seed-social-hearts` implies an opted-in demo user: hearts
             // only exist on published workouts, and publishing requires a
             // profile. Without this the flag would silently do nothing.
             if ProcessInfo.processInfo.arguments.contains("--seed-social-hearts") {
                 await SocialDemoData.seedMyProfile(into: mock)
+                guard !isLiveWorkoutActive, !Task.isCancelled else {
+                    bootstrapPendingAfterWorkout = true
+                    return
+                }
             }
             #endif
         }
         await refresh()
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            bootstrapPendingAfterWorkout = true
+            return
+        }
         #if DEBUG
         // Dev builds keep the Development environment's schema complete so a
         // dashboard deploy always carries every record type — see
         // SocialSchemaPrimer for why Follow/Like can't self-create.
         await SocialSchemaPrimer.primeIfNeeded(using: backend)
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            bootstrapPendingAfterWorkout = true
+            return
+        }
         #endif
+        didBootstrap = true
+        bootstrapPendingAfterWorkout = false
     }
 
     func refresh() async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else {
+            bootstrapPendingAfterWorkout = bootstrapPendingAfterWorkout || !didBootstrap
+            return
+        }
         do {
             let id = try await backend.currentUserID()
+            guard !isLiveWorkoutActive, !Task.isCancelled else {
+                bootstrapPendingAfterWorkout = bootstrapPendingAfterWorkout || !didBootstrap
+                return
+            }
             myUserID = id
-            myProfile = try await backend.profile(for: id)
+            let profile = try await backend.profile(for: id)
+            guard !isLiveWorkoutActive, !Task.isCancelled else {
+                bootstrapPendingAfterWorkout = bootstrapPendingAfterWorkout || !didBootstrap
+                return
+            }
+            myProfile = profile
             status = myProfile == nil ? .notOptedIn : .active
         } catch {
+            guard !isLiveWorkoutActive, !Task.isCancelled else {
+                bootstrapPendingAfterWorkout = bootstrapPendingAfterWorkout || !didBootstrap
+                return
+            }
             status = .unavailable("Sign in to iCloud in Settings to use ForgeFit social.")
         }
     }
@@ -268,7 +368,7 @@ final class SocialService {
     /// dropped — the delete path enqueues its own unpublish. Failures stay
     /// queued for the next drain (foreground, connectivity, reconcile).
     func drainShareOutbox(makeItems: (Set<UUID>) -> [SocialBackfillItem]) async {
-        guard isOptedIn, !drainInFlight else { return }
+        guard isOptedIn, !drainInFlight, !Task.isCancelled else { return }
         let outbox = shareOutbox
         guard !outbox.isEmpty else { return }
         drainInFlight = true
@@ -282,6 +382,7 @@ final class SocialService {
 
         var remaining = outbox
         for (id, op) in outbox {
+            guard !Task.isCancelled else { break }
             switch op {
             case .publish:
                 guard let item = built[id] else {
@@ -331,7 +432,8 @@ final class SocialService {
         force: Bool = false,
         makeItems: (Set<UUID>) -> [SocialBackfillItem]
     ) async {
-        guard isOptedIn, let myUserID, !reconcileInFlight else { return }
+        guard isOptedIn, let myUserID, !reconcileInFlight,
+              !Task.isCancelled else { return }
         if !force, let last = lastCleanReconcileAt,
            Date().timeIntervalSince(last) < Self.reconcileThrottle { return }
         reconcileInFlight = true
@@ -343,6 +445,7 @@ final class SocialService {
         var remoteWatermarks: [UUID: Date] = [:]
         var cursor: Date?
         while true {
+            guard !Task.isCancelled else { return }
             let page: [SocialWorkoutRef]
             do {
                 page = try await backend.recentWorkouts(for: myUserID, limit: Self.reconcilePageSize, before: cursor)
@@ -350,6 +453,7 @@ final class SocialService {
                 return
             }
             for ref in page {
+                guard !Task.isCancelled else { return }
                 // Pre-watermark records read as infinitely stale and self-heal.
                 remoteWatermarks[ref.id] = ref.sourceUpdatedAt ?? .distantPast
             }
@@ -359,6 +463,7 @@ final class SocialService {
 
         var toPublish = Set<UUID>()
         for stamp in eligible {
+            guard !Task.isCancelled else { return }
             guard let watermark = remoteWatermarks[stamp.id] else {
                 toPublish.insert(stamp.id)   // missing remotely
                 continue
@@ -372,6 +477,7 @@ final class SocialService {
         var clean = true
         if !toPublish.isEmpty {
             for item in makeItems(toPublish) {
+                guard !Task.isCancelled else { return }
                 do {
                     try await backend.publishWorkout(item.dto, summary: item.summary, publishedAt: item.publishedAt, sourceUpdatedAt: item.sourceUpdatedAt)
                 } catch {
@@ -382,6 +488,7 @@ final class SocialService {
 
         let stale = Set(remoteWatermarks.keys).intersection(deletedIDs)
         for id in stale {
+            guard !Task.isCancelled else { return }
             do {
                 try await backend.unpublishWorkout(id: id)
             } catch {
@@ -391,7 +498,7 @@ final class SocialService {
 
         // Only a fully clean pass arms the throttle — a pass with failures
         // retries on the next trigger instead of waiting it out.
-        if clean { lastCleanReconcileAt = Date() }
+        if clean, !Task.isCancelled { lastCleanReconcileAt = Date() }
     }
 
     // MARK: Pass-throughs the UI uses

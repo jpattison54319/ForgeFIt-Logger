@@ -325,6 +325,17 @@ struct InsightMetricCatalogTests {
         )
     }
 
+    @Test func chartAxesNameUnitsOnceWhileCalloutsKeepThem() {
+        #expect(InsightValueFormat.axisString(143, kind: .heartRateBPM) == "143")
+        #expect(InsightValueFormat.axisUnitLabel(kind: .heartRateBPM) == "bpm")
+        #expect(InsightValueFormat.string(143, kind: .heartRateBPM) == "143 bpm")
+
+        let rowPace = 120.0 / 500.0
+        #expect(InsightValueFormat.axisString(rowPace, kind: .pace, modality: "row") == "2:00")
+        #expect(InsightValueFormat.axisUnitLabel(kind: .pace, modality: "row") == "min/500m")
+        #expect(InsightValueFormat.string(rowPace, kind: .pace, modality: "row") == "2:00/500m")
+    }
+
     @Test func mixedRelationshipPopulationCopyNamesItsAsymmetricZeroPolicy() {
         let recipe = InsightRecipe(
             shape: .relationship,

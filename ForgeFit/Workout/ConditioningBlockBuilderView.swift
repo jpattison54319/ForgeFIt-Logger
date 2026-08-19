@@ -20,22 +20,54 @@ struct ConditioningBlockBuilderView: View {
 
     let exercises: [ExerciseLibraryModel]
     let workouts: [WorkoutModel]
-    let onSave: (String) -> Void
+    let navigationTitle: String
+    let allowsMultipleSections: Bool
+    let showsPresetActions: Bool
+    private let saveAction: (String) throws -> Bool
 
     @State private var plan: ConditioningPlan
     @State private var addMovementSection: BlockSectionSelection?
     @State private var replaceMovement: BlockMovementSelection?
     @State private var presetError: String?
+    @State private var saveError: String?
 
     init(
         planJSON: String?,
         exercises: [ExerciseLibraryModel],
         workouts: [WorkoutModel],
-        onSave: @escaping (String) -> Void
+        navigationTitle: String = "Conditioning Block",
+        allowsMultipleSections: Bool = true,
+        showsPresetActions: Bool = true,
+        onSave: @escaping (String) throws -> Void
     ) {
         self.exercises = exercises
         self.workouts = workouts
-        self.onSave = onSave
+        self.navigationTitle = navigationTitle
+        self.allowsMultipleSections = allowsMultipleSections
+        self.showsPresetActions = showsPresetActions
+        saveAction = { json in
+            try onSave(json)
+            return true
+        }
+        let decoded = ConditioningPlan.decode(from: planJSON)
+        _plan = State(initialValue: decoded ?? ConditioningPlan(sections: [Self.emptySection(index: 0)]))
+    }
+
+    init(
+        planJSON: String?,
+        exercises: [ExerciseLibraryModel],
+        workouts: [WorkoutModel],
+        navigationTitle: String = "Conditioning Block",
+        allowsMultipleSections: Bool = true,
+        showsPresetActions: Bool = true,
+        commit: @escaping (String) -> Bool
+    ) {
+        self.exercises = exercises
+        self.workouts = workouts
+        self.navigationTitle = navigationTitle
+        self.allowsMultipleSections = allowsMultipleSections
+        self.showsPresetActions = showsPresetActions
+        saveAction = commit
         let decoded = ConditioningPlan.decode(from: planJSON)
         _plan = State(initialValue: decoded ?? ConditioningPlan(sections: [Self.emptySection(index: 0)]))
     }
@@ -50,6 +82,7 @@ struct ConditioningBlockBuilderView: View {
                             ConditioningSectionEditor(
                                 section: $section,
                                 exercises: exercises,
+                                workouts: workouts,
                                 onChange: {},
                                 onApplyPreset: { apply($0, to: section.id) },
                                 onAddMovement: {
@@ -63,18 +96,21 @@ struct ConditioningBlockBuilderView: View {
                                 },
                                 onRemoveMovement: { removeMovement($0.id, from: section.id) },
                                 onMoveMovement: { moveMovement($0.id, by: $1, in: section.id) },
-                                onDelete: { deleteSection(section.id) }
+                                onDelete: { deleteSection(section.id) },
+                                showsPresetActions: showsPresetActions
                             )
                         }
 
-                        SecondaryButton(title: "Add Section", systemImage: "plus", action: addSection)
-                            .accessibilityIdentifier("add-conditioning-block-section")
+                        if allowsMultipleSections {
+                            SecondaryButton(title: "Add Section", systemImage: "plus", action: addSection)
+                                .accessibilityIdentifier("add-conditioning-block-section")
+                        }
                     }
                     .padding(.horizontal, Space.lg)
                     .padding(.vertical, Space.md)
                 }
             }
-            .navigationTitle("Conditioning Block")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -83,7 +119,7 @@ struct ConditioningBlockBuilderView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save", action: save)
                         .disabled(plan.isEmpty)
-                        .accessibilityIdentifier("save-conditioning-block")
+                        .accessibilityIdentifier(allowsMultipleSections ? "save-conditioning-block" : "save-conditioning-preset")
                 }
             }
         }
@@ -118,6 +154,13 @@ struct ConditioningBlockBuilderView: View {
         } message: {
             Text(presetError ?? "The preset is unavailable.")
         }
+        .alert("Couldn't Save Preset", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+        } message: {
+            Text(saveError ?? "The preset couldn't be saved.")
+        }
     }
 
     private static func emptySection(index: Int) -> ConditioningSection {
@@ -130,8 +173,13 @@ struct ConditioningBlockBuilderView: View {
 
     private func save() {
         guard let json = plan.encodedJSON(), !plan.isEmpty else { return }
-        onSave(json)
-        dismiss()
+        do {
+            if try saveAction(json) {
+                dismiss()
+            }
+        } catch {
+            saveError = error.localizedDescription
+        }
     }
 
     private func addSection() {
@@ -143,7 +191,7 @@ struct ConditioningBlockBuilderView: View {
         if plan.sections.isEmpty { addSection() }
     }
 
-    private func apply(_ preset: ConditioningPreset, to sectionID: UUID) {
+    private func apply(_ preset: ConditioningPresetSelection, to sectionID: UUID) {
         do {
             try ConditioningPlanCoordinator.apply(
                 preset,

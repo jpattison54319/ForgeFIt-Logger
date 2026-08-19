@@ -77,6 +77,28 @@ struct QuickIncrementControllerTests {
         #expect(controller.layout() == slots)
     }
 
+    @Test func guidedMyoRepLayoutIsLargerWithoutChangingCompactMetrics() {
+        let compact = configuredController()
+        _ = begin(compact, options: QuickIncrementController.repsOptions(), base: 4)
+        let compactSlots = try! #require(compact.layout())
+
+        let guided = QuickIncrementController(metrics: .guidedMyoRep)
+        guided.overlayBounds = CGRect(x: 0, y: 59, width: 400, height: 741)
+        _ = begin(guided, options: QuickIncrementController.repsOptions(), base: 4)
+        let guidedSlots = try! #require(guided.layout())
+
+        #expect(compactSlots[0].rect.size == CGSize(width: 92, height: 44))
+        #expect(guidedSlots[0].rect.size == CGSize(width: 120, height: 56))
+        #expect(compact.metrics.bandHeight - compact.metrics.visualHeightInset == 36)
+        #expect(guided.metrics.bandHeight - guided.metrics.visualHeightInset == 48)
+        #expect(guided.metrics.visualHeightInset == compact.metrics.visualHeightInset)
+        #expect(compact.overlayLocalRect(for: compactSlots[0].rect) == compactSlots[0].rect)
+        #expect(
+            guided.overlayLocalRect(for: guidedSlots[0].rect)
+                == guidedSlots[0].rect.offsetBy(dx: 0, dy: -59)
+        )
+    }
+
     @Test func layoutSlidesInsideBoundsNearTheTopEdge() {
         let controller = configuredController()
         let topField = CGRect(x: 150, y: 20, width: 60, height: 32)

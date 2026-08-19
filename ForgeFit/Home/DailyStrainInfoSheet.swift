@@ -78,7 +78,7 @@ struct DailyStrainInfoSheet: View {
         HStack(alignment: .top, spacing: Space.sm) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 13))
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .padding(.top, 2)
             Text(text)
                 .font(.system(size: 14, weight: .medium))

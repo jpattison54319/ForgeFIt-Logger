@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// Three-column status hero shown at the top of the settings list. Gives an
-/// at-a-glance summary of Apple Health, Apple Watch, and Bluetooth HR monitor
-/// connection state. Values are passed in from the parent so this remains a
-/// pure view with no service dependencies.
+/// Status hero shown at the top of the settings list. Gives an at-a-glance
+/// summary of Apple Health, Apple Watch, and — when the Bluetooth HR monitor
+/// feature is available — strap connection state. Values are passed in from the
+/// parent so this remains a pure view with no service dependencies; a nil
+/// `hrmConnected` drops the column entirely rather than showing a permanent
+/// "Off" for something the athlete cannot turn on.
 struct ConnectionStatusHero: View {
     @Environment(\.theme) private var theme
 
     let healthConnected: Bool
     let watchPaired: Bool
-    let hrmConnected: Bool
+    let hrmConnected: Bool?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -26,13 +28,15 @@ struct ConnectionStatusHero: View {
                 connected: watchPaired,
                 tint: theme.accent
             )
-            divider
-            column(
-                icon: "sensor.tag.radiowaves.forward.fill",
-                label: "HRM",
-                connected: hrmConnected,
-                tint: theme.danger
-            )
+            if let hrmConnected {
+                divider
+                column(
+                    icon: "sensor.tag.radiowaves.forward.fill",
+                    label: "HRM",
+                    connected: hrmConnected,
+                    tint: theme.danger
+                )
+            }
         }
         .padding(.vertical, Space.md)
         .frame(maxWidth: .infinity)

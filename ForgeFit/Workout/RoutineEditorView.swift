@@ -28,6 +28,7 @@ struct RoutineEditorView: View {
     /// Reference-backed so per-frame finger updates invalidate only the small
     /// reorder overlay, not every editor row and target field.
     @State private var reorderSession: ExerciseReorderSession?
+    @State private var keyboardVisible = false
     /// Debounced structural-save plumbing — see `save()`.
     @State private var deferredSaveTask: Task<Void, Never>?
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
@@ -60,14 +61,20 @@ struct RoutineEditorView: View {
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { hideKeyboard() }
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.accent)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if keyboardVisible {
+                KeyboardAccessoryBar {
+                    Spacer()
+                    Button("Done") { hideKeyboard() }
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.accentForeground)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
+                }
             }
         }
+        .onKeyboardVisibilityChange($keyboardVisible)
         .interactiveBackSwipeEnabled()
         .onAppear {
             if entrySnapshot == nil {
@@ -82,7 +89,9 @@ struct RoutineEditorView: View {
             if phase != .active { flushPendingSave() }
         }
         .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
-            Button("Save Changes") { saveNow(); dismiss() }
+            Button("Save Changes") {
+                saveNow(onCommit: dismiss.callAsFunction)
+            }
             Button("Discard Changes", role: .destructive) {
                 // A queued debounced save must not fire after the restore and
                 // persist the very edits being thrown away.
@@ -93,8 +102,11 @@ struct RoutineEditorView: View {
                     // discarding means it shouldn't exist at all.
                     discardNewRoutine()
                 } else {
-                    if let entrySnapshot { entrySnapshot.restore(onto: routine, in: modelContext) }
-                    dismiss()
+                    entrySnapshot?.restore(
+                        onto: routine,
+                        in: modelContext,
+                        onCommit: dismiss.callAsFunction
+                    )
                 }
             }
             Button("Keep Editing", role: .cancel) {}
@@ -119,15 +131,14 @@ struct RoutineEditorView: View {
                 ConditioningBlockBuilderView(
                     planJSON: block.planJSON,
                     exercises: exercises,
-                    workouts: allWorkouts
-                ) { json in
-                    update(block, planJSON: json)
-                }
+                    workouts: allWorkouts,
+                    commit: { update(block, planJSON: $0) }
+                )
             } else {
-                YogaFlowBuilderView(planJSON: block.planJSON) { json in
-                    guard let json else { return }
-                    update(block, planJSON: json)
-                }
+                YogaFlowBuilderView(planJSON: block.planJSON, commit: { json in
+                    guard let json else { return false }
+                    return update(block, planJSON: json)
+                })
             }
         }
         .sheet(item: $replaceTarget) { target in
@@ -178,11 +189,13 @@ struct RoutineEditorView: View {
                     VStack(alignment: .leading, spacing: Space.md) {
                         FieldLabel("Routine name")
                         DarkTextField(text: $routine.name, placeholder: "Routine name")
+                            .onChange(of: routine.name) { _, _ in save() }
                         FieldLabel("Notes")
                         DarkTextField(text: Binding(
                             get: { routine.notes ?? "" },
                             set: { routine.notes = $0.isEmpty ? nil : $0 }
                         ), placeholder: "Add notes", axis: .vertical)
+                            .onChange(of: routine.notes) { _, _ in save() }
                     }
                 }
 
@@ -299,8 +312,14 @@ struct RoutineEditorView: View {
             Spacer()
             Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
             Spacer()
-            Button("Save") { saveNow(); dismiss() }
-                .font(.bodyStrong).foregroundStyle(theme.accent)
+            Button {
+                saveNow(onCommit: dismiss.callAsFunction)
+            } label: {
+                Text("Save")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accentForeground)
+                    .minimumTouchTarget()
+            }
         }
         .padding(.top, Space.sm)
     }
@@ -409,10 +428,8 @@ struct RoutineEditorView: View {
         }
     }
 
-    private func update(_ block: RoutineBlockModel, planJSON: String) {
-        block.planJSON = planJSON
-        block.updatedAt = .now
-        save()
+    private func update(_ block: RoutineBlockModel, planJSON: String) -> Bool {
+        RoutineBlockPlanPersistence.apply(planJSON, to: block, in: modelContext)
     }
 
     /// The starter target rows an exercise gets when added: one rep set for
@@ -503,7 +520,7 @@ struct RoutineEditorView: View {
         }
         for (index, item) in orderedItems.enumerated() { item.position = index }
         routine.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     /// Debounced, matching the live logger's save discipline: a synchronous
@@ -537,9 +554,12 @@ struct RoutineEditorView: View {
         saveNow()
     }
 
-    private func saveNow() {
+    @discardableResult
+    private func saveNow(
+        onCommit: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
         routine.updatedAt = Date()
-        try? modelContext.save()
+        return modelContext.saveUserChanges(onSuccess: onCommit)
     }
 
     /// A brand-new routine the user backs out of is junk — soft-delete it
@@ -549,8 +569,7 @@ struct RoutineEditorView: View {
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
-        _ = modelContext.saveReportingFailure()
-        dismiss()
+        modelContext.saveUserChanges(onSuccess: dismiss.callAsFunction)
     }
 
     private func nextSupersetGroup() -> Int {
@@ -704,6 +723,7 @@ private struct ExerciseEditRow: View {
                                 onShowDetail(exercise.id)
                             } label: {
                                 ExerciseNameLabel(name: exercise.name)
+                                    .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                         } else {
@@ -779,6 +799,10 @@ private struct ExerciseEditRow: View {
                         set: set,
                         workingNumber: workingNumber(upTo: index),
                         displayUnit: displayUnit,
+                        supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                            name: exercise?.name,
+                            equipment: exercise?.equipment
+                        ),
                         onChange: save,
                         onSetType: { changeType(of: set, to: $0, index: index) },
                         onAddDrop: { addDropSet(below: set, index: index) },
@@ -807,7 +831,7 @@ private struct ExerciseEditRow: View {
             HStack(spacing: 8) {
                 Image(systemName: (plan?.style ?? .hatha).systemImage)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                 Text("Guided flow")
                     .font(.tag)
                     .foregroundStyle(theme.textTertiary)
@@ -825,15 +849,19 @@ private struct ExerciseEditRow: View {
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).opacity(0.7)
                     Spacer()
                 }
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
+                .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("routine-yoga-flow-builder")
             .sheet(isPresented: $showFlowBuilder) {
-                YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON) { json in
-                    routineExercise.yogaFlowJSON = json
-                    save()
-                }
+                YogaFlowBuilderView(planJSON: routineExercise.yogaFlowJSON, commit: { json in
+                    RoutineYogaPlanPersistence.apply(
+                        json,
+                        to: routineExercise,
+                        in: modelContext
+                    )
+                })
             }
 
             if let exercise {
@@ -866,7 +894,7 @@ private struct ExerciseEditRow: View {
                     .font(.system(size: 10, weight: .bold))
                 Spacer()
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -930,7 +958,7 @@ private struct ExerciseEditRow: View {
     }
 
     private func saveNow() {
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func addDropSet(below set: RoutineSetModel, index: Int) {
@@ -1011,12 +1039,13 @@ private struct SetTargetEditRow: View {
     @Bindable var set: RoutineSetModel
     let workingNumber: Int
     let displayUnit: WeightUnit
+    let supportsResistanceBands: Bool
     let onChange: () -> Void
     let onSetType: (SetType) -> Void
     let onAddDrop: () -> Void
     let onDelete: () -> Void
 
-    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
+    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType, theme: theme) }
     private var isDrop: Bool { self.set.setType == .drop }
 
     var body: some View {
@@ -1040,14 +1069,26 @@ private struct SetTargetEditRow: View {
 
             if set.setType == .amrap {
                 amrapTimeField
-                OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+                OptionalLoadField(
+                    placeholder: displayUnit.suffix,
+                    value: $set.targetWeight,
+                    unit: displayUnit,
+                    supportsResistanceBands: supportsResistanceBands,
+                    onChange: onChange
+                )
             } else {
                 OptionalRepsTargetField(
                     low: $set.targetRepsLow,
                     high: $set.targetRepsHigh,
                     onChange: onChange
                 )
-                OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+                OptionalLoadField(
+                    placeholder: displayUnit.suffix,
+                    value: $set.targetWeight,
+                    unit: displayUnit,
+                    supportsResistanceBands: supportsResistanceBands,
+                    onChange: onChange
+                )
                     .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
                 OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
             }
@@ -1165,7 +1206,13 @@ private struct SetTargetEditRow: View {
     }
 
     private var weightField: some View {
-        OptionalLoadField(placeholder: displayUnit.suffix, value: $set.targetWeight, unit: displayUnit, onChange: onChange)
+        OptionalLoadField(
+            placeholder: displayUnit.suffix,
+            value: $set.targetWeight,
+            unit: displayUnit,
+            supportsResistanceBands: supportsResistanceBands,
+            onChange: onChange
+        )
             .frame(width: 64)
     }
 
@@ -1434,6 +1481,7 @@ struct OptionalLoadField: View {
     @Binding var value: Double?
     let unit: WeightUnit
     var width: CGFloat? = nil
+    var supportsResistanceBands = false
     var onChange: () -> Void = {}
 
     /// Raw text while focused; formatted from the model otherwise. A
@@ -1445,26 +1493,49 @@ struct OptionalLoadField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField(placeholder, text: Binding(
-            get: { focused && draftActive ? draft : (value.map { Fmt.load($0, unit: unit) } ?? "") },
-            set: { text in
-                draft = text
-                draftActive = true
-                value = Fmt.loadKilograms(from: text, unit: unit)
-                onChange()
+        // Keep the band picker beside the field instead of laying it over the
+        // text. The explicit slot preserves its touch target and leaves the
+        // empty "Optional" placeholder readable in narrow conditioning rows.
+        HStack(spacing: supportsResistanceBands ? 2 : 0) {
+            if supportsResistanceBands {
+                ResistanceBandLoadMenu(
+                    selectedWeightKilograms: value,
+                    unit: unit,
+                    onSelect: selectBand
+                )
             }
-        ))
-        .focused($focused)
-        .onChange(of: focused) { _, isFocused in
-            if !isFocused { draftActive = false }
+
+            TextField(placeholder, text: Binding(
+                get: { focused && draftActive ? draft : (value.map { Fmt.load($0, unit: unit) } ?? "") },
+                set: { text in
+                    draft = text
+                    draftActive = true
+                    value = Fmt.loadKilograms(from: text, unit: unit)
+                    onChange()
+                }
+            ))
+            .focused($focused)
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { draftActive = false }
+            }
+            .frame(maxWidth: .infinity)
+            .keyboardType(.decimalPad)
+            .font(.bodyStrong)
+            .multilineTextAlignment(supportsResistanceBands ? .trailing : .center)
+            .padding(.trailing, supportsResistanceBands ? 4 : 0)
+            .foregroundStyle(theme.textPrimary)
         }
-        .keyboardType(.decimalPad)
-        .font(.bodyStrong)
-        .multilineTextAlignment(.center)
-        .foregroundStyle(theme.textPrimary)
         .frame(maxWidth: width == nil ? .infinity : width, minHeight: 44)
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func selectBand(_ kilograms: Double) {
+        focused = false
+        draftActive = false
+        value = kilograms
+        draft = Fmt.load(kilograms, unit: unit)
+        onChange()
     }
 }

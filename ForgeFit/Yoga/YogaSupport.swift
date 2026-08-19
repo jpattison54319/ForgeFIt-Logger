@@ -52,11 +52,19 @@ extension YogaFlowPlan {
         let poses = exercises.filter { $0.isYoga && !YogaPoseCatalog.isSessionExercise($0) }
         guard !poses.isEmpty else { return nil }
         return YogaFlowPlan(style: style, steps: poses.map { exercise in
-            PoseStep(
+            let slug = YogaPoseCatalog.slug(for: exercise)
+            let side: YogaFlowPlan.Side? = exercise.isUnilateral ? .left : nil
+            let defaultHold = exercise.defaultHoldSeconds ?? 30
+            let minimumHold = YogaGuidancePlanner.minimumCriticalHoldSeconds(
+                poseSlug: slug,
+                poseName: exercise.name,
+                side: side
+            ) ?? 1
+            return PoseStep(
                 poseID: exercise.id,
-                poseSlug: YogaPoseCatalog.slug(for: exercise),
+                poseSlug: slug,
                 name: exercise.name,
-                holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                holdSeconds: max(defaultHold, minimumHold),
                 side: exercise.isUnilateral ? .bothSides : nil
             )
         })
@@ -66,12 +74,20 @@ extension YogaFlowPlan {
     /// user adds one pose to a routine/workout without building a sequence.
     /// One-sided poses default to both sides so the practice stays balanced.
     static func singlePose(from exercise: ExerciseLibraryModel, style: YogaStyle = .hatha) -> YogaFlowPlan {
-        YogaFlowPlan(style: style, steps: [
+        let slug = YogaPoseCatalog.slug(for: exercise)
+        let side: YogaFlowPlan.Side? = exercise.isUnilateral ? .left : nil
+        let defaultHold = exercise.defaultHoldSeconds ?? 30
+        let minimumHold = YogaGuidancePlanner.minimumCriticalHoldSeconds(
+            poseSlug: slug,
+            poseName: exercise.name,
+            side: side
+        ) ?? 1
+        return YogaFlowPlan(style: style, steps: [
             PoseStep(
                 poseID: exercise.id,
-                poseSlug: YogaPoseCatalog.slug(for: exercise),
+                poseSlug: slug,
                 name: exercise.name,
-                holdSeconds: exercise.defaultHoldSeconds ?? 30,
+                holdSeconds: max(defaultHold, minimumHold),
                 side: exercise.isUnilateral ? .bothSides : nil
             )
         ])
@@ -105,34 +121,86 @@ enum YogaSessionCompletion {
         exercise: ExerciseLibraryModel?,
         context: ModelContext,
         endedAt: Date = .now,
-        useClockDuration: Bool
+        useClockDuration: Bool,
+        clearCheckpoint: Bool = true
     ) {
         session.endedAt = endedAt
+        session.updatedAt = endedAt
+
+        let plan = workoutExercise.flatMap { YogaFlowPlan.resolved(for: $0, exercise: exercise) }
 
         if useClockDuration {
             let start = session.liveStartedAt ?? session.startedAt
             session.durationSeconds = max(1, Int(endedAt.timeIntervalSince(start)))
-        } else if session.durationSeconds == nil,
-                  let workoutExercise,
-                  let plan = YogaFlowPlan.resolved(for: workoutExercise, exercise: exercise),
-                  plan.totalSeconds > 0 {
+        } else if session.durationSeconds == nil, let plan, plan.totalSeconds > 0 {
             session.durationSeconds = plan.totalSeconds
         }
 
-        let completedPoseIndexes = Set(
-            session.splits
-                .filter { $0.label != nil }
-                .map(\.index)
-        )
-        if session.posesCompleted == nil, !completedPoseIndexes.isEmpty {
-            session.posesCompleted = completedPoseIndexes.count
+        if let plan {
+            // Mid-class stops converge on one partial-credit semantic: the
+            // hold in progress when the class stopped is recorded with the
+            // seconds actually held (the Skip semantic). A live runner records
+            // it via `YogaFlowRunner.complete()`; this reconciles the paths
+            // with no runner to do it (app terminated mid-hold, or a workout
+            // finished from the wrist) from the persisted split timeline.
+            recordInterruptedHold(session: session, plan: plan, context: context, endedAt: endedAt)
+        }
+        if clearCheckpoint {
+            YogaRuntimeCheckpointStore.clear(sessionID: session.id)
         }
 
-        guard let workoutExercise,
-              let plan = YogaFlowPlan.resolved(for: workoutExercise, exercise: exercise) else { return }
+        if let logicalCount = session.logicalYogaPosesCompleted {
+            // Always normalize the stored value. Legacy sessions may carry an
+            // expanded Left/Right hold count even though the split timeline
+            // can provide the canonical logical-pose result.
+            session.posesCompleted = logicalCount
+        }
+
+        guard let plan else { return }
         if session.yogaStyleRaw == nil {
             session.yogaStyleRaw = plan.styleRaw
         }
         FlexibilityAnalytics.stampExposure(plan: plan, session: session, context: context)
+    }
+
+    /// Backstop partial-hold credit when no live runner can record it. The
+    /// durable checkpoint is the authority: it preserves the current step,
+    /// accrued seconds, and pause state across process death. With no valid
+    /// checkpoint (including a session created by an older build), completion
+    /// stays conservative and never invents time from a split-to-end wall gap.
+    private static func recordInterruptedHold(
+        session: CardioSessionModel,
+        plan: YogaFlowPlan,
+        context: ModelContext,
+        endedAt: Date
+    ) {
+        guard session.liveStartedAt != nil,
+              session.posesCompleted == nil,
+              let checkpoint = YogaRuntimeCheckpointStore.load(sessionID: session.id) else { return }
+        let expanded = YogaFlowRunner.expand(plan)
+        guard expanded.indices.contains(checkpoint.stepIndex) else { return }
+        let labeledIndexes = Set(session.splits.compactMap { split -> Int? in
+            guard let label = split.label else { return nil }
+            return label.isEmpty ? nil : split.index
+        })
+        guard !labeledIndexes.contains(checkpoint.stepIndex) else { return }
+        let step = expanded[checkpoint.stepIndex]
+        let duration = checkpoint.elapsed(at: endedAt, cappedAt: step.seconds)
+        guard duration > 0 else { return }
+        let startedAt = endedAt.addingTimeInterval(-TimeInterval(duration))
+        let split = CardioSplitModel(
+            userID: session.userID,
+            cardioSessionID: session.id,
+            index: step.id,
+            distanceMeters: 0,
+            durationSeconds: duration,
+            paceSecondsPerKm: 0,
+            label: step.displayName,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+        split.cardioSession = session
+        context.insert(split)
+        session.splits.append(split)
     }
 }

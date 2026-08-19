@@ -12,8 +12,21 @@ struct MetricDetailScaffold<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
 
     let title: String
+    let identifierStem: String
     @Binding var selectedTab: MetricDetailTab
-    @ViewBuilder let content: () -> Content
+    @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        selectedTab: Binding<MetricDetailTab>,
+        identifierStem: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.identifierStem = identifierStem ?? title.lowercased()
+        _selectedTab = selectedTab
+        self.content = content()
+    }
 
     var body: some View {
         DashboardScaffold(title: title, dismiss: dismiss) {
@@ -22,15 +35,16 @@ struct MetricDetailScaffold<Content: View>: View {
                 Text("Trends").tag(MetricDetailTab.trends)
             }
             .pickerStyle(.segmented)
-            .accessibilityIdentifier("\(title.lowercased())-detail-tabs")
+            .frame(minHeight: TouchTarget.minimum)
+            .accessibilityIdentifier("\(identifierStem)-detail-tabs")
 
-            content()
+            content
         }
-        .accessibilityIdentifier("\(title.lowercased())-detail")
+        .accessibilityIdentifier("\(identifierStem)-detail")
     }
 }
 
-/// Generic personal-baseline chart used by Sleep and Health. The shaded band
+/// Generic personal-baseline chart used by Sleep and Vitals. The shaded band
 /// is this user's 10th-to-90th percentile usual observed band, not a
 /// population cutoff or a medical normal range.
 struct MetricBaselineBandChart: View {
@@ -39,6 +53,30 @@ struct MetricBaselineBandChart: View {
     let tint: Color
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
+
+    private var selectedPoint: MetricTrendSeries.Point? {
+        guard let selectedDate else { return nil }
+        return trend.points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
+
+    private var unitLabel: String {
+        switch metricName.lowercased() {
+        case "hrv": "ms"
+        case "heart rate": "bpm"
+        case "respiratory rate": "br/min"
+        case "blood oxygen": "%"
+        case "sleep hours": "hours"
+        default: ""
+        }
+    }
+
+    private func formatted(_ value: Double) -> String {
+        let number = value.formatted(.number.precision(.fractionLength(0...1)))
+        return unitLabel.isEmpty ? number : "\(number) \(unitLabel)"
+    }
 
     var body: some View {
         Chart {
@@ -61,28 +99,49 @@ struct MetricBaselineBandChart: View {
                 .interpolationMethod(.catmullRom)
                 .foregroundStyle(tint)
                 .lineStyle(StrokeStyle(lineWidth: 2))
-            }
-            if let latest = trend.latest {
                 PointMark(
-                    x: .value("Date", latest.date),
-                    y: .value(metricName, latest.value)
+                    x: .value("Date", point.date),
+                    y: .value(metricName, point.value)
                 )
                 .foregroundStyle(tint)
-                .symbolSize(80)
+                .symbolSize(24)
+                .accessibilityLabel(point.date.formatted(date: .abbreviated, time: .omitted))
+                .accessibilityValue(formatted(point.value))
+            }
+            if let selectedPoint {
+                RuleMark(x: .value("Selected date", selectedPoint.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [(metricName, formatted(selectedPoint.value))]
+                        )
+                    }
+                PointMark(x: .value("Selected date", selectedPoint.date), y: .value(metricName, selectedPoint.value))
+                    .foregroundStyle(tint)
+                    .symbolSize(90)
+                    .accessibilityHidden(true)
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .foregroundStyle(theme.textTertiary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text(unitLabel.isEmpty ? metricName : "\(metricName) (\(unitLabel))")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 170)
         .accessibilityLabel("\(metricName) trend against your usual observed band")
         .accessibilityValue(chartAccessibilityValue)
@@ -160,7 +219,7 @@ struct MetricInfoLink: View {
             Card(padding: Space.md) {
                 HStack(spacing: Space.md) {
                     Image(systemName: "info.circle.fill")
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     Text(title)
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
@@ -220,7 +279,7 @@ struct MetricExplanationSheet: View {
                         HStack(alignment: .top, spacing: Space.md) {
                             Image(systemName: item.systemImage)
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                                 .frame(width: 28, height: 28)
                                 .background(theme.secondaryAccent.opacity(0.12), in: Circle())
                             VStack(alignment: .leading, spacing: 3) {

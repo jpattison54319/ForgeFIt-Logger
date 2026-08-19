@@ -32,7 +32,6 @@ private struct IntervalSplitsEditor: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Bindable var session: CardioSessionModel
-    @State private var saveError: String?
 
     private var laps: [CardioSplitModel] {
         session.splits.sorted { $0.index < $1.index }
@@ -46,7 +45,10 @@ private struct IntervalSplitsEditor: View {
                         HStack(spacing: Space.md) {
                             TextField("Label", text: Binding(
                                 get: { split.label ?? "" },
-                                set: { split.label = $0.isEmpty ? nil : $0 }
+                                set: {
+                                    split.label = $0.isEmpty ? nil : $0
+                                    session.updatedAt = .now
+                                }
                             ))
                             .font(.system(size: 15, weight: .semibold))
                             Spacer()
@@ -56,12 +58,16 @@ private struct IntervalSplitsEditor: View {
                     }
                     .onDelete { offsets in
                         let ordered = laps
-                        for index in offsets {
-                            let split = ordered[index]
-                            session.splits.removeAll { $0.id == split.id }
-                            modelContext.delete(split)
-                        }
-                        saveError = modelContext.saveReportingFailure()
+                        let splitIDs = offsets.map { ordered[$0].id }
+                        let sessionID = session.id
+                        PersistentChangeSaveCenter.shared.perform({
+                            try WorkoutDetailPersistence.deleteSplits(
+                                container: modelContext.container,
+                                sessionID: sessionID,
+                                splitIDs: splitIDs,
+                                updatedAt: .now
+                            )
+                        })
                     }
                 } footer: {
                     Text("Reverting restores the original laps.")
@@ -72,22 +78,15 @@ private struct IntervalSplitsEditor: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        if let failure = modelContext.saveReportingFailure() {
-                            saveError = failure
-                        } else {
-                            dismiss()
-                        }
+                        modelContext.saveUserChanges(onSuccess: dismiss.callAsFunction)
                     }
                     .font(.bodyStrong)
                 }
             }
-            .alert(
-                "Couldn't Save",
-                isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
-            ) {
-                Button("OK", role: .cancel) { saveError = nil }
-            } message: {
-                Text(saveError ?? "")
+            // A sheet swipe is still a navigation exit. Commit label edits
+            // there too instead of relying on SwiftData's eventual autosave.
+            .onDisappear {
+                if modelContext.hasChanges { modelContext.saveUserChanges() }
             }
         }
     }
@@ -107,12 +106,13 @@ struct WorkoutDetailView: View {
     @State private var showEditor = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
-    @State private var deleteError: String?
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
+    @State private var heartRateRefreshError: String?
     @State private var recoveryPoints: [SetRecoveryPoint] = []
     @State private var showSharePreview = false
     @State private var sharePayload: SharePayload?
+    @State private var routeExportError: String?
     @State private var editingSplits: EditSplitsTarget?
     @State private var routePointsMemo = MemoTable<UUID, [CardioRoutePointModel]>()
     @State private var routeCoordinatesMemo = MemoTable<UUID, [CLLocationCoordinate2D]>()
@@ -127,13 +127,30 @@ struct WorkoutDetailView: View {
         .of(workout: workout, summary: analytics.summary(for: workout))
     }
     private var presentationPlan: WorkoutPresentationPlan { .make(for: workout) }
+    private var awardEntries: [WorkoutAward] {
+        WorkoutAwards.all(for: workout, history: history, exercises: exercises)
+    }
+    private var detailHistory: [WorkoutModel] {
+        guard !history.isEmpty else { return [workout] }
+        return history.contains(where: { $0.id == workout.id }) ? history : history + [workout]
+    }
 
     /// A single-modality workout remains open as its source of truth. Any
     /// combination of strength, cardio, conditioning, and yoga uses compact
     /// disclosures so the authored timeline stays scannable.
     private var isMixedWorkout: Bool { presentationPlan.isMixed }
+    private var workoutHeartRateMetrics: WorkoutHeartRateResolution.Metrics {
+        WorkoutHeartRateResolution.workoutMetrics(for: workout, samples: hrSamples)
+    }
+    private var showsSessionMetrics: Bool {
+        workoutHeartRateMetrics.hasData
+            || workout.activeEnergyKcal != nil
+            || workout.readinessAtStart != nil
+    }
 
     var body: some View {
+        let plan = presentationPlan
+        let usesUnifiedCardioDetail = plan.usesUnifiedCardioDetail
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 header
@@ -161,13 +178,19 @@ struct WorkoutDetailView: View {
                 #endif
 
                 let s = analytics.summary(for: workout)
-                overallStatsCard(s)
+                if !usesUnifiedCardioDetail {
+                    overallStatsCard(s)
+                }
 
-                if workout.avgHR != nil || workout.activeEnergyKcal != nil || workout.readinessAtStart != nil {
+                if !awardEntries.isEmpty {
+                    WorkoutAwardsCard(awards: awardEntries)
+                }
+
+                if showsSessionMetrics, !usesUnifiedCardioDetail {
                     sessionMetricsCard
                 }
 
-                if hrLoaded, !hrSamples.isEmpty {
+                if hrLoaded, !hrSamples.isEmpty, !usesUnifiedCardioDetail {
                     heartRateCard
                 }
 
@@ -176,17 +199,17 @@ struct WorkoutDetailView: View {
                     betweenSetRecoveryCard
                 }
 
-                if presentationPlan.modalities.contains(.strength) {
+                if plan.modalities.contains(.strength) {
                     let muscleRows = analytics.muscleVolume(
                         for: workout,
-                        exerciseRows: presentationPlan.strengthExercises
+                        exerciseRows: plan.strengthExercises
                     )
                     if !muscleRows.isEmpty {
                         muscleWorkedCard(muscleRows)
                     }
                 }
 
-                ForEach(presentationPlan.items) { item in
+                ForEach(plan.items) { item in
                     switch item {
                     case .exercise(let workoutExercise):
                         if let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == workoutExercise.id }) {
@@ -197,6 +220,7 @@ struct WorkoutDetailView: View {
                                     workoutExercise: workoutExercise,
                                     exercise: exercises.first { $0.id == workoutExercise.exerciseID },
                                     hrSamples: hrSamples,
+                                    heartRateMetrics: resolvedHeartRateMetrics(for: session),
                                     collapsible: isMixedWorkout
                                 )
                             } else {
@@ -217,14 +241,17 @@ struct WorkoutDetailView: View {
                     case .block(let block):
                         completedBlock(block)
                     case .legacyConditioning(let conditioning):
+                        let session = workout.cardioSessions.first {
+                            $0.workoutBlockID == nil && $0.workoutExerciseID == nil && $0.isConditioningSession
+                        }
                         ConditioningHistoryCard(
                             plan: conditioning.plan,
                             result: conditioning.result,
-                            session: workout.cardioSessions.first {
-                                $0.workoutBlockID == nil && $0.workoutExerciseID == nil && $0.isConditioningSession
-                            },
+                            session: session,
                             exercises: exercises,
+                            workouts: detailHistory,
                             hrSamples: hrSamples,
+                            heartRateMetrics: resolvedHeartRateMetrics(for: session),
                             collapsible: isMixedWorkout
                         )
                     case .session(let session, _):
@@ -235,6 +262,7 @@ struct WorkoutDetailView: View {
                                 workoutExercise: nil,
                                 exercise: nil,
                                 hrSamples: hrSamples,
+                                heartRateMetrics: resolvedHeartRateMetrics(for: session),
                                 collapsible: isMixedWorkout
                             )
                         } else if session.isConditioningSession {
@@ -243,7 +271,9 @@ struct WorkoutDetailView: View {
                                 result: nil,
                                 session: session,
                                 exercises: exercises,
+                                workouts: detailHistory,
                                 hrSamples: hrSamples,
+                                heartRateMetrics: resolvedHeartRateMetrics(for: session),
                                 collapsible: isMixedWorkout
                             )
                         } else {
@@ -266,6 +296,7 @@ struct WorkoutDetailView: View {
             WorkoutSharePreviewSheet(
                 workout: workout,
                 exercises: exercises,
+                history: history,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints
             )
@@ -291,13 +322,21 @@ struct WorkoutDetailView: View {
         } message: {
             Text("This removes the workout from ForgeFit. Apple Health workout records and metadata are not deleted.")
         }
-        .alert("Couldn’t delete workout", isPresented: Binding(
-            get: { deleteError != nil },
-            set: { if !$0 { deleteError = nil } }
+        .alert("Couldn’t Update Heart Rate", isPresented: Binding(
+            get: { heartRateRefreshError != nil },
+            set: { if !$0 { heartRateRefreshError = nil } }
         )) {
-            Button("OK", role: .cancel) { deleteError = nil }
+            Button("OK", role: .cancel) { heartRateRefreshError = nil }
         } message: {
-            Text(deleteError ?? "Try again in a moment.")
+            Text(heartRateRefreshError ?? "The corrected values are visible now but may not be available elsewhere yet.")
+        }
+        .alert("Couldn’t Export Route", isPresented: Binding(
+            get: { routeExportError != nil },
+            set: { if !$0 { routeExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { routeExportError = nil }
+        } message: {
+            Text(routeExportError ?? "ForgeFit couldn’t create the GPX file. Try again.")
         }
         .navigationDestination(for: UUID.self) { exerciseID in
             ExerciseDetailView(exerciseID: exerciseID, workouts: history.isEmpty ? [workout] : history, exercises: exercises)
@@ -333,7 +372,8 @@ struct WorkoutDetailView: View {
         let overview = WorkoutOverviewPresentation.make(
             workout: workout,
             exercises: exercises,
-            durationSeconds: summary.durationSeconds
+            durationSeconds: summary.durationSeconds,
+            averageHeartRate: workoutHeartRateMetrics.averageBPM
         )
         return Card {
             LazyVGrid(
@@ -367,17 +407,20 @@ struct WorkoutDetailView: View {
 
     private func deleteWorkout() {
         let now = Date()
-        workout.updatedAt = now
-        workout.deletedAt = now
-        // Rollback-on-failure keeps a phantom-deleted row from riding a later
-        // unrelated save (and undoes `updatedAt` too, unlike a manual revert).
-        if let failure = modelContext.saveReportingFailure() {
+        let workoutID = workout.id
+        let committed = PersistentChangeSaveCenter.shared.perform({
+            try WorkoutDetailPersistence.softDeleteWorkout(
+                container: modelContext.container,
+                workoutID: workoutID,
+                deletedAt: now
+            )
+        }, onSuccess: {
+            BackupScheduler.shared.noteLogDataChanged()
+            dismiss()
+        })
+        if !committed {
             isDeleting = false
-            deleteError = failure
-            return
         }
-        BackupScheduler.shared.noteLogDataChanged()
-        dismiss()
     }
 
     /// Health metrics captured live during the session (Apple Watch /
@@ -398,8 +441,8 @@ struct WorkoutDetailView: View {
                     }
                 }
                 HStack {
-                    StatColumn(label: "Avg HR", value: Fmt.bpm(workout.avgHR))
-                    StatColumn(label: "Max HR", value: Fmt.bpm(workout.maxHR))
+                    StatColumn(label: "Avg HR", value: Fmt.bpm(workoutHeartRateMetrics.averageBPM))
+                    StatColumn(label: "Max HR", value: Fmt.bpm(workoutHeartRateMetrics.maximumBPM))
                     StatColumn(label: "Energy", value: workout.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
                 }
                 if workout.hrZoneSeconds.contains(where: { $0 > 0 }) {
@@ -422,6 +465,11 @@ struct WorkoutDetailView: View {
         hrSamples = samples
         recoveryPoints = betweenSetRecovery(from: samples)
         hrLoaded = true
+        heartRateRefreshError = WorkoutDetailPersistence.reconcileHeartRate(
+            container: modelContext.container,
+            workoutID: workout.id,
+            samples: samples
+        )
     }
 
     /// Per-set between-set HR recovery for this workout's strength sets, derived
@@ -545,7 +593,7 @@ struct WorkoutDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "figure.strengthtraining.traditional")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Muscles worked").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 VStack(spacing: 8) {
@@ -588,6 +636,7 @@ struct WorkoutDetailView: View {
                 workoutExercise: anchor,
                 exercise: anchor.flatMap { row in exercises.first { $0.id == row.exerciseID } },
                 hrSamples: hrSamples,
+                heartRateMetrics: resolvedHeartRateMetrics(for: session),
                 collapsible: isMixedWorkout
             )
         } else if block.kind == .conditioning,
@@ -601,7 +650,9 @@ struct WorkoutDetailView: View {
                 result: result,
                 session: session?.endedAt == nil ? nil : session,
                 exercises: exercises,
+                workouts: detailHistory,
                 hrSamples: hrSamples,
+                heartRateMetrics: resolvedHeartRateMetrics(for: session),
                 collapsible: isMixedWorkout
             )
         } else {
@@ -626,6 +677,7 @@ struct WorkoutDetailView: View {
                 if let exercise {
                     NavigationLink(value: exercise.id) {
                         ExerciseNameLabel(name: name)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -642,7 +694,7 @@ struct WorkoutDetailView: View {
     }
 
     private func historicalSetRow(_ set: SetModel, index: Int, sets: [SetModel], unit: WeightUnit) -> some View {
-        let style = SetTypeStyle.of(set.setType)
+        let style = SetTypeStyle.of(set.setType, theme: theme)
         let label = historicalSetLabel(for: set, index: index, sets: sets)
         let isPlainWorking = set.setType == .working
         let isCompleted = HistoricalSetPresentation.isCompleted(set)
@@ -702,7 +754,7 @@ struct WorkoutDetailView: View {
     private func autoIntervalBanner(_ cardio: CardioSessionModel) -> some View {
         let workCount = cardio.splits.filter { $0.autoDetected && ($0.label?.hasPrefix("Work") == true) }.count
         HStack(spacing: 8) {
-            Image(systemName: "wand.and.stars").foregroundStyle(theme.secondaryAccent)
+            Image(systemName: "wand.and.stars").foregroundStyle(theme.secondaryAccentForeground)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Detected \(workCount) interval\(workCount == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
@@ -711,10 +763,22 @@ struct WorkoutDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: Space.sm)
-            Button("Edit") { editingSplits = EditSplitsTarget(session: cardio) }
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.secondaryAccent)
-            Button("Revert") { CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext) }
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.danger)
+            Button {
+                editingSplits = EditSplitsTarget(session: cardio)
+            } label: {
+                Text("Edit")
+                    .font(.system(size: 13, weight: .semibold))
+                    .minimumTouchTarget()
+            }
+            .foregroundStyle(theme.secondaryAccentForeground)
+            Button {
+                CardioSeriesService.revertAutoIntervals(for: cardio, in: modelContext)
+            } label: {
+                Text("Revert")
+                    .font(.system(size: 13, weight: .semibold))
+                    .minimumTouchTarget()
+            }
+            .foregroundStyle(theme.danger)
         }
         .padding(10)
         .background(theme.secondaryAccent.opacity(0.10))
@@ -726,9 +790,11 @@ struct WorkoutDetailView: View {
     @ViewBuilder
     private func efficiencyRow(for cardio: CardioSessionModel) -> some View {
         let config = HRZoneConfigStore.load()
-        if let ef = analytics.efficiencyFactor(for: cardio), analytics.isAerobicSession(cardio, config: config) {
+        let averageHeartRate = resolvedHeartRateMetrics(for: cardio)?.averageBPM
+        if let ef = analytics.efficiencyFactor(for: cardio, averageHeartRate: averageHeartRate),
+           analytics.isAerobicSession(cardio, config: config, averageHeartRate: averageHeartRate) {
             HStack(spacing: 8) {
-                Image(systemName: "bolt.heart.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent)
+                Image(systemName: "bolt.heart.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accentForeground)
                 Text("Efficiency \(ef.formatted(.number.precision(.fractionLength(2))))")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 if let baseline = aerobicEFBaseline(kind: CardioKind.from(modality: cardio.modality)), baseline > 0 {
@@ -763,6 +829,7 @@ struct WorkoutDetailView: View {
     ) -> some View {
         let kind = CardioKind.from(modality: cardio.modality)
         let name = exercise?.name ?? kind.title
+        let integratesWorkoutSummary = presentationPlan.unifiedCardioSessionID == cardio.id
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 if isMixedWorkout {
@@ -775,22 +842,30 @@ struct WorkoutDetailView: View {
                         if let note = nonemptyNote(workoutExercise?.notes) {
                             LoggedNoteView(title: "Exercise note", text: note)
                         }
-                        cardioDetailContent(cardio, kind: kind, showPerBlockHR: true)
+                        cardioDetailContent(
+                            cardio,
+                            kind: kind,
+                            showPerBlockHR: true,
+                            integratesWorkoutSummary: false
+                        )
                         if let exercise {
                             cardioLibraryLink(exercise, name: name)
                         }
                     }
                 } else {
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
-                            .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
-                        if let exercise {
-                            NavigationLink(value: exercise.id) {
-                                ExerciseNameLabel(name: name)
+                    if !integratesWorkoutSummary {
+                        HStack(spacing: Space.sm) {
+                            Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccentForeground)
+                                .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
+                            if let exercise {
+                                NavigationLink(value: exercise.id) {
+                                    ExerciseNameLabel(name: name)
+                                        .minimumTouchTarget()
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             }
-                            .buttonStyle(.plain)
-                        } else {
-                            Text(name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         }
                     }
 
@@ -798,7 +873,15 @@ struct WorkoutDetailView: View {
                         LoggedNoteView(title: "Exercise note", text: note)
                     }
 
-                    cardioDetailContent(cardio, kind: kind, showPerBlockHR: false)
+                    cardioDetailContent(
+                        cardio,
+                        kind: kind,
+                        showPerBlockHR: false,
+                        integratesWorkoutSummary: integratesWorkoutSummary
+                    )
+                    if integratesWorkoutSummary, let exercise {
+                        cardioLibraryLink(exercise, name: name)
+                    }
                 }
             }
         }
@@ -815,7 +898,8 @@ struct WorkoutDetailView: View {
     /// "18min Run", a one-line metric summary, and a rotating chevron. The
     /// whole row toggles the inline detail.
     private func cardioBlockHeader(_ cardio: CardioSessionModel, kind: CardioKind, name: String, isExpanded: Bool) -> some View {
-        Button {
+        let blockAverageHR = resolvedHeartRateMetrics(for: cardio)?.averageBPM
+        return Button {
             withAnimation(.spring(duration: 0.25)) {
                 if isExpanded {
                     expandedModalityIDs.remove(cardio.id)
@@ -825,15 +909,15 @@ struct WorkoutDetailView: View {
             }
         } label: {
             HStack(spacing: Space.sm) {
-                Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccent)
+                Image(systemName: kind.systemImage).foregroundStyle(theme.secondaryAccentForeground)
                     .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text(CardioBlockSupport.compactTitle(durationSeconds: cardio.durationSeconds, name: name))
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
                     if let subtitle = CardioBlockSupport.compactSubtitle(
                         distance: cardio.distanceMeters.map { Fmt.cardioDistance($0, kind: kind) },
-                        avgHR: cardio.avgHR,
+                        avgHR: blockAverageHR,
                         calories: cardio.activeEnergyKcal,
                         effort: cardio.effort
                     ) {
@@ -870,19 +954,26 @@ struct WorkoutDetailView: View {
                     .font(.system(size: 10, weight: .bold))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(theme.secondaryAccent)
+            .foregroundStyle(theme.secondaryAccentForeground)
             .contentShape(Rectangle())
             .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
     }
 
-    /// The full cardio detail experience — identical for cardio-only workouts
-    /// and expanded mixed blocks. `showPerBlockHR` adds this block's slice of
-    /// the workout HR series (mixed only; cardio-only workouts already show it
-    /// at the workout level).
+    /// The full cardio detail experience. A sole cardio activity also owns the
+    /// workout-level health context because both scopes cover the same event;
+    /// mixed blocks retain their independently time-boxed heart-rate view.
     @ViewBuilder
-    private func cardioDetailContent(_ cardio: CardioSessionModel, kind: CardioKind, showPerBlockHR: Bool) -> some View {
+    private func cardioDetailContent(
+        _ cardio: CardioSessionModel,
+        kind: CardioKind,
+        showPerBlockHR: Bool,
+        integratesWorkoutSummary: Bool
+    ) -> some View {
+        let heartRateMetrics = resolvedHeartRateMetrics(for: cardio)
+        let displayAverageHR = heartRateMetrics?.averageBPM
+
         // Primary Strava-style read-outs
         HStack {
             metric(kind.usesPace ? "Pace" : "Speed",
@@ -894,16 +985,53 @@ struct WorkoutDetailView: View {
             metric("Time", Fmt.durationShort(cardio.durationSeconds))
         }
 
-        // Secondary metrics
-        HStack {
-            if let hr = cardio.avgHR { metric("Avg HR", "\(hr)") }
-            if let cal = cardio.activeEnergyKcal { metric("Calories", "\(Int(cal))") }
-            if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
-            if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
-            if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+        if integratesWorkoutSummary {
+            // The generic workout and session cards are intentionally absent in
+            // this one-to-one shape, so retain each unique health fact here once.
+            if heartRateMetrics?.hasData == true || heartRateMetrics?.activeEnergyKcal != nil {
+                HStack {
+                    if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
+                    if let maxHR = heartRateMetrics?.maximumBPM { metric("Max HR", "\(maxHR)") }
+                    if let energy = heartRateMetrics?.activeEnergyKcal { metric("Calories", "\(Int(energy))") }
+                }
+            }
+            if cardio.elevationGainMeters != nil || cardio.avgPowerWatts != nil || cardio.effort != nil {
+                HStack {
+                    if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
+                    if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
+                    if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+                }
+            }
+            if let readiness = workout.readinessAtStart {
+                Label("Started at \(readiness)% ready", systemImage: "bolt.heart.fill")
+                    .font(.tag)
+                    .foregroundStyle(theme.readinessColor(Double(readiness) / 100))
+            }
+        } else {
+            // Secondary activity metrics when a distinct workout-level summary
+            // remains visible above this card.
+            HStack {
+                if let hr = displayAverageHR { metric("Avg HR", "\(hr)") }
+                if let cal = heartRateMetrics?.activeEnergyKcal ?? cardio.activeEnergyKcal {
+                    metric("Calories", "\(Int(cal))")
+                }
+                if let elev = cardio.elevationGainMeters { metric("Elev", "\(Int(elev)) m") }
+                if let power = cardio.avgPowerWatts { metric("Power", "\(Int(power)) W") }
+                if let effort = cardio.effort { metric("Effort", "\(effort)/10") }
+            }
         }
 
         efficiencyRow(for: cardio)
+
+        if integratesWorkoutSummary, hrLoaded, hrSamples.count >= 2 {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Text("Heart rate").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                HeartRateTrendChart(
+                    samples: hrSamples,
+                    bands: HeartRateTrendChart.cardioBands(for: workout)
+                )
+            }
+        }
 
         if cardio.intervalsAutoApplied {
             autoIntervalBanner(cardio)
@@ -929,15 +1057,17 @@ struct WorkoutDetailView: View {
 
         // Show one zone story. Prefer the measured per-sample distribution;
         // fall back to the stored distribution, then estimate from average HR.
-        let measuredZones = CardioMetrics.measuredZoneSecondsArray(seriesJSON: cardio.sampleSeriesJSON)
+        let measuredZones = heartRateMetrics?.zoneSeconds
+            ?? CardioMetrics.measuredZoneSecondsArray(seriesJSON: cardio.sampleSeriesJSON)
         let storedZones = cardio.hrZoneSeconds.contains(where: { $0 > 0 }) ? cardio.hrZoneSeconds : nil
-        if let hr = cardio.avgHR {
+        if let hr = displayAverageHR {
             HRZoneBar(
                 avgHR: hr,
-                maxHR: cardio.maxHR,
+                maxHR: heartRateMetrics?.maximumBPM,
                 durationSeconds: cardio.durationSeconds,
                 zoneSeconds: measuredZones ?? storedZones,
-                source: measuredZones == nil ? .estimated : .measured
+                source: measuredZones == nil ? .estimated : .measured,
+                showsAverageInHeader: !integratesWorkoutSummary
             )
         }
 
@@ -963,6 +1093,17 @@ struct WorkoutDetailView: View {
         }
 
         MuscleChips(muscles: kind.musclesWorked)
+    }
+
+    private func resolvedHeartRateMetrics(
+        for session: CardioSessionModel?
+    ) -> WorkoutHeartRateResolution.Metrics? {
+        guard let session else { return nil }
+        return WorkoutHeartRateResolution.sessionMetrics(
+            for: session,
+            in: workout,
+            samples: hrSamples
+        )
     }
 
     // MARK: - Best efforts (T4-3)
@@ -1047,8 +1188,12 @@ struct WorkoutDetailView: View {
         let stamp = cardio.startedAt.formatted(.iso8601.year().month().day())
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeFit-\(kind.title)-\(stamp).gpx")
-        guard (try? GPXCodec.encode(track: track).write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
-        sharePayload = SharePayload(items: [url])
+        do {
+            try GPXCodec.encode(track: track).write(to: url, atomically: true, encoding: .utf8)
+            sharePayload = SharePayload(items: [url])
+        } catch {
+            routeExportError = "ForgeFit couldn’t create the GPX file. \(error.localizedDescription)"
+        }
     }
 
     /// Start (green) / finish (red) markers for a route — without them a bare
@@ -1145,11 +1290,11 @@ struct WorkoutDetailView: View {
                     if let label = split.label {
                         Text(label)
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                     } else {
                         Text("\(split.index + 1)")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                             .frame(width: 24, alignment: .leading)
                         Text(Fmt.distance(split.distanceMeters))
                             .font(.system(size: 13, weight: .semibold))
@@ -1298,7 +1443,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let runSession = CardioSessionModel(
         userID: userID, workoutExerciseID: runWE.id, modality: "run",
         startedAt: runStart, liveStartedAt: runStart, endedAt: runStart.addingTimeInterval(1080),
-        durationSeconds: 1080, distanceMeters: 3200, activeEnergyKcal: 240,
+        durationSeconds: 1080, distanceMeters: 3200, distanceSource: .route, activeEnergyKcal: 240,
         avgHR: 152, maxHR: 171, hrZoneSeconds: [60, 240, 480, 240, 60],
         routePoints: runRoutePoints,
         splits: runSplits)
@@ -1318,7 +1463,8 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let bikeSession = CardioSessionModel(
         userID: userID, workoutExerciseID: bikeWE.id, modality: "cycle",
         startedAt: bikeStart, liveStartedAt: bikeStart, endedAt: bikeStart.addingTimeInterval(600),
-        durationSeconds: 600, distanceMeters: 4000, activeEnergyKcal: 110, avgHR: 138, effort: 6,
+        durationSeconds: 600, distanceMeters: 4000, distanceSource: .userEntered,
+        activeEnergyKcal: 110, avgHR: 138, effort: 6,
         intervalsAutoApplied: true,
         splits: bikeSplits)
 
@@ -1326,7 +1472,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let legacySession = CardioSessionModel(
         userID: userID, modality: "row",
         startedAt: start.addingTimeInterval(3800),
-        durationSeconds: 480, distanceMeters: 1200, avgHR: 129)
+        durationSeconds: 480, distanceMeters: 1200, distanceSource: .userEntered, avgHR: 129)
 
     let workout = WorkoutModel(
         userID: userID, title: "Push + Engine", startedAt: start, endedAt: start.addingTimeInterval(4400),
@@ -1347,8 +1493,8 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     .modelContainer(container)
 }
 
-/// Cardio-only session — must render exactly like production today: full
-/// detail, no chevron, no collapse.
+/// Cardio-only session — one unified detail card owns workout and activity
+/// metrics because their scopes are identical.
 #Preview("Cardio only") {
     let container = previewContainer()
     let userID = UUID()
@@ -1358,7 +1504,7 @@ private func previewMixedWorkout(userID: UUID) -> (WorkoutModel, [ExerciseLibrar
     let session = CardioSessionModel(
         userID: userID, workoutExerciseID: runWE.id, modality: "run",
         startedAt: start, liveStartedAt: start, endedAt: start.addingTimeInterval(1620),
-        durationSeconds: 1620, distanceMeters: 5000, activeEnergyKcal: 380,
+        durationSeconds: 1620, distanceMeters: 5000, distanceSource: .userEntered, activeEnergyKcal: 380,
         avgHR: 156, maxHR: 178, hrZoneSeconds: [120, 300, 720, 360, 120])
     let workout = WorkoutModel(
         userID: userID, title: "Morning Run", startedAt: start, endedAt: start.addingTimeInterval(1700),

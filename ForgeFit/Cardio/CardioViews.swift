@@ -45,6 +45,7 @@ struct CardioExerciseCard: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -65,6 +66,7 @@ struct CardioExerciseCard: View {
     @State private var importing = false
     @State private var showIntervalEditor = false
     @State private var activeSegmentMessage: String?
+    @State private var noteFocusRequested = false
     @AppStorage("zoneVoiceCues") private var zoneVoiceCues = true
 
     private var kind: CardioKind {
@@ -118,10 +120,7 @@ struct CardioExerciseCard: View {
     private func setZoneTarget(_ zone: Int?) {
         var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON) ?? IntervalPlan(steps: [])
         plan.hrZoneTarget = zone
-        workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
-        workoutExercise.updatedAt = Date()
-        try? modelContext.save()
-        WatchLink.shared.publishState()
+        _ = persistPlan(plan.isMeaningful ? plan.encodedJSON() : nil)
     }
 
     /// Pre-start goal selector: open tracking, a heart-rate zone to hold, or
@@ -145,9 +144,14 @@ struct CardioExerciseCard: View {
             }
             Spacer()
             if hasIntervals {
-                Button("Edit") { showIntervalEditor = true }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                Button {
+                    showIntervalEditor = true
+                } label: {
+                    Text("Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
             }
             Menu {
@@ -171,10 +175,11 @@ struct CardioExerciseCard: View {
             } label: {
                 Text(plan?.isMeaningful == true ? "Change" : "Set")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
+                    .minimumTouchTarget()
             }
             .accessibilityIdentifier("cardio-goal-menu")
         }
@@ -182,12 +187,10 @@ struct CardioExerciseCard: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .sheet(isPresented: $showIntervalEditor) {
-            IntervalPlanBuilderView(planJSON: workoutExercise.intervalPlanJSON) { json in
-                workoutExercise.intervalPlanJSON = json
-                workoutExercise.updatedAt = Date()
-                try? modelContext.save()
-                WatchLink.shared.publishState()
-            }
+            IntervalPlanBuilderView(
+                planJSON: workoutExercise.intervalPlanJSON,
+                commit: persistPlan
+            )
         }
     }
 
@@ -206,20 +209,23 @@ struct CardioExerciseCard: View {
     }
 
     private func setGoalOpen() {
-        workoutExercise.intervalPlanJSON = nil
-        workoutExercise.updatedAt = Date()
-        try? modelContext.save()
-        WatchLink.shared.publishState()
+        _ = persistPlan(nil)
     }
 
     private func setGoalZone(_ zone: Int) {
         // A zone goal replaces intervals — the selector is choosing the
         // session's mode, and the interval editor can still layer a zone
         // lock on top of steps.
-        workoutExercise.intervalPlanJSON = IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON()
-        workoutExercise.updatedAt = Date()
-        try? modelContext.save()
-        WatchLink.shared.publishState()
+        _ = persistPlan(IntervalPlan(steps: [], hrZoneTarget: zone).encodedJSON())
+    }
+
+    private func persistPlan(_ planJSON: String?) -> Bool {
+        WorkoutIntervalPlanPersistence.apply(
+            planJSON,
+            to: workoutExercise,
+            in: modelContext,
+            onCommit: { WatchLink.shared.publishState() }
+        )
     }
 
     /// Live zone-lock picker on the cardio card: choose a target zone to get
@@ -243,10 +249,11 @@ struct CardioExerciseCard: View {
             } label: {
                 Text(currentZoneTarget == 0 ? "Set" : "Z\(currentZoneTarget)")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(theme.secondaryAccent.opacity(0.12))
                     .clipShape(Capsule())
+                    .minimumTouchTarget()
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -266,7 +273,10 @@ struct CardioExerciseCard: View {
                     StickyNoteView(
                         workoutExercise: workoutExercise,
                         exerciseID: workoutExercise.exerciseID,
-                        pinnedNote: pinnedNote
+                        pinnedNote: pinnedNote,
+                        focusRequested: noteFocusRequested,
+                        onFocusHandled: { noteFocusRequested = false },
+                        onPinnedNoteChanged: onPinnedNoteChanged
                     )
                 }
                 if let session {
@@ -317,9 +327,14 @@ struct CardioExerciseCard: View {
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("cardio-history-edit")
             }
@@ -373,7 +388,7 @@ struct CardioExerciseCard: View {
                     Image(systemName: "play.fill")
                     Text("Start \(kind.title)")
                 }
-                .font(.bodyStrong).foregroundStyle(.white)
+                .font(.bodyStrong).foregroundStyle(theme.onSecondaryAccent)
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(theme.secondaryAccent)
                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
@@ -389,6 +404,7 @@ struct CardioExerciseCard: View {
             Button { withAnimation { showManual.toggle() } } label: {
                 Text(showManual ? "Hide manual entry" : "Enter manually instead")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    .minimumTouchTarget()
             }
             if showManual {
                 CardioSessionEditor(session: session, kind: kind, onChange: recompute)
@@ -413,7 +429,8 @@ struct CardioExerciseCard: View {
                 } label: {
                     Label("Start interval guidance", systemImage: "timer")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                        .minimumTouchTarget()
                 }
             } else {
                 // Zone-only or open sessions can still set/adjust a zone
@@ -493,8 +510,14 @@ struct CardioExerciseCard: View {
                 Text(filled ? "Auto-filled from Apple Health" : "No Health data for this segment yet")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button(showManual ? "Done" : "Edit") { withAnimation { showManual.toggle() } }
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.secondaryAccent)
+                Button {
+                    withAnimation { showManual.toggle() }
+                } label: {
+                    Text(showManual ? "Done" : "Edit")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                        .minimumTouchTarget()
+                }
             }
             if let hr = session.avgHR, !showManual {
                 HRZoneBar(avgHR: hr, maxHR: session.maxHR, durationSeconds: session.durationSeconds)
@@ -514,7 +537,7 @@ struct CardioExerciseCard: View {
                             Spacer()
                             Text(Fmt.durationShort(split.durationSeconds))
                                 .font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                         }
                     }
                 }
@@ -561,7 +584,8 @@ struct CardioExerciseCard: View {
                     } label: {
                         Text("Open Settings")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -592,20 +616,27 @@ struct CardioExerciseCard: View {
             activeSegmentMessage = "\(active) is already recording. Complete it before starting cardio."
             return
         }
-        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         let now = Date()
-        session.liveStartedAt = now
-        session.startedAt = now
+        CardioSessionStartPersistence.perform(
+            session: session,
+            startedAt: now,
+            context: modelContext,
+            onCommit: {
+            beginPersistedCardioRuntime(session, startedAt: now)
+        })
+    }
+
+    private func beginPersistedCardioRuntime(_ session: CardioSessionModel, startedAt: Date) {
+        Task { await HealthService.shared.requestAuthorizationIfNeeded() }
         CardioGoalAnnouncer.shared.activate(
             sessionID: session.id,
             goal: decodedPlan?.goal,
-            startedAt: now,
+            startedAt: startedAt,
             cardioKind: kind
         )
         if providesGPSDistance {
             CardioRouteRecorder.shared.start(session: session)
         }
-        try? modelContext.save()
         // Structured session: begin the step engine with the segment. The
         // runner drives the zone guard per step (work Z4, recover Z3...).
         if let planJSON = workoutExercise.intervalPlanJSON {
@@ -620,65 +651,61 @@ struct CardioExerciseCard: View {
     }
 
     private func complete(_ session: CardioSessionModel) {
-        IntervalRunnerHub.shared.stop(for: session.id)
-        HRZoneGuard.shared.deactivate()
-        PaceGuard.shared.deactivate()
-        NotificationScheduler.shared.cancelCardioCues()
         let end = Date()
         let start = session.liveStartedAt ?? session.startedAt
         let distanceAtEnd = liveDistance(session)
         let elevationAtEnd = CardioRouteRecorder.shared.recordingSessionID == session.id
             ? CardioRouteRecorder.shared.liveElevationGainMeters
             : session.elevationGainMeters
-        session.endedAt = end
-        session.durationSeconds = max(1, Int(end.timeIntervalSince(start)))
-        CardioRouteRecorder.shared.stop(session: session, in: modelContext)
-        CardioGoalAnnouncer.shared.evaluate(
-            sessionID: session.id,
-            distanceMeters: distanceAtEnd,
-            elapsedSeconds: session.durationSeconds,
-            liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
-            elevationGainMeters: elevationAtEnd,
-            at: end
-        )
-        CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: session.id)
-        try? modelContext.save()
-        importing = true
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
-        Task {
-            let snap = await HealthService.shared.importSnapshot(from: start, to: end, modality: kind)
-            await MainActor.run {
-                if let d = snap.durationSeconds { session.durationSeconds = d }
-                if let hr = snap.avgHR ?? bleStats?.avgHR { session.avgHR = hr }
-                if let mx = snap.maxHR ?? bleStats?.maxHR { session.maxHR = mx }
-                if let e = snap.activeEnergyKcal { session.activeEnergyKcal = e }
-                // Skip auto distance for treadmills / indoor machines (manual
-                // entry). For outdoor runs, keep the GPS route distance when we
-                // recorded a route — it's what the splits are summed from, so
-                // overwriting it with HealthKit's shorter estimate makes the
-                // total disagree with the splits. Only fall back to HealthKit
-                // when there's no route to trust.
-                if let dist = snap.distanceMeters, providesGPSDistance, session.routePoints.count < 2 {
-                    session.distanceMeters = dist
-                }
-                // Provisional estimate — finalize() below replaces it with the
-                // measured distribution when the HR series has real coverage.
-                session.hrZoneSeconds = CardioMetrics.estimatedZoneSecondsArray(avgHR: session.avgHR, durationSeconds: session.durationSeconds)
+        CardioSessionTerminalPersistence.perform(
+            container: modelContext.container,
+            sessionID: session.id,
+            endedAt: end,
+            completesYoga: false,
+            useClockDuration: true,
+            stagesRoute: providesGPSDistance
+        ) { outcome in
+            IntervalRunnerHub.shared.stop(for: outcome.sessionID)
+            HRZoneGuard.shared.deactivate()
+            PaceGuard.shared.deactivate()
+            NotificationScheduler.shared.cancelCardioCues()
+            if providesGPSDistance {
+                CardioRouteRecorder.shared.cancel(sessionID: outcome.sessionID)
             }
-            // Capture the time-series (measured zones) and auto-detect intervals (free-form runs).
-            await CardioSeriesService.finalize(session: session, hadManualIntervalPlan: hadManualIntervalPlan, in: modelContext)
-            await MainActor.run {
-                CardioGoalAnnouncer.shared.finish(
-                    sessionID: session.id,
-                    distanceMeters: session.distanceMeters ?? distanceAtEnd,
-                    durationSeconds: session.durationSeconds,
-                    activeEnergyKcal: session.activeEnergyKcal,
-                    elevationGainMeters: session.elevationGainMeters ?? elevationAtEnd
-                )
-                importing = false
-                recompute()
-            }
+            CardioGoalAnnouncer.shared.evaluate(
+                sessionID: outcome.sessionID,
+                distanceMeters: outcome.distanceMeters ?? distanceAtEnd,
+                elapsedSeconds: outcome.durationSeconds,
+                liveActiveEnergyTotalKcal: LiveMetricsHub.shared.liveMetrics?.activeEnergyKcal,
+                elevationGainMeters: outcome.elevationGainMeters ?? elevationAtEnd,
+                at: outcome.end
+            )
+            CardioGoalAnnouncer.shared.stopLiveUpdates(sessionID: outcome.sessionID)
+            DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
+                .init(
+                    sessionID: outcome.sessionID,
+                    start: outcome.start,
+                    end: outcome.end,
+                    modality: kind,
+                    fallbackAvgHR: bleStats?.avgHR,
+                    fallbackMaxHR: bleStats?.maxHR,
+                    importsDistance: providesGPSDistance,
+                    providesGPSDistance: providesGPSDistance,
+                    hadManualIntervalPlan: hadManualIntervalPlan
+                ),
+                container: modelContext.container
+            )
+            CardioGoalAnnouncer.shared.finish(
+                sessionID: outcome.sessionID,
+                distanceMeters: outcome.distanceMeters ?? distanceAtEnd,
+                durationSeconds: outcome.durationSeconds,
+                activeEnergyKcal: outcome.activeEnergyKcal,
+                elevationGainMeters: outcome.elevationGainMeters ?? elevationAtEnd
+            )
+            importing = false
+            WatchLink.shared.publishDurableState()
         }
     }
 
@@ -686,7 +713,7 @@ struct CardioExerciseCard: View {
         HStack(spacing: Space.md) {
             Image(systemName: kind.systemImage)
                 .font(.rowValue)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .frame(width: 38, height: 38)
                 .background(theme.surfaceElevated).clipShape(Circle())
             VStack(alignment: .leading, spacing: 1) {
@@ -695,6 +722,7 @@ struct CardioExerciseCard: View {
                         onShowExerciseDetail(exercise)
                     } label: {
                         ExerciseNameLabel(name: exercise.name, font: .system(size: 18, weight: .bold))
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -741,7 +769,8 @@ struct CardioExerciseCard: View {
             actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
-                try? modelContext.save()
+                noteFocusRequested = true
+                modelContext.saveUserChanges()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -777,8 +806,9 @@ struct CardioExerciseCard: View {
         )
         modelContext.insert(new)
         workout.cardioSessions.append(new)
-        try? modelContext.save()
-        session = new
+        modelContext.saveUserChanges {
+            session = new
+        }
     }
 
     /// Post-hoc goal verdict against the final session numbers — met in
@@ -818,8 +848,9 @@ struct CardioExerciseCard: View {
                let meters = CardioDerivations.swimDistanceMeters(
                    poolLengthMeters: session.poolLengthMeters,
                    lengths: session.lengthsCompleted
-               ) {
+                ) {
                 session.distanceMeters = meters
+                session.distanceSource = .userEntered
             }
             // Manual field edits must not fabricate a distribution over real
             // data: keep the measured series-derived zones when they exist and
@@ -830,7 +861,7 @@ struct CardioExerciseCard: View {
         }
         workoutExercise.updatedAt = Date()
         workout.updatedAt = Date()
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 
@@ -866,7 +897,10 @@ private struct CardioSessionEditor: View {
                 } else if kind.usesDistance {
                     field("Distance", kind.usesFixedMeters ? "m" : Fmt.distanceUnit.abbreviation,
                           get: session.distanceMeters.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.distance(fromMeters: $0) },
-                          set: { session.distanceMeters = $0.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.meters(fromDistance: $0) } })
+                          set: {
+                              session.distanceMeters = $0.map { kind.usesFixedMeters ? $0 : Fmt.distanceUnit.meters(fromDistance: $0) }
+                              session.distanceSource = $0 == nil ? nil : .userEntered
+                          })
                 }
                 field("Avg HR", "bpm", get: session.avgHR.map(Double.init), set: { session.avgHR = $0.map { Int($0) } })
                 field("Max HR", "bpm", get: session.maxHR.map(Double.init), set: { session.maxHR = $0.map { Int($0) } })
@@ -980,10 +1014,11 @@ private struct CardioSessionEditor: View {
                     Text(session.strokeStyleRaw.flatMap(SwimStrokeStyle.init(rawValue:))?.title ?? "Stroke")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(theme.secondaryAccent.opacity(0.12))
                 .clipShape(Capsule())
+                .minimumTouchTarget()
             }
             .accessibilityIdentifier("swim-stroke-style")
             Spacer()
@@ -1129,6 +1164,7 @@ private struct MetricDraftField: View {
                     .font(.rowValue)
                     .foregroundStyle(theme.textPrimary)
                     .focused($focused)
+                    .minimumTouchTarget()
                     .accessibilityIdentifier("cardio-field-\(label.lowercased().replacingOccurrences(of: " ", with: "-"))")
             }
             Text(unit).font(.system(size: 11)).foregroundStyle(theme.textTertiary)
@@ -1165,6 +1201,10 @@ struct HRZoneBar: View {
     let durationSeconds: Int?
     var zoneSeconds: [Int]? = nil
     var source: ZoneDataSource = .estimated
+    /// The surrounding summary may already own the exact average. In that
+    /// context the zone bar labels only the interpreted zone instead of
+    /// repeating the same BPM value a second time.
+    var showsAverageInHeader = true
 
     private var distribution: [(zone: Int, seconds: Int)] {
         if let zoneSeconds, zoneSeconds.contains(where: { $0 > 0 }) {
@@ -1181,7 +1221,9 @@ struct HRZoneBar: View {
             HStack {
                 Text("Heart-rate zones").font(.tag).foregroundStyle(theme.textSecondary)
                 Spacer()
-                Text("\(avgHR) bpm avg · \(HRZone.label(zone))")
+                Text(showsAverageInHeader
+                     ? "\(avgHR) bpm avg · \(HRZone.label(zone))"
+                     : HRZone.label(zone))
                     .font(.tag).foregroundStyle(theme.zoneColor(zone))
             }
             let total = distribution.reduce(0) { $0 + $1.seconds }
@@ -1378,7 +1420,13 @@ struct CardioSummaryCard: View {
                         TimeChartRangePicker(selection: $range)
                     }
                     if weekly.contains(where: { $0.value > 0 }) {
-                        BarTrendChart(points: weekly, color: theme.secondaryAccent)
+                        BarTrendChart(
+                            points: weekly,
+                            color: theme.secondaryAccent,
+                            valueFormatter: { "\($0.formatted(.number.precision(.fractionLength(0...1)))) min" },
+                            axisValueFormatter: { $0.formatted(.number.precision(.fractionLength(0...1))) },
+                            yAxisLabel: "Time (min/week)"
+                        )
                     } else {
                         Text("Start a run, ride, or Zone 2 session to see cardio trends.")
                             .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
@@ -1408,7 +1456,7 @@ struct CardioSummaryCard: View {
         let zone = session.avgHR.map { HRZone.zone(forAvgHR: $0) }
         return HStack(spacing: Space.md) {
             Image(systemName: kind.systemImage)
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .frame(width: 34, height: 34).background(theme.surfaceElevated).clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(kind.title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -1510,13 +1558,13 @@ struct CardioZoneInsightsCard: View {
                     } label: {
                         HStack {
                             Text("What your zones train")
-                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accent)
+                                .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accentForeground)
                             Spacer()
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 11, weight: .bold)).foregroundStyle(theme.textTertiary)
                                 .rotationEffect(.degrees(showAdaptations ? 180 : 0))
                         }
-                        .contentShape(Rectangle())
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
 

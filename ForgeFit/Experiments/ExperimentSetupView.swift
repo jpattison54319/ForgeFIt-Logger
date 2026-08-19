@@ -396,7 +396,7 @@ struct ExperimentSetupView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: tracker.kind.systemImage)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -653,7 +653,9 @@ struct ExperimentTrackerEditor: View {
                     } else if tracker.kind == .rating {
                         HStack(spacing: Space.md) {
                             TextField("1 means…", text: $tracker.lowLabel)
+                                .minimumTouchTarget()
                             TextField("5 means…", text: $tracker.highLabel)
+                                .minimumTouchTarget()
                         }
                         .textFieldStyle(.roundedBorder)
                     } else if tracker.kind == .choice {
@@ -801,7 +803,7 @@ struct ExperimentTrackerEditor: View {
                     } label: {
                         Text(String(symbol.prefix(1)))
                             .font(.tag)
-                            .foregroundStyle(selected ? Color.white : theme.textSecondary)
+                            .foregroundStyle(selected ? theme.onAccent : theme.textSecondary)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(selected ? theme.accent : theme.surface)
                             .clipShape(Circle())

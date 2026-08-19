@@ -35,6 +35,7 @@ enum RoutineDuplicator {
                             targetRepsLow: s.targetRepsLow, targetRepsHigh: s.targetRepsHigh,
                             targetWeight: s.targetWeight, targetRPE: s.targetRPE,
                             targetRIR: s.targetRIR, targetDurationSeconds: s.targetDurationSeconds,
+                            targetDistanceMeters: s.targetDistanceMeters,
                             plannedMiniSetCount: s.plannedMiniSetCount,
                             plannedMiniRepsJSON: s.plannedMiniRepsJSON
                         )

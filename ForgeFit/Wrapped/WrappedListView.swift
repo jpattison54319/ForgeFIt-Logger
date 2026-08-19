@@ -75,7 +75,7 @@ struct WrappedListView: View {
                     if !report.isViewed {
                         Text("NEW")
                             .font(.tag)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(theme.accentSoft)

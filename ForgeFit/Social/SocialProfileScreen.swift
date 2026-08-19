@@ -55,7 +55,7 @@ struct SocialProfileScreen: View {
                         } label: {
                             Card(padding: Space.md) {
                                 HStack(spacing: Space.md) {
-                                    Image(systemName: "calendar").font(.system(size: 16)).foregroundStyle(theme.accent).frame(width: 28)
+                                    Image(systemName: "calendar").font(.system(size: 16)).foregroundStyle(theme.accentForeground).frame(width: 28)
                                     Text("View all workouts").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                                     Spacer()
                                     Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textTertiary)

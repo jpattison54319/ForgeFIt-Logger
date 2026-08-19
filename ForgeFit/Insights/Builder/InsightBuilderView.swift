@@ -25,6 +25,7 @@ struct InsightBuilderView: View {
     @State private var name = ""
     @State private var preview: InsightResult?
     @State private var previewTask: Task<Void, Never>?
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showMetricPicker: MetricSlot?
     /// The canvas as it was seeded — Cancel warns only when work would be lost.
     @State private var seededRecipe: InsightRecipe?
@@ -178,6 +179,11 @@ struct InsightBuilderView: View {
             }
             .onAppear(perform: seedCanvas)
             .onChange(of: recipe) { _, _ in schedulePreview() }
+            .onChange(of: performanceGate.isLiveWorkoutActive) { _, isActive in
+                previewTask?.cancel()
+                previewTask = nil
+                if !isActive { schedulePreview() }
+            }
         }
     }
 
@@ -229,7 +235,8 @@ struct InsightBuilderView: View {
                             systemImage: "plus.circle.fill"
                         )
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("insight-add-comparison")
@@ -529,6 +536,7 @@ struct InsightBuilderView: View {
                     in: (availableLags.map(\.count).min() ?? 0)...(availableLags.map(\.count).max() ?? 0)
                 )
                 .labelsHidden()
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityLabel("Timing offset")
                 .accessibilityValue(lagDescription)
             }
@@ -748,19 +756,24 @@ struct InsightBuilderView: View {
     private func schedulePreview() {
         previewTask?.cancel()
         preview = nil
-        guard validation.isValid else { return }
+        guard validation.isValid,
+              performanceGate.allowsNonWorkoutWork else { return }
         let snapshot = recipe
         previewTask = Task { [workouts, exercises, checkins, routines] in
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             let result = await InsightDataCoordinator.shared.result(
                 for: snapshot, workouts: workouts, exercises: exercises, checkins: checkins,
                 routines: routines
             )
             // A slow evaluation must never replace the preview of a newer
             // recipe — cancellation plus a signature check closes the race.
-            guard !Task.isCancelled, snapshot.analysisSignature == recipe.analysisSignature else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork,
+                  snapshot.analysisSignature == recipe.analysisSignature else { return }
             preview = result
+            previewTask = nil
         }
     }
 
@@ -1014,32 +1027,30 @@ struct InsightBuilderView: View {
         }
 
         if let editing {
-            let previous = (editing.name, editing.recipeJSON, editing.updatedAt)
-            editing.name = toSave.name
-            editing.recipeJSON = encoded
-            editing.updatedAt = toSave.updatedAt
             do {
-                try modelContext.save()
+                _ = try SavedInsightPersistence.update(
+                    id: editing.id,
+                    name: toSave.name,
+                    recipeJSON: encoded,
+                    in: modelContext,
+                    now: toSave.updatedAt
+                )
             } catch {
-                editing.name = previous.0
-                editing.recipeJSON = previous.1
-                editing.updatedAt = previous.2
                 saveError = "Couldn't save this insight: \(error.localizedDescription)"
                 return
             }
         } else {
             let existingCount = (try? modelContext.fetchCount(FetchDescriptor<SavedInsightModel>())) ?? 0
-            let row = SavedInsightModel(
-                userID: ForgeFitDemo.userID,
-                name: toSave.name,
-                recipeJSON: encoded,
-                position: existingCount
-            )
-            modelContext.insert(row)
             do {
-                try modelContext.save()
+                _ = try SavedInsightPersistence.create(
+                    userID: ForgeFitDemo.userID,
+                    name: toSave.name,
+                    recipeJSON: encoded,
+                    position: existingCount,
+                    in: modelContext,
+                    now: toSave.updatedAt
+                )
             } catch {
-                modelContext.delete(row)
                 saveError = "Couldn't save this insight: \(error.localizedDescription)"
                 return
             }
@@ -1214,7 +1225,7 @@ private struct InsightMetricPickerSheet: View {
                                     if currentID == InsightMetricCatalog.muscleSetsID(for: muscle) {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 13, weight: .bold))
-                                            .foregroundStyle(theme.accent)
+                                            .foregroundStyle(theme.accentForeground)
                                     }
                                 }
                             }
@@ -1244,7 +1255,7 @@ private struct InsightMetricPickerSheet: View {
                                         if metric.id == currentID {
                                             Image(systemName: "checkmark")
                                                 .font(.system(size: 13, weight: .bold))
-                                                .foregroundStyle(theme.accent)
+                                                .foregroundStyle(theme.accentForeground)
                                         }
                                     }
                                 }
@@ -1267,7 +1278,7 @@ private struct InsightMetricPickerSheet: View {
                                 if currentID.flatMap({ InsightMetricCatalog.muscle(fromMetricID: $0) }) != nil {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(theme.accent)
+                                        .foregroundStyle(theme.accentForeground)
                                 } else {
                                     Image(systemName: "chevron.right")
                                         .font(.system(size: 12, weight: .semibold))
@@ -1436,7 +1447,7 @@ private struct InsightChipRow<T: Hashable>: View {
                                 .lineLimit(1)
                                 .fixedSize()
                         }
-                        .foregroundStyle(selected ? Color.white : theme.textSecondary)
+                        .foregroundStyle(selected ? theme.onAccent : theme.textSecondary)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 8)
                         .background(selected ? theme.accent : theme.surfaceElevated)

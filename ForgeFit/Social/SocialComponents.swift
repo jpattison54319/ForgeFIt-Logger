@@ -97,7 +97,7 @@ struct SocialStatTile: View {
     var body: some View {
         VStack(spacing: 2) {
             HStack(spacing: Space.xs) {
-                Image(systemName: icon).font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent).accessibilityHidden(true)
+                Image(systemName: icon).font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accentForeground).accessibilityHidden(true)
                 Text(value).font(.system(size: 17, weight: .bold)).foregroundStyle(theme.textPrimary).lineLimit(1).minimumScaleFactor(0.7)
             }
             Text(label).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
@@ -118,7 +118,7 @@ struct SocialWorkoutRow: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(spacing: Space.sm) {
-                    Image(systemName: kindIcon).font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accent)
+                    Image(systemName: kindIcon).font(.system(size: 14, weight: .bold)).foregroundStyle(theme.accentForeground)
                     Text(ref.title ?? "Workout").font(.bodyStrong).foregroundStyle(theme.textPrimary).lineLimit(1)
                     Spacer()
                     Text(ref.startedAt.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 12)).foregroundStyle(theme.textSecondary)

@@ -27,6 +27,14 @@ extension ExerciseLibraryModel {
     }
 }
 
+private enum ImportedExerciseReviewError: LocalizedError {
+    case missingExercise
+
+    var errorDescription: String? {
+        "That imported exercise is no longer available."
+    }
+}
+
 struct ReviewImportedExercisesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -87,6 +95,14 @@ struct ReviewImportedExercisesView: View {
                 mergingExercise = nil
             }
         }
+        .alert(
+            "Couldn't Save Changes",
+            isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "The imported exercise change wasn't saved.")
+        }
     }
 
     private var header: some View {
@@ -124,59 +140,105 @@ struct ReviewImportedExercisesView: View {
     }
 
     private func confirm(_ exercise: ExerciseLibraryModel) {
-        exercise.needsReview = false
-        exercise.userModified = true
-        exercise.classificationSource = ClassificationSource.manual
-        exercise.classificationConfidence = max(exercise.classificationConfidence, ExerciseClassifier.reviewConfidenceThreshold)
-        exercise.updatedAt = Date()
-        save()
+        confirm(exerciseID: exercise.id)
     }
 
     private func merge(_ source: ExerciseLibraryModel, into target: ExerciseLibraryModel) {
+        merge(sourceID: source.id, targetID: target.id)
+    }
+
+    private func confirm(exerciseID: UUID) {
         errorMessage = nil
-        guard source.id != target.id else {
+        PersistentChangeSaveCenter.shared.perform({
+            let transaction = isolatedTransactionContext()
+            guard let exercise = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { $0.id == exerciseID }
+            )).first else {
+                throw ImportedExerciseReviewError.missingExercise
+            }
+            exercise.needsReview = false
+            exercise.userModified = true
+            exercise.classificationSource = ClassificationSource.manual
+            exercise.classificationConfidence = max(
+                exercise.classificationConfidence,
+                ExerciseClassifier.reviewConfidenceThreshold
+            )
+            exercise.updatedAt = Date()
+            do {
+                try transaction.save()
+            } catch {
+                transaction.rollback()
+                throw error
+            }
+        }, onSuccess: {
+            BackupScheduler.shared.noteLogDataChanged()
+        })
+    }
+
+    private func merge(sourceID: UUID, targetID: UUID) {
+        errorMessage = nil
+        guard sourceID != targetID else {
             errorMessage = "Choose a different exercise to merge into."
             return
         }
 
-        do {
-            try remapReferences(from: source.id, to: target.id)
-            modelContext.delete(source)
-            try modelContext.save()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        PersistentChangeSaveCenter.shared.perform({
+            let transaction = isolatedTransactionContext()
+            guard let source = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { $0.id == sourceID }
+            )).first,
+            try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
+                predicate: #Predicate { $0.id == targetID }
+            )).first != nil else {
+                throw ImportedExerciseReviewError.missingExercise
+            }
+            try remapReferences(from: sourceID, to: targetID, in: transaction)
+            transaction.delete(source)
+            do {
+                try transaction.save()
+            } catch {
+                // The isolated context owns only this merge, so rollback
+                // cannot erase or commit pending edits held by another screen.
+                transaction.rollback()
+                throw error
+            }
+        }, onSuccess: {
+            BackupScheduler.shared.noteLogDataChanged()
+        })
     }
 
-    private func remapReferences(from sourceID: UUID, to targetID: UUID) throws {
-        let workoutExercises = try modelContext.fetch(FetchDescriptor<WorkoutExerciseModel>(
+    private func remapReferences(
+        from sourceID: UUID,
+        to targetID: UUID,
+        in context: ModelContext
+    ) throws {
+        let workoutExercises = try context.fetch(FetchDescriptor<WorkoutExerciseModel>(
             predicate: #Predicate { $0.exerciseID == sourceID }
         ))
         for item in workoutExercises { item.exerciseID = targetID }
 
-        let routineExercises = try modelContext.fetch(FetchDescriptor<RoutineExerciseModel>(
+        let routineExercises = try context.fetch(FetchDescriptor<RoutineExerciseModel>(
             predicate: #Predicate { $0.exerciseID == sourceID }
         ))
         for item in routineExercises { item.exerciseID = targetID }
 
-        let aliases = try modelContext.fetch(FetchDescriptor<ExerciseAliasModel>(
+        let aliases = try context.fetch(FetchDescriptor<ExerciseAliasModel>(
             predicate: #Predicate { $0.exerciseID == sourceID }
         ))
         for item in aliases { item.exerciseID = targetID }
 
-        let notes = try modelContext.fetch(FetchDescriptor<UserExerciseNoteModel>(
+        let notes = try context.fetch(FetchDescriptor<UserExerciseNoteModel>(
             predicate: #Predicate { $0.exerciseID == sourceID }
         ))
         for item in notes { item.exerciseID = targetID }
     }
 
-    private func save() {
-        do {
-            try modelContext.save()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func isolatedTransactionContext() -> ModelContext {
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
+        return context
     }
+
 }
 
 private struct ReviewImportedExerciseRow: View {
@@ -250,6 +312,7 @@ private struct ReviewImportedExerciseRow: View {
                     Button(action: onConfirm) {
                         Label("Confirm", systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.accent)
@@ -257,12 +320,14 @@ private struct ReviewImportedExerciseRow: View {
                     Button(action: onEdit) {
                         Label("Edit", systemImage: "slider.horizontal.3")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.bordered)
 
                     Button(action: onMerge) {
                         Label("Merge", systemImage: "arrow.triangle.merge")
                             .frame(maxWidth: .infinity)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.bordered)
                 }

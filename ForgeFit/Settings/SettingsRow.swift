@@ -19,7 +19,7 @@ struct SettingsRowLabel: View {
             if let icon {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(iconTint == nil ? theme.onAccent : .white)
                     .frame(width: 30, height: 30)
                     .background(iconTint ?? theme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -83,7 +83,7 @@ struct SettingsRow<Trailing: View>: View {
 
 // MARK: - List row theming
 
-/// Applies the Sage theme's surface color and separator tint to a list row.
+/// Applies the active theme's surface color and separator tint to a list row.
 /// Use on every row inside the settings `List(.insetGrouped)` so the grouped
 /// sections match the custom dark/light Sage palette instead of the system
 /// defaults.
@@ -98,7 +98,7 @@ private struct ThemedListRowModifier: ViewModifier {
 }
 
 extension View {
-    /// Style a list row with Sage theme surface + separator colors.
+    /// Style a list row with the active theme's surface + separator colors.
     func themedListRow() -> some View {
         modifier(ThemedListRowModifier())
     }

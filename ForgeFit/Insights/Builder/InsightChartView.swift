@@ -46,6 +46,8 @@ struct InsightChartView: View {
 
     @State private var selectedDate: Date?
     @State private var selectedX: Double?
+    @State private var selectedCategory: String?
+    @State private var selectedAngle: Double?
 
     /// Series colors must be tellable apart at a glance — accent green, then
     /// amber, teal, and slate (secondaryAccent is a near-twin of accent, so
@@ -87,10 +89,8 @@ struct InsightChartView: View {
 
     private var supportsValueInspection: Bool {
         switch kind {
-        case .lineTrend, .sharedUnitOverlay, .baselineIndexLines, .scatterWithTrend:
-            true
-        default:
-            false
+        case .periodComparisonCards: false
+        default: true
         }
     }
 
@@ -187,12 +187,8 @@ struct InsightChartView: View {
 
     @ViewBuilder
     private var annotatedTimeChart: some View {
-        if compact {
-            lineChart
-        } else {
-            lineChart
-                .chartXSelection(value: $selectedDate)
-        }
+        lineChart
+            .pressHoldChartXSelection(value: $selectedDate)
     }
 
     private var lineChart: some View {
@@ -266,18 +262,7 @@ struct InsightChartView: View {
     }
 
     private func selectionBox(title: String, lines: [(String, String)]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(theme.textSecondary)
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                HStack(spacing: 4) {
-                    Text(line.0).font(.system(size: 10)).foregroundStyle(theme.textSecondary)
-                    Text(line.1).font(.system(size: 11, weight: .bold)).foregroundStyle(theme.textPrimary)
-                }
-            }
-        }
-        .padding(6)
-        .background(theme.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        ChartSelectionCallout(title: title, lines: lines)
     }
 
     private var barChart: some View {
@@ -288,25 +273,37 @@ struct InsightChartView: View {
                         x: .value("Date", point.date),
                         y: .value(titleFor(series.metricID), point.value)
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .cornerRadius(3)
                     .accessibilityLabel(spokenPointLabel(key: series.metricID, date: point.date))
                     .accessibilityValue(
                         formattedValue(point.value, key: series.metricID)
                     )
                 }
+                if let point = selectedDate.flatMap({ nearestPoint(to: $0, in: series) }) {
+                    RuleMark(x: .value("Selected date", point.date))
+                        .foregroundStyle(theme.separator)
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                            selectionBox(
+                                title: point.date.formatted(date: .abbreviated, time: .omitted),
+                                lines: [(titleFor(series.metricID), formattedValue(point.value, key: series.metricID))]
+                            )
+                        }
+                }
             }
         }
         .chartYAxis { formattedYAxis(primaryKind) }
         .chartXAxis { dateXAxis }
         .chartYAxisLabel(alignment: .leading) { singleSeriesYTitle }
+        .pressHoldChartXSelection(value: $selectedDate)
     }
 
     private var smallMultiples: some View {
         VStack(spacing: Space.md) {
             ForEach(Array(result.series.enumerated()), id: \.element.metricID) { index, series in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(titleFor(series.metricID))
+                    Text(axisTitleText(for: series.metricID))
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(theme.textSecondary)
                     Chart {
@@ -327,11 +324,23 @@ struct InsightChartView: View {
                                     formattedValue(point.value, key: series.metricID)
                                 )
                         }
+                        if let point = selectedDate.flatMap({ nearestPoint(to: $0, in: series) }) {
+                            RuleMark(x: .value("Selected date", point.date))
+                                .foregroundStyle(theme.separator)
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                                    selectionBox(
+                                        title: point.date.formatted(date: .abbreviated, time: .omitted),
+                                        lines: [(titleFor(series.metricID), formattedValue(point.value, key: series.metricID))]
+                                    )
+                                }
+                        }
                     }
                     .chartXScale(domain: sharedTimeDomain)
                     .chartXAxis { dateXAxis }
                     .chartYAxis { formattedYAxis(valueKindFor(series.metricID), key: series.metricID) }
                     .chartLegend(.hidden)
+                    .pressHoldChartXSelection(value: $selectedDate)
                     .frame(height: max(64, (height - 40) / CGFloat(max(result.series.count, 1))))
                 }
             }
@@ -382,15 +391,20 @@ struct InsightChartView: View {
             }
         }
         .chartLegend(.hidden)
-        .chartXSelection(value: $selectedX)
-        .chartXAxisLabel(titleFor(exposureID))
-        .chartYAxisLabel(titleFor(outcomeID))
+        .pressHoldChartXSelection(value: $selectedX)
+        .chartXAxisLabel(axisTitleText(for: exposureID))
+        .chartYAxisLabel(axisTitleText(for: outcomeID))
         .chartXAxis {
-            AxisMarks { value in
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine()
                 AxisValueLabel {
                     if let doubleValue = value.as(Double.self) {
-                        Text(formattedValue(doubleValue, key: exposureID))
+                        Text(InsightValueFormat.axisString(
+                            doubleValue,
+                            kind: valueKindFor(exposureID),
+                            weightUnit: weightUnitFor(exposureID),
+                            modality: modalityFor(exposureID)
+                        ))
                             .font(.system(size: 9))
                     }
                 }
@@ -401,6 +415,12 @@ struct InsightChartView: View {
 
     private func nearestPair(to x: Double) -> InsightPair? {
         result.relationship?.pairs.min { abs($0.x - x) < abs($1.x - x) }
+    }
+
+    private func nearestPoint(to date: Date, in series: InsightSeries) -> InsightSeriesPoint? {
+        series.points.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
     }
 
     // MARK: - Groups
@@ -435,7 +455,7 @@ struct InsightChartView: View {
                         y: .value("Median", group.median),
                         width: .ratio(0.6)
                     )
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .cornerRadius(4)
                     .accessibilityLabel(group.category)
                     .accessibilityValue(
@@ -443,9 +463,29 @@ struct InsightChartView: View {
                     )
                 }
             }
+            if let group = selectedGroup {
+                RuleMark(x: .value("Selected group", group.category))
+                    .foregroundStyle(theme.separator)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        selectionBox(
+                            title: group.category,
+                            lines: showRange
+                                ? [("Median", formattedValue(group.median, key: primaryKey)),
+                                   ("Range", "\(formattedValue(group.minimum, key: primaryKey))–\(formattedValue(group.maximum, key: primaryKey))")]
+                                : [("Median", formattedValue(group.median, key: primaryKey))]
+                        )
+                    }
+            }
         }
         .chartYAxis { formattedYAxis(primaryKind) }
         .chartYAxisLabel(alignment: .leading) { singleSeriesYTitle }
+        .pressHoldChartXSelection(value: $selectedCategory)
+    }
+
+    private var selectedGroup: InsightGroup? {
+        guard let selectedCategory else { return nil }
+        return result.groups?.first { $0.category == selectedCategory }
     }
 
     private var donutChart: some View {
@@ -458,6 +498,7 @@ struct InsightChartView: View {
                     angularInset: 2
                 )
                 .foregroundStyle(by: .value("Group", group.category))
+                .opacity(selectedDonutGroup == nil || selectedDonutGroup?.category == group.category ? 1 : 0.35)
                 .cornerRadius(3)
                 .accessibilityLabel(group.category)
                 .accessibilityValue(
@@ -469,6 +510,38 @@ struct InsightChartView: View {
             }
         }
         .chartForegroundStyleScale(range: seriesPalette + [theme.danger, theme.textTertiary])
+        .chartBackground { _ in
+            if let group = selectedDonutGroup {
+                VStack(spacing: 1) {
+                    Text(group.category)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    Text(formattedValue(group.total, key: primaryKey))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(theme.textPrimary)
+                    if total > 0 {
+                        Text("\((group.total / total * 100).formatted(.number.precision(.fractionLength(0...1))))%")
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(group.category)
+                .accessibilityValue(formattedValue(group.total, key: primaryKey))
+                .accessibilityIdentifier("chart-selected-measurement")
+            }
+        }
+        .pressHoldChartAngleSelection(value: $selectedAngle)
+    }
+
+    private var selectedDonutGroup: InsightGroup? {
+        guard let selectedAngle else { return nil }
+        var upperBound = 0.0
+        for group in result.groups ?? [] {
+            upperBound += group.total
+            if selectedAngle <= upperBound { return group }
+        }
+        return result.groups?.last
     }
 
     @ChartContentBuilder
@@ -569,10 +642,31 @@ struct InsightChartView: View {
                     .accessibilityValue(formattedValue(current, key: delta.metricID))
                 }
             }
+            if let delta = selectedPeriodDelta {
+                RuleMark(x: .value("Selected metric", titleFor(delta.metricID)))
+                    .foregroundStyle(theme.separator)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        selectionBox(
+                            title: titleFor(delta.metricID),
+                            lines: [
+                                delta.previous.map { ("Previous", formattedValue($0, key: delta.metricID)) },
+                                delta.current.map { ("Current", formattedValue($0, key: delta.metricID)) },
+                            ].compactMap { $0 }
+                        )
+                    }
+            }
         }
         .chartForegroundStyleScale(["Previous": theme.zone1.opacity(0.7), "Current": theme.accent])
         .chartLegend(.visible)
         .chartYAxis { formattedYAxis(primaryKind) }
+        .chartYAxisLabel(alignment: .leading) { singleSeriesYTitle }
+        .pressHoldChartXSelection(value: $selectedCategory)
+    }
+
+    private var selectedPeriodDelta: InsightPeriodDelta? {
+        guard let selectedCategory else { return nil }
+        return result.periodDeltas?.first { titleFor($0.metricID) == selectedCategory }
     }
 
     /// Five-number summary for a distribution's "Ranges" chart: min–max
@@ -613,8 +707,25 @@ struct InsightChartView: View {
                     + "full range \(formattedValue(summary.minimum, key: primaryKey)) to "
                     + "\(formattedValue(summary.maximum, key: primaryKey))"
             )
+            if selectedCategory == title {
+                RuleMark(x: .value("Selected distribution", title))
+                    .foregroundStyle(theme.separator)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        selectionBox(
+                            title: title,
+                            lines: [
+                                ("Median", formattedValue(summary.median, key: primaryKey)),
+                                ("Middle half", "\(formattedValue(summary.q1, key: primaryKey))–\(formattedValue(summary.q3, key: primaryKey))"),
+                                ("Range", "\(formattedValue(summary.minimum, key: primaryKey))–\(formattedValue(summary.maximum, key: primaryKey))"),
+                            ]
+                        )
+                    }
+            }
         }
         .chartYAxis { formattedYAxis(primaryKind) }
+        .chartYAxisLabel(alignment: .leading) { singleSeriesYTitle }
+        .pressHoldChartXSelection(value: $selectedCategory)
     }
 
     private func deltaColor(_ delta: InsightPeriodDelta) -> Color {
@@ -635,7 +746,7 @@ struct InsightChartView: View {
                     y: .value("Count", bin.count),
                     width: .automatic
                 )
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .cornerRadius(2)
                 .accessibilityLabel(
                     "\(formattedValue(bin.lowerBound, key: primaryKey)) to "
@@ -643,21 +754,53 @@ struct InsightChartView: View {
                 )
                 .accessibilityValue("\(bin.count) \(distributionCountNoun.lowercased())")
             }
+            if let bin = selectedHistogramBin {
+                let midpoint = (bin.lowerBound + bin.upperBound) / 2
+                RuleMark(x: .value("Selected range", midpoint))
+                    .foregroundStyle(theme.separator)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        selectionBox(
+                            title: "\(formattedValue(bin.lowerBound, key: primaryKey))–\(formattedValue(bin.upperBound, key: primaryKey))",
+                            lines: [(distributionCountNoun, bin.count.formatted())]
+                        )
+                    }
+            }
         }
         .chartYAxisLabel(alignment: .leading) { axisTitle(distributionCountNoun) }
         .chartXAxisLabel(alignment: .center) {
-            if let first = result.series.first { axisTitle(titleFor(first.metricID)) }
+            if let first = result.series.first { axisTitle(axisTitleText(for: first.metricID)) }
         }
         .chartXAxis {
-            AxisMarks { value in
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine()
                 AxisValueLabel {
                     if let doubleValue = value.as(Double.self) {
-                        Text(formattedValue(doubleValue, key: primaryKey))
+                        Text(InsightValueFormat.axisString(
+                            doubleValue,
+                            kind: valueKindFor(primaryKey),
+                            weightUnit: weightUnitFor(primaryKey),
+                            modality: modalityFor(primaryKey)
+                        ))
                             .font(.system(size: 9))
                     }
                 }
             }
+        }
+        .chartYAxis {
+            AxisMarks(position: .trailing, values: .automatic(desiredCount: 5)) { _ in
+                AxisGridLine()
+                AxisValueLabel()
+            }
+        }
+        .pressHoldChartXSelection(value: $selectedX)
+    }
+
+    private var selectedHistogramBin: InsightHistogramBin? {
+        guard let selectedX else { return nil }
+        return result.histogram?.min {
+            abs((($0.lowerBound + $0.upperBound) / 2) - selectedX)
+                < abs((($1.lowerBound + $1.upperBound) / 2) - selectedX)
         }
     }
 
@@ -760,8 +903,30 @@ struct InsightChartView: View {
     @ViewBuilder
     private var singleSeriesYTitle: some View {
         if result.series.count == 1, let first = result.series.first {
-            axisTitle(titleFor(first.metricID))
+            axisTitle(axisTitleText(for: first.metricID))
+        } else if let unit = sharedYAxisUnit {
+            axisTitle(unit)
         }
+    }
+
+    private func axisTitleText(for key: String) -> String {
+        let unit = InsightValueFormat.axisUnitLabel(
+            kind: valueKindFor(key),
+            weightUnit: weightUnitFor(key),
+            modality: modalityFor(key)
+        )
+        return unit.map { "\(titleFor(key)) (\($0))" } ?? titleFor(key)
+    }
+
+    private var sharedYAxisUnit: String? {
+        let units = Set(result.series.compactMap { series in
+            InsightValueFormat.axisUnitLabel(
+                kind: valueKindFor(series.metricID),
+                weightUnit: weightUnitFor(series.metricID),
+                modality: modalityFor(series.metricID)
+            )
+        })
+        return units.count == 1 ? units.first : nil
     }
 
     private func axisTitle(_ text: String) -> some View {
@@ -774,11 +939,11 @@ struct InsightChartView: View {
         _ kind: InsightValueKind?,
         key: String? = nil
     ) -> some AxisContent {
-        AxisMarks(position: .trailing) { value in
+        AxisMarks(position: .trailing, values: .automatic(desiredCount: 5)) { value in
             AxisGridLine()
             AxisValueLabel {
                 if let doubleValue = value.as(Double.self) {
-                    Text(InsightValueFormat.string(
+                    Text(InsightValueFormat.axisString(
                         doubleValue,
                         kind: kind,
                         weightUnit: weightUnitFor(key ?? primaryKey),

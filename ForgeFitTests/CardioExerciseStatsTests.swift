@@ -126,6 +126,32 @@ struct CardioExerciseStatsTests {
         #expect(!records.contains { $0.kind == .fastestPace })
     }
 
+    @Test func runExposesHeartRateAndAerobicEfficiencyTrends() {
+        let runs = [
+            workout(daysAgo: 2, exerciseID: exerciseID) { rowID in
+                let session = self.runSession(rowID: rowID, meters: 2_000, seconds: 1_200, daysAgo: 2)
+                session.avgHR = 120
+                return session
+            },
+            workout(daysAgo: 1, exerciseID: exerciseID) { rowID in
+                let session = self.runSession(rowID: rowID, meters: 2_200, seconds: 1_200, daysAgo: 1)
+                session.avgHR = 120
+                return session
+            },
+        ]
+        let entries = CardioExerciseStats.entries(for: exerciseID, in: runs)
+        let metrics = CardioExerciseStats.availableMetrics(for: .run, entries: entries)
+
+        #expect(metrics.contains(.pace))
+        #expect(metrics.contains(.averageHeartRate))
+        #expect(metrics.contains(.aerobicEfficiency))
+
+        let efficiency = CardioExerciseStats.series(.aerobicEfficiency, entries: entries)
+        #expect(efficiency.count == 2)
+        #expect(efficiency[1].value > efficiency[0].value)
+        #expect(CardioExerciseStats.series(.averageHeartRate, entries: entries).allSatisfy { $0.value == 120 })
+    }
+
     // MARK: - Records gating
 
     @Test func recordsFollowModalityContract() {

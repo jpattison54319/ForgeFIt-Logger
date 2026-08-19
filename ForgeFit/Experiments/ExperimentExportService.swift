@@ -268,7 +268,7 @@ nonisolated enum ExperimentExportService {
                     averagePowerWatts: session.avgPowerWatts,
                     elevationGainMeters: session.elevationGainMeters,
                     steps: session.totalSteps,
-                    posesCompleted: session.posesCompleted
+                    posesCompleted: session.logicalYogaPosesCompleted
                 )
             }
         }

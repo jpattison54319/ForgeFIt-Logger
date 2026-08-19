@@ -256,7 +256,7 @@ struct CoachingSetupView: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
             .padding(.horizontal, Space.md)
@@ -396,7 +396,7 @@ struct CoachingSetupView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "figure.yoga")
                         .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 30)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(sessionsPerWeek)x per week")
@@ -410,8 +410,12 @@ struct CoachingSetupView: View {
                 }
             }
             PrimaryButton(title: "Set my target", systemImage: "checkmark.circle.fill") {
-                CoachPlanService.confirmYogaPlan(answers: currentAnswers(), sessionsPerWeek: sessionsPerWeek, in: modelContext)
-                didConfirm = true
+                CoachPlanService.confirmYogaPlan(
+                    answers: currentAnswers(),
+                    sessionsPerWeek: sessionsPerWeek,
+                    in: modelContext,
+                    onCommit: { didConfirm = true }
+                )
             }
         }
     }
@@ -440,8 +444,12 @@ struct CoachingSetupView: View {
     }
 
     private func confirm(candidate: ProgramCandidate) {
-        CoachPlanService.confirmPlan(candidate: candidate, answers: currentAnswers(), in: modelContext)
-        didConfirm = true
+        CoachPlanService.confirmPlan(
+            candidate: candidate,
+            answers: currentAnswers(),
+            in: modelContext,
+            onCommit: { didConfirm = true }
+        )
     }
 
     // MARK: - Confirmed

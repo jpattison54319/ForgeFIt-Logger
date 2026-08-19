@@ -188,6 +188,26 @@ struct SleepIntegrityTests {
         }
     }
 
+    @Test @MainActor func clearAllErasesPersistedAndLiveSleepCorrections() throws {
+        let suiteName = "SleepOverrideStoreClearTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let day = cal.startOfDay(for: now)
+        let store = SleepOverrideStore(defaults: defaults, calendar: cal)
+        store.set(.manual(minutes: 450), for: day)
+
+        #expect(defaults.data(forKey: SleepOverrideStore.defaultsKey) != nil)
+        #expect(defaults.bool(forKey: SleepOverrideStore.eagerDeleteRepairKey))
+
+        store.clearAll()
+
+        #expect(store.override(for: day) == nil)
+        #expect(defaults.object(forKey: SleepOverrideStore.defaultsKey) == nil)
+        #expect(defaults.object(forKey: SleepOverrideStore.eagerDeleteRepairKey) == nil)
+        let reloaded = SleepOverrideStore(defaults: defaults, calendar: cal)
+        #expect(reloaded.override(for: day) == nil)
+    }
+
     @Test func manualOverrideSubstitutesDurationAndClearsFlag() {
         let last = night(daysAgo: 0, sleepMinutes: 120, hrvSamples: 2, hrSamples: 3)
         var series = series(lastNight: last)

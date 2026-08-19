@@ -68,6 +68,10 @@ final class ReadinessDelivery {
     private var container: ModelContainer?
     private var observersStarted = false
     private var refreshTask: Task<Void, Never>?
+    private var resumeTask: Task<Void, Never>?
+    private var externalRefreshTasks: [UUID: Task<Void, Never>] = [:]
+    private var isLiveWorkoutActive = false
+    private var pendingRefreshAfterWorkout = false
     /// Keeps the observing HKHealthStore alive — observer queries stop if
     /// their store deallocates. AnyObject so the property compiles where
     /// HealthKit can't be imported.
@@ -97,17 +101,55 @@ final class ReadinessDelivery {
         refreshMorningNotification()
     }
 
+    /// Health/readiness work is useful again after the session, but never
+    /// while the logger owns the interaction budget. Suppressed wake-ups are
+    /// collapsed into one delayed catch-up rather than replayed individually.
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        guard isLiveWorkoutActive != isActive else { return }
+        isLiveWorkoutActive = isActive
+        if isActive {
+            pendingRefreshAfterWorkout = true
+            refreshTask?.cancel()
+            refreshTask = nil
+            resumeTask?.cancel()
+            resumeTask = nil
+            for task in externalRefreshTasks.values {
+                task.cancel()
+            }
+            externalRefreshTasks.removeAll()
+        } else if pendingRefreshAfterWorkout {
+            schedulePostWorkoutCatchUp()
+        }
+    }
+
     // MARK: - BGAppRefresh (pre-dawn recompute)
 
     private func handleRefresh(_ task: BGAppRefreshTask) {
         scheduleNextRefresh()   // one-shot: always re-arm tomorrow's first
-        let work = Task { @MainActor in
-            refreshTask?.cancel()
-            refreshTask = nil
-            await HealthMetricsStore.shared.refreshNow()
-            await refreshMorningNotificationNow()
+        guard !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
             task.setTaskCompleted(success: true)
+            return
         }
+        let id = UUID()
+        let work = Task { @MainActor [weak self] in
+            defer {
+                task.setTaskCompleted(success: !Task.isCancelled)
+                self?.externalRefreshTasks[id] = nil
+            }
+            guard let self else { return }
+            guard !self.isLiveWorkoutActive else {
+                self.pendingRefreshAfterWorkout = true
+                return
+            }
+            await HealthMetricsStore.shared.refreshNow()
+            guard !Task.isCancelled, !self.isLiveWorkoutActive else {
+                pendingRefreshAfterWorkout = true
+                return
+            }
+            await refreshMorningNotificationNow()
+        }
+        externalRefreshTasks[id] = work
         task.expirationHandler = { work.cancel() }
     }
 
@@ -139,11 +181,25 @@ final class ReadinessDelivery {
                     return
                 }
                 Task { @MainActor in
-                    ReadinessDelivery.shared.refreshTask?.cancel()
-                    ReadinessDelivery.shared.refreshTask = nil
-                    await HealthMetricsStore.shared.refreshNow()
-                    await ReadinessDelivery.shared.refreshMorningNotificationNow()
-                    completion()
+                    let id = UUID()
+                    let work = Task { @MainActor in
+                        defer {
+                            completion()
+                            ReadinessDelivery.shared.externalRefreshTasks[id] = nil
+                        }
+                        guard !ReadinessDelivery.shared.isLiveWorkoutActive else {
+                            ReadinessDelivery.shared.pendingRefreshAfterWorkout = true
+                            return
+                        }
+                        await HealthMetricsStore.shared.refreshNow()
+                        guard !Task.isCancelled,
+                              !ReadinessDelivery.shared.isLiveWorkoutActive else {
+                            ReadinessDelivery.shared.pendingRefreshAfterWorkout = true
+                            return
+                        }
+                        await ReadinessDelivery.shared.refreshMorningNotificationNow()
+                    }
+                    ReadinessDelivery.shared.externalRefreshTasks[id] = work
                 }
             }
             store.execute(query)
@@ -158,6 +214,10 @@ final class ReadinessDelivery {
     /// observer wakes, app foreground). A push is scheduled only when today's
     /// daily score includes complete sleep and is ready before the cutoff.
     func refreshMorningNotification() {
+        guard !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
+            return
+        }
         refreshTask?.cancel()
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -168,6 +228,10 @@ final class ReadinessDelivery {
     }
 
     private func refreshMorningNotificationNow() async {
+        guard !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
+            return
+        }
         guard NotificationScheduler.shared.morningReadinessEnabled else {
             cancelPendingMorningReadiness()
             return
@@ -198,7 +262,10 @@ final class ReadinessDelivery {
         }
 
         let report = await computeReport()
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
+            return
+        }
         let dailyScore = report?.recovery.daily.state.value
 
         // Sleep is attributed to the day it ended. Require today's trustworthy
@@ -255,6 +322,23 @@ final class ReadinessDelivery {
     private func cancelPendingMorningReadiness() {
         UserDefaults.standard.removeObject(forKey: Self.scheduledFireKey)
         NotificationScheduler.shared.cancelMorningReadiness()
+    }
+
+    private func schedulePostWorkoutCatchUp() {
+        resumeTask?.cancel()
+        resumeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled, !isLiveWorkoutActive else { return }
+            pendingRefreshAfterWorkout = false
+            await HealthMetricsStore.shared.refreshIfStaleNow()
+            guard !Task.isCancelled, !isLiveWorkoutActive else {
+                pendingRefreshAfterWorkout = true
+                return
+            }
+            await refreshMorningNotificationNow()
+            guard !Task.isCancelled else { return }
+            resumeTask = nil
+        }
     }
 
     private func computeReport() async -> RecoveryEngine.Report? {

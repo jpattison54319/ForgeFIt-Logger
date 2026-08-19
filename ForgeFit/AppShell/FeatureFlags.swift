@@ -31,6 +31,29 @@ enum FeatureFlags {
         UserDefaults.standard.bool(forKey: "social")
     }
 
+    /// Bluetooth heart-rate monitors — the Settings pairing row, the pairing
+    /// sheet, the HRM column in the connection hero, and the reconnect that
+    /// runs when a workout starts. Held OFF for 1.0.
+    ///
+    /// App Review cited the `bluetooth-central` background mode under
+    /// Guideline 2.5.4 and asked for a physical-device recording of Bluetooth
+    /// in use. With no strap on hand to film, the background mode came out of
+    /// `AppInfo.plist` and the entry points came out with it — a feature a
+    /// reviewer can see but cannot exercise is worse than no feature at all.
+    ///
+    /// `BLEHeartRateService` and everything downstream of it are untouched;
+    /// this gate only hides the ways in. Because `CBCentralManager` is built
+    /// lazily on first use, gating the reconnect call means it is never
+    /// constructed and iOS never asks for Bluetooth permission.
+    ///
+    /// Turning this back on also needs `bluetooth-central` restored to
+    /// `AppInfo.plist`, or a paired strap will drop as soon as the app leaves
+    /// the foreground. `NSBluetoothAlwaysUsageDescription` was deliberately
+    /// left in place so flipping this key alone can never crash on launch.
+    nonisolated static var bluetoothHeartRate: Bool {
+        UserDefaults.standard.bool(forKey: "bluetooth_heart_rate")
+    }
+
     /// Launching a coach-adjusted version of a routine from Home — the
     /// "Review coach's version" button under Up next, and the welcome-back
     /// card's "Ease back in". Held OFF: ForgeFit shows you your training and
@@ -42,5 +65,34 @@ enum FeatureFlags {
     /// review entry and is gated separately by `coachCorner`.
     nonisolated static var coachDoseReview: Bool {
         UserDefaults.standard.bool(forKey: "coach_dose_review")
+    }
+
+    /// Home's expandable daily recommendation. Held OFF while ForgeFit moves
+    /// away from recommendation-led presentation. Recovery data and the
+    /// recommendation engine remain intact for the metric tiles, detail views,
+    /// notifications, widgets, and a possible future return of this card.
+    nonisolated static var homeDailyRecommendation: Bool {
+        UserDefaults.standard.bool(forKey: "home_daily_recommendation")
+    }
+
+    /// The large suggested-routine card above Home's quick-launch tiles. Held
+    /// OFF so the workout entry point is the neutral "Quick start" collection.
+    /// The suggestion and launch path remain intact behind this one gate.
+    nonisolated static var homeSuggestedWorkout: Bool {
+        UserDefaults.standard.bool(forKey: "home_suggested_workout")
+    }
+
+    /// The explanatory sentence beneath the green action on Recovery Today.
+    /// The action remains visible; only the supporting recommendation copy is
+    /// held back.
+    nonisolated static var recoveryActionDetail: Bool {
+        UserDefaults.standard.bool(forKey: "recovery_action_detail")
+    }
+
+    /// The CR10 methodology line under a ready weekly-load comparison. Empty
+    /// and building states keep their explanations because those communicate
+    /// why a comparison is unavailable.
+    nonisolated static var trainingLoadMethodDetail: Bool {
+        UserDefaults.standard.bool(forKey: "training_load_method_detail")
     }
 }

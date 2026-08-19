@@ -60,7 +60,10 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [treadmill], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [treadmill], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.count == 1)
         #expect(workout.exercises.first?.sets.isEmpty == true)
@@ -96,7 +99,14 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            setupNotes: [setupNote],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == setupNote.note)
         #expect(workout.exercises.first?.notePinned == true)
@@ -123,7 +133,14 @@ struct ForgeFitTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], setupNotes: [setupNote], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            setupNotes: [setupNote],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.first?.notes == "Routine-specific cue")
         #expect(workout.exercises.first?.notePinned == false)
@@ -240,7 +257,14 @@ struct ForgeFitTests {
         ]
         let report = RecoveryEngine(workouts: workouts, exercises: [squat, curl, pushdown], now: now).report()
 
-        #expect(report.recovery.muscles.filter { $0.state.value != nil }.count == 3)
+        let scoredMuscles = Set(
+            report.recovery.muscles.compactMap { muscle in
+                muscle.state.value == nil ? nil : muscle.muscle
+            }
+        )
+        // Exact muscles remain represented even when the recovery model also
+        // adds their parent-region rollups (for example, arms and legs).
+        #expect(scoredMuscles.isSuperset(of: ["quadriceps", "biceps", "triceps"]))
         #expect(!report.reasonChips.contains { $0.text.localizedCaseInsensitiveContains("fresh") })
 
         // Mixed picture: biceps trained yesterday → the named-muscle chip is

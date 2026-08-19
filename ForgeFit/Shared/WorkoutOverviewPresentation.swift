@@ -18,7 +18,8 @@ struct WorkoutOverviewPresentation {
     static func make(
         workout: WorkoutModel,
         exercises: [ExerciseLibraryModel],
-        durationSeconds: Int
+        durationSeconds: Int,
+        averageHeartRate: Int? = nil
     ) -> Self {
         let plan = WorkoutPresentationPlan.make(for: workout)
         let sessions = workout.cardioSessions.filter { $0.deletedAt == nil }
@@ -42,7 +43,7 @@ struct WorkoutOverviewPresentation {
                         strengthSets: effectiveSets
                     )
                 }
-                let avgHR = workout.avgHR ?? completed.compactMap(\.avgHR).averageRounded
+                let avgHR = averageHeartRate ?? workout.avgHR ?? completed.compactMap(\.avgHR).averageRounded
                 let energy = workout.activeEnergyKcal
                     ?? completed.compactMap(\.activeEnergyKcal).reduce(0, +)
                 return Self(
@@ -117,7 +118,10 @@ struct WorkoutOverviewPresentation {
                         label: cardio.count > 1 ? "Activities" : "Avg HR",
                         value: cardio.count > 1
                             ? "\(cardio.count)"
-                            : cardio.first?.avgHR.map(String.init) ?? workout.avgHR.map(String.init) ?? "—"
+                            : averageHeartRate.map(String.init)
+                                ?? workout.avgHR.map(String.init)
+                                ?? cardio.first?.avgHR.map(String.init)
+                                ?? "—"
                     )
                 ],
                 strengthVolume: volume,

@@ -27,6 +27,9 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
         /// Yoga mode: wall-clock end of the current pose hold, so the lock
         /// screen renders a native countdown. Nil outside a guided class.
         public var poseEndsAt: Date?
+        /// Optional so a Live Activity started by an older app remains valid.
+        public var themeFamily: ThemeFamily?
+        public var themeMode: ForgeThemeMode?
 
         public init(
             startedAt: Date,
@@ -40,7 +43,9 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
             cardioDetail: String? = nil,
             restEndsAt: Date? = nil,
             heartRate: Int? = nil,
-            poseEndsAt: Date? = nil
+            poseEndsAt: Date? = nil,
+            themeFamily: ThemeFamily? = nil,
+            themeMode: ForgeThemeMode? = nil
         ) {
             self.startedAt = startedAt
             self.exerciseName = exerciseName
@@ -54,7 +59,12 @@ public struct WorkoutActivityAttributes: ActivityAttributes {
             self.restEndsAt = restEndsAt
             self.heartRate = heartRate
             self.poseEndsAt = poseEndsAt
+            self.themeFamily = themeFamily
+            self.themeMode = themeMode
         }
+
+        public var effectiveThemeFamily: ThemeFamily { themeFamily ?? .sage }
+        public var effectiveThemeMode: ForgeThemeMode { themeMode ?? .dark }
     }
 
     public enum WorkoutActivityMode: String, Codable, Hashable {

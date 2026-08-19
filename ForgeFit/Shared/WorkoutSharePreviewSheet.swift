@@ -17,11 +17,12 @@ struct WorkoutSharePreviewSheet: View {
 
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
+    var history: [WorkoutModel] = []
     var hrSamples: [(date: Date, bpm: Int)] = []
     var recoveryPoints: [SetRecoveryPoint] = []
 
     /// Opens on the style picked last time, when this workout offers it.
-    @AppStorage("shareCardStyle.last") private var lastStyleRaw = ShareCardStyle.trainingLog.rawValue
+    @AppStorage(ShareCardStyle.preferenceKey) private var lastStyleRaw = ShareCardStyle.trainingLog.rawValue
 
     @State private var selection: ShareCardStyle = .trainingLog
     @State private var pages: [ShareCardStyle: UIImage] = [:]
@@ -118,55 +119,83 @@ struct WorkoutSharePreviewSheet: View {
     /// renders so the carousel stays responsive. Route maps are snapshotted
     /// once up front (MapKit can't be rasterized by ImageRenderer).
     private func renderPages() async {
+        let exportTheme = AppTheme.export(family: theme.family)
+        let awards = WorkoutAwards.all(
+            for: workout,
+            history: history,
+            exercises: exercises
+        )
         var routeMaps: [UUID: UIImage] = [:]
         for session in workout.cardioSessions where session.deletedAt == nil {
             let coordinates = session.routePoints
                 .sorted { $0.timestamp < $1.timestamp }
                 .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
             if coordinates.count >= 2,
-               let map = await RouteMapSnapshot.image(coordinates: coordinates, size: WorkoutShareCard.routeMapSize, theme: theme) {
+               let map = await RouteMapSnapshot.image(
+                   coordinates: coordinates,
+                   size: WorkoutShareCard.routeMapSize,
+                   theme: exportTheme
+               ) {
                 routeMaps[session.id] = map
             }
         }
         let ordered = [selection] + styles.filter { $0 != selection }
         for style in ordered where pages[style] == nil {
-            pages[style] = render(style, routeMaps: routeMaps)
+            pages[style] = render(style, routeMaps: routeMaps, awards: awards)
             await Task.yield()
         }
     }
 
     @MainActor
-    private func render(_ style: ShareCardStyle, routeMaps: [UUID: UIImage]) -> UIImage? {
+    private func render(
+        _ style: ShareCardStyle,
+        routeMaps: [UUID: UIImage],
+        awards: [WorkoutAward]
+    ) -> UIImage? {
+        let exportTheme = AppTheme.export(family: theme.family)
         switch style {
         case .trainingLog:
             return ShareRenderer.image(
-                WorkoutShareCardTrainingLog(workout: workout, exercises: exercises, theme: theme, routeMaps: routeMaps),
-                theme: theme
+                WorkoutShareCardTrainingLog(
+                    workout: workout,
+                    exercises: exercises,
+                    theme: exportTheme,
+                    routeMaps: routeMaps,
+                    awards: awards
+                ),
+                theme: exportTheme
             )
         case .metrics:
             return ShareRenderer.image(
                 WorkoutShareCardMetrics(
                     workout: workout,
                     exercises: exercises,
-                    theme: theme,
+                    theme: exportTheme,
                     hrSamples: hrSamples,
-                    recoveryPoints: recoveryPoints
+                    recoveryPoints: recoveryPoints,
+                    awards: awards
                 ),
-                theme: theme
+                theme: exportTheme
             )
         case .minimal:
             return ShareRenderer.image(
-                WorkoutShareCardMinimal(workout: workout, exercises: exercises, theme: theme),
-                theme: theme
+                WorkoutShareCardMinimal(
+                    workout: workout,
+                    exercises: exercises,
+                    theme: exportTheme,
+                    awards: awards
+                ),
+                theme: exportTheme
             )
         case .full:
             return WorkoutShareRenderer.image(
                 for: workout,
                 exercises: exercises,
-                theme: theme,
+                theme: exportTheme,
                 hrSamples: hrSamples,
                 recoveryPoints: recoveryPoints,
-                routeMaps: routeMaps
+                routeMaps: routeMaps,
+                awards: awards
             )
         }
     }

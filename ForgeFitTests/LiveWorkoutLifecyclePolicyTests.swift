@@ -1,8 +1,49 @@
 import Foundation
+import ForgeData
 import Testing
 @testable import ForgeFit
 
+@MainActor
 struct LiveWorkoutLifecyclePolicyTests {
+    @Test func performanceGateTransitionsOnceAndResumesOnce() {
+        let gate = LiveWorkoutPerformanceGate()
+
+        #expect(gate.allowsNonWorkoutWork)
+        #expect(gate.setLiveWorkoutActive(true))
+        #expect(!gate.allowsNonWorkoutWork)
+        #expect(gate.transitionRevision == 1)
+        #expect(gate.idleRevision == 0)
+
+        #expect(!gate.setLiveWorkoutActive(true))
+        #expect(gate.transitionRevision == 1)
+
+        #expect(gate.setLiveWorkoutActive(false))
+        #expect(gate.allowsNonWorkoutWork)
+        #expect(gate.transitionRevision == 2)
+        #expect(gate.idleRevision == 1)
+
+        #expect(!gate.setLiveWorkoutActive(false))
+        #expect(gate.idleRevision == 1)
+    }
+
+    @Test func socialBootstrapDefersAndRetriesAfterTheWorkout() async {
+        let service = SocialService(
+            backend: MockSocialBackend(me: SocialUserID("live-priority-test")),
+            isDemo: false
+        )
+        service.setLiveWorkoutActive(true)
+
+        await service.bootstrap()
+        #expect(service.status == .loading)
+
+        service.setLiveWorkoutActive(false)
+        for _ in 0..<1_000 {
+            if service.status != .loading { break }
+            await Task.yield()
+        }
+        #expect(service.status == .notOptedIn)
+    }
+
     @Test func foregroundMaintenanceNeverRunsOverALiveWorkout() {
         #expect(!LiveWorkoutLifecyclePolicy.shouldRunForegroundMaintenance(hasActiveWorkout: true))
         #expect(LiveWorkoutLifecyclePolicy.shouldRunForegroundMaintenance(hasActiveWorkout: false))
@@ -33,6 +74,10 @@ struct LiveWorkoutLifecyclePolicyTests {
             isBackgrounded: false,
             hasExportInFlight: false
         ))
+    }
+
+    @Test func automaticWorkoutHistoryBackupIsEnabledForThisRelease() {
+        #expect(BackupAutomationPolicy.isEnabledInThisRelease)
     }
 
     @Test func eachRestAlertGetsAUniquePrefixMatchedIdentifier() {

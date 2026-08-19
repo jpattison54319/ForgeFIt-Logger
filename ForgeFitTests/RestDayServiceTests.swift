@@ -6,6 +6,10 @@ import Testing
 
 @MainActor
 struct RestDayServiceTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private let timeZone = TimeZone(identifier: "America/New_York")!
 
     private var calendar: Calendar {
@@ -119,5 +123,53 @@ struct RestDayServiceTests {
         )
 
         #expect(restDay.deletedAt == date(2026, 8, 8, 15))
+    }
+
+    @Test func failedLogCannotRideAlongOnALaterSave() throws {
+        let (container, context) = try TestStore.make()
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try RestDayService.log(
+                date: date(2026, 8, 6),
+                workouts: [],
+                in: context,
+                now: date(2026, 8, 8),
+                timeZone: timeZone,
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        #expect(try freshContext.fetch(FetchDescriptor<RestDayModel>()).isEmpty)
+    }
+
+    @Test func failedRemovalRestoresTheLiveRestDayBeforeAnyLaterSave() throws {
+        let (container, context) = try TestStore.make()
+        let restDay = try RestDayService.log(
+            date: date(2026, 8, 6),
+            workouts: [],
+            in: context,
+            now: date(2026, 8, 8),
+            timeZone: timeZone
+        )
+        let originalUpdatedAt = restDay.updatedAt
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try RestDayService.remove(
+                restDay,
+                in: context,
+                now: date(2026, 8, 8, 15),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(restDay.deletedAt == nil)
+        #expect(restDay.updatedAt == originalUpdatedAt)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        let persisted = try #require(freshContext.fetch(FetchDescriptor<RestDayModel>()).first)
+        #expect(persisted.deletedAt == nil)
+        #expect(persisted.updatedAt == originalUpdatedAt)
     }
 }

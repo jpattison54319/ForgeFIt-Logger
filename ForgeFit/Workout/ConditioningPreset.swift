@@ -46,6 +46,18 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    var summary: String {
+        switch self {
+        case .cindy: "20 min AMRAP"
+        case .hundredsChipper: "10 rounds × 10"
+        case .twentyOneFifteenNine: "Descending ladder"
+        case .emom: "10-minute EMOM"
+        case .tabata: "8 × 20 sec work / 10 sec rest"
+        case .ladder: "10-round ascending ladder"
+        case .maxLoad: "5 attempts for load"
+        }
+    }
+
     var movements: [ConditioningPresetMovement] {
         switch self {
         case .cindy:
@@ -91,7 +103,7 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
             )
         }
 
-        return switch self {
+        var section = switch self {
         case .cindy:
             ConditioningSection(id: id, name: title, format: .amrap, durationSeconds: 1_200, movements: resolvedMovements)
         case .hundredsChipper:
@@ -123,6 +135,8 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
         case .maxLoad:
             ConditioningSection(id: id, name: title, format: .maxLoad, timeCapSeconds: 600, rounds: 5, movements: resolvedMovements)
         }
+        section.presetReferenceID = "built-in-\(self.id)"
+        return section
     }
 
     func makePlan(exerciseIDs: [UUID]) -> ConditioningPlan {
@@ -134,11 +148,13 @@ enum ConditioningPreset: String, CaseIterable, Identifiable, Sendable {
 enum ConditioningPlanCoordinator {
     enum ApplyError: LocalizedError {
         case missingExercise(String)
+        case missingSavedExercise
         case missingSection
 
         var errorDescription: String? {
             switch self {
             case .missingExercise(let name): "The exercise library is missing \(name)."
+            case .missingSavedExercise: "A movement in this saved preset is no longer in your exercise library."
             case .missingSection: "That conditioning section no longer exists."
             }
         }
@@ -172,6 +188,36 @@ enum ConditioningPlanCoordinator {
     }
 
     static func apply(
+        _ selection: ConditioningPresetSelection,
+        to sectionID: UUID,
+        in plan: inout ConditioningPlan,
+        catalog: [ExerciseLibraryModel]
+    ) throws {
+        switch selection {
+        case .builtIn(let preset):
+            try apply(preset, to: sectionID, in: &plan, catalog: catalog)
+        case .saved(_, _, let savedSection):
+            guard let sectionIndex = plan.sections.firstIndex(where: { $0.id == sectionID }) else {
+                throw ApplyError.missingSection
+            }
+            let availableExerciseIDs = Set(catalog.lazy.filter { $0.deletedAt == nil }.map(\.id))
+            guard savedSection.movements.allSatisfy({ availableExerciseIDs.contains($0.exerciseID) }) else {
+                throw ApplyError.missingSavedExercise
+            }
+
+            var replacement = savedSection
+            replacement.id = sectionID
+            replacement.presetReferenceID = selection.id
+            replacement.movements = savedSection.movements.map { movement in
+                var copy = movement
+                copy.id = UUID()
+                return copy
+            }
+            plan.sections[sectionIndex] = replacement
+        }
+    }
+
+    static func apply(
         _ preset: ConditioningPreset,
         to sectionID: UUID,
         in plan: inout ConditioningPlan,
@@ -180,6 +226,20 @@ enum ConditioningPlanCoordinator {
         in context: ModelContext
     ) throws {
         try apply(preset, to: sectionID, in: &plan, catalog: catalog)
+        reconcileRoutineExercises(with: plan, routine: routine, in: context)
+        routine.conditioningPlanJSON = plan.encodedJSON()
+        routine.updatedAt = .now
+    }
+
+    static func apply(
+        _ selection: ConditioningPresetSelection,
+        to sectionID: UUID,
+        in plan: inout ConditioningPlan,
+        to routine: RoutineModel,
+        catalog: [ExerciseLibraryModel],
+        in context: ModelContext
+    ) throws {
+        try apply(selection, to: sectionID, in: &plan, catalog: catalog)
         reconcileRoutineExercises(with: plan, routine: routine, in: context)
         routine.conditioningPlanJSON = plan.encodedJSON()
         routine.updatedAt = .now

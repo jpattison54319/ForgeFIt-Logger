@@ -109,7 +109,7 @@ struct CoachAdjustmentReviewView: View {
             }
             Text(sourceLabel)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .textCase(.uppercase)
                 .accessibilityIdentifier("coach-review-source-label")
             Text(draft.plan.summary)
@@ -161,6 +161,7 @@ struct CoachAdjustmentReviewView: View {
                     Toggle("", isOn: row.included)
                         .labelsHidden()
                         .tint(theme.accent)
+                        .minimumTouchTarget()
                         .accessibilityLabel("\(row.wrappedValue.exerciseName) included in coach adjustment")
                 }
                 if row.wrappedValue.included, row.wrappedValue.maxSetsToDrop > 0 {
@@ -247,21 +248,40 @@ struct CoachAdjustmentReviewView: View {
 
     private func startWorkout() {
         let capturedDraft = draft
-        dismiss()
         appState.requestStart {
-            let workout = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-            CoachAdjustments.apply(draft: capturedDraft, to: workout, in: modelContext)
-            appState.showingLogger = true
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: setupNotes,
+                in: modelContext,
+                prepare: { workout, context in
+                    CoachAdjustments.apply(
+                        draft: capturedDraft,
+                        to: workout,
+                        in: context,
+                        saveChanges: false
+                    )
+                },
+                onCommit: { _ in completeStart() }
+            )
         }
-        onStarted?()
     }
 
     private func startAsPlanned() {
-        dismiss()
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-            appState.showingLogger = true
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: setupNotes,
+                in: modelContext,
+                onCommit: { _ in completeStart() }
+            )
         }
+    }
+
+    private func completeStart() {
+        dismiss()
+        appState.showingLogger = true
         onStarted?()
     }
 }

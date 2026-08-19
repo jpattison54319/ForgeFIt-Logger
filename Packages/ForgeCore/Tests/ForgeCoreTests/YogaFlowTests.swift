@@ -42,11 +42,18 @@ struct YogaFlowTests {
                 transitionCue: "Step your right foot forward"
             ),
             step("Downward-Facing Dog", hold: 30)
-        ])
+        ], voiceGuidanceEnabled: false)
         let json = try #require(original.encodedJSON())
         let decoded = try #require(YogaFlowPlan.decode(from: json))
         #expect(decoded == original)
         #expect(decoded.style == .vinyasa)
+        #expect(!decoded.voiceGuidanceEnabled)
+    }
+
+    @Test func legacyJSONDefaultsVoiceGuidanceOn() throws {
+        let json = #"{"styleRaw":"hatha","steps":[]}"#
+        let decoded = try #require(YogaFlowPlan.decode(from: json))
+        #expect(decoded.voiceGuidanceEnabled)
     }
 
     @Test func decodeToleratesUnknownStyleRaw() throws {
@@ -71,5 +78,20 @@ struct YogaFlowTests {
         #expect(!YogaStyle.vinyasa.isRestorative)
         #expect(!YogaStyle.power.isRestorative)
         #expect(!YogaStyle.hatha.isRestorative)
+    }
+
+    @Test func logicalPoseCountFoldsOnlyAdjacentComplementarySides() {
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Left", "Pigeon — Right", "Mountain"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: ["Pigeon — Left"]) == 1)
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Left", "Warrior II — Right"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: [
+            "Pigeon — Right", "Pigeon — Left",
+            "Pigeon — Left", "Pigeon — Right"
+        ]) == 2)
+        #expect(YogaPoseCounting.logicalCount(labels: ["", "   "]) == 0)
     }
 }

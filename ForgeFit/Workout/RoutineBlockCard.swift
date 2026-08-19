@@ -26,7 +26,7 @@ struct RoutineBlockCard: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(block.kind == .conditioning ? conditioningTitle : "Yoga")
+                    Text(RoutineBlockPresentation.title(for: block))
                         .font(.cardTitle)
                         .foregroundStyle(theme.textPrimary)
                     Text(summary)
@@ -66,14 +66,6 @@ struct RoutineBlockCard: View {
             }
         }
         .accessibilityIdentifier("routine-\(block.kindRaw)-block")
-    }
-
-    private var conditioningTitle: String {
-        let plan = ConditioningPlan.decode(from: block.planJSON)
-        guard plan?.sections.count == 1, let name = plan?.sections.first?.name, !name.isEmpty else {
-            return "Conditioning"
-        }
-        return name
     }
 
     private var summary: String {

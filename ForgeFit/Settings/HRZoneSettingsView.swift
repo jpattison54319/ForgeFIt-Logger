@@ -70,7 +70,7 @@ struct HRZoneSettingsView: View {
                             Text("Max heart rate").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                             Spacer()
                             Text("\(config.maxHR) bpm").font(.system(size: 17, weight: .bold, design: .rounded))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                         }
                     }
                     Text(config.restingHR == nil
@@ -178,6 +178,7 @@ struct HRZoneSettingsView: View {
                                 .padding(.vertical, 8).padding(.horizontal, 10)
                                 .background(theme.surfaceElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .minimumTouchTarget()
                             SecondaryButton(title: "Apply", systemImage: "sparkles") {
                                 if let age = Int(manualAge), (10...100).contains(age) {
                                     config.maxHR = HRZoneConfig.maxHR(forAge: age)
@@ -225,6 +226,7 @@ struct HRZoneSettingsView: View {
                     Image(systemName: showAdvanced ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textTertiary)
                 }
+                .minimumTouchTarget()
             }
             if showAdvanced {
                 Card {
@@ -321,6 +323,7 @@ struct HRZoneSettingsView: View {
                     .padding(.horizontal, 10)
                     .background(theme.surfaceElevated)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .minimumTouchTarget()
                 Text("bpm")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textTertiary)
@@ -565,7 +568,7 @@ struct HRZoneFieldTestView: View {
         VStack(spacing: Space.lg) {
             if peakHR > 0 {
                 Text("Observed peak").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textSecondary)
-                Text("\(peakHR)").font(.system(size: 64, weight: .bold, design: .rounded)).foregroundStyle(theme.secondaryAccent)
+                Text("\(peakHR)").font(.system(size: 64, weight: .bold, design: .rounded)).foregroundStyle(theme.secondaryAccentForeground)
                 Text("bpm").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
                 if !plausibleRange.contains(peakHR) {
                     Card(fill: theme.danger.opacity(0.12)) {

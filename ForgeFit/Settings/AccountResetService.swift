@@ -10,24 +10,91 @@ extension Notification.Name {
 
 @MainActor
 enum AccountResetService {
-    static func resetAllAppData(in context: ModelContext) throws {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
+    /// Result of a full reset. The local wipe is all-or-nothing and throws on
+    /// failure; the iCloud backup deletion is awaited and reported separately
+    /// so the confirmation can never claim a deletion that did not happen.
+    enum ResetOutcome: Equatable, Sendable {
+        /// Local reset completed and the backup was removed.
+        case completed
+        /// Backup deletion failed; the backup may still exist in iCloud Drive.
+        /// The user must be told the consequence before the shell transitions.
+        case backupDeletionFailed(String)
+        /// Backup deletion was interrupted; the backup may still exist.
+        case backupDeletionCancelled
+        /// The ubiquity container could not be resolved (signed out, offline,
+        /// or inaccessible), so the backup's fate is UNKNOWN and it may still
+        /// exist. Not success: the user must acknowledge the consequence.
+        case backupDeletionUnavailable
+    }
+
+    static func resetAllAppData(
+        in context: ModelContext,
+        backupDeleter: any BackupDeleting = BackupExporter.shared,
+        databaseSave: SaveOperation = { try $0.save() }
+    ) async throws -> ResetOutcome {
+        // Delete and reseed inside one private transaction. Until this single
+        // save commits, the user's durable models, defaults, live devices, and
+        // backups are untouched; a seed/save failure therefore leaves a fully
+        // retryable pre-reset app instead of a half-wiped one.
+        let transaction = ModelContext(context.container)
+        transaction.autosaveEnabled = false
+        try stageAllLocalModelDeletes(in: transaction)
+        try ExerciseSeedRepository.seedGlobalLibrary(
+            in: transaction,
+            persist: false
+        )
+        try ExerciseCatalog.seed(into: transaction, persist: false)
+        try YogaPoseCatalog.seed(into: transaction, persist: false)
+        try YogaPoseCatalog.pruneUnavailablePoses(into: transaction, persist: false)
+        try databaseSave(transaction)
+
+        // The private commit supersedes any stale or unsaved rows retained by
+        // the keep-resident UI context. Reset intentionally discards them so a
+        // later autosave cannot resurrect pre-reset user data.
+        context.rollback()
         clearLiveSurfaces()
         cancelAppNotifications()
         ExperimentExportService.cleanupAll()
-        try deleteAllLocalModels(in: context)
         clearAppDefaults()
-        try ExerciseSeedRepository.seedGlobalLibrary(in: context)
-        ExerciseCatalog.seed(into: context)
-        try context.save()
         // The privacy policy promises reset also removes the iCloud Drive
-        // backup. Best-effort — offline just means the files outlive the
-        // reset until the user deletes them in Files.
-        Task { await BackupExporter.shared.deleteAllBackups() }
+        // backup. Await the deletion: the reset must not be declared complete
+        // (and the shell must not move to onboarding) until we know whether
+        // the backup is actually gone.
+        switch await backupDeleter.deleteAllBackups() {
+        case .deleted:
+            NotificationCenter.default.post(name: .forgeFitAccountResetDidComplete, object: nil)
+            return .completed
+        case .failed(let message):
+            return .backupDeletionFailed(message)
+        case .cancelled:
+            return .backupDeletionCancelled
+        case .unavailable:
+            // A missing/inaccessible ubiquity container does NOT prove the
+            // backup is gone — it only proves we could not look. Treat it as
+            // an unresolved consequence the user must acknowledge.
+            return .backupDeletionUnavailable
+        }
+    }
+
+    /// Called AFTER the user has acknowledged a consequence-stated backup
+    /// deletion outcome (failure, interruption, or unresolved/unavailable).
+    /// The local reset already happened, so the shell still has to return to
+    /// onboarding — but never before the consequence was shown.
+    static func finishResetAfterBackupDeletionFailure() {
         NotificationCenter.default.post(name: .forgeFitAccountResetDidComplete, object: nil)
     }
 
     static func deleteAllLocalModels(in context: ModelContext) throws {
+        DeferredWorkoutEnrichmentCoordinator.shared.cancelAll()
+        ExerciseAIClassifier.cancelAll()
         WorkoutFinisher.cancelLiveRuntime()
+        try stageAllLocalModelDeletes(in: context)
+        try context.save()
+    }
+
+    private static func stageAllLocalModelDeletes(in context: ModelContext) throws {
         try deleteAll(RestDayModel.self, in: context)
         try deleteAll(MicrocycleWindowModel.self, in: context)
         try deleteAll(MicrocycleTrackingModel.self, in: context)
@@ -62,7 +129,6 @@ enum AccountResetService {
         try deleteAll(UserExerciseNoteModel.self, in: context)
         try deleteAll(ExerciseAliasModel.self, in: context)
         try deleteAll(ExerciseLibraryModel.self, in: context)
-        try context.save()
     }
 
     private static func deleteAll<T: PersistentModel>(_ type: T.Type, in context: ModelContext) throws {
@@ -73,7 +139,10 @@ enum AccountResetService {
 
     private static func clearLiveSurfaces() {
         WorkoutFinisher.cancelLiveRuntime()
-        WatchLink.shared.sendCommand(.discardWorkout)
+        // Pairing is device-local and deliberately excluded from backup. A full
+        // reset must also stop a standing reconnect and forget its identifiers.
+        BLEHeartRateService.shared.forget()
+        WatchLink.shared.sendCommand(.discardWorkout(workoutID: nil))
         WatchLink.shared.publishState()
     }
 
@@ -94,10 +163,17 @@ enum AccountResetService {
         // catalog seed against the freshly-reset store.)
         let defaults = UserDefaults.standard
         AppPreferenceKeys.allResettable.forEach(defaults.removeObject(forKey:))
+        // These health-derived stores are local-only. Clear through the stores
+        // as well as the canonical key list so their live singleton state
+        // cannot survive the reset until the next process launch.
+        SleepOverrideStore.shared.clearAll()
+        RecoverySnapshotStore.shared.clearAll()
+        YogaRuntimeCheckpointStore.clearAll(defaults: defaults)
         // HR-zone config lives in the app-group suite (health-derived —
         // never backed up, but reset must still clear it).
         UserDefaults(suiteName: ForgeFitWidgetSnapshotStore.suiteName)?
             .removeObject(forKey: HRZoneConfigStore.key)
+        ForgeThemePreferenceStore.reset()
         Fmt.unit = .lb
         Fmt.distanceUnit = .km
     }

@@ -49,6 +49,72 @@ public enum SetType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Minimal value used by both the phone and Watch command paths to reason
+/// about superset rounds without depending on SwiftData models.
+public struct SupersetSetProgress: Equatable, Sendable {
+    public let id: UUID
+    public let setType: SetType
+    public let isComplete: Bool
+
+    public init(id: UUID, setType: SetType, isComplete: Bool) {
+        self.id = id
+        self.setType = setType
+        self.isComplete = isComplete
+    }
+}
+
+/// Maps raw set arrays onto logical superset rounds. A base set and all drop
+/// sets immediately following it belong to one round, so unequal drop chains
+/// never shift the round compared with another superset member.
+public enum SupersetRoundPolicy {
+    public static func logicalRoundIndex(
+        for setID: UUID,
+        in sets: [SupersetSetProgress]
+    ) -> Int? {
+        var logicalRound = -1
+        for set in sets {
+            if set.setType != .drop {
+                logicalRound += 1
+            }
+            if set.id == setID {
+                return logicalRound >= 0 ? logicalRound : nil
+            }
+        }
+        return nil
+    }
+
+    /// Missing rounds are satisfied, matching a shorter superset member: only
+    /// a round that actually exists on that member can block group rest.
+    public static func isRoundSatisfied(
+        _ requestedRound: Int,
+        in sets: [SupersetSetProgress]
+    ) -> Bool {
+        guard requestedRound >= 0 else { return false }
+        var logicalRound = -1
+
+        for set in sets {
+            if set.setType != .drop {
+                logicalRound += 1
+                if logicalRound > requestedRound { break }
+            }
+            guard logicalRound == requestedRound else { continue }
+            if !set.isComplete { return false }
+        }
+
+        return true
+    }
+
+    public static func hasPendingDrop(
+        after setID: UUID,
+        in sets: [SupersetSetProgress]
+    ) -> Bool {
+        guard let index = sets.firstIndex(where: { $0.id == setID }) else { return false }
+        let nextIndex = index + 1
+        guard sets.indices.contains(nextIndex), sets[nextIndex].setType == .drop else { return false }
+        return !sets[nextIndex].isComplete
+    }
+}
+
 /// How the load on a set is interpreted, mirroring `weight_mode` in the schema.
 public enum WeightMode: String, Codable, Sendable {
     case external              // standard barbell/dumbbell/machine load

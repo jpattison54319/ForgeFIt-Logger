@@ -4,6 +4,8 @@ import Foundation
 import SwiftData
 
 enum XPService {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     struct Award: Equatable {
         var amount: Int
         var base: Int
@@ -116,9 +118,65 @@ enum XPService {
         )
     }
 
+    /// Stages XP in the caller's transaction. Workout finishing uses this so
+    /// the award, workout terminal state, and every related session mutation
+    /// share one save boundary owned by `WorkoutFinisher`.
     @MainActor
     @discardableResult
-    static func awardXPIfNeeded(for workout: WorkoutModel, in context: ModelContext, now: Date = Date()) -> Award {
+    static func stageXPIfNeeded(
+        for workout: WorkoutModel,
+        in context: ModelContext,
+        now: Date = Date()
+    ) -> Award {
+        stageAwardIfNeeded(for: workout, in: context, now: now)
+    }
+
+    /// Persists a standalone award in its own stable-ID transaction. A failed
+    /// save throws and discards that private context, so it cannot report a
+    /// phantom award or leave XP/event rows for an unrelated later save.
+    @MainActor
+    @discardableResult
+    static func awardXPIfNeeded(
+        for workout: WorkoutModel,
+        in sourceContext: ModelContext,
+        now: Date = Date(),
+        save: SaveOperation = { try $0.save() }
+    ) throws -> Award {
+        let workoutID = workout.id
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        var descriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )
+        descriptor.fetchLimit = 1
+        guard let transactionWorkout = try transaction.fetch(descriptor).first else {
+            throw PersistenceError.workoutUnavailable
+        }
+
+        let award = stageAwardIfNeeded(
+            for: transactionWorkout,
+            in: transaction,
+            now: now
+        )
+        guard transaction.hasChanges else { return award }
+        try save(transaction)
+        return award
+    }
+
+    private enum PersistenceError: LocalizedError {
+        case workoutUnavailable
+
+        var errorDescription: String? {
+            "This workout is no longer available."
+        }
+    }
+
+    @MainActor
+    private static func stageAwardIfNeeded(
+        for workout: WorkoutModel,
+        in context: ModelContext,
+        now: Date
+    ) -> Award {
         if let amount = workout.xpAwardedAmount, workout.xpAwardedAt != nil {
             return Award(amount: amount, base: 0, duration: 0, strength: 0, cardioDuration: 0, cardioDistance: 0, eligible: amount > 0)
         }
@@ -142,7 +200,6 @@ enum XPService {
             componentsJSON: componentsJSON(for: award),
             createdAt: now
         ))
-        try? context.save()
         return award
     }
 

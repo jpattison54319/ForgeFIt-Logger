@@ -54,6 +54,7 @@ struct ExerciseNoteBanner: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss note")
@@ -92,6 +93,7 @@ struct EntryField: View {
             TextField(title, text: $value)
                 .keyboardType(.decimalPad)
                 .textFieldStyle(.roundedBorder)
+                .minimumTouchTarget()
                 .accessibilityLabel(title)
         }
     }

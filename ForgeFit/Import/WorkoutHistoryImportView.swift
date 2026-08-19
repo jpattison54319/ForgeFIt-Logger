@@ -10,6 +10,7 @@ struct WorkoutHistoryImportView: View {
     var onComplete: (() -> Void)?
 
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var themeManager: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
@@ -89,7 +90,7 @@ struct WorkoutHistoryImportView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "icloud.and.arrow.down.fill")
                         .font(.cardTitle)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onSecondaryAccent)
                         .frame(width: 44, height: 44)
                         .background(theme.secondaryAccent)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -118,13 +119,14 @@ struct WorkoutHistoryImportView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text("\(backup.label) — \(backup.exportedAt.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accent)
+                                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.accentForeground)
                                     Text("\(backup.workoutCount) workouts")
                                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                             }
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     }
@@ -141,6 +143,7 @@ struct WorkoutHistoryImportView: View {
             do {
                 let file = try await BackupRestoreService.loadFile(at: backup.url)
                 let outcome = try BackupRestoreService.commit(file, restorePreferences: true, in: modelContext)
+                themeManager.reload()
                 let enrichment = await HealthEnrichmentService().enrich(
                     workoutIDs: outcome.restoredWorkoutIDs, in: modelContext
                 )
@@ -160,7 +163,7 @@ struct WorkoutHistoryImportView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.cardTitle)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onAccent)
                         .frame(width: 44, height: 44)
                         .background(theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -186,7 +189,8 @@ struct WorkoutHistoryImportView: View {
                 } label: {
                     Label(preview == nil ? "Choose File" : "Choose Different File", systemImage: "doc.badge.plus")
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
                 }
                 .disabled(loading)
             }
@@ -651,6 +655,7 @@ struct WorkoutHistoryImportView: View {
             sourceDevice: "gpx-import",
             durationSeconds: durationSeconds,
             distanceMeters: cumulative > 0 ? cumulative : nil,
+            distanceSource: cumulative > 0 ? .importedFile : nil,
             avgHR: avgHR,
             maxHR: heartRates.max(),
             hrZoneSeconds: CardioMetrics.measuredZoneSecondsArray(series: series) ?? []
@@ -668,8 +673,12 @@ struct WorkoutHistoryImportView: View {
             avgHR: avgHR,
             maxHR: heartRates.max()
         )
-        modelContext.insert(workout)
-        modelContext.insert(session)
+        // Keep this import transactional without committing or rolling back
+        // unrelated edits held by another keep-resident UI surface.
+        let importContext = ModelContext(modelContext.container)
+        importContext.autosaveEnabled = false
+        importContext.insert(workout)
+        importContext.insert(session)
         session.workout = workout
         for entry in timed {
             let point = CardioRoutePointModel(
@@ -680,12 +689,12 @@ struct WorkoutHistoryImportView: View {
                 longitude: entry.point.longitude,
                 altitudeMeters: entry.point.elevationMeters
             )
-            modelContext.insert(point)
+            importContext.insert(point)
             session.routePoints.append(point)
         }
-        CardioRouteMath.replaceSplits(for: session, in: modelContext)
+        CardioRouteMath.replaceSplits(for: session, in: importContext)
         do {
-            try modelContext.save()
+            try importContext.save()
             result = WorkoutHistoryImportCommitResult(
                 importedWorkouts: 1,
                 skippedDuplicates: 0,
@@ -693,7 +702,11 @@ struct WorkoutHistoryImportView: View {
                 flaggedForReview: 0,
                 warningCount: track.points.count == timed.count ? 0 : 1
             )
+            BackupScheduler.shared.noteLogDataChanged()
         } catch {
+            // Failed imports must not remain pending and silently commit with
+            // the next unrelated save (or duplicate on a retry).
+            importContext.rollback()
             errorMessage = error.localizedDescription
         }
     }

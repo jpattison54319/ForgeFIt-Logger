@@ -36,11 +36,16 @@ struct HealthEnrichmentServiceTests {
         let mock = MockHealth()
         let summary = await HealthEnrichmentService(health: mock).enrich(workoutIDs: [workout.id], in: context)
 
-        #expect(workout.avgHR == 152)
-        #expect(workout.maxHR == 178)
-        #expect(workout.activeEnergyKcal == 410)
-        #expect(!workout.hrZoneSeconds.isEmpty)
-        #expect(workout.hkWorkoutUUID == mock.matchedUUID)
+        let workoutID = workout.id
+        let verification = ModelContext(container)
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.avgHR == 152)
+        #expect(persisted.maxHR == 178)
+        #expect(persisted.activeEnergyKcal == 410)
+        #expect(!persisted.hrZoneSeconds.isEmpty)
+        #expect(persisted.hkWorkoutUUID == mock.matchedUUID)
         #expect(summary.workoutsEnriched == 1)
         #expect(summary.healthUUIDsRelinked == 1)
     }
@@ -59,10 +64,15 @@ struct HealthEnrichmentServiceTests {
 
         _ = await HealthEnrichmentService(health: MockHealth()).enrich(workoutIDs: [workout.id], in: context)
 
-        #expect(workout.avgHR == 140)
-        #expect(workout.maxHR == 165)
-        #expect(workout.activeEnergyKcal == 300)
-        #expect(workout.hkWorkoutUUID == originalUUID)
+        let workoutID = workout.id
+        let verification = ModelContext(container)
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.avgHR == 140)
+        #expect(persisted.maxHR == 165)
+        #expect(persisted.activeEnergyKcal == 300)
+        #expect(persisted.hkWorkoutUUID == originalUUID)
     }
 
     @Test func skipsSoftDeletedWorkouts() async throws {
@@ -75,7 +85,12 @@ struct HealthEnrichmentServiceTests {
 
         let summary = await HealthEnrichmentService(health: MockHealth()).enrich(workoutIDs: [workout.id], in: context)
 
-        #expect(workout.avgHR == nil)
+        let workoutID = workout.id
+        let verification = ModelContext(container)
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persisted.avgHR == nil)
         #expect(summary.workoutsEnriched == 0)
     }
 
@@ -98,9 +113,14 @@ struct HealthEnrichmentServiceTests {
 
         let summary = await HealthEnrichmentService(health: MockHealth()).enrich(workoutIDs: [workout.id], in: context)
 
-        #expect(set.bodyweightKg == 81.5)
+        let setID = set.id
+        let verification = ModelContext(container)
+        let persistedSet = try #require(verification.fetch(FetchDescriptor<SetModel>(
+            predicate: #Predicate { $0.id == setID }
+        )).first)
+        #expect(persistedSet.bodyweightKg == 81.5)
         #expect(summary.setsBodyweightFilled == 1)
-        #expect((set.totalVolume ?? 0) > 0)
+        #expect((persistedSet.totalVolume ?? 0) > 0)
     }
 
     @Test func enrichesOnlyRequestedWorkouts() async throws {
@@ -113,7 +133,11 @@ struct HealthEnrichmentServiceTests {
 
         _ = await HealthEnrichmentService(health: MockHealth()).enrich(workoutIDs: [target.id], in: context)
 
-        #expect(target.avgHR == 152)
-        #expect(bystander.avgHR == nil)
+        let targetID = target.id
+        let bystanderID = bystander.id
+        let verification = ModelContext(container)
+        let persisted = try verification.fetch(FetchDescriptor<WorkoutModel>())
+        #expect(persisted.first { $0.id == targetID }?.avgHR == 152)
+        #expect(persisted.first { $0.id == bystanderID }?.avgHR == nil)
     }
 }

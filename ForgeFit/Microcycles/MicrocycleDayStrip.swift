@@ -9,32 +9,37 @@ struct MicrocycleDayStrip: View {
     let restDays: [RestDayModel]
     var now: Date = .now
     var isCompact = false
+    var presentedDays: [MicrocycleDayPresentation]?
+    var isReadOnly = false
     let onSelectDay: (Date) -> Void
 
     var body: some View {
         if isCompact {
-            HStack(spacing: days.count > 14 ? 2 : Space.xs) {
+            MicrocycleCompactDayLayout {
                 ForEach(days, id: \.date) { day in
                     Button {
                         onSelectDay(day.date)
                     } label: {
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(fill(for: day.status))
+                            .fill(fill(for: day))
                             .strokeBorder(
-                                stroke(for: day.status),
-                                lineWidth: day.status == .ready ? 2 : 1
+                                day.isToday ? theme.accent : stroke(for: day.status),
+                                lineWidth: day.isToday ? 2 : 1
                             )
-                            .frame(height: day.status == .ready ? 10 : 8)
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                            .frame(height: day.isToday ? 10 : 8)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: TouchTarget.minimum,
+                                maxHeight: TouchTarget.minimum
+                            )
+                            .padding(.horizontal, 2)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(accessibilityLabel(for: day))
                     .accessibilityHint(accessibilityHint(for: day.status))
                 }
             }
-            .frame(height: 44)
             .accessibilityElement(children: .contain)
         } else {
             LazyVGrid(
@@ -57,7 +62,7 @@ struct MicrocycleDayStrip: View {
     }
 
     private var days: [MicrocycleDayPresentation] {
-        MicrocycleDayTimeline.days(
+        presentedDays ?? MicrocycleDayTimeline.days(
             in: window,
             workouts: workouts,
             restDays: restDays,
@@ -72,13 +77,19 @@ struct MicrocycleDayStrip: View {
                 .foregroundStyle(day.isToday ? theme.accent : theme.textTertiary)
             ZStack {
                 Circle()
-                    .fill(fill(for: day.status))
-                    .strokeBorder(stroke(for: day.status), lineWidth: day.status == .ready ? 2 : 1)
+                    .fill(fill(for: day))
+                    .strokeBorder(stroke(for: day.status), lineWidth: 1)
                     .frame(width: 36, height: 36)
+                if day.isToday {
+                    Circle()
+                        .stroke(theme.accent, lineWidth: 2)
+                        .frame(width: 42, height: 42)
+                        .accessibilityHidden(true)
+                }
                 if !day.routineMarkers.isEmpty {
                     Text(day.routineMarkers.joined(separator: "·"))
                         .font(.caption.bold())
-                        .foregroundStyle(foreground(for: day.status))
+                        .foregroundStyle(foreground(for: day))
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
                         .padding(.horizontal, 3)
@@ -86,12 +97,12 @@ struct MicrocycleDayStrip: View {
                 } else if let icon = icon(for: day.status) {
                     Image(systemName: icon)
                         .font(.caption.bold())
-                        .foregroundStyle(foreground(for: day.status))
+                        .foregroundStyle(foreground(for: day))
                         .accessibilityHidden(true)
                 } else {
                     Text("\(day.index + 1)")
                         .font(.caption.bold())
-                        .foregroundStyle(foreground(for: day.status))
+                        .foregroundStyle(foreground(for: day))
                 }
             }
         }
@@ -100,29 +111,27 @@ struct MicrocycleDayStrip: View {
         .accessibilityElement(children: .ignore)
     }
 
-    private func fill(for status: MicrocycleDayStatus) -> Color {
-        switch status {
+    private func fill(for day: MicrocycleDayPresentation) -> Color {
+        switch day.status {
         case .trained: theme.accent
         case .rest: theme.surfaceElevated
-        case .ready: theme.accent.opacity(0.12)
-        case .empty: theme.background
+        case .empty: day.isToday ? theme.accent.opacity(0.12) : theme.background
         }
     }
 
     private func stroke(for status: MicrocycleDayStatus) -> Color {
         switch status {
-        case .trained, .ready: theme.accent
+        case .trained: theme.accent
         case .rest: theme.textSecondary
         case .empty: theme.separator
         }
     }
 
-    private func foreground(for status: MicrocycleDayStatus) -> Color {
-        switch status {
+    private func foreground(for day: MicrocycleDayPresentation) -> Color {
+        switch day.status {
         case .trained: theme.background
         case .rest: theme.textSecondary
-        case .ready: theme.accent
-        case .empty: theme.textTertiary
+        case .empty: day.isToday ? theme.accent : theme.textTertiary
         }
     }
 
@@ -130,7 +139,7 @@ struct MicrocycleDayStrip: View {
         switch status {
         case .trained: "checkmark"
         case .rest: "moon.zzz.fill"
-        case .ready, .empty: nil
+        case .empty: nil
         }
     }
 
@@ -143,7 +152,6 @@ struct MicrocycleDayStrip: View {
         case .trained:
             "training completed"
         case .rest: "rest day"
-        case .ready: "ready next"
         case .empty: "not logged"
         }
         let today = day.isToday ? ", today" : ""
@@ -151,15 +159,16 @@ struct MicrocycleDayStrip: View {
     }
 
     private func accessibilityHint(for status: MicrocycleDayStatus) -> String {
-        switch status {
+        if isReadOnly {
+            return "Shows this day's logged history."
+        }
+        return switch status {
         case .trained:
             "Shows the workout for this day."
         case .rest:
             "Shows the rest day and available workout options."
-        case .ready:
-            "Shows the next day in this microcycle."
         case .empty:
-            "Shows completed workouts that can be added to this day."
+            "Shows the logging options for this day."
         }
     }
 }

@@ -9,6 +9,7 @@ struct QuickIncrementFanAppearance: View {
     let hoveredIndex: Int?
     let isPresented: Bool
     let presentationTick: Int
+    let metrics: QuickIncrementController.Metrics
 
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -45,13 +46,16 @@ struct QuickIncrementFanAppearance: View {
         let highlighted = hoveredIndex == index && isPresented
 
         return Text(slot.option.label)
-            .font(.system(size: 16, weight: .bold, design: .rounded))
+            .font(.system(size: metrics.labelFontSize, weight: .bold, design: .rounded))
             .foregroundStyle(
                 highlighted
                     ? Color.white
                     : (slot.isPositive ? theme.textPrimary : theme.textSecondary)
             )
-            .frame(width: slot.rect.width, height: slot.rect.height - 8)
+            .frame(
+                width: slot.rect.width,
+                height: slot.rect.height - metrics.visualHeightInset
+            )
             .contentShape(Capsule())
             .background {
                 Capsule()
@@ -100,8 +104,8 @@ struct QuickIncrementFanAppearance: View {
     /// parked beyond an edge of the screen. They remain mounted only to keep
     /// the long-press recognizer stable.
     private var placeholderSlot: QuickIncrementController.Slot {
-        let width = QuickIncrementController.bandWidth
-        let height = QuickIncrementController.bandHeight
+        let width = metrics.bandWidth
+        let height = metrics.bandHeight
         let center = fieldFrame.isEmpty
             ? CGPoint(x: width / 2, y: height / 2)
             : CGPoint(x: fieldFrame.midX, y: fieldFrame.midY)

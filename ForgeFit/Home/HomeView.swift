@@ -15,6 +15,8 @@ struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var healthMetrics = HealthMetricsStore.shared
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+    @State private var navigationPath = NavigationPath()
     @State private var showSettings = false
     // Coach surfaces remain implemented and testable, but are intentionally
     // dormant while the Home header uses its more useful calendar shortcut.
@@ -74,13 +76,11 @@ struct HomeView: View {
     // Recovery reports are full-history passes — memoized so the always-alive
     // tab doesn't recompute them on every unrelated re-render.
     @AppStorage("profileDisplayName") private var displayName = "Athlete"
-    @AppStorage("homeQuickStartActions.v1") private var quickStartActionsJSON = ""
-    @State private var connectingHealth = false
-    /// Mirrors `HealthService.isConnected`. Held in state rather than read in
-    /// `body`: the authorization lookup would otherwise run on every render,
-    /// including every frame of a scroll. Re-read whenever the app returns to
-    /// the foreground, which is where a Settings-app permission change lands.
-    @State private var healthConnected = false
+    @AppStorage(HomeQuickStartAction.preferenceKey) private var quickStartActionsJSON = ""
+    @State private var healthAuthorization = HealthAuthorizationStore.shared
+
+    private var connectingHealth: Bool { healthAuthorization.state.isRequesting }
+    private var healthConnected: Bool { healthAuthorization.state.isConnected }
     // Keeps the check-in strip visible while the user is mid-selection —
     // without it the row would vanish on the first tap. Resets when Home
     // reloads, so an answered check-in stays collapsed on later visits.
@@ -92,12 +92,13 @@ struct HomeView: View {
     // @Query reflects the write, to avoid a one-frame flicker to the old value.
     @State private var checkinDraft: [String]?
     @State private var checkinCommitTask: Task<Void, Never>?
+    @State private var pendingCheckinID = UUID()
     @State private var dashboardAnalytics: HomeAnalyticsResult?
     @State private var dashboardAnalyticsKey: String?
     @State private var dashboardIsComputing = false
     @State private var dashboardMaintenanceTask: Task<Void, Never>?
     @State private var targetRecoveryMemo = Memo<String, RoutineDoseContext>()
-    @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
+    @State private var weekMemo = Memo<Int, HomeWeekMetrics.Summary>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var todayCheckin: DailyCheckinModel? {
@@ -125,6 +126,15 @@ struct HomeView: View {
             + "\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)|"
             + "\(healthMetrics.metricsRevision)|"
             + todayCheckinTags.joined(separator: ",")
+    }
+
+    private var pausesForLiveWorkout: Bool {
+        performanceGate.isLiveWorkoutActive
+            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    }
+
+    private var analyticsTaskKey: String {
+        "\(analyticsRequestKey)|live:\(pausesForLiveWorkout)"
     }
 
     private var todayAnalytics: HomeAnalyticsResult? {
@@ -204,9 +214,10 @@ struct HomeView: View {
     }
 
     /// Today's cached Home render, if this day already produced one. Strictly
-    /// keyed to the current calendar day — right after midnight there is no
-    /// cache and the dashboard shows its loader, because a new day's scores
-    /// don't exist yet and yesterday's must never stand in for them.
+    /// keyed to the current calendar day. Right after midnight there is no
+    /// cache: a connected Health dashboard shows its loader, while a
+    /// disconnected Home keeps that empty dashboard collapsed. Yesterday's
+    /// values must never stand in for either state.
     private var todayDashboardCache: (RecoverySnapshot, HomeDashboardCache)? {
         guard let snapshot = RecoverySnapshotStore.shared.snapshot(for: Date()),
               let cache = snapshot.dashboard else { return nil }
@@ -249,6 +260,7 @@ struct HomeView: View {
             healthCaption: health.caption,
             healthEvaluatedCount: health.evaluatedCount,
             healthOutsideRangeCount: health.outsideRangeCount,
+            vitals: .make(assessment: health),
             preWorkoutAdjustment: report.preWorkoutAdjustment,
             readinessMethodID: report.displayScore == nil ? nil : report.recovery.daily.methodID,
             readinessCoverage: report.displayScore == nil ? nil : report.dataCoverage)
@@ -258,7 +270,8 @@ struct HomeView: View {
         // Before the first Health query, a workouts-only strain value can look
         // real and overwrite today's valid cache. Keep the same launch gate,
         // but do no score work on MainActor while waiting.
-        guard healthMetrics.lastRefreshed != nil else { return }
+        guard healthMetrics.lastRefreshed != nil,
+              !pausesForLiveWorkout else { return }
 
         dashboardMaintenanceTask?.cancel()
         dashboardMaintenanceTask = nil
@@ -280,7 +293,9 @@ struct HomeView: View {
 
         do {
             let result = try await worker.calculateCurrent(input)
-            guard !Task.isCancelled, key == analyticsRequestKey else { return }
+            guard !Task.isCancelled,
+                  !pausesForLiveWorkout,
+                  key == analyticsRequestKey else { return }
 
             dashboardAnalytics = result
             dashboardAnalyticsKey = key
@@ -308,6 +323,7 @@ struct HomeView: View {
         worker: HomeAnalyticsWorker,
         input: HomeAnalyticsInput
     ) {
+        guard !pausesForLiveWorkout else { return }
         let snapshotStore = RecoverySnapshotStore.shared
         let backfillEligible = workouts.contains {
             $0.endedAt != nil && $0.deletedAt == nil
@@ -322,7 +338,7 @@ struct HomeView: View {
             do {
                 if shouldBackfill {
                     let snapshots = try await worker.calculateBackfill(input)
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, !pausesForLiveWorkout else { return }
                     snapshotStore.mergeBackfill(snapshots)
                 }
                 if !bodyweight.isEmpty {
@@ -332,7 +348,7 @@ struct HomeView: View {
                 // Maintenance is retryable on the next refresh. Visible scores
                 // have already published and remain fully interactive.
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !pausesForLiveWorkout else { return }
             dashboardMaintenanceTask = nil
         }
     }
@@ -375,7 +391,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScreenScaffold(
                 greeting,
                 subtitle: Date().formatted(.dateTime.weekday(.wide).month().day()),
@@ -405,17 +421,19 @@ struct HomeView: View {
                         connectHealthPrompt
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
-                        if hasReadinessSignal {
-                            RecoveryHeroCard(
-                                report: recovery,
-                                source: dashboardSource,
-                                isRefreshing: dashboardIsRefreshing
-                            )
-                            .accessibilityIdentifier("home-guidance")
-                            .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                        } else {
-                            readinessEmptyState
+                        if FeatureFlags.homeDailyRecommendation {
+                            if hasReadinessSignal {
+                                RecoveryHeroCard(
+                                    report: recovery,
+                                    source: dashboardSource,
+                                    isRefreshing: dashboardIsRefreshing
+                                )
+                                .accessibilityIdentifier("home-guidance")
                                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            } else {
+                                readinessEmptyState
+                                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                            }
                         }
 
                         HomeMetricGrid(
@@ -506,7 +524,20 @@ struct HomeView: View {
                     }
 
                     if !recentCompleted.isEmpty {
-                        SectionHeader("Recent")
+                        SectionHeader("Recent") {
+                            NavigationLink(value: HomeRoute.history) {
+                                HStack(spacing: Space.xs) {
+                                    Text("See all")
+                                    Image(systemName: "chevron.right")
+                                }
+                                .minimumTouchTarget()
+                            }
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.accentForeground)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("See all workouts")
+                            .accessibilityIdentifier("home-see-all-workouts")
+                        }
                         ForEach(recentCompleted) { workout in
                             NavigationLink(value: workout) {
                                 WorkoutFeedRow(workout: workout, analytics: analytics)
@@ -538,6 +569,7 @@ struct HomeView: View {
                 case .strain: StrainDetailView(report: dailyStrain)
                 case .health: HealthDetailView(report: recovery, metrics: healthMetrics.metrics)
                 case .calendar: WorkoutCalendarView(workouts: workouts, exercises: exercises)
+                case .history: WorkoutHistoryView(workouts: workouts, exercises: exercises)
                 case .microcycle(let trackingID):
                     MicrocycleDetailView(trackingID: trackingID)
                 }
@@ -557,7 +589,13 @@ struct HomeView: View {
             // Health/SwiftData snapshots are captured quickly on MainActor;
             // every history-wide score pass then runs on HomeAnalyticsWorker's
             // detached context. SwiftUI receives only the finished projection.
-            .task(id: analyticsRequestKey) {
+            .task(id: analyticsTaskKey) {
+                guard !pausesForLiveWorkout else {
+                    dashboardMaintenanceTask?.cancel()
+                    dashboardMaintenanceTask = nil
+                    dashboardIsComputing = false
+                    return
+                }
                 await refreshDashboardAnalytics(for: analyticsRequestKey)
             }
             .fullScreenCover(item: $presentedWrappedReport) { report in
@@ -601,15 +639,14 @@ struct HomeView: View {
                         showQuickStartAdd = false
                     },
                     onCreateRoutine: {
-                        showQuickStartAdd = false
-                        editingRoutine = createRoutine()
+                        createRoutine()
                     }
                 )
             }
             // Screenshot/UI-test hook, same family as -initialTab (unset in
             // production).
             .onAppear {
-                healthConnected = HealthService.shared.isConnected
+                healthAuthorization.refresh()
                 if UserDefaults.standard.bool(forKey: "openSettings") { showSettings = true }
                 #if DEBUG
                 // UI automation keeps exercising the dormant coach surfaces
@@ -629,12 +666,7 @@ struct HomeView: View {
                 if phase != .active { commitCheckinDraft() }
                 // Granting or revoking access happens in Apple's Health app,
                 // so the answer can only have changed while we were away.
-                if phase == .active { healthConnected = HealthService.shared.isConnected }
-            }
-            // In-app grant: the prompt's own button flips this the moment the
-            // permission sheet resolves, without waiting for a foreground trip.
-            .onChange(of: connectingHealth) { _, isConnecting in
-                if !isConnecting { healthConnected = HealthService.shared.isConnected }
+                if phase == .active { healthAuthorization.refresh() }
             }
             .onDisappear { commitCheckinDraft() }
             .sheet(isPresented: $showExploreLibrary) {
@@ -650,13 +682,19 @@ struct HomeView: View {
                     onImport: { program in
                         // A catalog program lands as one standalone microcycle
                         // folder containing its day routines.
-                        RoutineTemplateCatalog.importProgram(program, templates: templates, in: modelContext)
-                        showExploreLibrary = false
+                        let attempt = RoutineProgramImportAttempt(
+                            program: program,
+                            templates: templates,
+                            in: modelContext
+                        )
+                        attempt.commit(into: modelContext) { _ in
+                            showExploreLibrary = false
+                        }
                     }
                 )
             }
         }
-        .id(tabRootRequestID)
+        .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .interactiveBackSwipeEnabled()
     }
 
@@ -709,11 +747,13 @@ struct HomeView: View {
         _ tracking: MicrocycleTrackingModel,
         showsOnHome: Bool
     ) {
-        try? MicrocycleTrackingService.setPresentation(
-            tracking,
-            showsOnHome: showsOnHome,
-            in: modelContext
-        )
+        PersistentChangeSaveCenter.shared.perform {
+            try MicrocycleTrackingService.setPresentation(
+                tracking,
+                showsOnHome: showsOnHome,
+                in: modelContext
+            )
+        }
     }
 
     /// Shown in place of "Up next" when no routine exists yet — the way into
@@ -726,7 +766,7 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "sparkle.magnifyingglass")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -749,27 +789,29 @@ struct HomeView: View {
         healthConnected || !healthMetrics.metrics.isEmpty || todayDashboardCache != nil
     }
 
-    /// The workout entry point: what to do next, then the quick-start tiles.
+    /// The workout entry point: quick-launch tiles, with the existing suggested
+    /// workout retained behind a presentation flag for a possible return.
     /// Rendered near the top when the recovery dashboard is suppressed, in its
     /// usual place below the week card otherwise.
     @ViewBuilder
     private var trainingSurface: some View {
-        // "Jump back in" only when there is something to jump back
-        // into — a brand-new user gets "Get started" and a route
-        // into the program library instead of a dangling header.
-        SectionHeader(suggestion != nil || !recentCompleted.isEmpty ? "Jump back in" : "Get started")
-        if let suggestion {
-            suggestionCard(
-                suggestion.routine,
-                reason: suggestion.reason,
-                alternatingWith: suggestion.alternatingWith
-            )
+        SectionHeader("Quick start") {
+            quickStartEditButton
+        }
+        if FeatureFlags.homeSuggestedWorkout {
+            if let suggestion {
+                suggestionCard(
+                    suggestion.routine,
+                    reason: suggestion.reason,
+                    alternatingWith: suggestion.alternatingWith
+                )
                 .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                 .transition(.opacity)
-        } else {
-            explorePromptCard
-                .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
-                .transition(.opacity)
+            } else {
+                explorePromptCard
+                    .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
+                    .transition(.opacity)
+            }
         }
         quickStart
     }
@@ -782,7 +824,7 @@ struct HomeView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: "heart.fill")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 36, height: 36)
                     .background(theme.accentSoft)
                     .clipShape(Circle())
@@ -791,26 +833,24 @@ struct HomeView: View {
                     Text("Readiness needs Apple Health")
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textPrimary)
-                    Text("Sleep, HRV, and resting heart rate come from Health. Until it's connected, ForgeFit tracks your training only.")
+                    Text(healthAuthorization.state.issueMessage
+                        ?? "Sleep, HRV, and resting heart rate come from Health. Until it's connected, ForgeFit tracks your training only.")
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: Space.sm)
-                Button(connectingHealth ? "…" : "Connect") {
-                    connectingHealth = true
-                    Task {
-                        _ = await HealthService.shared.requestAuthorization()
-                        await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-                        healthMetrics.refresh(force: true)
-                        connectingHealth = false
-                    }
+                Button {
+                    performHomeHealthAction()
+                } label: {
+                    Text(homeHealthActionTitle)
+                        .minimumTouchTarget()
                 }
                 .font(.bodyStrong)
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
                 .tint(theme.accent)
-                .disabled(connectingHealth)
+                .disabled(connectingHealth || healthAuthorization.state == .unavailable)
                 .accessibilityIdentifier("home-connect-health")
             }
         }
@@ -823,7 +863,7 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -836,25 +876,46 @@ struct HomeView: View {
                 HStack(spacing: Space.md) {
                     // Triggers the Health permission directly — no detour
                     // through the full Settings sheet to find the right card.
-                    Button(connectingHealth ? "Connecting…" : "Connect Apple Health") {
-                        connectingHealth = true
-                        Task {
-                            _ = await HealthService.shared.requestAuthorization()
-                            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
-                            healthMetrics.refresh(force: true)
-                            connectingHealth = false
-                        }
+                    Button {
+                        performHomeHealthAction()
+                    } label: {
+                        Text(homeHealthActionTitle)
+                            .minimumTouchTarget()
                     }
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .tint(theme.accent)
-                    .disabled(connectingHealth)
-                    Button("Explore programs") { showExploreLibrary = true }
-                        .font(.bodyStrong)
+                    .disabled(connectingHealth || healthAuthorization.state == .unavailable)
+                    Button {
+                        showExploreLibrary = true
+                    } label: {
+                        Text("Explore programs")
+                            .font(.bodyStrong)
+                            .minimumTouchTarget()
+                    }
                         .buttonStyle(.glass)
                 }
                 .buttonBorderShape(.capsule)
             }
+        }
+    }
+
+    private var homeHealthActionTitle: String {
+        if connectingHealth { return "Connecting…" }
+        if healthAuthorization.state.requiresPermissionReview { return "Open Settings" }
+        if healthAuthorization.state == .notDetermined { return "Connect" }
+        return "Try Again"
+    }
+
+    private func performHomeHealthAction() {
+        if healthAuthorization.state.requiresPermissionReview {
+            HealthAuthorizationRecovery.openSettings()
+            return
+        }
+        Task {
+            guard await healthAuthorization.connect() else { return }
+            await HealthWorkoutImporter.shared.importRecent(in: modelContext.container)
+            healthMetrics.refresh(force: true)
         }
     }
 
@@ -872,12 +933,12 @@ struct HomeView: View {
                             .frame(width: 44, height: 44)
                         Image(systemName: "sparkles")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(report.isMonthly ? "Monthly" : "Yearly") Report Available")
                             .font(.tag)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Text("Your \(WrappedReportService.title(for: report)) is ready.")
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
@@ -898,9 +959,16 @@ struct HomeView: View {
 
     private var weekCard: some View {
         let now = Date()
-        let interval = TrainingWeekSupport.interval(containing: now)
-        let week = weekMemo("\(AnalyticsFingerprint.of(workouts))|\(interval.start.timeIntervalSinceReferenceDate)") {
-            analytics.thisWeek()
+        let week = weekMemo(HomeWeekMetrics.fingerprint(
+            workouts: workouts,
+            exercises: exercises,
+            containing: now
+        )) {
+            HomeWeekMetrics.summary(
+                workouts: workouts,
+                exercises: exercises,
+                containing: now
+            )
         }
         let days = TrainingWeekSupport.days(workouts: workouts, containing: now)
         return Card {
@@ -923,10 +991,15 @@ struct HomeView: View {
                 TrainingLoadGauge(comparison: recovery.trainingLoad)
 
                 HStack {
-                    StatColumn(label: "Workouts", value: "\(week.workoutCount)")
-                    StatColumn(label: "Time", value: Fmt.durationShort(week.durationSeconds))
-                    StatColumn(label: "Volume", value: Fmt.volume(week.volume))
-                    StatColumn(label: "Sets", value: Fmt.sets(week.sets))
+                    ForEach(week.metrics) { metric in
+                        StatColumn(
+                            label: metric.label,
+                            value: metric.formatted(
+                                weightUnit: Fmt.unit,
+                                distanceUnit: Fmt.distanceUnit
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -1010,6 +1083,7 @@ struct HomeView: View {
                             .padding(.vertical, 8)
                             .background(Capsule().fill(on ? theme.accent : theme.surfaceElevated))
                             .animation(Motion.tap, value: on)
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
@@ -1052,23 +1126,25 @@ struct HomeView: View {
     /// Persist the pending mood tags. Idempotent and safe to call from the
     /// debounce, on scene-background, and on disappear — a nil/unchanged draft
     /// is a no-op, so a tapped-then-backgrounded check-in is never lost. Writing
-    /// `model.tags` here is what finally moves `todayCheckinTags`, so this is the
-    /// single point where the (memoized) recovery recompute is triggered.
+    /// The committed private-context row is what finally moves
+    /// `todayCheckinTags`, so this is the single point where the (memoized)
+    /// recovery recompute is triggered.
     private func commitCheckinDraft() {
         checkinCommitTask?.cancel()
         checkinCommitTask = nil
         guard let tags = checkinDraft else { return }
         guard tags != todayCheckinTags else { checkinDraft = nil; return }
-        let model: DailyCheckinModel
-        if let existing = todayCheckin {
-            model = existing
-        } else {
-            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
-            modelContext.insert(model)
-        }
-        model.tags = tags
-        model.updatedAt = Date()
-        try? modelContext.save()
+        let attempt = DailyCheckinCommitAttempt(
+            id: todayCheckin?.id ?? pendingCheckinID,
+            userID: ForgeFitDemo.userID,
+            day: Date(),
+            tags: tags
+        )
+        PersistentChangeSaveCenter.shared.perform({
+            _ = try attempt.commit(in: modelContext)
+        }, onSuccess: {
+            pendingCheckinID = UUID()
+        })
         // Draft is cleared by the todayCheckinTags onChange once the write is
         // reflected, so the capsule never flickers back mid-commit.
     }
@@ -1101,11 +1177,21 @@ struct HomeView: View {
             onApplyPlan: effective != nil ? { plan in
                 guard let suggestion else { return }
                 appState.requestStart {
-                    let workout = WorkoutFactory.start(
-                        routine: suggestion.routine, exercises: exercises,
-                        setupNotes: setupNotes, in: modelContext)
-                    CoachAdjustments.apply(plan, to: workout, in: modelContext)
-                    appState.showingLogger = true
+                    _ = WorkoutFactory.start(
+                        routine: suggestion.routine,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        in: modelContext,
+                        prepare: { workout, context in
+                            CoachAdjustments.apply(
+                                plan,
+                                to: workout,
+                                in: context,
+                                saveChanges: false
+                            )
+                        },
+                        onCommit: { _ in appState.showingLogger = true }
+                    )
                 }
             } : nil
         )
@@ -1162,7 +1248,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Up next")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .textCase(.uppercase)
                     Text(routine.name)
                         .font(.cardTitle)
@@ -1177,7 +1263,7 @@ struct HomeView: View {
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .accessibilityIdentifier("home-alternating-routine")
                     }
                     // No readiness action line here: the RecoveryHeroCard above
@@ -1192,8 +1278,13 @@ struct HomeView: View {
                 // anything other than what it does.
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     appState.requestStart {
-                        _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                        appState.showingLogger = true
+                        _ = WorkoutFactory.start(
+                            routine: routine,
+                            exercises: exercises,
+                            setupNotes: setupNotes,
+                            in: modelContext,
+                            onCommit: { _ in appState.showingLogger = true }
+                        )
                     }
                 }
                 .accessibilityIdentifier("start-suggested-routine-\(routine.name)")
@@ -1237,95 +1328,102 @@ struct HomeView: View {
     }
 
     private var quickStart: some View {
-        VStack(spacing: Space.md) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: Space.md) {
-                    // Fixed leading tile, not part of the customizable/
-                    // reorderable quick-start actions (it's a fundamental
-                    // capability, not a preference) — folded in here instead
-                    // of its own full-width button so it stops competing
-                    // with the "Up next" suggestion's Start button above.
-                    QuickStartTile(
-                        title: "Empty",
-                        systemImage: "square.and.pencil",
-                        accessibilityIdentifier: "start-empty-workout",
-                        isEditing: false,
-                        isDragging: false,
-                        onTap: {
-                            appState.requestStart {
-                                _ = WorkoutFactory.startEmpty(in: modelContext)
-                                appState.showingLogger = true
-                            }
-                        },
-                        onLongPress: {},
-                        onRemove: {}
-                    )
-
-                    ForEach(quickStartActions) { action in
-                        QuickStartTile(
-                            title: title(for: action),
-                            systemImage: systemImage(for: action),
-                            accessibilityIdentifier: accessibilityIdentifier(for: action),
-                            isEditing: quickStartEditing,
-                            isDragging: draggedQuickStartAction == action,
-                            onTap: { start(action) },
-                            onLongPress: { withAnimation(.spring(duration: 0.28)) { quickStartEditing = true } },
-                            onRemove: { removeQuickStartAction(action) }
-                        )
-                        .onDrag {
-                            withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
-                            draggedQuickStartAction = action
-                            return NSItemProvider(object: action.id as NSString)
-                        }
-                        .onDrop(
-                            of: [UTType.plainText],
-                            delegate: QuickStartReorderDropDelegate(
-                                target: action,
-                                draggedAction: $draggedQuickStartAction,
-                                moveAction: reorderQuickStartAction
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: Space.md) {
+                // Fixed leading tile, not part of the customizable/
+                // reorderable quick-start actions (it's a fundamental
+                // capability, not a preference) — folded in here instead
+                // of its own full-width button so it stops competing
+                // with the "Up next" suggestion's Start button above.
+                QuickStartTile(
+                    title: "Empty",
+                    systemImage: "square.and.pencil",
+                    accessibilityIdentifier: "start-empty-workout",
+                    isEditing: false,
+                    isDragging: false,
+                    onTap: {
+                        appState.requestStart {
+                            _ = WorkoutFactory.startEmpty(
+                                in: modelContext,
+                                onCommit: { _ in appState.showingLogger = true }
                             )
-                        )
-                    }
+                        }
+                    },
+                    onLongPress: {},
+                    onRemove: {}
+                )
 
-                    Button {
-                        showQuickStartAdd = true
-                    } label: {
-                        VStack(spacing: 8) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 19, weight: .bold))
-                            Text("Add")
-                                .font(.tag)
-                        }
-                        .foregroundStyle(theme.textSecondary)
-                        .frame(width: 104, height: 76)
-                        .background(theme.surface.opacity(0.34))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                                .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
-                                .foregroundStyle(theme.separator)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                ForEach(quickStartActions) { action in
+                    QuickStartTile(
+                        title: title(for: action),
+                        systemImage: systemImage(for: action),
+                        accessibilityIdentifier: accessibilityIdentifier(for: action),
+                        isEditing: quickStartEditing,
+                        isDragging: draggedQuickStartAction == action,
+                        onTap: { start(action) },
+                        onLongPress: { withAnimation(.spring(duration: 0.28)) { quickStartEditing = true } },
+                        onRemove: { removeQuickStartAction(action) }
+                    )
+                    .onDrag {
+                        withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
+                        draggedQuickStartAction = action
+                        return NSItemProvider(object: action.id as NSString)
                     }
-                    .buttonStyle(PressableButtonStyle())
+                    .onDrop(
+                        of: [UTType.plainText],
+                        delegate: QuickStartReorderDropDelegate(
+                            target: action,
+                            draggedAction: $draggedQuickStartAction,
+                            moveAction: reorderQuickStartAction
+                        )
+                    )
                 }
-            }
-            Button(quickStartEditing ? "Done" : "Edit", systemImage: quickStartEditing ? "checkmark" : "pencil") {
-                if quickStartEditing {
-                    dismissQuickStartEdit()
-                } else {
-                    withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
+
+                Button {
+                    showQuickStartAdd = true
+                } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 19, weight: .bold))
+                        Text("Add")
+                            .font(.tag)
+                    }
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 104, height: 76)
+                    .background(theme.surface.opacity(0.34))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                            .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
+                            .foregroundStyle(theme.separator)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
+                .buttonStyle(PressableButtonStyle())
             }
-            .font(.system(size: 13, weight: .bold))
-            .foregroundStyle(theme.accent)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityIdentifier("home-quick-start-edit")
         }
     }
 
+    private var quickStartEditButton: some View {
+        Button {
+            if quickStartEditing {
+                dismissQuickStartEdit()
+            } else {
+                withAnimation(.spring(duration: 0.28)) { quickStartEditing = true }
+            }
+        } label: {
+            Label(
+                quickStartEditing ? "Done" : "Edit",
+                systemImage: quickStartEditing ? "checkmark" : "pencil"
+            )
+            .minimumTouchTarget()
+        }
+        .font(.system(size: 13, weight: .bold))
+        .foregroundStyle(theme.accentForeground)
+        .accessibilityIdentifier("home-quick-start-edit")
+    }
+
     private var quickStartActions: [HomeQuickStartAction] {
-        let decoded = HomeQuickStartAction.decodeList(from: quickStartActionsJSON)
-        let actions = decoded.isEmpty ? HomeQuickStartAction.defaults : decoded
+        let actions = HomeQuickStartAction.resolvedList(from: quickStartActionsJSON)
         return actions.filter { action in
             switch action.kind {
             case .cardio: true
@@ -1373,20 +1471,31 @@ struct HomeView: View {
         appState.requestStart {
             switch action.kind {
             case .cardio(let modality):
-                _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
+                _ = WorkoutFactory.startCardio(
+                    modality,
+                    exercises: exercises,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             case .routine(let id):
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
-                _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
+                _ = WorkoutFactory.start(
+                    routine: routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             case .yoga(let slug):
                 guard let seed = YogaFlowCatalog.flow(forSlug: slug) else { return }
                 _ = WorkoutFactory.startYoga(
                     flow: YogaFlowCatalog.plan(for: seed),
                     named: seed.name,
                     exercises: exercises,
-                    in: modelContext
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
                 )
             }
-            appState.showingLogger = true
         }
     }
 
@@ -1414,12 +1523,18 @@ struct HomeView: View {
         }
     }
 
-    private func createRoutine() -> RoutineModel {
-        let routine = RoutineModel(userID: ForgeFitDemo.userID, name: "New Routine", position: routines.count)
-        modelContext.insert(routine)
-        try? modelContext.save()
-        addQuickStartAction(.routine(routine.id))
-        return routine
+    private func createRoutine() {
+        let attempt = RoutineCreationAttempt(
+            name: "New Routine",
+            folderID: nil,
+            position: routines.count,
+            in: modelContext
+        )
+        attempt.commit(into: modelContext) { routine in
+            addQuickStartAction(.routine(routine.id))
+            showQuickStartAdd = false
+            editingRoutine = routine
+        }
     }
 }
 
@@ -1429,10 +1544,13 @@ enum HomeRoute: Hashable {
     case strain
     case health
     case calendar
+    case history
     case microcycle(UUID)
 }
 
-private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
+struct HomeQuickStartAction: Hashable, Identifiable {
+    static let preferenceKey = "homeQuickStartActions.v1"
+
     enum Kind: Hashable {
         case cardio(CardioModality)
         case routine(UUID)
@@ -1468,9 +1586,7 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         self.kind = kind
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let raw = try container.decode(String.self)
+    init?(id raw: String) {
         if let modalityRaw = raw.removingPrefix("cardio:"),
            let modality = CardioModality(rawValue: modalityRaw) {
             kind = .cardio(modality)
@@ -1480,23 +1596,31 @@ private struct HomeQuickStartAction: Codable, Hashable, Identifiable {
         } else if let slug = raw.removingPrefix("yoga:") {
             kind = .yoga(slug)
         } else {
-            kind = .cardio(.run)
+            return nil
         }
     }
 
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(id)
+    /// Nil means the stored payload is malformed. An empty array is a valid,
+    /// intentional choice because Home always retains its fixed Empty tile.
+    static func decodeList(from json: String) -> [HomeQuickStartAction]? {
+        guard let data = json.data(using: .utf8),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else { return nil }
+        var seen = Set<String>()
+        return ids
+            .compactMap { HomeQuickStartAction(id: $0) }
+            .filter { seen.insert($0.id).inserted }
     }
 
-    static func decodeList(from json: String) -> [HomeQuickStartAction] {
-        guard let data = json.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([HomeQuickStartAction].self, from: data) else { return [] }
-        return decoded
+    /// An absent preference gets the onboarding defaults. A persisted `[]`
+    /// stays empty, so removing the final configurable tile survives redraws
+    /// and relaunches instead of silently restoring the defaults.
+    static func resolvedList(from json: String) -> [HomeQuickStartAction] {
+        guard !json.isEmpty else { return defaults }
+        return decodeList(from: json) ?? defaults
     }
 
     static func encodeList(_ actions: [HomeQuickStartAction]) -> String {
-        guard let data = try? JSONEncoder().encode(actions),
+        guard let data = try? JSONEncoder().encode(actions.map(\.id)),
               let json = String(data: data, encoding: .utf8) else { return "" }
         return json
     }
@@ -1579,9 +1703,11 @@ private struct QuickStartTile: View {
                             .frame(width: 24, height: 24)
                             .background(theme.danger)
                             .clipShape(Circle())
+                            .padding(4)
+                            .frame(width: 44, height: 44, alignment: .topTrailing)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(4)
                     .accessibilityLabel("Remove \(title)")
                 }
             }
@@ -1719,7 +1845,7 @@ private struct QuickStartAddSheet: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: systemImage)
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 36, height: 36)
                         .background(theme.surfaceElevated)
                         .clipShape(Circle())
@@ -1775,6 +1901,7 @@ struct RecoveryHeroCard: View {
                             .foregroundStyle(theme.textSecondary)
                             .frame(width: 32, height: 32)
                             .contentShape(Circle())
+                            .minimumTouchTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isExpanded ? "Collapse today's recommendation" : "Expand today's recommendation")
@@ -1882,7 +2009,7 @@ struct WorkoutFeedRow: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
                     Image(systemName: shape.systemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 34, height: 34)
                         .background(theme.surfaceElevated).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 1) {

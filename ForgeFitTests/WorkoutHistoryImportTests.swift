@@ -7,6 +7,10 @@ import Testing
 
 @MainActor
 struct WorkoutHistoryImportTests {
+    private enum SimulatedImportSaveFailure: Error {
+        case saveFailed
+    }
+
     @Test func hevyCSVParsesStrengthAndCardioRows() throws {
         let csv = """
         "title","start_time","end_time","description","exercise_title","superset_id","exercise_notes","set_index","set_type","weight_lbs","reps","distance_miles","duration_seconds","rpe"
@@ -288,6 +292,58 @@ struct WorkoutHistoryImportTests {
         #expect(second.skippedDuplicates == 1)
         #expect(try context.fetch(FetchDescriptor<WorkoutModel>()).count == 1)
         #expect(try context.fetch(FetchDescriptor<WorkoutImportBatchModel>()).count == 2)
+    }
+
+    @Test func failedCommitRollsBackTheWholeBatchBeforeAnUnrelatedSave() async throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let bench = ExerciseLibraryModel(
+            name: "Bench Press",
+            primaryMuscles: ["chest"],
+            equipment: "barbell"
+        )
+        context.insert(bench)
+        try context.save()
+
+        let csv = """
+        title,start_time,end_time,exercise_title,set_index,set_type,weight_lbs,reps
+        Push,"May 15, 2026, 7:26 PM","May 15, 2026, 8:00 PM",Bench Press,0,normal,225,5
+        """
+        let preview = try await WorkoutHistoryImportService.preview(
+            data: Data(csv.utf8),
+            fileName: "workouts.csv",
+            workouts: [],
+            exercises: [bench]
+        )
+        let unrelated = ExerciseLibraryModel(name: "Unrelated Exercise")
+        context.insert(unrelated)
+
+        #expect(throws: SimulatedImportSaveFailure.saveFailed) {
+            try WorkoutHistoryImportService.commit(
+                preview: preview,
+                workouts: [],
+                exercises: [bench],
+                in: context,
+                performSave: { _ in throw SimulatedImportSaveFailure.saveFailed }
+            )
+        }
+        // The import's isolated transaction neither commits nor rolls back an
+        // unrelated pending editor change in the shared UI context.
+        #expect(context.hasChanges)
+        let beforeUnrelatedSave = ModelContext(container)
+        #expect(try beforeUnrelatedSave.fetch(FetchDescriptor<WorkoutModel>()).isEmpty)
+        #expect(try beforeUnrelatedSave.fetch(FetchDescriptor<WorkoutImportBatchModel>()).isEmpty)
+        #expect(try beforeUnrelatedSave.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            .contains(where: { $0.id == unrelated.id }) == false)
+
+        // Prove the failed import graph cannot ride along with the next user
+        // action while that unrelated pending edit remains independently valid.
+        try context.save()
+        let freshContext = ModelContext(container)
+        #expect(try freshContext.fetch(FetchDescriptor<WorkoutModel>()).isEmpty)
+        #expect(try freshContext.fetch(FetchDescriptor<WorkoutImportBatchModel>()).isEmpty)
+        #expect(try freshContext.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            .contains(where: { $0.id == unrelated.id }))
     }
 
     @Test func importCreatesClassifiedCustomStrengthExercise() async throws {

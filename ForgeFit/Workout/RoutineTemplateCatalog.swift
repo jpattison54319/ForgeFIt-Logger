@@ -83,6 +83,20 @@ struct RoutineProgramTemplate: Identifiable, Codable, Hashable {
 }
 
 enum RoutineTemplateCatalog {
+    enum ImportError: LocalizedError {
+        case programHasNoRoutines
+        case committedFolderUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .programHasNoRoutines:
+                "This program doesn't contain any available routines."
+            case .committedFolderUnavailable:
+                "The program was saved, but ForgeFit couldn't reopen it. Try again."
+            }
+        }
+    }
+
     static func load() -> [RoutineTemplate] {
         guard let url = Bundle.main.url(forResource: "routine_templates", withExtension: "json"),
               let data = try? Data(contentsOf: url),
@@ -129,8 +143,9 @@ enum RoutineTemplateCatalog {
         _ template: RoutineTemplate,
         folderID: UUID?,
         existingRoutines: [RoutineModel],
-        in context: ModelContext
-    ) -> RoutineModel {
+        in context: ModelContext,
+        saveChanges: Bool
+    ) throws -> RoutineModel {
         let name = uniqueName(template.name, existingRoutines: existingRoutines)
         let routine = RoutineModel(
             userID: ForgeFitDemo.userID,
@@ -159,7 +174,14 @@ enum RoutineTemplateCatalog {
             return exercise
         }
         context.insert(routine)
-        try? context.save()
+        if saveChanges {
+            do {
+                try context.save()
+            } catch {
+                context.delete(routine)
+                throw error
+            }
+        }
         return routine
     }
 
@@ -170,12 +192,13 @@ enum RoutineTemplateCatalog {
     static func importProgram(
         _ program: RoutineProgramTemplate,
         templates: [RoutineTemplate],
-        in context: ModelContext
-    ) -> RoutineFolderModel? {
+        in context: ModelContext,
+        saveChanges: Bool
+    ) throws -> RoutineFolderModel? {
         let days = program.routines(from: templates)
         guard !days.isEmpty else { return nil }
 
-        let allFolders = (try? context.fetch(FetchDescriptor<RoutineFolderModel>())) ?? []
+        let allFolders = try context.fetch(FetchDescriptor<RoutineFolderModel>())
         let activeFolders = allFolders.filter { $0.deletedAt == nil }
         let topLevel = activeFolders.filter { $0.parentID == nil }
         let folder = RoutineFolderModel(
@@ -185,12 +208,28 @@ enum RoutineTemplateCatalog {
         )
         context.insert(folder)
 
-        var existingRoutines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
+        var existingRoutines = try context.fetch(FetchDescriptor<RoutineModel>())
+        var createdRoutines: [RoutineModel] = []
         for day in days {
-            let routine = importTemplate(day, folderID: folder.id, existingRoutines: existingRoutines, in: context)
+            let routine = try importTemplate(
+                day,
+                folderID: folder.id,
+                existingRoutines: existingRoutines,
+                in: context,
+                saveChanges: false
+            )
             existingRoutines.append(routine)
+            createdRoutines.append(routine)
         }
-        try? context.save()
+        if saveChanges {
+            do {
+                try context.save()
+            } catch {
+                createdRoutines.forEach(context.delete)
+                context.delete(folder)
+                throw error
+            }
+        }
         return folder
     }
 
@@ -208,5 +247,64 @@ enum RoutineTemplateCatalog {
         var index = 2
         while names.contains("\(base) \(index)") { index += 1 }
         return "\(base) \(index)"
+    }
+}
+
+/// A user-triggered catalog import that builds and saves its entire folder /
+/// routine graph outside the shared UI context. Dismissal and navigation are
+/// therefore impossible until the durable folder resolves back to the caller.
+@MainActor
+final class RoutineProgramImportAttempt {
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
+    private let program: RoutineProgramTemplate
+    private let templates: [RoutineTemplate]
+    private let persistenceContext: ModelContext
+    private var folder: RoutineFolderModel?
+
+    init(
+        program: RoutineProgramTemplate,
+        templates: [RoutineTemplate],
+        in sourceContext: ModelContext
+    ) {
+        self.program = program
+        self.templates = templates
+        persistenceContext = ModelContext(sourceContext.container)
+        persistenceContext.autosaveEnabled = false
+    }
+
+    @discardableResult
+    func commit(
+        into sourceContext: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (RoutineFolderModel) -> Void
+    ) -> Bool {
+        var committedFolder: RoutineFolderModel?
+        return (saveCenter ?? .shared).perform({ [self] in
+            if folder == nil {
+                folder = try RoutineTemplateCatalog.importProgram(
+                    program,
+                    templates: templates,
+                    in: persistenceContext,
+                    saveChanges: false
+                )
+            }
+            guard let folder else {
+                throw RoutineTemplateCatalog.ImportError.programHasNoRoutines
+            }
+            let folderID = folder.id
+            try save(persistenceContext)
+            committedFolder = try sourceContext.fetch(
+                FetchDescriptor<RoutineFolderModel>(
+                    predicate: #Predicate { $0.id == folderID }
+                )
+            ).first
+            guard committedFolder != nil else {
+                throw RoutineTemplateCatalog.ImportError.committedFolderUnavailable
+            }
+        }, onSuccess: {
+            if let committedFolder { onCommit(committedFolder) }
+        })
     }
 }

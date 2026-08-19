@@ -43,10 +43,13 @@ struct ConditioningPlanEditor: View {
                                 .font(.cardTitle)
                                 .foregroundStyle(theme.textPrimary)
                             Spacer()
-                            Menu("Conditioning options", systemImage: "ellipsis.circle") {
+                            Menu {
                                 Button("Remove Conditioning", systemImage: "trash", role: .destructive, action: removePlan)
+                            } label: {
+                                Label("Conditioning options", systemImage: "ellipsis.circle")
+                                    .labelStyle(.iconOnly)
+                                    .minimumTouchTarget()
                             }
-                            .labelStyle(.iconOnly)
                             .accessibilityIdentifier("conditioning-options")
                         }
 
@@ -54,6 +57,7 @@ struct ConditioningPlanEditor: View {
                             ConditioningSectionEditor(
                                 section: $section,
                                 exercises: exercises,
+                                workouts: workouts,
                                 onChange: persist,
                                 onApplyPreset: { apply($0, to: section.id) },
                                 onAddMovement: {
@@ -166,7 +170,7 @@ struct ConditioningPlanEditor: View {
         persist()
     }
 
-    private func apply(_ preset: ConditioningPreset, to sectionID: UUID) {
+    private func apply(_ preset: ConditioningPresetSelection, to sectionID: UUID) {
         do {
             try ConditioningPlanCoordinator.apply(
                 preset,
@@ -245,51 +249,104 @@ struct ConditioningPlanEditor: View {
 }
 
 struct ConditioningSectionEditor: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Binding var section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
+    let workouts: [WorkoutModel]
     let onChange: () -> Void
-    let onApplyPreset: (ConditioningPreset) -> Void
+    let onApplyPreset: (ConditioningPresetSelection) -> Void
     let onAddMovement: () -> Void
     let onReplaceMovement: (ConditioningMovement) -> Void
     let onRemoveMovement: (ConditioningMovement) -> Void
     let onMoveMovement: (ConditioningMovement, Int) -> Void
     let onDelete: () -> Void
+    var showsPresetActions = true
 
-    @State private var pendingPreset: ConditioningPreset?
+    @Query(sort: \IntervalPresetModel.createdAt, order: .reverse)
+    private var presetRecords: [IntervalPresetModel]
+
+    @FocusState private var nameIsFocused: Bool
+    @State private var pendingPreset: ConditioningPresetSelection?
     @State private var showPresetConfirmation = false
+    @State private var showAddPresetPrompt = false
+    @State private var showPresetManager = false
+    @State private var presetName = ""
+    @State private var storeError = ""
+    @State private var showStoreError = false
 
     var body: some View {
+        let savedPresets = ConditioningPresetStore.savedPresets(from: presetRecords)
+        let includedPresets = ConditioningPresetStore.visibleBuiltIns(from: presetRecords)
+
         VStack(alignment: .leading, spacing: Space.md) {
             HStack {
-                TextField("Section name", text: $section.name)
+                TextField("Block name", text: $section.name)
                     .font(.bodyStrong)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($nameIsFocused)
+                    .submitLabel(.done)
+                    .frame(minHeight: 44)
                     .onChange(of: section.name) { _, _ in onChange() }
-                Menu("Preset", systemImage: "square.grid.2x2") {
-                    ForEach(ConditioningPreset.allCases) { preset in
-                        Button(preset.menuTitle) { choose(preset) }
+                    .onSubmit(finishRenaming)
+                    .accessibilityLabel("Conditioning block name")
+                    .accessibilityIdentifier("conditioning-block-name-\(section.id.uuidString)")
+                if showsPresetActions {
+                    Menu {
+                        Button("Rename Block", systemImage: "pencil", action: focusName)
+                            .accessibilityIdentifier("rename-conditioning-block-\(section.id.uuidString)")
+                        Button("Add as Preset", systemImage: "bookmark", action: beginSavingPreset)
+                            .disabled(section.movements.isEmpty)
+                            .accessibilityIdentifier("add-conditioning-as-preset-\(section.id.uuidString)")
+                        Button("Manage Presets", systemImage: "slider.horizontal.3") {
+                            showPresetManager = true
+                        }
+                        .accessibilityIdentifier("manage-conditioning-presets")
+                        if !savedPresets.isEmpty || !includedPresets.isEmpty {
+                            Divider()
+                            if !savedPresets.isEmpty {
+                                Section("Saved") {
+                                    ForEach(savedPresets) { preset in
+                                        Button(preset.menuTitle) { choose(preset) }
+                                    }
+                                }
+                            }
+                            if !includedPresets.isEmpty {
+                                Section("Included") {
+                                    ForEach(includedPresets) { preset in
+                                        Button(preset.menuTitle) { choose(.builtIn(preset)) }
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
+                    } label: {
+                        Label("Block options", systemImage: "ellipsis")
+                            .labelStyle(.iconOnly)
+                            .minimumTouchTarget()
+                    }
+                    .tint(theme.accent)
+                    .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
+                    .confirmationDialog(
+                        "Replace this section?",
+                        isPresented: $showPresetConfirmation,
+                        presenting: pendingPreset
+                    ) { preset in
+                        Button("Use \(preset.title)", role: .destructive) { onApplyPreset(preset) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: { preset in
+                        Text("\(preset.title) replaces only this section's format, movements, and targets.")
+                    }
+                    .alert("Add as Preset", isPresented: $showAddPresetPrompt) {
+                        TextField("Preset name", text: $presetName)
+                        Button("Cancel", role: .cancel) { presetName = "" }
+                        Button("Add", action: saveAsPreset)
+                            .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } message: {
+                        Text("Saves this block's format, movements, and targets for reuse.")
                     }
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
-                .tint(theme.accent)
-                .accessibilityIdentifier("conditioning-section-preset-\(section.id.uuidString)")
-                .confirmationDialog(
-                    "Replace this section?",
-                    isPresented: $showPresetConfirmation,
-                    presenting: pendingPreset
-                ) { preset in
-                    Button("Use \(preset.title)", role: .destructive) { onApplyPreset(preset) }
-                    Button("Cancel", role: .cancel) {}
-                } message: { preset in
-                    Text("\(preset.title) replaces only this section's format, movements, and targets.")
-                }
-                Menu("Section options", systemImage: "ellipsis") {
-                    Button("Delete Section", systemImage: "trash", role: .destructive, action: onDelete)
-                }
-                .labelStyle(.iconOnly)
-                .accessibilityIdentifier("conditioning-section-options")
             }
 
             Picker("Format", selection: $section.format) {
@@ -298,6 +355,7 @@ struct ConditioningSectionEditor: View {
                 }
             }
             .pickerStyle(.menu)
+            .minimumTouchTarget()
             .onChange(of: section.format) { _, format in applyDefaults(for: format) }
 
             HStack(spacing: Space.md) {
@@ -368,6 +426,7 @@ struct ConditioningSectionEditor: View {
                     TextField("21-15-9", text: repSchemeBinding)
                         .textFieldStyle(.roundedBorder)
                         .keyboardType(.numbersAndPunctuation)
+                        .minimumTouchTarget()
                     if !section.repScheme.isEmpty {
                         Text("Each round uses the next target in the scheme.")
                             .font(.label)
@@ -382,6 +441,7 @@ struct ConditioningSectionEditor: View {
                 }
             }
             .pickerStyle(.segmented)
+            .frame(minHeight: TouchTarget.minimum)
             .onChange(of: section.ordering) { _, _ in onChange() }
 
             VStack(spacing: 0) {
@@ -410,6 +470,16 @@ struct ConditioningSectionEditor: View {
         .padding(Space.md)
         .background(theme.surfaceHighlight)
         .clipShape(.rect(cornerRadius: Radius.control))
+        .sheet(isPresented: $showPresetManager) {
+            ConditioningPresetManagerView(workouts: workouts, exercises: exercises)
+        }
+        .alert("Couldn't Save Preset", isPresented: $showStoreError) {
+        } message: {
+            Text(storeError)
+        }
+        .onChange(of: nameIsFocused) { _, isFocused in
+            if !isFocused { finishRenaming() }
+        }
     }
 
     private func numericField(_ label: String, value: Binding<Int>) -> some View {
@@ -418,6 +488,7 @@ struct ConditioningSectionEditor: View {
             TextField(label, value: value, format: .number)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
+                .minimumTouchTarget()
                 .onChange(of: value.wrappedValue) { _, _ in onChange() }
         }
     }
@@ -461,7 +532,34 @@ struct ConditioningSectionEditor: View {
         section.durationSeconds = (section.rounds ?? 8) * ((section.workSeconds ?? 20) + (section.restSeconds ?? 10))
     }
 
-    private func choose(_ preset: ConditioningPreset) {
+    private func focusName() {
+        nameIsFocused = true
+    }
+
+    private func finishRenaming() {
+        let trimmedName = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? section.format.title : trimmedName
+        guard section.name != finalName else { return }
+        section.name = finalName
+    }
+
+    private func beginSavingPreset() {
+        let trimmedName = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        presetName = trimmedName.isEmpty ? section.format.title : trimmedName
+        showAddPresetPrompt = true
+    }
+
+    private func saveAsPreset() {
+        do {
+            try ConditioningPresetStore.save(section, named: presetName, in: modelContext)
+            presetName = ""
+        } catch {
+            storeError = error.localizedDescription
+            showStoreError = true
+        }
+    }
+
+    private func choose(_ preset: ConditioningPresetSelection) {
         if section.movements.isEmpty {
             onApplyPreset(preset)
         } else {
@@ -496,21 +594,24 @@ private struct ConditioningMovementEditor: View {
                             .font(.label)
                     }
                     .foregroundStyle(theme.textPrimary)
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
                 .layoutPriority(1)
                 .accessibilityLabel("Replace \(exercise?.name ?? "exercise")")
                 Spacer()
-                Menu("Movement options", systemImage: "ellipsis") {
+                Menu {
                     Button("Move Up", systemImage: "arrow.up", action: onMoveUp)
                         .disabled(!canMoveUp)
                     Button("Move Down", systemImage: "arrow.down", action: onMoveDown)
                         .disabled(!canMoveDown)
                     Divider()
                     Button("Remove Movement", systemImage: "trash", role: .destructive, action: onRemove)
+                } label: {
+                    Label("Movement options", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                        .minimumTouchTarget()
                 }
-                .labelStyle(.iconOnly)
-                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("conditioning-movement-options-\(exercise?.name ?? movement.id.uuidString)")
             }
 
@@ -524,6 +625,7 @@ private struct ConditioningMovementEditor: View {
                     .multilineTextAlignment(.trailing)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 72)
+                    .minimumTouchTarget()
                     .onChange(of: movement.targetValue) { _, _ in onChange() }
                     .accessibilityIdentifier("conditioning-target-\(exercise?.name ?? movement.id.uuidString)")
                 Picker("Unit", selection: $movement.targetUnit) {
@@ -534,6 +636,7 @@ private struct ConditioningMovementEditor: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize(horizontal: true, vertical: false)
+                .minimumTouchTarget()
                 .onChange(of: movement.targetUnit) { _, _ in onChange() }
                 .accessibilityIdentifier("conditioning-unit-\(exercise?.name ?? movement.id.uuidString)")
             }
@@ -543,13 +646,19 @@ private struct ConditioningMovementEditor: View {
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
-                    TextField("Optional", value: $movement.targetLoad, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .onChange(of: movement.targetLoad) { _, _ in onChange() }
-                    Text(exercise?.effectiveWeightUnit.suffix ?? Fmt.unit.suffix)
+                    let unit = exercise?.effectiveWeightUnit ?? Fmt.unit
+                    OptionalLoadField(
+                        placeholder: "Optional",
+                        value: $movement.targetLoad,
+                        unit: unit,
+                        width: 104,
+                        supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                            name: exercise?.name,
+                            equipment: exercise?.equipment
+                        ),
+                        onChange: onChange
+                    )
+                    Text(unit.suffix)
                         .foregroundStyle(theme.textSecondary)
                 }
             }

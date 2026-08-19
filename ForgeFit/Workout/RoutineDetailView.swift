@@ -48,8 +48,12 @@ struct RoutineDetailView: View {
                 HStack {
                     Text("Workout").font(.sectionTitle).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Button("Edit Routine") { editing = true }
-                        .font(.bodyStrong).foregroundStyle(theme.accent)
+                    Button { editing = true } label: {
+                        Text("Edit Routine")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
+                    }
                 }
 
                 if orderedItems.isEmpty {
@@ -130,7 +134,7 @@ struct RoutineDetailView: View {
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
                                 .contentTransition(.numericText())
                             Text(last.date.formatted(.dateTime.month(.abbreviated).day()))
-                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accent)
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentForeground)
                         } else {
                             Text("No data yet").font(.cardTitle).foregroundStyle(theme.textSecondary)
                         }
@@ -143,7 +147,13 @@ struct RoutineDetailView: View {
                     // `.id(metric)` swaps the chart identity per metric so the
                     // change reads as a crossfade, not a path morph between
                     // unrelated series.
-                    LineTrendChart(points: series)
+                    LineTrendChart(
+                        points: series,
+                        yLabel: metric.rawValue,
+                        valueFormatter: { metric.formatted($0) },
+                        axisValueFormatter: { metric.axisValue($0) },
+                        yAxisUnitLabel: metric.axisLabel
+                    )
                         .id(metric)
                         .transition(.opacity)
                 } else {
@@ -160,8 +170,13 @@ struct RoutineDetailView: View {
 
     private func start() {
         appState.requestStart {
-            _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-            appState.showingLogger = true
+            _ = WorkoutFactory.start(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: setupNotes,
+                in: modelContext,
+                onCommit: { _ in appState.showingLogger = true }
+            )
         }
     }
 
@@ -212,7 +227,7 @@ private struct RoutineBlockSummary: View {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .accessibilityLabel("Conditioning details")
+                    .accessibilityLabel("\(title) details")
                     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                     .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
                     .accessibilityIdentifier("routine-conditioning-details")
@@ -241,7 +256,7 @@ private struct RoutineBlockSummary: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(block.kind.title)
+                Text(title)
                     .font(.cardTitle)
                     .foregroundStyle(theme.textPrimary)
                 Text(summary)
@@ -318,6 +333,10 @@ private struct RoutineBlockSummary: View {
         .accessibilityIdentifier("routine-conditioning-plan")
     }
 
+    private var title: String {
+        RoutineBlockPresentation.title(for: block)
+    }
+
     private func exercise(for id: UUID) -> ExerciseLibraryModel? {
         exercises.first { $0.id == id }
     }
@@ -364,6 +383,7 @@ private struct RoutineExerciseSummary: View {
                         if let exercise {
                             NavigationLink(value: exercise.id) {
                                 ExerciseNameLabel(name: exercise.name)
+                                    .minimumTouchTarget()
                             }
                             .buttonStyle(.plain)
                         } else {
@@ -415,7 +435,7 @@ private struct RoutineExerciseSummary: View {
             }
             Spacer()
         }
-        .foregroundStyle(theme.accent)
+        .foregroundStyle(theme.accentForeground)
     }
 
     private var strengthSummary: some View {
@@ -424,7 +444,7 @@ private struct RoutineExerciseSummary: View {
                 Image(systemName: "timer").font(.system(size: 13, weight: .semibold))
                 Text("Rest Timer: \(restText)").font(.system(size: 14, weight: .semibold))
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
 
             HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
@@ -436,7 +456,7 @@ private struct RoutineExerciseSummary: View {
             .foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
-                let style = SetTypeStyle.of(set.setType)
+                let style = SetTypeStyle.of(set.setType, theme: theme)
                 HStack(alignment: .top, spacing: 8) {
                     Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sortedSets))
                         .font(.system(size: 15, weight: .bold))

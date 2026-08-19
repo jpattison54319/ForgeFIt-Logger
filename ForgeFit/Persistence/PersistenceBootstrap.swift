@@ -3,13 +3,71 @@ import Foundation
 import SQLite3
 import SwiftData
 
+enum PersistenceLaunchFailure: Equatable {
+    /// The one-time legacy plan migration could not complete. Opening the
+    /// split stack anyway could drop the only local copy of those plan rows,
+    /// so launch stops before either store is changed.
+    case planMigrationUnavailable
+
+    /// The irreplaceable local workout log could not be opened. It is never
+    /// quarantined or replaced automatically.
+    case workoutLogUnavailable
+
+    /// The workout log opened independently, but the complete split stack
+    /// still could not be created. Both active stores remain in place.
+    case storeStackUnavailable
+
+    /// The store directory could not be excluded from device backup. Running
+    /// anyway could place workout and Health-derived data in iCloud backup,
+    /// violating ForgeFit's release privacy boundary.
+    case backupProtectionUnavailable
+
+    var recoveryMessage: String {
+        switch self {
+        case .planMigrationUnavailable:
+            "Your workout history and training plan were left untouched because ForgeFit could not finish updating its data. Check that your iPhone has free storage, then try again."
+        case .workoutLogUnavailable:
+            "Your workout history was left untouched. Check that your iPhone has free storage, then try again."
+        case .storeStackUnavailable:
+            "Your workout history and training plan were left untouched. Check that your iPhone has free storage, then try again."
+        case .backupProtectionUnavailable:
+            "ForgeFit could not apply required privacy protection to your local workout data. Your data was left untouched. Check that your iPhone has free storage, then try again."
+        }
+    }
+
+    var supportCode: String {
+        switch self {
+        case .planMigrationUnavailable: "DATA-MIGRATE-1"
+        case .workoutLogUnavailable: "DATA-OPEN-1"
+        case .storeStackUnavailable: "DATA-OPEN-2"
+        case .backupProtectionUnavailable: "DATA-PRIVACY-1"
+        }
+    }
+}
+
+enum PersistenceLaunchState {
+    case ready(ModelContainer)
+    case blocked(PersistenceLaunchFailure)
+
+    var container: ModelContainer? {
+        guard case let .ready(container) = self else { return nil }
+        return container
+    }
+
+    var failure: PersistenceLaunchFailure? {
+        guard case let .blocked(failure) = self else { return nil }
+        return failure
+    }
+}
+
 /// Builds the app's split persistence stack (App Store Guideline 5.1.3(ii)):
 ///
 /// - `default.store` — the training LOG (workouts, sets, cardio, health-
 ///   derived metrics, check-ins). LOCAL ONLY, never CloudKit: these models
 ///   carry personal health information, which must not be stored in iCloud.
-///   Cross-device continuity comes from the sanitized iCloud Drive backup
-///   plus re-enrichment from Apple Health.
+///   Users can make an explicit export for continuity; legacy sanitized
+///   iCloud Drive backups can still be restored, with Health values
+///   re-enriched from Apple Health.
 /// - `plan.store` — the training PLAN (routines, exercise library, notes,
 ///   presets, flows, XP). Syncs via CloudKit; contains no health data by
 ///   construction (see `ForgeDataSchema.planModels`).
@@ -41,45 +99,62 @@ enum PersistenceBootstrap {
     }()
 
     @MainActor
-    static func makeContainer() -> ModelContainer {
-        migratePlanRowsIfNeeded()
-        restoreQuarantinedWorkoutLogIfNeeded()
+    static func makeContainer(
+        prepare: @MainActor () throws -> Void = {
+            try PersistenceBootstrap.migratePlanRowsIfNeeded()
+            PersistenceBootstrap.restoreQuarantinedWorkoutLogIfNeeded()
+        },
+        openSplit: @MainActor () throws -> ModelContainer = {
+            try PersistenceBootstrap.makeSplitContainer()
+        },
+        workoutLogCanOpen: @MainActor () -> Bool = {
+            PersistenceBootstrap.canOpenWorkoutLog()
+        },
+        protectStoresFromBackup: @MainActor () throws -> Void = {
+            try PersistenceBootstrap.excludeStoreDirectoryFromSystemBackup()
+        }
+    ) -> PersistenceLaunchState {
+        do {
+            try prepare()
+        } catch {
+            // A failed migration is not permission to continue into the split
+            // stack: doing so can make legacy plan rows unreachable. Leave
+            // both stores exactly where they are and let the user retry.
+            print("Plan-store migration could not complete; preserving both stores: \(error)")
+            return .blocked(.planMigrationUnavailable)
+        }
 
         do {
-            let container = try makeSplitContainer()
-            excludeStoreDirectoryFromSystemBackup()
-            return container
-        } catch {
-            // The plan store is CloudKit-recoverable; the local workout log is
-            // not. The old fallback quarantined BOTH stores when either one
-            // failed, which could replace a healthy workout history with an
-            // empty database after an unrelated plan-store schema error.
-            guard canOpenWorkoutLog() else {
-                fatalError("Local workout store could not open; it was preserved for recovery: \(error)")
-            }
-            quarantine(storeURL: planStoreURL)
+            let container = try openSplit()
             do {
-                let container = try makeSplitContainer()
-                excludeStoreDirectoryFromSystemBackup()
-                return container
+                try protectStoresFromBackup()
             } catch {
-                fatalError("Could not create ModelContainer: \(error)")
+                print("Required local-store backup exclusion failed: \(error)")
+                return .blocked(.backupProtectionUnavailable)
             }
+            return .ready(container)
+        } catch {
+            // Never move an active user-authored store automatically. The old
+            // fallback quarantined stores and retried with empty databases;
+            // that could make intact history or an unsynced plan look erased.
+            guard workoutLogCanOpen() else {
+                print("Local workout store could not open; preserving it for recovery: \(error)")
+                return .blocked(.workoutLogUnavailable)
+            }
+            print("Split store stack could not open; preserving both active stores: \(error)")
+            return .blocked(.storeStackUnavailable)
         }
     }
 
     /// The LOG store contains Health-derived values and experiments. Neither
-    /// belongs in an opaque device backup: workout continuity comes from the
-    /// app's deliberately sanitized iCloud Drive file, while plan rows already
-    /// sync through their private CloudKit store. Excluding the containing
-    /// directory also covers SQLite's transient WAL/SHM files.
-    private static func excludeStoreDirectoryFromSystemBackup() {
+    /// belongs in Apple's opaque device backup. Workout continuity comes from
+    /// ForgeFit's sanitized iCloud Drive backup, while plan rows sync through
+    /// their private CloudKit store. Excluding the containing directory also
+    /// covers SQLite's transient WAL/SHM files and prevents the unsanitized
+    /// local database from entering iCloud through the system backup path.
+    private static func excludeStoreDirectoryFromSystemBackup() throws {
         let directory = defaultStoreURL.deletingLastPathComponent()
-        do {
-            try excludeDirectoryFromSystemBackup(directory)
-        } catch {
-            assertionFailure("Could not exclude ForgeFit stores from system backup: \(error)")
-        }
+        try excludeDirectoryFromSystemBackup(directory)
     }
 
     static func excludeDirectoryFromSystemBackup(_ url: URL) throws {
@@ -232,18 +307,72 @@ enum PersistenceBootstrap {
         return Int(exactly: sqlite3_column_int64(statement, 0))
     }
 
-    private static func replaceStore(at destination: URL, withStoreAt source: URL) throws {
+    /// Replaces a three-file SQLite store without deleting the active copy
+    /// until every source component has first been staged successfully. A
+    /// failed staging copy leaves the destination byte-for-byte untouched; a
+    /// failed promotion rolls moved destination files back from a same-volume
+    /// directory. The preserved source is never moved, so a process death in
+    /// the narrow promotion window can retry recovery on the next launch.
+    static func replaceStore(at destination: URL, withStoreAt source: URL) throws {
         let fileManager = FileManager.default
-        for suffix in ["", "-shm", "-wal"] {
-            let destinationFile = URL(fileURLWithPath: destination.path + suffix)
-            let sourceFile = URL(fileURLWithPath: source.path + suffix)
-            if fileManager.fileExists(atPath: destinationFile.path) {
-                try fileManager.removeItem(at: destinationFile)
-            }
-            if fileManager.fileExists(atPath: sourceFile.path) {
-                try fileManager.copyItem(at: sourceFile, to: destinationFile)
-            }
+        let suffixes = ["", "-shm", "-wal"]
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw CocoaError(.fileNoSuchFile)
         }
+
+        let parent = destination.deletingLastPathComponent()
+        let staging = parent.appendingPathComponent(".StoreRestore-\(UUID().uuidString)", isDirectory: true)
+        let rollback = parent.appendingPathComponent(".StoreRollback-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: staging) }
+
+        let sourceSuffixes = suffixes.filter {
+            fileManager.fileExists(atPath: URL(fileURLWithPath: source.path + $0).path)
+        }
+        for suffix in sourceSuffixes {
+            let sourceFile = URL(fileURLWithPath: source.path + suffix)
+            let stagedFile = staging.appendingPathComponent(destination.lastPathComponent + suffix)
+            try fileManager.copyItem(at: sourceFile, to: stagedFile)
+        }
+
+        try fileManager.createDirectory(at: rollback, withIntermediateDirectories: false)
+        var movedDestinationSuffixes: [String] = []
+        var installedSourceSuffixes: [String] = []
+        do {
+            for suffix in suffixes {
+                let destinationFile = URL(fileURLWithPath: destination.path + suffix)
+                guard fileManager.fileExists(atPath: destinationFile.path) else { continue }
+                try fileManager.moveItem(
+                    at: destinationFile,
+                    to: rollback.appendingPathComponent(destination.lastPathComponent + suffix)
+                )
+                movedDestinationSuffixes.append(suffix)
+            }
+
+            for suffix in sourceSuffixes {
+                let stagedFile = staging.appendingPathComponent(destination.lastPathComponent + suffix)
+                let destinationFile = URL(fileURLWithPath: destination.path + suffix)
+                try fileManager.moveItem(at: stagedFile, to: destinationFile)
+                installedSourceSuffixes.append(suffix)
+            }
+        } catch {
+            for suffix in installedSourceSuffixes {
+                try? fileManager.removeItem(at: URL(fileURLWithPath: destination.path + suffix))
+            }
+            var rollbackCompleted = true
+            for suffix in movedDestinationSuffixes.reversed() {
+                let preserved = rollback.appendingPathComponent(destination.lastPathComponent + suffix)
+                let destinationFile = URL(fileURLWithPath: destination.path + suffix)
+                do {
+                    try fileManager.moveItem(at: preserved, to: destinationFile)
+                } catch {
+                    rollbackCompleted = false
+                }
+            }
+            if rollbackCompleted { try? fileManager.removeItem(at: rollback) }
+            throw error
+        }
+        try fileManager.removeItem(at: rollback)
     }
 
     /// One-time copy of plan rows out of the legacy combined store. MUST run
@@ -251,7 +380,7 @@ enum PersistenceBootstrap {
     /// open drops the plan tables from the legacy file (by design, after
     /// the copy). Fresh installs just stamp the flag.
     @MainActor
-    private static func migratePlanRowsIfNeeded() {
+    private static func migratePlanRowsIfNeeded() throws {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: splitMigrationDoneKey) else { return }
         guard FileManager.default.fileExists(atPath: defaultStoreURL.path) else {
@@ -266,25 +395,11 @@ enum PersistenceBootstrap {
             defaults.set(true, forKey: splitMigrationDoneKey)
             print("PlanStoreSplitMigration copied \(summary.totalCopied) rows: \(summary.copiedByType)")
         } catch {
-            // Legacy store unreadable with the current schema — the split
-            // container will hit the same wall and quarantine it; migration
-            // then has nothing left to do.
-            print("PlanStoreSplitMigration failed (continuing to quarantine path): \(error)")
-            defaults.set(true, forKey: splitMigrationDoneKey)
-        }
-    }
-
-    private static func quarantine(storeURL: URL) {
-        let dir = storeURL.deletingLastPathComponent()
-        let base = storeURL.lastPathComponent
-        guard FileManager.default.fileExists(atPath: storeURL.path) else { return }
-        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let backupDir = dir.appendingPathComponent("StoreBackup-\(stamp)-\(base)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
-        for name in [base, base + "-shm", base + "-wal"] {
-            let source = dir.appendingPathComponent(name)
-            try? FileManager.default.copyItem(at: source, to: backupDir.appendingPathComponent(name))
-            try? FileManager.default.removeItem(at: source)
+            // Never stamp a failed migration complete. Opening the split
+            // stack after this point can make legacy plan rows unreachable;
+            // the launch recovery surface leaves the store intact for retry.
+            print("PlanStoreSplitMigration failed: \(error)")
+            throw error
         }
     }
 }

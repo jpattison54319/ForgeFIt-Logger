@@ -86,7 +86,7 @@ nonisolated struct RecoveryEngine {
         }
     }
 
-    struct DailyHealthMetric: Sendable {
+    struct DailyHealthMetric: Equatable, Sendable {
         var date: Date
         var hrvSDNN: Double?
         var hrvRMSSD: Double?

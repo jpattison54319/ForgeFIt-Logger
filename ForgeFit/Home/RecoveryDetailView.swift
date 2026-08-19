@@ -37,22 +37,21 @@ struct RecoveryDetailView: View {
     }
 
     private func toggleCheckinTag(_ tag: String) {
-        let model: DailyCheckinModel
-        if let existing = todayCheckin {
-            model = existing
-        } else {
-            model = DailyCheckinModel(userID: ForgeFitDemo.userID, date: Calendar.current.startOfDay(for: Date()))
-            modelContext.insert(model)
-        }
-        var tags = model.tags
+        var tags = todayCheckin?.tags ?? []
         if let index = tags.firstIndex(of: tag) {
             tags.remove(at: index)
         } else {
             tags.append(tag)
         }
-        model.tags = tags
-        model.updatedAt = Date()
-        try? modelContext.save()
+        let attempt = DailyCheckinCommitAttempt(
+            id: todayCheckin?.id ?? UUID(),
+            userID: ForgeFitDemo.userID,
+            day: Date(),
+            tags: tags
+        )
+        PersistentChangeSaveCenter.shared.perform {
+            _ = try attempt.commit(in: modelContext)
+        }
     }
 
     /// Daily HRV over the last ~45 days with a source-pure 10th–90th
@@ -143,8 +142,15 @@ struct RecoveryDetailView: View {
 private struct FitnessFatigueCard: View {
     @Environment(\.theme) private var theme
     let points: [FitnessFatigue.Point]
+    @State private var selectedDate: Date?
 
     private var latest: FitnessFatigue.Point? { points.last }
+    private var selectedPoint: FitnessFatigue.Point? {
+        guard let selectedDate else { return nil }
+        return points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
 
     var body: some View {
         Card {
@@ -156,26 +162,56 @@ private struct FitnessFatigueCard: View {
                         legendValue("Balance", value: latest.tsb, color: theme.textSecondary, signed: true)
                     }
                 }
-                Chart(points, id: \.date) { point in
-                    LineMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl), series: .value("Metric", "Long-term"))
-                        .foregroundStyle(theme.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                    LineMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl), series: .value("Metric", "Short-term"))
-                        .foregroundStyle(theme.secondaryAccent)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                Chart {
+                    ForEach(points, id: \.date) { point in
+                        LineMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl), series: .value("Metric", "Long-term"))
+                            .foregroundStyle(theme.accentForeground)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                        LineMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl), series: .value("Metric", "Short-term"))
+                            .foregroundStyle(theme.secondaryAccentForeground)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        PointMark(x: .value("Day", point.date), y: .value("Long-term load", point.ctl))
+                            .foregroundStyle(theme.accentForeground)
+                            .symbolSize(20)
+                        PointMark(x: .value("Day", point.date), y: .value("Short-term load", point.atl))
+                            .foregroundStyle(theme.secondaryAccentForeground)
+                            .symbolSize(20)
+                    }
+                    if let selectedPoint {
+                        RuleMark(x: .value("Selected day", selectedPoint.date))
+                            .foregroundStyle(theme.textTertiary)
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                                ChartSelectionCallout(
+                                    title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                                    lines: [
+                                        ("Long-term", "\(Int(selectedPoint.ctl.rounded())) AU"),
+                                        ("Short-term", "\(Int(selectedPoint.atl.rounded())) AU"),
+                                        ("Balance", "\(Int(selectedPoint.tsb.rounded())) AU"),
+                                    ]
+                                )
+                            }
+                    }
                 }
                 .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                         AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                         AxisValueLabel().foregroundStyle(theme.textTertiary)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                             .foregroundStyle(theme.textTertiary)
                     }
                 }
+                .chartYAxisLabel(position: .top, alignment: .leading) {
+                    Text("Load (AU)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .pressHoldChartXSelection(value: $selectedDate)
                 .frame(height: 150)
                 Text(balanceLine)
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
@@ -234,6 +270,7 @@ private struct MorningCheckinCard: View {
                             .background(
                                 Capsule().fill(on ? theme.accent : theme.surfaceElevated)
                             )
+                            .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
@@ -393,10 +430,13 @@ private struct RecoverySummaryCard: View {
                         }
                         .foregroundStyle(report.action.tint(in: theme))
 
-                        Text(report.preWorkoutAdjustment)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if FeatureFlags.recoveryActionDetail {
+                            Text(report.preWorkoutAdjustment)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("recovery-action-detail")
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -584,17 +624,36 @@ private struct MuscleRecoveryCard: View {
     @Environment(\.theme) private var theme
     let muscles: [RecoveryEngine.MuscleRecoveryScore]
     let onInfo: (RecoveryInfoTopic) -> Void
-    @State private var backExpanded = false
+    @State private var expandedGroups: Set<String> = []
 
-    private var topLevelMuscles: [RecoveryEngine.MuscleRecoveryScore] {
-        let children = Set(MuscleTaxonomy.children["back"] ?? [])
-        return muscles.filter { !children.contains($0.muscle) }
+    private var musclesByName: [String: RecoveryEngine.MuscleRecoveryScore] {
+        Dictionary(muscles.map { ($0.muscle, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
-    private var backChildren: [RecoveryEngine.MuscleRecoveryScore] {
-        let order = MuscleTaxonomy.children["back"] ?? []
-        let byName = Dictionary(muscles.map { ($0.muscle, $0) }, uniquingKeysWith: { first, _ in first })
-        return order.compactMap { byName[$0] }
+    private func toggle(_ group: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedGroups.contains(group) {
+                expandedGroups.remove(group)
+            } else {
+                expandedGroups.insert(group)
+            }
+        }
+    }
+
+    private func accessibilityValue(
+        for muscle: RecoveryEngine.MuscleRecoveryScore,
+        expanded: Bool
+    ) -> String {
+        var parts = [expanded ? "Expanded" : "Collapsed"]
+        if let score = muscle.state.value {
+            parts.append("\(Int((score * 100).rounded())), \(muscle.statusLabel)")
+        } else {
+            parts.append("No sets yet")
+        }
+        if let days = muscle.lastTrainedDaysAgo {
+            parts.append(days == 0 ? "Trained today" : (days == 1 ? "Trained yesterday" : "Trained \(days) days ago"))
+        }
+        return parts.joined(separator: ", ")
     }
 
     var body: some View {
@@ -608,45 +667,46 @@ private struct MuscleRecoveryCard: View {
                     Spacer()
                 }
 
-                if muscles.allSatisfy({ $0.state.value == nil }) {
-                    Text("Log strength workouts to build recency-weighted exposure estimates for each muscle.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.textSecondary)
-                } else {
-                    VStack(spacing: Space.md) {
-                        ForEach(topLevelMuscles) { muscle in
-                            if muscle.muscle == "back" {
+                VStack(spacing: Space.md) {
+                    ForEach(MuscleTaxonomy.freshnessGroups) { group in
+                        if let muscle = musclesByName[group.name] {
+                            if group.children.isEmpty {
+                                MuscleRecoveryRow(muscle: muscle)
+                            } else {
+                                let expanded = expandedGroups.contains(group.name)
                                 Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        backExpanded.toggle()
-                                    }
+                                    toggle(group.name)
                                 } label: {
                                     HStack(spacing: Space.sm) {
                                         MuscleRecoveryRow(muscle: muscle)
                                         Image(systemName: "chevron.right")
                                             .font(.system(size: 12, weight: .bold))
                                             .foregroundStyle(theme.textTertiary)
-                                            .rotationEffect(.degrees(backExpanded ? 90 : 0))
+                                            .rotationEffect(.degrees(expanded ? 90 : 0))
                                             .frame(width: 18, height: 44)
                                     }
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Back freshness")
-                                .accessibilityValue(backExpanded ? "Expanded" : "Collapsed")
-                                .accessibilityHint(backExpanded ? "Collapses back muscle details" : "Shows lats, upper back, middle back, lower back, and traps")
+                                .accessibilityLabel("\(MuscleTaxonomy.freshnessDisplayName(group.name)) freshness")
+                                .accessibilityValue(accessibilityValue(for: muscle, expanded: expanded))
+                                .accessibilityHint(expanded
+                                    ? "Collapses muscle details"
+                                    : "Shows \(group.children.map(MuscleTaxonomy.freshnessDisplayName).joined(separator: ", "))")
+                                .accessibilityInputLabels([MuscleTaxonomy.freshnessDisplayName(group.name)])
+                                .accessibilityIdentifier("muscle-freshness-toggle-\(group.name)")
 
-                                if backExpanded {
+                                if expanded {
                                     VStack(spacing: Space.md) {
-                                        ForEach(backChildren) { child in
-                                            MuscleRecoveryRow(muscle: child)
+                                        ForEach(group.children, id: \.self) { childName in
+                                            if let child = musclesByName[childName] {
+                                                MuscleRecoveryRow(muscle: child)
+                                            }
                                         }
                                     }
                                     .padding(.leading, Space.md)
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
-                            } else {
-                                MuscleRecoveryRow(muscle: muscle)
                             }
                         }
                     }
@@ -663,17 +723,12 @@ private struct MuscleRecoveryRow: View {
     var body: some View {
         HStack(spacing: Space.md) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(muscle.muscle.capitalized)
+                Text(MuscleTaxonomy.freshnessDisplayName(muscle.muscle))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(theme.textTertiary)
-                if muscle.isProvisional {
-                    Text("Provisional")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(theme.warmup)
-                }
             }
             .frame(width: 104, alignment: .leading)
 
@@ -734,28 +789,19 @@ private struct CardioRecoveryCard: View {
                 }
 
                 if let lastSessionText = cardio.lastSessionText {
-                    Text("Last session: \(lastSessionText)")
+                    Text("Last load: \(lastSessionText)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textTertiary)
                 }
 
-                if let method = cardio.methodLabel {
-                    Text("\(method)\(cardio.isProvisional ? " · provisional" : "")")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(cardio.isProvisional ? theme.warmup : theme.textTertiary)
+                if case .building(let needed) = cardio.state {
+                    Text(needed)
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Text(guidanceText)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    private var guidanceText: String {
-        if case .building(let needed) = cardio.state { return needed }
-        return cardio.guidance
     }
 }
 
@@ -922,9 +968,9 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .systemicScore:
             return "A seven-day view of available HRV, heart-rate, and sleep trends. It uses source-consistent personal baselines and appears only when enough recent observations are available."
         case .muscleScore:
-            return "A recency-weighted estimate of logged training exposure. Primary and secondary muscle work use consistent weights, and recent high-effort sets add modestly more exposure. The decay setting is a display model, not a biological recovery clock."
+            return "A recency-weighted estimate of completed working sets, normalized to your typical dose for each muscle or body region. Set type, primary or secondary role, and logged RPE or RIR shape the estimate; it is not a biological recovery clock."
         case .cardioScore:
-            return "A recency-weighted cardio-exposure estimate using one locked load method: preferably duration × whole-session CR10, otherwise genuinely measured zone-duration load. Methods are never mixed."
+            return "A recency-weighted cardiovascular-load estimate normalized to your typical session. Measured heart-rate zones can contribute from any workout, including strength circuits; cardio and conditioning effort is used only when measured zones are unavailable."
         case .confidence:
             return "Shows comparable data availability and baseline maturity. It is not a statistical confidence interval. Missing data shrinks the score toward 50 and can withhold it entirely."
         }
@@ -939,7 +985,7 @@ private enum RecoveryInfoTopic: String, Identifiable {
         case .muscleScore:
             return "Lower freshness means more recent modeled exposure, not incomplete biological recovery."
         case .cardioScore:
-            return "A score of 50 means modeled remaining exposure equals one typical same-method session; it does not mean 50% recovered."
+            return "A score of 50 means one typical session's modeled exposure remains; it does not mean 50% recovered."
         case .confidence:
             return "Low coverage means the score should be interpreted less strongly or withheld."
         }

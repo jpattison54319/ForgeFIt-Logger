@@ -1,0 +1,1057 @@
+{
+  "schemaVersion": 1,
+  "contentVersion": "2026.08.09.7",
+  "reviewStatus": "source-audited; awaiting independent yoga-teacher review",
+  "reviewedAt": "2026-08-09",
+  "global": {
+    "openings": [
+      "Welcome to your practice. Let comfort, steadiness, and an unforced breath guide you.",
+      "Arrive as you are. There is nothing to prove and no shape you need to force.",
+      "Choose a simple intention for this practice, then let it rest lightly in your awareness.",
+      "Let this be a practice of ahimsa: meet your body with care and do no harm.",
+      "Feel the support beneath you and give yourself permission to take up space on your mat.",
+      "Your breath belongs to you. Let your breath move at a pace that feels comfortable for you.",
+      "Begin by noticing what is present without needing to label it good or bad.",
+      "Let the next few moments be a quiet return to body, breath, and attention."
+    ],
+    "breath": [
+      "Notice the next inhale from its beginning to its end, then follow the exhale the same way.",
+      "Let the breath remain smooth and unforced; a smaller shape is always available.",
+      "Feel the ribs widen as you inhale and gently settle as you exhale.",
+      "If the breath becomes strained, ease the pose until breathing feels steady again.",
+      "Allow the exhale to be complete without pressing or holding the breath.",
+      "Breathe at your own pace, using the cue as an invitation rather than a demand.",
+      "Let the inhale create space and the exhale release effort you do not need.",
+      "Notice where the breath moves easily and where it feels quieter today.",
+      "Keep the jaw and throat soft enough for the breath to pass without effort.",
+      "Stay curious about the pause between breaths, without trying to lengthen it.",
+      "Return attention to one uncomplicated breath in and one uncomplicated breath out.",
+      "Let your breathing be the metronome, and let the pose adapt to it."
+    ],
+    "awareness": [
+      "Notice the places meeting the floor and let that contact make the pose more supported.",
+      "Scan from your feet toward your face and soften any effort the pose does not require.",
+      "Observe sensation without chasing intensity; clear and sustainable is enough.",
+      "Feel the difference between useful muscular effort and gripping you can release.",
+      "Let your gaze be steady or your eyes close only if balance and comfort allow.",
+      "Notice whether you are holding your jaw, brow, fingers, or toes more tightly than needed.",
+      "Stay with direct sensation rather than an idea of how the pose should look.",
+      "Allow a little silence so your body has time to answer the last cue.",
+      "Notice what changes when you trade one percent of effort for one percent more ease.",
+      "Feel the whole outline of your body rather than focusing only on the strongest sensation.",
+      "Let your attention rest where the pose feels stable and clear.",
+      "If the mind wanders, gently return to one point of contact or one breath."
+    ],
+    "encouragement": [
+      "Choose the version you can sustain with steadiness rather than the deepest version available.",
+      "You can pause, change the shape, or leave the pose at any time.",
+      "Consistency matters more than intensity; let today’s range be enough.",
+      "Keep what serves your practice and release any cue that does not fit your body.",
+      "A prop is part of the practice, not a lesser version of it.",
+      "Let steadiness and ease share the work.",
+      "You are practicing attention, not performing a pose.",
+      "Make room for your body to be different from one side or one day to the next.",
+      "Stay for another breath only if the pose remains clear and workable.",
+      "The option to rest is available now and throughout the class."
+    ],
+    "spiritual": [
+      "Yoga invites union: notice body, breath, and attention meeting in this one moment.",
+      "Practice santosha, or contentment, by letting this honest version of the pose be complete.",
+      "Let aparigraha, non-grasping, remind you that you do not need to reach for more intensity.",
+      "Notice prana as the felt aliveness of breath and sensation, without needing to define it.",
+      "Let your drishti be more than a gaze point; allow it to steady your attention.",
+      "Bring a quiet sense of gratitude to the body carrying you through this practice.",
+      "Meet each sensation with the kindness you would offer a trusted friend.",
+      "Let the practice be an inquiry: what can be steady, and what can soften?",
+      "Observe thoughts as passing events, then return to the living experience of this breath.",
+      "Allow the space between effort and ease to become a place of meditation.",
+      "Honor the lineage of yoga by practicing with attention, humility, and care.",
+      "Let your intention guide the quality of your attention, not the depth of your pose."
+    ],
+    "closings": [
+      "Your guided practice is complete. Notice what is present now without needing to change it.",
+      "Take a moment of gratitude for the time and attention you offered yourself.",
+      "Carry the steadiness of one conscious breath into whatever comes next.",
+      "Let your practice close with the same care with which it began.",
+      "Notice one quality from your practice that you would like to take beyond the mat.",
+      "May the care you practiced here extend to yourself and to the people around you.",
+      "Bring your palms together if that feels meaningful, or simply rest your hands and breathe.",
+      "Thank yourself for showing up. Your practice is complete."
+    ]
+  },
+  "poses": [
+    {
+      "slug": "downward-facing-dog",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, tuck your toes, press through your hands, and lift your hips up and back; keep your knees bent if helpful."
+        ],
+        "alignment": [
+          "Spread your fingers and share pressure across your palms and knuckles as you press the floor away.",
+          "Prioritize length through your spine. Your knees may stay bent and your heels do not need to touch the floor."
+        ],
+        "breath": [
+          "Let each inhale widen your ribs and each exhale soften the backs of your legs without pushing.",
+          "Keep your neck easy between your upper arms and let your breathing remain unforced."
+        ],
+        "options": [
+          "For less load on your wrists or shoulders, keep a deep bend in your knees, raise your hands on stable blocks, or take the shape with your hands at a wall."
+        ],
+        "reflection": [
+          "Feel the steady triangle of hands, hips, and feet supporting an even breath."
+        ],
+        "exit": "Bend your knees and lower them softly, returning to hands and knees."
+      },
+      "considerations": [
+        "Reduce or avoid wrist and shoulder loading if it causes pain.",
+        "Ask a clinician or qualified teacher whether partial inversions suit you if you have an eye condition or uncontrolled blood pressure."
+      ],
+      "sources": [
+        {"title": "Yoga International: Downward-Facing Dog Pose", "url": "https://yogainternational.com/article/view/downward-facing-dog-pose/"},
+        {"title": "Yoga Journal: Downward-Facing Dog Variations", "url": "https://www.yogajournal.com/practice/ways-to-practice-downward-facing-dog-pose/"}
+      ]
+    },
+    {
+      "slug": "low-lunge",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, step your {side} foot between your hands and lower your {oppositeSide} knee onto padding; keep your hands on the mat, blocks, or thighs."
+        ],
+        "alignment": [
+          "Keep your {side} knee pointing in the same direction as your toes and roughly above or behind the ankle.",
+          "Lengthen up through your torso and let the front of the back hip open without forcing your pelvis to face perfectly forward."
+        ],
+        "breath": [
+          "Inhale to lengthen through the crown of your head; exhale and let the pelvis settle only as far as the breath stays easy.",
+          "Notice the breath moving around your ribs while the legs provide a steady base."
+        ],
+        "options": [
+          "Keep both hands on blocks, shorten your stance, or place extra padding under the back knee."
+        ],
+        "reflection": [
+          "Practice meeting the edge of the stretch without needing to cross it."
+        ],
+        "exit": "Bring your hands down, shift your hips back slightly, and return your {side} knee beside the other knee."
+      },
+      "considerations": [
+        "Pad the back knee and reduce the front-knee bend if either knee feels compressed.",
+        "Stop if you feel sharp sensation in the groin, hip, or knee."
+      ],
+      "sources": [
+        {"title": "Yoga International: Low Lunge and Pigeon Knee Safety", "url": "https://yogainternational.com/article/view/how-to-please-the-knees-in-low-lunge-and-pigeon/"},
+        {"title": "Yoga Journal: Low Lunge Pose", "url": "https://www.yogajournal.com/poses/low-lunge/"}
+      ]
+    },
+    {
+      "slug": "high-lunge",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "From standing, step your {oppositeSide} foot back and bend your {side} knee as comfortable, staying on the ball of the back foot; keep your hands at your hips or reach up."
+        ],
+        "alignment": [
+          "Give your feet enough side-to-side width for balance, and keep the front knee tracking with the toes.",
+          "Stack your torso over your pelvis and reach back through the lifted heel without locking the back knee."
+        ],
+        "breath": [
+          "Inhale to grow taller through your side body; exhale while keeping the legs steady.",
+          "Let the breath tell you whether to make the lunge shallower."
+        ],
+        "options": [
+          "Lower the back knee, keep your hands on your hips, or use a wall or sturdy chair for balance."
+        ],
+        "reflection": [
+          "Let steadiness come from a wide, responsive base rather than from gripping."
+        ],
+        "exit": "Lower your arms, press through the front foot, and step the back foot forward to stand."
+      },
+      "considerations": [
+        "Use support if balance is uncertain.",
+        "Choose a shorter stance or lower the back knee if either knee or the front of the back hip feels strained."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: High Lunge", "url": "https://www.yogajournal.com/poses/high-lunge"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "warrior-ii",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "Face the long side of your mat and step your feet wide. Turn your {side} foot toward the short edge, angle the other toes slightly inward, bend your {side} knee as comfortable, and reach your arms out at shoulder height."
+        ],
+        "alignment": [
+          "Keep the {side} knee centered over the ankle and pointing toward the middle toes rather than falling inward.",
+          "Share your weight between both feet, lengthen your spine, and soften your shoulders away from your ears."
+        ],
+        "breath": [
+          "Breathe across the width of your chest while your feet stay grounded.",
+          "On each exhale, release effort from your jaw and hands without losing the support of your legs."
+        ],
+        "options": [
+          "Make the stance shorter, bend the front knee less, or rest the front thigh on a sturdy chair."
+        ],
+        "reflection": [
+          "Let your gaze be clear and steady without becoming hard."
+        ],
+        "exit": "Straighten your {side} leg, lower your arms, and turn both feet parallel."
+      },
+      "considerations": [
+        "Reduce the bend or use a chair if the front knee, hip, hamstring, or groin feels strained.",
+        "Keep the front knee aligned with the toes instead of forcing a ninety-degree bend."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Warrior II Pose", "url": "https://www.yogajournal.com/poses/warrior-ii-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "extended-side-angle",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "Face the long side of your mat and step wide. Turn your {side} foot toward the short edge, angle the other toes slightly inward, bend your {side} knee, and rest that forearm lightly on your thigh; keep the other hand at your hip or reach overhead."
+        ],
+        "alignment": [
+          "Press through the outer edge of your back foot and keep the front knee pointing with the toes.",
+          "Lengthen both sides of your waist and rotate your chest only as far as your neck and breathing stay comfortable."
+        ],
+        "breath": [
+          "Breathe into the long side of your ribs beneath the upper arm.",
+          "Use the inhale to create length and the exhale to settle into a sustainable shape."
+        ],
+        "options": [
+          "Keep the upper hand on your hip, place the lower hand on a block, or make the front-knee bend shallower."
+        ],
+        "reflection": [
+          "Feel one line of attention traveling from the back foot through the crown of your head."
+        ],
+        "exit": "Press through both feet, bring the upper hand to your hip, and rise before straightening your {side} leg."
+      },
+      "considerations": [
+        "Avoid leaning weight into the front knee; keep the forearm light on the thigh.",
+        "Look forward or down if turning your head causes neck discomfort or dizziness."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Extended Side Angle Pose", "url": "https://www.yogajournal.com/poses/extended-side-angle-pose-2/"},
+        {"title": "Yoga Journal: Extended Side Angle With a Block", "url": "https://www.yogajournal.com/practice/beginners/how-to/extended-side-angle-pose/"}
+      ]
+    },
+    {
+      "slug": "tree-pose",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "Stand near a wall, shift into your {side} foot, and place your {oppositeSide} toes on the floor or that foot at your inner ankle, calf, or thigh, never against the knee joint."
+        ],
+        "alignment": [
+          "Keep a soft bend in the standing knee and let the standing foot spread into the floor.",
+          "Bring your hands to your hips, heart, or overhead while keeping the pelvis and ribs comfortably stacked."
+        ],
+        "breath": [
+          "Breathe steadily and let small movements in the standing foot be part of balancing.",
+          "Soften your gaze on one unmoving point as the breath moves naturally."
+        ],
+        "options": [
+          "Use the wall, keep the lifted toes down like a kickstand, or place the foot lower on the standing leg."
+        ],
+        "reflection": [
+          "Balance is a series of small responses, not a demand to become perfectly still."
+        ],
+        "exit": "Lower your {oppositeSide} foot with control and stand evenly on both feet."
+      },
+      "considerations": [
+        "Practice beside a wall or sturdy chair if falling is a concern.",
+        "Never place the lifted foot directly against the side of the standing knee."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Tree Pose", "url": "https://www.yogajournal.com/poses/tree-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "dancer-pose",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+          "Stand near a wall on your {side} foot. Hold your {oppositeSide} ankle with your {oppositeSide} hand, then press the foot back as your chest leans forward.",
+          "Reach your {side} arm forward, then gently press the lifted foot back into your hand as your chest inclines forward."
+        ],
+        "alignment": [
+          "Keep the standing knee soft and the standing foot responsive against the floor.",
+          "Lift through your chest as the leg moves back; choose length and balance rather than compressing your low back."
+        ],
+        "breath": [
+          "Let the inhale broaden your chest and the exhale steady your gaze.",
+          "Keep breathing smoothly; come more upright if the breath becomes held."
+        ],
+        "options": [
+          "Hold a wall, loop a strap around the lifted foot, or remain upright in a simple standing quadriceps stretch."
+        ],
+        "reflection": [
+          "Let effort and openness grow together without sacrificing steadiness."
+        ],
+        "exit": "Rise upright, release your {oppositeSide} ankle gently, and place both feet down."
+      },
+      "considerations": [
+        "Use a wall and keep the pose smaller if balance is uncertain.",
+        "Do not force the shoulder grip or the backbend; stop for ankle, knee, shoulder, or low-back pain."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Dancer Pose", "url": "https://www.yogajournal.com/poses/lord-of-the-dance-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "cobra-pose",
+      "movementBase": "prone",
+      "cues": {
+        "entry": [
+          "From your belly, place your hands beside your lower ribs and use your back muscles to lift your chest slightly.",
+          "On an inhale, use your back muscles to lift your head and chest a small amount. Keep your elbows bent and your hands light."
+        ],
+        "alignment": [
+          "Press the tops of your feet and pelvis into the mat while your breastbone reaches forward and up.",
+          "Keep your shoulders away from your ears and look slightly forward and down so the neck follows the spine."
+        ],
+        "breath": [
+          "Let the inhale expand the front of your chest without pushing higher.",
+          "On the exhale, keep length through your whole spine and soften any gripping in the buttocks."
+        ],
+        "options": [
+          "Stay in a low baby cobra, move your hands slightly forward, or skip the lift and rest on your forearms."
+        ],
+        "reflection": [
+          "Explore how little height you need to create a clear sense of length."
+        ],
+        "exit": "Exhale and lower slowly to your belly."
+      },
+      "considerations": [
+        "Keep the lift low or skip it if you feel pinching or pain in the low back.",
+        "Choose a non-prone alternative during pregnancy or whenever lying on the abdomen is not comfortable."
+      ],
+      "sources": [
+        {"title": "Yoga International: Cobra Pose", "url": "https://yogainternational.com/article/view/cobra-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "upward-facing-dog",
+      "movementBase": "prone",
+      "cues": {
+      "entry": [
+        "From your belly, place hands by your ribs; press through hands and feet to lift chest and thighs.",
+          "Press through your hands and feet to lift your chest and thighs, straightening your arms only as far as your shoulders and low back stay comfortable."
+        ],
+        "alignment": [
+          "Keep your legs active and draw your chest forward and up instead of sinking into your low back.",
+          "Let your shoulders move away from your ears and keep your gaze forward rather than throwing your head back."
+        ],
+        "breath": [
+          "Inhale into the space across your collarbones while the hands and feet ground you.",
+          "If the breath feels compressed, lower the pose or choose cobra."
+        ],
+        "options": [
+          "Choose cobra with your thighs down and elbows bent, or lower to your belly at any time."
+        ],
+        "reflection": [
+          "Let the backbend feel like a forward-reaching arc rather than a demand for height."
+        ],
+      "exit": "Bend your elbows and lower."
+      },
+      "considerations": [
+        "Choose cobra if full arm extension creates wrist, shoulder, or low-back discomfort.",
+        "Choose a non-prone alternative during pregnancy or whenever lying on the abdomen is not comfortable."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Upward-Facing Dog Pose", "url": "https://www.yogajournal.com/poses/upward-facing-dog-2/"},
+        {"title": "Yoga International: Upward-Facing Dog", "url": "https://yogainternational.com/article/view/upward-facing-dog-pose-benefits-modifications-and-mythology/"}
+      ]
+    },
+    {
+      "slug": "bow-pose",
+      "movementBase": "prone",
+      "cues": {
+        "entry": [
+          "From your belly, bend both knees, hold your ankles or a strap, and press your feet back to lift.",
+          "Press your feet back into your hands as you lift your chest and thighs only as high as your breathing and low back remain comfortable."
+        ],
+        "alignment": [
+          "Keep your knees about hip-width rather than letting them spread wide.",
+          "Reach your breastbone forward, keep your neck long, and let the lift come from the legs pressing back."
+        ],
+        "breath": [
+          "Keep the breath moving around the front, sides, and back of your ribs.",
+          "Lower the pose if you notice breath-holding or pinching in your back."
+        ],
+        "options": [
+          "Use a strap, practice one side at a time, or choose locust pose without holding the ankles."
+        ],
+        "reflection": [
+          "Let the pose be energized without turning the breath into effort."
+        ],
+        "exit": "Release both ankles and lower with control."
+      },
+      "considerations": [
+        "Avoid or modify for low-back or neck pain, blood-pressure concerns, migraine, or hernia unless individually cleared.",
+        "Choose a non-prone alternative during pregnancy."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Bow Pose", "url": "https://www.yogajournal.com/poses/bow-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "childs-pose",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, bring your big toes toward each other, move your hips toward your heels, and fold forward with support beneath your torso or forehead as needed."
+        ],
+        "alignment": [
+          "Rest your forehead on the mat, a block, or folded hands so your neck can release.",
+          "Reach your arms forward or rest them beside your legs, choosing the version that lets your shoulders soften."
+        ],
+        "breath": [
+          "Feel the back and sides of your ribs expand into the space behind you as you inhale.",
+          "Let the exhale settle your weight into the support beneath you."
+        ],
+        "options": [
+          "Place a bolster under your torso, padding behind your knees, or rest on your side or back if this is not a resting pose for you."
+        ],
+        "reflection": [
+          "Let rest be an intentional part of practice rather than something you need to earn."
+        ],
+        "exit": "Bring your hands beneath your shoulders and rise slowly back to hands and knees."
+      },
+      "considerations": [
+        "Add padding or choose another resting shape if the knees or ankles feel compressed.",
+        "Use a wide-knee, supported, side-lying, or back-lying option when space for the abdomen or chest is needed."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Child's Pose", "url": "https://www.yogajournal.com/poses/child-s-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "butterfly-pose",
+      "movementBase": "seated",
+      "cues": {
+        "entry": [
+          "Sit on your sitting bones, bend your knees, and bring the soles of your feet together at a comfortable distance from your pelvis.",
+          "Hold your ankles or shins and let your knees open only as far as they naturally go."
+        ],
+        "alignment": [
+          "Lengthen through the crown of your head and keep your chest easy rather than pulling the feet closer.",
+          "If you fold forward, hinge from your hips and stop before your back or inner thighs feel strained."
+        ],
+        "breath": [
+          "Let the inhale lift your spine and the exhale soften effort around the hips.",
+          "Keep your breath smooth instead of using it to push the knees down."
+        ],
+        "options": [
+          "Sit on a folded blanket and support each thigh with a block, cushion, or rolled blanket."
+        ],
+        "reflection": [
+          "Notice how support can create more ease than force."
+        ],
+        "exit": "Use your hands to support your outer thighs as you bring your knees toward center, then extend your legs."
+      },
+      "considerations": [
+        "Support the thighs and move the feet farther away if the groin or knees feel strained.",
+        "Do not press or bounce the knees toward the floor."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Bound Angle Pose", "url": "https://www.yogajournal.com/poses/bound-angle-pose-2/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "pigeon-pose",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, bring your {side} knee behind that wrist, extend your {oppositeSide} leg back, and support your {side} outer hip; keep the front shin on a comfortable diagonal."
+        ],
+        "alignment": [
+          "Keep the front shin diagonal unless your hip already allows more rotation without any knee sensation.",
+          "Support the pelvis so you feel the pose in the hip rather than the front knee or sacroiliac area."
+        ],
+        "breath": [
+          "Stay upright or fold forward only while the breath and front knee remain comfortable.",
+          "Let each exhale soften around the outer hip without pressing deeper."
+        ],
+        "options": [
+          "Choose a reclined figure-four stretch on your back whenever pigeon creates knee or sacroiliac discomfort."
+        ],
+        "reflection": [
+          "Let sensation be informative rather than a target to intensify."
+        ],
+        "exit": "Press into your hands, lift your hips, and return your {side} knee carefully to hands and knees."
+      },
+      "considerations": [
+        "Leave the pose immediately for any front-knee or sacroiliac pain.",
+        "A reclined figure four is the preferred alternative when hip rotation is limited or the pelvis cannot be supported."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Comfortable Pigeon Pose", "url": "https://www.yogajournal.com/practice/beginners/pigeon-pose"},
+        {"title": "Yoga International: Knee Safety in Hip Openers", "url": "https://yogainternational.com/article/view/how-to-keep-your-knees-safe-in-hip-opening-yoga-poses/"}
+      ]
+    },
+    {
+      "slug": "boat-pose",
+      "movementBase": "seated",
+      "cues": {
+        "entry": [
+      "Sit with your knees bent, hold behind your thighs, and lean back with a long spine; keep your toes down or lift your shins roughly parallel to the floor."
+        ],
+        "alignment": [
+          "Lift through your chest and let your abdominal muscles support the angle of your torso.",
+          "Reach your arms forward only if you can keep the same steady shape and relaxed shoulders."
+        ],
+        "breath": [
+          "Keep a steady breath moving through your ribs instead of bracing and holding it.",
+          "Use the exhale to feel support through the center of your body."
+        ],
+        "options": [
+          "Keep one or both feet down, hold your thighs, or sit more upright. Straight legs are optional, not required."
+        ],
+        "reflection": [
+          "Choose a level of effort that leaves room for breath and attention."
+        ],
+        "exit": "Lower both feet with control and return your torso upright."
+      },
+      "considerations": [
+        "Keep the feet down or leave the pose if the low back feels painful or compressed.",
+        "Avoid breath-holding; choose a less demanding variation whenever breathing is strained."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Boat Pose", "url": "https://www.yogajournal.com/poses/boat-pose/"},
+        {"title": "Yoga Journal: Boat Pose Made Easy", "url": "https://www.yogajournal.com/poses/types/core/boat-pose-made-easy"}
+      ]
+    },
+    {
+      "slug": "camel-pose",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+          "Kneel with your hips over your knees and hands on the back of your pelvis. Lift your chest into a small backbend.",
+          "Lift your breastbone and begin a small upper-back arc while keeping your head neutral. Reach for your heels only if you stay supported and pain-free."
+        ],
+        "alignment": [
+          "Keep your thighs near vertical and lengthen your tailbone toward the floor so the low back is not taking all the bend.",
+          "Draw your shoulders gently back as your chest lifts, without pushing your hips forward past your knees."
+        ],
+        "breath": [
+          "Let the inhale widen the upper chest and the exhale keep your lower ribs supported.",
+          "Come more upright if your breath becomes short, pressured, or held."
+        ],
+        "options": [
+          "Keep both hands on your pelvis, tuck your toes to raise the heels, or practice a smaller kneeling backbend."
+        ],
+        "reflection": [
+          "Let openness come from lift and space rather than from collapsing backward."
+        ],
+        "exit": "Bring your hands to your back pelvis and rise upright with your chest leading."
+      },
+      "considerations": [
+        "Keep the head neutral and the backbend small if you have neck or low-back sensitivity.",
+        "Come out slowly and pause upright if backbends make you lightheaded."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Camel Pose Complete Guide", "url": "https://www.yogajournal.com/poses/library/camel-pose-the-complete-guide/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "hero-pose",
+      "movementBase": "seated",
+      "nameAnnouncement": "Settle into Hero Pose",
+      "cues": {
+        "entry": [
+      "Kneel with your knees forward, the tops of your feet down, and your feet just outside your hips. Sit on enough support between your heels that your knees and ankles feel comfortable."
+        ],
+        "alignment": [
+          "Keep your weight on the support and sitting bones rather than sitting on your feet.",
+          "Rest your hands on your thighs and lengthen your spine without hardening your ribs."
+        ],
+        "breath": [
+          "Let your breath settle into an easy rhythm as your shoulders soften.",
+          "Feel the inhale lift through the crown of your head and the exhale ground through your seat."
+        ],
+        "options": [
+          "Raise your seat higher, place padding under the ankles, or choose a comfortable cross-legged or chair seat."
+        ],
+        "reflection": [
+          "Let the support beneath you make stillness more available."
+        ],
+        "exit": "Lean forward onto your hands, return to hands and knees, and extend each leg back one at a time."
+      },
+      "considerations": [
+        "Do not remain in the pose with knee or ankle pain, numbness, or tingling.",
+        "Use more height or choose another seat instead of forcing the hips to the floor."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Hero Pose", "url": "https://www.yogajournal.com/poses/hero-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "mountain-pose",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+          "Stand with your feet together or about hip-width apart, choosing the stance that feels most stable.",
+          "Lift and spread your toes once, then set them down and share your weight across both feet."
+        ],
+        "alignment": [
+          "Keep your knees responsive rather than locked and stack your pelvis, ribs, and head comfortably over your feet.",
+          "Let your arms rest by your sides as your shoulders soften and the crown of your head reaches upward."
+        ],
+        "breath": [
+          "Feel the inhale travel up through a tall spine and the exhale settle through your feet.",
+          "Let your breathing be quiet enough to notice the small movements of standing balance."
+        ],
+        "options": [
+          "Widen your feet, stand with your back near a wall, or keep one hand on a sturdy chair."
+        ],
+        "reflection": [
+          "Practice standing with dignity and ease, without needing to become rigid."
+        ],
+        "exit": "Keep a soft bend in your knees as you move from standing into the next shape."
+      },
+      "considerations": [
+        "Use a wall or chair if balance is uncertain or standing still makes you lightheaded.",
+        "Keep the knees unlocked."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Mountain Pose", "url": "https://www.yogajournal.com/poses/mountain-pose"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "cat-cow",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, inhale as your chest and tailbone lift gently; exhale as you press the floor away and round your spine within a comfortable range."
+        ],
+        "alignment": [
+          "Inhale as your sitting bones and breastbone move apart for cow, keeping the neck part of the spinal curve.",
+          "Exhale as you press the floor away and round into cat, letting your head release without forcing your chin down."
+        ],
+        "breath": [
+          "Let each breath guide one unhurried wave through your spine.",
+          "Move only through a range where the inhale and exhale remain smooth."
+        ],
+        "options": [
+          "Practice on fists, forearms on blocks, or seated in a chair if hands, wrists, or knees need less load."
+        ],
+        "reflection": [
+          "Notice how breath and movement can become one continuous action."
+        ],
+        "exit": "Finish your exhale and return to a neutral spine on hands and knees."
+      },
+      "considerations": [
+        "Add padding under the knees and reduce wrist extension if needed.",
+        "Keep the spinal movement small and pain-free rather than seeking the largest curve."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Cat Pose", "url": "https://www.yogajournal.com/poses/cat-pose/"},
+        {"title": "Yoga Journal: Cow Pose", "url": "https://www.yogajournal.com/poses/cow-pose/"}
+      ]
+    },
+    {
+      "slug": "thread-the-needle",
+      "movementBase": "kneeling",
+      "cues": {
+        "entry": [
+      "From hands and knees, slide your {side} arm beneath your chest, palm up, and lower that shoulder and the side of your head onto support while keeping your hips near your knees."
+        ],
+        "alignment": [
+          "Let your neck stay easy and keep your weight distributed between the shoulder, knees, and supporting hand.",
+          "Keep the {oppositeSide} hand where it supports you, or walk it forward only if the shoulder and neck remain comfortable."
+        ],
+        "breath": [
+          "Breathe into the ribs across your upper back without pressing the twist deeper.",
+          "Use each exhale to soften the muscles around your shoulder blade."
+        ],
+        "options": [
+          "Support your shoulder and head with folded blankets, or choose a gentle seated twist."
+        ],
+        "reflection": [
+          "Let the floor receive your weight while the breath creates space across your back."
+        ],
+        "exit": "Press into your {oppositeSide} hand and slowly sweep your {side} arm back out, returning to hands and knees."
+      },
+      "considerations": [
+        "Use support and keep the twist small for shoulder or neck sensitivity.",
+        "Come out if the threaded arm becomes numb or tingling."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Shoulder-Safe Thread-the-Needle Movement", "url": "https://www.yogajournal.com/practice/yoga-sequences/camel-pose-yoga-deconstructed/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "standing-forward-fold",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+          "From standing, bend your knees and hinge forward from your hips, bringing your torso toward your thighs.",
+          "Place your hands on blocks, your shins, or the floor, and let your head and neck release."
+        ],
+        "alignment": [
+          "Keep enough bend in your knees for the abdomen and thighs to meet without straining the low back.",
+          "Balance your weight through the centers of your feet rather than pushing all of it into your toes."
+        ],
+        "breath": [
+          "Let the inhale create space across your back and the exhale release the weight of your head.",
+          "Keep the breath comfortable instead of pulling yourself closer to your legs."
+        ],
+        "options": [
+          "Rest your forearms on the seat of a stable chair or keep your hands on blocks for a higher fold."
+        ],
+        "reflection": [
+          "Let gravity participate so the pose asks for less pulling and more listening."
+        ],
+        "exit": "Bend your knees, bring your hands to your hips, lengthen your spine, and press through your feet to rise."
+      },
+      "considerations": [
+        "Bend the knees generously and use support for low-back or hamstring sensitivity.",
+        "Rise slowly and pause if forward folds make you dizzy."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Standing Forward Bend", "url": "https://www.yogajournal.com/poses/standing-forward-bend-2/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "seated-forward-fold",
+      "movementBase": "seated",
+      "cues": {
+        "entry": [
+      "Sit with your legs extended and knees soft; elevate your pelvis if needed, lengthen your spine, and hinge forward from your hips with your hands on your legs or a strap around your feet."
+        ],
+        "alignment": [
+          "Keep your knees bent enough that the fold feels distributed rather than sharp behind the knees or in the low back.",
+          "Reach your breastbone forward and stop before you need to pull with your arms."
+        ],
+        "breath": [
+          "Inhale into the length of your spine and exhale without forcing your torso lower.",
+          "Let the back of your body receive the breath as the front of your body softens."
+        ],
+        "options": [
+          "Sit higher, bend your knees, use a strap, or rest your torso on a bolster across your thighs."
+        ],
+        "reflection": [
+          "Let patience replace the urge to measure progress by distance."
+        ],
+        "exit": "Inhale and lift your torso upright from the hips, then release your hands."
+      },
+      "considerations": [
+        "Avoid pulling through a hamstring strain or rounding into low-back pain.",
+        "Use support and a smaller range if you have osteoporosis or have been advised to avoid loaded spinal flexion."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Seated Forward Bend", "url": "https://www.yogajournal.com/poses/seated-forward-bend/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "wide-legged-forward-fold",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "Step your feet wide with toes forward or slightly inward, soften your knees, lengthen your spine, and hinge forward with your hands on blocks, a chair, or the floor."
+        ],
+        "alignment": [
+          "Share your weight across heels and forefeet and keep your knees pointing in the same direction as your toes.",
+          "Lengthen your spine and support your head if letting it hang is uncomfortable."
+        ],
+        "breath": [
+          "Breathe into the width of your back while your feet stay grounded.",
+          "Use the exhale to release unnecessary neck and shoulder effort, not to force the fold."
+        ],
+        "options": [
+          "Make the stance narrower and place your hands or forearms on a sturdy chair."
+        ],
+        "reflection": [
+          "Feel stability spread across both feet as the upper body releases."
+        ],
+        "exit": "Bring your hands to your hips, soften your knees, lengthen forward through your spine, and rise to standing."
+      },
+      "considerations": [
+        "Keep the fold higher for low-back or hamstring sensitivity.",
+        "Rise slowly and use a chair if forward folds make you dizzy."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Wide-Legged Standing Forward Bend", "url": "https://www.yogajournal.com/poses/wide-legged-forward-bend/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "triangle-pose",
+      "movementBase": "standing",
+      "cues": {
+        "entry": [
+      "Face the long side of your mat and step wide. Turn your {side} foot toward the short edge, angle the other toes slightly inward, keep your knees soft, reach over your {side} leg, and place that hand on your shin or a block."
+        ],
+        "alignment": [
+          "Place the upper hand on your hip or reach it upward while keeping length through both sides of your waist.",
+          "Rotate your chest only as far as feels natural; avoid pressing the lower hand into the knee."
+        ],
+        "breath": [
+          "Inhale into the full width of your ribs and exhale while both feet remain steady.",
+          "Keep your neck comfortable by looking down, forward, or up."
+        ],
+        "options": [
+          "Shorten your stance, use a higher block or chair, or practice with your back near a wall."
+        ],
+        "reflection": [
+          "Let the pose expand in several directions without making any one direction extreme."
+        ],
+        "exit": "Bring the upper hand to your hip, press through both feet, and rise upright before turning your feet parallel."
+      },
+      "considerations": [
+        "Look down or forward for neck sensitivity or dizziness.",
+        "Keep a micro-bend in the knees and use support for hamstring, hip, or low-back sensitivity."
+      ],
+      "sources": [
+        {"title": "Yoga International: Triangle Pose", "url": "https://yogainternational.com/article/view/triangle-pose"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "happy-baby-pose",
+      "movementBase": "supine",
+      "cues": {
+        "entry": [
+      "Lie on your back, draw your knees toward the sides of your ribs, and hold behind your thighs, at your shins, or at the outer edges of your feet while keeping your shoulders relaxed."
+        ],
+        "alignment": [
+          "Keep your sacrum heavy and bring your ankles roughly above your knees only if that position is comfortable.",
+          "Let your head and shoulders remain supported instead of pulling the legs down."
+        ],
+        "breath": [
+          "Breathe into your back body where it meets the floor.",
+          "Let the exhale soften around your hips without adding force through your hands."
+        ],
+        "options": [
+          "Hold one leg at a time, use straps behind the thighs, or place your feet on a wall."
+        ],
+        "reflection": [
+          "Allow a sense of ease or gentle play without turning the pose into a stretch to achieve."
+        ],
+        "exit": "Release one leg and then the other, placing both feet on the floor or hugging your knees in."
+      },
+      "considerations": [
+        "Hold behind the thighs instead of the feet if the knees, hips, neck, or low back feel strained.",
+        "Choose a side-lying or elevated alternative if prolonged back-lying is not appropriate for you."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Happy Baby Pose", "url": "https://www.yogajournal.com/poses/happy-baby-pose/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "bridge-pose",
+      "movementBase": "supine",
+      "cues": {
+        "entry": [
+      "Lie on your back with your knees bent and feet about hip-width; press through your feet and lift your pelvis comfortably while keeping your head centered."
+        ],
+        "alignment": [
+          "Keep your knees tracking in the same direction as your feet rather than falling outward.",
+          "Broaden your collarbones and lift your chest gently toward your chin without pressing the back of your neck flat."
+        ],
+        "breath": [
+          "Breathe across your chest and ribs while your feet and upper arms support the pose.",
+          "Let the exhale steady your legs rather than asking the hips to lift higher."
+        ],
+        "options": [
+          "Keep the lift low or place a block beneath the flat part of your sacrum for a supported bridge."
+        ],
+        "reflection": [
+          "Feel how support from the ground can create space across the front of the body."
+        ],
+        "exit": "Exhale and lower your spine and pelvis gradually to the mat, keeping your head centered."
+      },
+      "considerations": [
+        "Do not turn your head while your pelvis is lifted.",
+        "Use a lower or supported version if the neck, shoulders, knees, or low back feel uncomfortable."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Bridge Pose", "url": "https://www.yogajournal.com/poses/bridge-pose"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "seated-spinal-twist",
+      "movementBase": "seated",
+      "cues": {
+        "entry": [
+      "Sit tall, bend your {side} knee with that foot outside the opposite thigh, then turn toward that side with your {side} hand behind you for support.",
+          "Place your {side} hand behind you for support and hold the bent knee with your other arm."
+        ],
+        "alignment": [
+          "Ground both sitting bones as evenly as you can and lengthen your spine before turning toward the {side} side.",
+          "Rotate through your ribs without using the arm to force the twist, and let your head turn last."
+        ],
+        "breath": [
+          "Inhale to create length; exhale and rotate only within an easy breathing range.",
+          "If the breath becomes shallow, unwind slightly and grow taller."
+        ],
+        "options": [
+          "Keep the lower leg extended, sit on a folded blanket, or practice the twist upright in a chair."
+        ],
+        "reflection": [
+          "Notice the length of your spine before inviting a gentle turn."
+        ],
+        "exit": "Inhale to lengthen, then exhale and slowly unwind toward center before releasing your {side} leg."
+      },
+      "considerations": [
+        "Keep the twist small or choose a chair for knee, hip, or back sensitivity.",
+        "Seek individual guidance for twisting if you have osteoporosis, a spinal condition, or are pregnant."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Half Lord of the Fishes Pose", "url": "https://www.yogajournal.com/poses/half-lord-of-the-fishes-pose"},
+        {"title": "Yoga Journal: Seated Twist Variations", "url": "https://www.yogajournal.com/practice/ways-to-practice-half-lord-of-the-fishes/"}
+      ]
+    },
+    {
+      "slug": "supine-twist",
+      "movementBase": "supine",
+      "cues": {
+        "entry": [
+      "Lie on your back, draw your {side} knee in, and guide it across toward your {oppositeSide} side onto support, keeping both shoulders comfortable."
+        ],
+        "alignment": [
+          "Let the pelvis roll naturally and keep the crossed knee supported rather than pressing it to the floor.",
+          "Keep your head neutral or turn it away from the knee only if your neck remains completely comfortable."
+        ],
+        "breath": [
+          "Breathe into the side ribs and back body without trying to deepen the rotation.",
+          "Let each exhale release effort around your abdomen and shoulders."
+        ],
+        "options": [
+          "Place a bolster under the crossed knee, keep both knees bent together, or reduce the twist."
+        ],
+        "reflection": [
+          "Let support and gravity hold the shape while you practice receiving the breath."
+        ],
+        "exit": "Use your abdominal support to bring your {side} knee back to center, then place the foot down or extend the leg."
+      },
+      "considerations": [
+        "Keep the knee supported and reduce the range for back, hip, or sacroiliac sensitivity.",
+        "Seek individual guidance for twisting if you have osteoporosis, a spinal condition, or are pregnant."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Reclining Twist", "url": "https://www.yogajournal.com/poses/reclining-twist/"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "plank-pose",
+      "movementBase": "prone",
+      "cues": {
+        "entry": [
+          "From hands and knees, place your hands beneath or slightly ahead of your shoulders and step one foot and then the other back.",
+          "Reach from the crown of your head through your heels, keeping your knees lifted or placing them on the mat."
+        ],
+        "alignment": [
+          "Press through your hands and broaden your upper back without letting your chest sink between your arms.",
+          "Support your ribs and pelvis with your abdominal muscles and keep your neck in line with your spine."
+        ],
+        "breath": [
+          "Keep breathing across your ribs; lower your knees before the breath turns into bracing.",
+          "Reach back through your heels on the inhale and press the floor away on the exhale."
+        ],
+        "options": [
+          "Lower your knees onto padding or place your hands on a secure chair or wall for an inclined plank."
+        ],
+        "reflection": [
+          "Let strength feel organized through the whole body rather than concentrated in the wrists."
+        ],
+        "exit": "Lower your knees with control and return to hands and knees."
+      },
+      "considerations": [
+        "Use knees-down or an incline for wrist or shoulder sensitivity.",
+        "Leave the pose if the low back sags painfully or the breath cannot remain steady."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Plank Pose", "url": "https://www.yogajournal.com/poses/plank-pose/"},
+        {"title": "Yoga Journal: Plank Alignment", "url": "https://www.yogajournal.com/poses/types/strength/plank-pose-your-ticket-to-power-and-grace/"}
+      ]
+    },
+    {
+      "slug": "legs-up-the-wall",
+      "movementBase": "supine",
+      "cues": {
+        "entry": [
+          "Sit with one hip beside a clear wall, then turn onto your back as you bring your legs up the wall.",
+          "Move your hips any comfortable distance from the wall and rest your arms where your shoulders can soften."
+        ],
+        "alignment": [
+          "Let the wall carry the weight of your legs and keep your head and neck in a neutral, supported position.",
+          "Allow your feet and knees to relax rather than holding the legs rigid."
+        ],
+        "breath": [
+          "Let your breath return to its own quiet pace as the back of your body rests on the floor.",
+          "Notice the exhale settling your shoulders, jaw, and hands."
+        ],
+        "options": [
+          "Move farther from the wall, bend your knees, or rest your calves on a chair instead."
+        ],
+        "reflection": [
+          "Practice being supported without needing to add effort."
+        ],
+        "exit": "Bend your knees, roll onto one side, pause there, and use your hands to press up slowly."
+      },
+      "considerations": [
+        "Come out slowly and pause on your side if position changes make you dizzy.",
+        "Ask a clinician whether this inversion suits you if you have an eye condition, uncontrolled blood pressure, or another reason to avoid inversions."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Legs Up the Wall", "url": "https://www.yogajournal.com/practice/legs-up-the-wall-viparita-karani"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    },
+    {
+      "slug": "savasana",
+      "movementBase": "supine",
+      "cues": {
+        "entry": [
+          "Lie on your back with your legs and arms resting at any comfortable width, or choose another fully supported position.",
+          "Place support beneath your head or knees if it helps your spine and breath settle."
+        ],
+        "alignment": [
+          "Let your feet, hands, jaw, and eyes rest without trying to make the two sides perfectly symmetrical.",
+          "Feel the floor supporting the weight of your whole body."
+        ],
+        "breath": [
+          "Allow your breath to return to its natural rhythm with nothing to manage.",
+          "Notice breathing happening on its own as effort gradually becomes quieter."
+        ],
+        "options": [
+          "Rest on your side, recline with your upper body elevated, or place your lower legs on a chair."
+        ],
+        "reflection": [
+          "Let stillness be spacious rather than something you have to accomplish."
+        ],
+        "exit": "Deepen your breath, move your fingers and toes, bend your knees, roll to one side, and rise slowly when you are ready."
+      },
+      "considerations": [
+        "Choose side-lying or an elevated position if lying flat is uncomfortable or not appropriate for you.",
+        "Take time to orient before standing after a long rest."
+      ],
+      "sources": [
+        {"title": "Yoga Journal: Corpse Pose", "url": "https://www.yogajournal.com/poses/corpse-pose-2"},
+        {"title": "NCCIH: Yoga Effectiveness and Safety", "url": "https://www.nccih.nih.gov/health/yoga-effectiveness-and-safety"}
+      ]
+    }
+  ]
+}

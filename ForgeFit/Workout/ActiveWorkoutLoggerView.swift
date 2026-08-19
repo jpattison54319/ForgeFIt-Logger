@@ -20,8 +20,7 @@ struct SetTypeStyle {
     /// Whether this type consumes a numbered working-set slot.
     let numbered: Bool
 
-    static func of(_ type: SetType) -> SetTypeStyle {
-        let t = AppTheme.sage
+    static func of(_ type: SetType, theme t: AppTheme = .sage) -> SetTypeStyle {
         switch type {
         case .warmup: return SetTypeStyle(badge: "W", color: t.warmup, label: "Warm-up", numbered: false)
         case .working: return SetTypeStyle(badge: "", color: t.textPrimary, label: "Working", numbered: true)
@@ -38,6 +37,11 @@ struct SetTypeStyle {
 enum WorkoutLoggerMode {
     case active
     case historicalEdit
+}
+
+private struct RemovedSessionRuntime {
+    let id: UUID
+    let wasLive: Bool
 }
 
 /// Full-screen active-workout logger with per-set type selection, dynamic
@@ -88,6 +92,10 @@ struct ActiveWorkoutLoggerView: View {
     /// every visible exercise.
     @State private var exerciseByID: [UUID: ExerciseLibraryModel] = [:]
     @State private var setupNoteByExerciseID: [UUID: UserExerciseNoteModel] = [:]
+    /// A deleted/unpinned setup note must win over the immutable array the
+    /// logger received at presentation. Otherwise a later cache refresh can
+    /// reinsert that stale model before the parent's @Query catches up.
+    @State private var removedSetupNoteExerciseIDs = Set<UUID>()
     /// Live-session history snapshot, fetched once on appear ("history doesn't
     /// change mid-session" is this screen's contract). Internal code reads
     /// `history`, which resolves injected (historical edit) over snapshot.
@@ -142,6 +150,7 @@ struct ActiveWorkoutLoggerView: View {
                     .allowsHitTesting(false)
             }
         }
+        .accessibilityIdentifier("active-workout-theme-\(theme.family.rawValue)")
         // The header lives in the safe area, so content can never slide
         // underneath it or collide with the stats bar.
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -163,28 +172,34 @@ struct ActiveWorkoutLoggerView: View {
         .coordinateSpace(name: QuickIncrementController.spaceName)
         .onAppear(perform: reconcileEffortVisibility)
         .onChange(of: showRPEInLogger) { _, _ in reconcileEffortVisibility() }
-        // One keyboard toolbar for every set input in the logger, driven by
-        // whichever field registered itself with the router on focus. A
-        // single root-level toolbar can't hit the per-field UIKit
-        // toolbar-reuse bug that used to blank the accessory buttons.
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                if let actions = inputRouter.active {
-                    Button {
-                        actions.onDismiss()
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                    .accessibilityLabel("Dismiss keyboard")
+        // One app-owned accessory for every set input, driven by whichever
+        // field registered itself with the router on focus. SwiftUI's iOS 26
+        // `.keyboard` toolbar emits an invalid-frame runtime warning as it is
+        // installed; the safe-area host keeps each action as standalone
+        // Liquid Glass without entering that broken layout path.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let actions = inputRouter.active {
+                KeyboardAccessoryBar {
+                    CircleIconButton(
+                        systemImage: "keyboard.chevron.compact.down",
+                        label: "Dismiss keyboard",
+                        action: actions.onDismiss
+                    )
                     Spacer()
                     if let onNext = actions.onNext {
                         Button("Next", action: onNext)
                             .font(.bodyStrong)
-                            .tint(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.capsule)
+                            .controlSize(.large)
                     }
                     Button(actions.completeTitle, action: actions.onComplete)
                         .font(.bodyStrong)
-                        .tint(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
                 }
             }
         }
@@ -222,8 +237,7 @@ struct ActiveWorkoutLoggerView: View {
             titleVisibility: .visible
         ) {
             Button("Discard Workout", role: .destructive) {
-                WorkoutFinisher.discard(workout, in: modelContext)
-                dismiss()
+                discardWorkout()
             }
             Button("Keep Logging", role: .cancel) {}
         } message: {
@@ -276,13 +290,14 @@ struct ActiveWorkoutLoggerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: block.planSnapshotJSON,
                     exercises: liveExerciseLibrary,
-                    workouts: history
-                ) { updateBlock(block, planJSON: $0) }
+                    workouts: history,
+                    commit: { updateBlock(block, planJSON: $0) }
+                )
             } else {
-                YogaFlowBuilderView(planJSON: block.planSnapshotJSON) { json in
-                    guard let json else { return }
-                    updateBlock(block, planJSON: json)
-                }
+                YogaFlowBuilderView(planJSON: block.planSnapshotJSON, commit: { json in
+                    guard let json else { return false }
+                    return updateBlock(block, planJSON: json)
+                })
             }
         }
         .sheet(item: $replaceTarget) { target in
@@ -349,7 +364,7 @@ struct ActiveWorkoutLoggerView: View {
                     SecondaryButton(title: "Add Workout Note", systemImage: "note.text") {
                         workout.notes = ""
                         workout.updatedAt = .now
-                        try? modelContext.save()
+                        modelContext.saveUserChanges()
                     }
                     .accessibilityIdentifier("add-workout-note")
                 }
@@ -427,8 +442,9 @@ struct ActiveWorkoutLoggerView: View {
             for (index, row) in reorderSession.rows.enumerated() {
                 itemsByID[row.id]?.position = index
             }
-            try? modelContext.save()
-            publishWorkoutChange()
+            modelContext.saveUserChanges {
+                publishWorkoutChange()
+            }
         }
         withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
     }
@@ -441,8 +457,9 @@ struct ActiveWorkoutLoggerView: View {
         guard target != index else { return }
         rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
         for (index, item) in rows.enumerated() { item.position = index }
-        try? modelContext.save()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     @ViewBuilder
@@ -457,6 +474,7 @@ struct ActiveWorkoutLoggerView: View {
                 workoutExercise: we,
                 exercise: ex,
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
+                onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
                 allowsLiveControls: !isHistoricalEdit,
                 availableSupersetGroups: supersetGroups,
                 onAssignSuperset: { assignSuperset($0, to: we) },
@@ -477,6 +495,7 @@ struct ActiveWorkoutLoggerView: View {
                 workoutExercise: we,
                 exercise: ex,
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
+                onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
                 allowsLiveControls: !isHistoricalEdit,
                 availableSupersetGroups: supersetGroups,
                 onAssignSuperset: { assignSuperset($0, to: we) },
@@ -498,6 +517,7 @@ struct ActiveWorkoutLoggerView: View {
                 workoutExercise: we,
                 exercise: ex,
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
+                onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
                 previousSets: cachedPreviousSets(for: we),
                 recordBaseline: recordBaselines[we.exerciseID],
                 allowsRestTimers: !isHistoricalEdit,
@@ -615,6 +635,7 @@ struct ActiveWorkoutLoggerView: View {
                         .font(.system(size: 15, weight: .bold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
+                        .minimumTouchTarget()
                 }
                 .buttonStyle(.glassProminent)
                 .tint(theme.accent)
@@ -665,7 +686,7 @@ struct ActiveWorkoutLoggerView: View {
         HStack {
             if isPureYoga {
                 let loggedTime = workout.cardioSessions.compactMap { $0.durationSeconds }.reduce(0, +)
-                let poses = workout.cardioSessions.compactMap { $0.posesCompleted }.reduce(0, +)
+                let poses = workout.cardioSessions.compactMap { $0.logicalYogaPosesCompleted }.reduce(0, +)
                 let hrs = workout.cardioSessions.compactMap { $0.avgHR }
                 StatColumn(label: "Duration", value: Fmt.durationShort(loggedTime > 0 ? loggedTime : elapsed), valueColor: theme.accent, animatesValue: true)
                 StatColumn(label: "Poses", value: poses > 0 ? "\(poses)" : "—", animatesValue: true)
@@ -761,7 +782,11 @@ struct ActiveWorkoutLoggerView: View {
         let storedSetupNotes = (try? modelContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
         setupNoteByExerciseID = Dictionary(
             (setupNotes + storedSetupNotes)
-                .filter { $0.userID == ForgeFitDemo.userID }
+                .filter {
+                    $0.userID == ForgeFitDemo.userID
+                        && !removedSetupNoteExerciseIDs.contains($0.exerciseID)
+                        && ExerciseNotePolicy.authoredText($0.note) != nil
+                }
                 .map { ($0.exerciseID, $0) },
             uniquingKeysWith: { first, second in
                 first.updatedAt >= second.updatedAt ? first : second
@@ -774,6 +799,31 @@ struct ActiveWorkoutLoggerView: View {
         previousSetsByExerciseID = caches.previousSetsByExerciseID
         refreshProgressionSuggestions()
         refreshLiveStats()
+    }
+
+    private func updateSetupNote(_ note: UserExerciseNoteModel?, for exerciseID: UUID) {
+        if let note, ExerciseNotePolicy.authoredText(note.note) != nil {
+            removedSetupNoteExerciseIDs.remove(exerciseID)
+            setupNoteByExerciseID[exerciseID] = note
+        } else {
+            removedSetupNoteExerciseIDs.insert(exerciseID)
+            setupNoteByExerciseID.removeValue(forKey: exerciseID)
+        }
+    }
+
+    private func setupNote(for exerciseID: UUID) -> UserExerciseNoteModel? {
+        guard !removedSetupNoteExerciseIDs.contains(exerciseID) else { return nil }
+        if let cached = setupNoteByExerciseID[exerciseID],
+           ExerciseNotePolicy.authoredText(cached.note) != nil {
+            return cached
+        }
+        return setupNotes
+            .filter {
+                $0.userID == ForgeFitDemo.userID
+                    && $0.exerciseID == exerciseID
+                    && ExerciseNotePolicy.authoredText($0.note) != nil
+            }
+            .max { $0.updatedAt < $1.updatedAt }
     }
 
     private func buildReferenceCaches() async -> ReferenceCaches {
@@ -871,8 +921,9 @@ struct ActiveWorkoutLoggerView: View {
             set.reps = nil
             set.recomputeDerivedMetrics()
         }
-        try? modelContext.save()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     private func sortedPriorWorkouts() -> [WorkoutModel] {
@@ -963,9 +1014,9 @@ struct ActiveWorkoutLoggerView: View {
                 sets: exercise.isCardio ? [] : [SetModel(userID: ForgeFitDemo.userID, position: 0, weightMode: exercise.defaultWeightMode)]
             )
             nextPosition += 1
-            if let pinned = setupNoteByExerciseID[exercise.id]
-                ?? setupNotes.first(where: { $0.exerciseID == exercise.id && $0.userID == ForgeFitDemo.userID }) {
-                we.notes = pinned.note
+            if let pinned = setupNote(for: exercise.id),
+               let note = ExerciseNotePolicy.authoredText(pinned.note) {
+                we.notes = note
                 we.notePinned = true
             }
             modelContext.insert(we)
@@ -986,8 +1037,9 @@ struct ActiveWorkoutLoggerView: View {
             }
         }
         refreshLiveStats()
-        try? modelContext.save()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
         Task { await refreshReferenceCaches() }
     }
 
@@ -1002,9 +1054,9 @@ struct ActiveWorkoutLoggerView: View {
             yogaFlowJSON: plan?.encodedJSON(),
             sets: []
         )
-        if let pinned = setupNoteByExerciseID[sessionExercise.id]
-            ?? setupNotes.first(where: { $0.exerciseID == sessionExercise.id && $0.userID == ForgeFitDemo.userID }) {
-            we.notes = pinned.note
+        if let pinned = setupNote(for: sessionExercise.id),
+           let note = ExerciseNotePolicy.authoredText(pinned.note) {
+            we.notes = note
             we.notePinned = true
         }
         modelContext.insert(we)
@@ -1049,26 +1101,24 @@ struct ActiveWorkoutLoggerView: View {
             workout.blocks.append(block)
             workout.cardioSessions.append(session)
         }
-        try? modelContext.save()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
         computeModalityFlags()
-        publishWorkoutChange()
     }
 
-    private func updateBlock(_ block: WorkoutBlockModel, planJSON: String) {
+    private func updateBlock(_ block: WorkoutBlockModel, planJSON: String) -> Bool {
         let session = workout.cardioSessions.first { $0.workoutBlockID == block.id }
-        guard session?.liveStartedAt == nil, session?.endedAt == nil else { return }
-        block.planSnapshotJSON = planJSON
-        block.updatedAt = .now
-        if block.kind == .conditioning {
-            block.progressJSON = ConditioningProgress().encodedJSON()
-            block.resultJSON = nil
-        } else if let plan = YogaFlowPlan.decode(from: planJSON) {
-            session?.durationSeconds = plan.totalSeconds > 0 ? plan.totalSeconds : nil
-            session?.yogaStyleRaw = plan.styleRaw
-            workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }?.yogaFlowJSON = planJSON
-        }
-        try? modelContext.save()
-        publishWorkoutChange()
+        guard session?.liveStartedAt == nil, session?.endedAt == nil else { return false }
+        let generatedExercise = workout.exercises.first { $0.generatedByWorkoutBlockID == block.id }
+        return WorkoutBlockPlanPersistence.apply(
+            planJSON,
+            to: block,
+            session: session,
+            generatedExercise: generatedExercise,
+            in: modelContext,
+            onCommit: { publishWorkoutChange() }
+        )
     }
 
     private func removeBlock(_ block: WorkoutBlockModel) {
@@ -1077,9 +1127,10 @@ struct ActiveWorkoutLoggerView: View {
         let sessions = workout.cardioSessions.filter {
             $0.workoutBlockID == block.id || $0.workoutExerciseID.map(generatedIDs.contains) == true
         }
+        let removedRuntime = sessions.map {
+            RemovedSessionRuntime(id: $0.id, wasLive: $0.liveStartedAt != nil && $0.endedAt == nil)
+        }
         for session in sessions {
-            WorkoutFinisher.cancelLiveRuntime(for: session)
-            YogaFlowRunnerHub.shared.stop(for: session.id)
             modelContext.delete(session)
         }
         workout.cardioSessions.removeAll { session in
@@ -1091,9 +1142,11 @@ struct ActiveWorkoutLoggerView: View {
         modelContext.delete(block)
         normalizeOrderedPositions()
         workout.recomputeTotalVolume()
-        try? modelContext.save()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
         computeModalityFlags()
-        publishWorkoutChange()
         Task { await refreshReferenceCaches() }
     }
 
@@ -1131,51 +1184,41 @@ struct ActiveWorkoutLoggerView: View {
         let wasSessionBased = previousExercise?.isCardio == true
             || previousExercise?.isYoga == true
             || previousSession != nil
+        var removedRuntime: [RemovedSessionRuntime] = []
         let replacement = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
         // `exercise` may have been created inside the replacement picker's
         // nested sheet. Cache the concrete model before either replacement path
         // publishes its ID to the card tree.
         exerciseByID[replacement.id] = replacement
 
-        // Logged work belongs to the exercise that was actually performed.
-        // Keep those completed sets on the original row, discard only its
-        // unfinished entries, and continue the remaining set slots on a fresh
-        // replacement row immediately below it. With no completed work the
-        // existing in-place replacement path remains correct.
-        if !wasSessionBased,
-           !exercise.isCardio,
-           !exercise.isYoga,
-           let split = LiveExerciseReplacement.splitIfNeeded(
-               target: target,
-               replacementExerciseID: replacement.id,
-               replacementWeightMode: exercise.defaultWeightMode,
-               replacementIsUnilateral: exercise.isUnilateral,
-               in: workout
-           ) {
-            split.discardedSets.forEach(modelContext.delete)
-            modelContext.insert(split.replacement)
-            if let pinned = setupNoteByExerciseID[replacement.id] {
-                split.replacement.notes = pinned.note
-                split.replacement.notePinned = true
-            }
-            if let suggestion = progressionByWorkoutExercise[target.id], suggestion.statusRaw == "pending" {
-                suggestion.statusRaw = "rejected"
-                suggestion.updatedAt = Date()
-            }
-            previousSetsByExerciseID[replacement.id] = []
-            recordBaselines[replacement.id] = nil
-            workout.recomputeTotalVolume()
-            refreshLiveStats()
-            try? modelContext.save()
-            publishWorkoutChange()
-            Task { await refreshReferenceCaches() }
-            return
+        if !exercise.isCardio, !exercise.isYoga {
+            LiveExerciseReplacement.replaceInPlace(
+                target: target,
+                replacementExerciseID: replacement.id,
+                replacementWeightMode: exercise.defaultWeightMode,
+                replacementIsUnilateral: exercise.isUnilateral
+            )
+        } else {
+            target.exerciseID = replacement.id
+            target.updatedAt = Date()
         }
 
-        target.exerciseID = replacement.id
-        target.updatedAt = Date()
         previousSetsByExerciseID[replacement.id] = []
         recordBaselines[replacement.id] = nil
+        if let suggestion = progressionByWorkoutExercise[target.id], suggestion.statusRaw == "pending" {
+            suggestion.statusRaw = "rejected"
+            suggestion.updatedAt = Date()
+        }
+        if let pinned = setupNote(for: replacement.id),
+           let note = ExerciseNotePolicy.authoredText(pinned.note) {
+            target.notes = note
+            target.notePinned = true
+        } else {
+            // Exercise notes describe that exercise, so an in-workout swap
+            // never carries the old movement's note onto the replacement.
+            target.notes = nil
+            target.notePinned = false
+        }
         if exercise.isYoga {
             target.intervalPlanJSON = nil
             let plan = YogaFlowPlan.fromSelectedPoses([exercise]) ?? YogaFlowPlan.decode(from: target.yogaFlowJSON)
@@ -1239,69 +1282,63 @@ struct ActiveWorkoutLoggerView: View {
             target.intervalPlanJSON = nil
             target.yogaFlowJSON = nil
             if wasSessionBased {
-                deleteCardioSessions(for: target.id)
+                removedRuntime = deleteCardioSessions(for: target.id)
             }
             if target.sets.isEmpty {
                 let set = SetModel(userID: ForgeFitDemo.userID, position: 0, weightMode: exercise.defaultWeightMode)
                 modelContext.insert(set)
                 target.sets = [set]
-            } else {
-                // The gym-swap contract: set count and set types carry over,
-                // but values belong to the exercise they were entered for.
-                // Uncompleted sets restart clean so PREVIOUS/ghosts/RPE
-                // re-source from the replacement's own history (empty when it
-                // has none — a carried myo-rep block the new exercise has
-                // never done just starts blank). Completed sets are facts and
-                // stay exactly as logged.
-                // A swap invalidates the old exercise's suggestion — the new
-                // exercise earns its own next session.
-                if let suggestion = progressionByWorkoutExercise[target.id], suggestion.statusRaw == "pending" {
-                    suggestion.statusRaw = "rejected"
-                    suggestion.updatedAt = Date()
-                }
-                for set in target.sets where set.completedAt == nil {
-                    set.weightMode = exercise.defaultWeightMode
-                    set.isUnilateral = exercise.isUnilateral
-                    set.weight = nil
-                    set.reps = nil
-                    set.rpe = nil
-                    set.rir = nil
-                    set.durationSeconds = nil
-                    set.holdSeconds = nil
-                    set.partialReps = nil
-                    set.addedWeight = nil
-                    set.assistanceWeight = nil
-                    set.implementWeight = nil
-                    set.side2Reps = nil
-                    set.miniRepsJSON = nil
-                    set.machineSettingsJSON = nil
-                    set.recomputeDerivedMetrics()
-                }
             }
         }
-        try? modelContext.save()
-        publishWorkoutChange()
+        workout.recomputeTotalVolume()
+        refreshLiveStats()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
         Task { await refreshReferenceCaches() }
     }
 
     private func removeExercise(_ we: WorkoutExerciseModel) {
+        var removedRuntime: [RemovedSessionRuntime] = []
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
-            deleteCardioSessions(for: we.id)
+            removedRuntime = deleteCardioSessions(for: we.id)
             modelContext.delete(we)
             normalizeOrderedPositions(excluding: we.id)
             workout.recomputeTotalVolume()
             refreshLiveStats()
         }
-        try? modelContext.save()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            cancelRemovedSessionRuntime(removedRuntime)
+            publishWorkoutChange()
+        }
     }
 
-    private func deleteCardioSessions(for workoutExerciseID: UUID) {
-        for session in workout.cardioSessions.filter({ $0.workoutExerciseID == workoutExerciseID }) {
-            WorkoutFinisher.cancelLiveRuntime(for: session)
+    private func deleteCardioSessions(for workoutExerciseID: UUID) -> [RemovedSessionRuntime] {
+        let sessions = workout.cardioSessions.filter { $0.workoutExerciseID == workoutExerciseID }
+        let removedRuntime = sessions.map {
+            RemovedSessionRuntime(id: $0.id, wasLive: $0.liveStartedAt != nil && $0.endedAt == nil)
+        }
+        for session in sessions {
             modelContext.delete(session)
         }
         workout.cardioSessions.removeAll { $0.workoutExerciseID == workoutExerciseID }
+        return removedRuntime
+    }
+
+    private func cancelRemovedSessionRuntime(_ removed: [RemovedSessionRuntime]) {
+        guard !removed.isEmpty else { return }
+        for session in removed {
+            CardioGoalAnnouncer.shared.cancel(sessionID: session.id)
+            CardioRouteRecorder.shared.cancel(sessionID: session.id)
+            IntervalRunnerHub.shared.stop(for: session.id)
+            YogaFlowRunnerHub.shared.stop(for: session.id, clearCheckpoint: true)
+        }
+        guard removed.contains(where: \.wasLive) else { return }
+        HRZoneGuard.shared.deactivate()
+        PaceGuard.shared.deactivate()
+        PaceAnnouncer.shared.stop()
+        NotificationScheduler.shared.cancelCardioCues()
     }
 
     private func nextSupersetGroup() -> Int {
@@ -1312,8 +1349,9 @@ struct ActiveWorkoutLoggerView: View {
         we.supersetGroup = group
         we.updatedAt = Date()
         compactSupersetPositions()
-        try? modelContext.save()
-        WatchLink.shared.publishState()
+        modelContext.saveUserChanges {
+            WatchLink.shared.publishState()
+        }
     }
 
     private func ungroupSuperset(_ group: Int) {
@@ -1322,8 +1360,9 @@ struct ActiveWorkoutLoggerView: View {
             exercise.updatedAt = Date()
         }
         compactSupersetPositions()
-        try? modelContext.save()
-        WatchLink.shared.publishState()
+        modelContext.saveUserChanges {
+            WatchLink.shared.publishState()
+        }
     }
 
     private func compactSupersetPositions() {
@@ -1364,12 +1403,17 @@ struct ActiveWorkoutLoggerView: View {
         }
 
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let roundIndex = supersetRoundIndex(for: set, in: sets) else { return }
+        guard let roundIndex = SupersetRoundPolicy.logicalRoundIndex(
+            for: set.id,
+            in: sets.map(\.supersetProgress)
+        ) else { return }
         let groupMembers = sortedExercises.filter { $0.supersetGroup == group }
         let roundComplete = groupMembers.allSatisfy { member in
             let memberSets = member.sets.sorted { $0.position < $1.position }
-            guard roundIndex < memberSets.count else { return true }
-            return setAndDropChainComplete(at: roundIndex, in: memberSets)
+            return SupersetRoundPolicy.isRoundSatisfied(
+                roundIndex,
+                in: memberSets.map(\.supersetProgress)
+            )
         }
         guard roundComplete else { return }
         startRest(after: set, in: workoutExercise, label: "\(SupersetUI.label(for: group)) rest")
@@ -1377,26 +1421,10 @@ struct ActiveWorkoutLoggerView: View {
 
     private func hasPendingDropSet(after set: SetModel, in workoutExercise: WorkoutExerciseModel) -> Bool {
         let sets = workoutExercise.sets.sorted { $0.position < $1.position }
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return false }
-        let next = index + 1
-        guard next < sets.count, sets[next].setType == .drop else { return false }
-        return sets[next].completedAt == nil
-    }
-
-    private func supersetRoundIndex(for set: SetModel, in sets: [SetModel]) -> Int? {
-        guard let index = sets.firstIndex(where: { $0.id == set.id }) else { return nil }
-        guard set.setType == .drop else { return index }
-        return sets[..<index].lastIndex { $0.setType != .drop }
-    }
-
-    private func setAndDropChainComplete(at index: Int, in sets: [SetModel]) -> Bool {
-        guard index < sets.count, sets[index].completedAt != nil else { return false }
-        var next = index + 1
-        while next < sets.count, sets[next].setType == .drop {
-            guard sets[next].completedAt != nil else { return false }
-            next += 1
-        }
-        return true
+        return SupersetRoundPolicy.hasPendingDrop(
+            after: set.id,
+            in: sets.map(\.supersetProgress)
+        )
     }
 
     private func startRest(after set: SetModel, in workoutExercise: WorkoutExerciseModel, label: String? = nil) {
@@ -1440,8 +1468,9 @@ struct ActiveWorkoutLoggerView: View {
         guard !isHistoricalEdit, !showRPEInLogger else { return }
         guard WorkoutEffortPolicy.removeEffort(from: workout) else { return }
         workout.updatedAt = .now
-        try? modelContext.save()
-        publishWorkoutChange()
+        modelContext.saveUserChanges {
+            publishWorkoutChange()
+        }
     }
 
     private func updateWidgetSnapshot() {
@@ -1470,7 +1499,7 @@ struct ActiveWorkoutLoggerView: View {
     private func finishAndDismiss(endedAt: Date) -> String? {
         // Prefer live session metrics (watch or BLE monitor) when streaming.
         if let failure = WorkoutFinisher.finish(
-            workout,
+            workoutID: workout.id,
             in: modelContext,
             liveMetrics: LiveMetricsHub.shared.liveMetrics,
             endedAt: endedAt
@@ -1482,13 +1511,19 @@ struct ActiveWorkoutLoggerView: View {
         return nil
     }
 
+    private func discardWorkout() {
+        PersistentChangeSaveCenter.shared.performReportingFailure({
+            WorkoutFinisher.discard(workoutID: workout.id, in: modelContext)
+        }, onSuccess: dismiss.callAsFunction)
+    }
+
     private func saveHistoricalEdit() {
         workout.recomputeTotalVolume()
         workout.updatedAt = .now
-        if (try? modelContext.save()) != nil {
+        modelContext.saveUserChanges {
             BackupScheduler.shared.noteLogDataChanged()
+            dismiss()
         }
-        dismiss()
     }
 }
 
@@ -1539,6 +1574,11 @@ private struct PostWorkoutSummaryView: View {
     @State private var routineName: String?
     @State private var showRoutineUpdatePrompt = false
     @State private var saveError: String?
+    /// FF-006 in-flight gate: held from the moment a Save commits until the
+    /// sheet dismisses (success) or the finisher surfaces a failure (release
+    /// so "Try saving again" works). The routine prompt does not hold it, so
+    /// dismissing that dialog can never strand the gate.
+    @State private var saveGate = WorkoutFinisher.InFlightGate()
     /// One-shot notification prime, shown at the value moment (a finished
     /// workout) instead of buried in Settings — accepting turns on the
     /// rest-timer alerts, reminders, and Wrapped alerts that
@@ -1553,18 +1593,11 @@ private struct PostWorkoutSummaryView: View {
     private var completedSets: [SetModel] {
         workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
     }
-    private var effectiveSetTotal: Double {
-        completedSets.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
-    }
     private var duration: Int {
         max(0, Int(finishRequestedAt.timeIntervalSince(workout.startedAt)))
     }
     private var volume: Double {
         completedSets.reduce(0) { $0 + ($1.totalVolume ?? 0) }
-    }
-    private var cardioDistance: Double? {
-        let value = workout.cardioSessions.compactMap(\.distanceMeters).reduce(0, +)
-        return value > 0 ? value : nil
     }
     private var previousComparable: WorkoutModel? {
         history
@@ -1583,38 +1616,14 @@ private struct PostWorkoutSummaryView: View {
         guard abs(delta) > 0.1 else { return "Volume matched last time" }
         return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
     }
-    private var totalReps: Int {
-        completedSets.reduce(0) {
-            $0 + ($1.reps ?? 0) + $1.miniReps.reduce(0, +)
-                + ($1.side2Reps ?? 0) + $1.side2MiniReps.reduce(0, +)
-        }
-    }
-    private var bestLift: Double? {
-        completedSets.compactMap(\.effectiveLoad).filter { $0 > 0 }.max()
-    }
-
-    private struct AwardEntry: Identifiable {
-        let id: String
-        let exerciseName: String
-        let kind: RecordKind
-        let valueText: String
-    }
-    /// Final records of the session: per exercise, the best set per kind that
-    /// beat the historical baseline. Same engine as the in-logger trophies.
-    private var awardEntries: [AwardEntry] {
-        let baselines = PersonalRecords.baselines(history: history, before: workout)
-        return workout.exercises.sorted { $0.position < $1.position }.flatMap { we -> [AwardEntry] in
-            let exercise = exercises.first { $0.id == we.exerciseID }
-            let unit = exercise?.effectiveWeightUnit ?? Fmt.unit
-            return PersonalRecords.summaryAwards(for: we, baseline: baselines[we.exerciseID]).map { kind, set in
-                AwardEntry(
-                    id: "\(we.id)-\(kind.rawValue)",
-                    exerciseName: exercise?.name ?? "Exercise",
-                    kind: kind,
-                    valueText: kind.valueText(for: set, unit: unit)
-                )
-            }
-        }
+    /// Final records and milestones use one derivation path across the
+    /// completion sheet, history, search, and generated share images.
+    private var awardEntries: [WorkoutAward] {
+        WorkoutAwards.all(
+            for: workout,
+            history: history,
+            exercises: exercises
+        )
     }
     private var xpAward: XPService.Award {
         XPService.previewAward(for: workout, requireEnded: false)
@@ -1644,26 +1653,12 @@ private struct PostWorkoutSummaryView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
 
-                    Card {
-                        VStack(spacing: Space.lg) {
-                            HStack {
-                                StatColumn(label: "Time", value: Fmt.durationShort(duration))
-                                if let cardioDistance {
-                                    StatColumn(label: "Distance", value: Fmt.distance(cardioDistance), valueColor: theme.secondaryAccent)
-                                } else {
-                                    StatColumn(label: "Volume", value: Fmt.volume(volume))
-                                }
-                                StatColumn(label: "Sets", value: Fmt.sets(effectiveSetTotal))
-                            }
-                            if !completedSets.isEmpty {
-                                HStack {
-                                    StatColumn(label: "Reps", value: "\(totalReps)")
-                                    StatColumn(label: "Best Lift", value: bestLift.map { Fmt.loadUnit($0) } ?? "—")
-                                    StatColumn(label: "Awards", value: "\(awardEntries.count)", valueColor: awardEntries.isEmpty ? theme.textPrimary : theme.warmup)
-                                }
-                            }
-                        }
-                    }
+                    PostWorkoutSummaryStatsCard(
+                        workout: workout,
+                        exercises: exercises,
+                        durationSeconds: duration,
+                        awardCount: awardEntries.count
+                    )
                     .modifier(SummaryCardReveal(index: 0, revealed: cardsRevealed))
 
                     SessionRPECard(selection: $sessionRPE)
@@ -1688,7 +1683,7 @@ private struct PostWorkoutSummaryView: View {
                     }
 
                     if !awardEntries.isEmpty {
-                        awardsCard
+                        WorkoutAwardsCard(awards: awardEntries)
                             .modifier(SummaryCardReveal(index: 3, revealed: cardsRevealed))
                     }
 
@@ -1710,7 +1705,8 @@ private struct PostWorkoutSummaryView: View {
                 PostWorkoutActionBar(
                     onKeepLogging: onCancel,
                     onShare: shareWorkout,
-                    onSave: requestSave
+                    onSave: requestSave,
+                    isSaving: saveGate.isActive
                 )
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -1752,7 +1748,8 @@ private struct PostWorkoutSummaryView: View {
             theme: theme,
             hrSamples: [],
             recoveryPoints: [],
-            routeMaps: [:]
+            routeMaps: [:],
+            awards: awardEntries
         )
         showShareSheet = shareImage != nil
     }
@@ -1785,7 +1782,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "figure.strengthtraining.traditional")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("What this trained").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 ForEach(trainedMuscleRows, id: \.muscle) { row in
@@ -1850,7 +1847,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.turn.up.right")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     Text("Next time").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 }
                 ForEach(nextTimeEntries, id: \.name) { entry in
@@ -1872,7 +1869,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(spacing: Space.md) {
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                         .frame(width: 38, height: 38)
                         .background(theme.accentSoft)
                         .clipShape(Circle())
@@ -1883,14 +1880,22 @@ private struct PostWorkoutSummaryView: View {
                     }
                 }
                 HStack(spacing: Space.md) {
-                    Button("Enable notifications") {
+                    Button {
                         notificationPrimeShown = true
                         Task { await NotificationScheduler.shared.requestPermission() }
+                    } label: {
+                        Text("Enable notifications")
+                            .minimumTouchTarget()
                     }
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .tint(theme.accent)
-                    Button("Not now") { notificationPrimeShown = true }
+                    Button {
+                        notificationPrimeShown = true
+                    } label: {
+                        Text("Not now")
+                            .minimumTouchTarget()
+                    }
                         .font(.bodyStrong)
                         .buttonStyle(.glass)
                 }
@@ -1913,7 +1918,7 @@ private struct PostWorkoutSummaryView: View {
                 HStack(alignment: .center, spacing: Space.md) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onAccent)
                         .frame(width: 38, height: 38)
                         .background(theme.accent)
                         .clipShape(Circle())
@@ -1945,40 +1950,6 @@ private struct PostWorkoutSummaryView: View {
         }
     }
 
-    /// Every record earned this session, grouped visually by exercise.
-    private var awardsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                Label("Awards", systemImage: "trophy.fill")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.warmup)
-                ForEach(awardEntries) { entry in
-                    HStack(spacing: Space.md) {
-                        Image(systemName: entry.kind.icon)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.warmup)
-                            .frame(width: 28, height: 28)
-                            .background(theme.warmup.opacity(0.15))
-                            .clipShape(Circle())
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.exerciseName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.textPrimary)
-                                .lineLimit(1)
-                            Text(entry.kind.label)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                        Spacer()
-                        Text(entry.valueText)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(theme.warmup)
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Routine update flow
 
     private var routineUpdatePromptTitle: String {
@@ -1988,8 +1959,10 @@ private struct PostWorkoutSummaryView: View {
 
     /// On Save: if this workout was started from a routine and structural
     /// changes were made mid-session, ask before finishing. Otherwise save
-    /// straight away.
+    /// straight away. The gate is checked (not held) here — the routine
+    /// prompt must not strand it if dismissed without a choice.
     private func requestSave() {
+        guard !saveGate.isActive else { return }
         guard let routineID = workout.routineID,
               let routine = fetchRoutine(id: routineID) else {
             commitSave()
@@ -2006,16 +1979,28 @@ private struct PostWorkoutSummaryView: View {
     }
 
     private func applyRoutineChangesAndSave() {
+        // Acquired before ANY routine mutation so a rapid second commit
+        // cannot re-enter mid-apply.
+        guard saveGate.tryBegin() else { return }
         if let plan = routinePlan,
            let routineID = workout.routineID,
            let routine = fetchRoutine(id: routineID) {
             RoutineChangeSync.apply(plan, to: routine, from: workout, in: modelContext)
-            try? modelContext.save()
         }
-        commitSave()
+        // WorkoutFinisher's terminal save commits the routine update and the
+        // completed workout together. Keeping one durability boundary avoids
+        // reporting a stale first-save error if that same context succeeds a
+        // moment later while finishing the workout.
+        commitSaveUnderGate()
     }
 
     private func commitSave() {
+        guard saveGate.tryBegin() else { return }
+        commitSaveUnderGate()
+    }
+
+    private func commitSaveUnderGate() {
+        // All progression/RPE mutations happen only while the gate is held.
         // Resolve what the lifter did with each suggestion (accepted at the
         // suggested weight, edited to another, or untouched) before finishing.
         ProgressionPlanner.resolveStatuses(for: workout, in: modelContext)
@@ -2023,6 +2008,11 @@ private struct PostWorkoutSummaryView: View {
         workout.wholeSessionRPERatedAt = sessionRPERatedAt
         workout.wholeSessionRPEProtocolVersion = sessionRPE == nil ? nil : "whole-session-cr10-immediate-v1"
         saveError = onSave(finishRequestedAt)
+        if saveError != nil {
+            // A surfaced failure re-opens the gate so "Try saving again" works;
+            // success keeps it held through dismissal.
+            saveGate.end()
+        }
     }
 
     private func fetchRoutine(id: UUID) -> RoutineModel? {
@@ -2035,7 +2025,7 @@ private struct PostWorkoutSummaryView: View {
             HStack(spacing: Space.md) {
                 Image(systemName: icon)
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .frame(width: 34, height: 34)
                     .background(theme.surfaceElevated)
                     .clipShape(Circle())
@@ -2050,7 +2040,7 @@ private struct PostWorkoutSummaryView: View {
 
 // MARK: - Exercise card
 
-private enum SetInputField: Hashable {
+enum SetInputField: Hashable {
     case weight
     case primary
     case rpe
@@ -2137,6 +2127,7 @@ private struct ExerciseLogCard: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
     let previousSets: [SetModel]
     let recordBaseline: ExerciseRecordBaseline?
     let allowsRestTimers: Bool
@@ -2176,6 +2167,13 @@ private struct ExerciseLogCard: View {
     @State private var deferredSaveTask: Task<Void, Never>?
     /// Set being plate-calculated (barbell-loaded exercises only).
     @State private var plateSet: SetModel?
+    /// Myo-reps use a focused full-screen runner; the enclosing card keeps the
+    /// presentation identity so logged progress survives row reconstruction.
+    @State private var presentedMyoSet: MyoRepSetPresentation?
+    /// A row converted into Myo-reps may already show regular-set reps. Keep
+    /// those as an activation suggestion without treating them as performed;
+    /// `SetModel.reps` becomes the durable activation receipt only after Log.
+    @State private var myoActivationSuggestionOverrides: [UUID: Int] = [:]
     @State private var editedSuggestionSetIDs = Set<UUID>()
     /// Per-set fields the user explicitly typed into (suggestion-backed rows
     /// only). Lives here, not in SetRow @State, so LazyVStack row recycling
@@ -2196,6 +2194,7 @@ private struct ExerciseLogCard: View {
     /// `onAppear` still re-folds an already-completed exercise on revisit so the
     /// list stays tidy and the fold survives LazyVStack row recycling.
     @State private var collapsed = false
+    @State private var noteFocusRequested = false
 
     private var sortedSets: [SetModel] { workoutExercise.sets.sorted { $0.position < $1.position } }
     private var completedSetIDs: Set<UUID> {
@@ -2261,6 +2260,56 @@ private struct ExerciseLogCard: View {
             // exists (typed, matched, or materialized from a suggestion).
             fillPendingWarmupRamp()
         }
+        .fullScreenCover(item: $presentedMyoSet) { presentation in
+            let sets = sortedSets
+            if let index = sets.firstIndex(where: { $0.id == presentation.set.id }) {
+                if presentation.mode == .editing {
+                    MyoRepSetEditorView(
+                        set: presentation.set,
+                        exerciseName: exercise?.name ?? "Exercise",
+                        displayUnit: displayUnit,
+                        showsWeight: weightHeader != nil,
+                        isUnilateral: exercise?.isUnilateral == true,
+                        supportsResistanceBands: supportsResistanceBands,
+                        onSave: {
+                            editedSuggestionSetIDs.insert(presentation.set.id)
+                            recompute(changedSet: presentation.set)
+                        }
+                    )
+                } else {
+                    MyoRepActiveSetView(
+                        set: presentation.set,
+                        workoutExercise: workoutExercise,
+                        exerciseName: exercise?.name ?? "Exercise",
+                        supportsResistanceBands: supportsResistanceBands,
+                        blockNumber: myoRepNumber(upTo: index, in: sets),
+                        previous: blockTemplate(for: presentation.set, index: index, in: sets),
+                        showsWeight: weightHeader != nil,
+                        displayUnit: displayUnit,
+                        isUnilateral: exercise?.isUnilateral == true,
+                        completionDate: completionDate,
+                        usesSuggestedValues: usesSuggestedValues(for: presentation.set),
+                        suggestedWeight: suggestedWeight(for: presentation.set, index: index),
+                        suggestedReps: suggestedReps(for: presentation.set, index: index),
+                        editedFields: editedSuggestionFields[presentation.set.id] ?? [],
+                        onChange: { recompute(changedSet: presentation.set) },
+                        onCompletionChange: { completed in
+                            recompute(changedSet: presentation.set, refreshAllAwards: !completed)
+                        },
+                        onMaterializeSuggestion: { fields in
+                            materializeSuggestion(
+                                for: presentation.set,
+                                index: index,
+                                editedFields: fields
+                            )
+                        },
+                        onCompleted: {
+                            if allowsRestTimers { onCompletedSet(presentation.set) }
+                        }
+                    )
+                }
+            }
+        }
     }
 
     /// One-line receipt shown once every set is checked off: name, set count,
@@ -2322,6 +2371,11 @@ private struct ExerciseLogCard: View {
         guard !sets.isEmpty else { return }
         if allSetsCompleted {
             for set in sets { set.completedAt = nil }
+        } else if allowsRestTimers,
+                  let myoSet = sets.first(where: { $0.setType == .myoRep && $0.completedAt == nil }) {
+            collapsed = false
+            presentedMyoSet = MyoRepSetPresentation(set: myoSet, mode: .active)
+            return
         } else {
             let completedAt = completionDate ?? Date()
             var lastCompletedSet: SetModel?
@@ -2367,7 +2421,14 @@ private struct ExerciseLogCard: View {
                 header
 
                 if workoutExercise.notes != nil {
-                    StickyNoteView(workoutExercise: workoutExercise, exerciseID: workoutExercise.exerciseID, pinnedNote: pinnedNote)
+                    StickyNoteView(
+                        workoutExercise: workoutExercise,
+                        exerciseID: workoutExercise.exerciseID,
+                        pinnedNote: pinnedNote,
+                        focusRequested: noteFocusRequested,
+                        onFocusHandled: { noteFocusRequested = false },
+                        onPinnedNoteChanged: onPinnedNoteChanged
+                    )
                 }
 
                 // Also gated on the park flag so a workout started before the
@@ -2394,7 +2455,7 @@ private struct ExerciseLogCard: View {
                                 .font(.system(size: 15, weight: .semibold))
                             Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
                         }
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     }
                 }
 
@@ -2403,9 +2464,36 @@ private struct ExerciseLogCard: View {
                 let sets = sortedSets
 
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
-                    if set.setType.isBlockType {
-                        // Myo-reps / rest-pause / cluster log as a nested block,
-                        // not a flat row.
+                    if set.setType == .myoRep {
+                        SwipeToDeleteRow(
+                            isOpen: openSwipeSetID == set.id,
+                            onOpenChange: { open in
+                                if open { openSwipeSetID = set.id }
+                                else if openSwipeSetID == set.id { openSwipeSetID = nil }
+                            },
+                            onDelete: { deleteSet(set) }
+                        ) {
+                            let mode: MyoRepSetPresentation.Mode = set.completedAt != nil || !allowsRestTimers
+                                ? .editing
+                                : .active
+                            MyoRepSetLauncherCard(
+                                set: set,
+                                workoutExercise: workoutExercise,
+                                showWeight: weightHeader != nil,
+                                displayUnit: displayUnit,
+                                isUnilateral: exercise?.isUnilateral == true,
+                                actionMode: mode,
+                                onLaunch: {
+                                    presentedMyoSet = MyoRepSetPresentation(set: set, mode: mode)
+                                },
+                                onChange: { recompute(changedSet: set) },
+                                onSetType: { changeType(of: set, to: $0, index: index) },
+                                onDelete: { deleteSet(set) }
+                            )
+                        }
+                    } else if set.setType.isBlockType {
+                        // Rest-pause / cluster stay inline; Myo-reps owns a
+                        // dedicated continuous-focus runner above.
                         SwipeToDeleteRow(
                             isOpen: openSwipeSetID == set.id,
                             onOpenChange: { open in
@@ -2421,13 +2509,30 @@ private struct ExerciseLogCard: View {
                                 previous: blockTemplate(for: set, index: index, in: sets),
                                 showWeight: weightHeader != nil,
                                 displayUnit: displayUnit,
+                                supportsResistanceBands: supportsResistanceBands,
                                 isUnilateral: exercise?.isUnilateral == true,
                                 completionDate: completionDate,
+                                usesSuggestedValues: usesSuggestedValues(for: set),
+                                suggestedWeight: suggestedWeight(for: set, index: index),
+                                suggestedReps: suggestedReps(for: set, index: index),
+                                editedFields: editedSuggestionFields[set.id] ?? [],
                                 onChange: { recompute(changedSet: set) },
                                 onCompletionChange: { completed in
                                     recompute(changedSet: set, refreshAllAwards: !completed)
                                 },
-                                onSetType: { set.setType = $0; recompute(changedSet: set) },
+                                onSuggestionFieldEdited: { field, isEdited in
+                                    var fields = editedSuggestionFields[set.id] ?? []
+                                    if isEdited { fields.insert(field) } else { fields.remove(field) }
+                                    editedSuggestionFields[set.id] = fields
+                                },
+                                onMaterializeSuggestion: { editedFields in
+                                    materializeSuggestion(
+                                        for: set,
+                                        index: index,
+                                        editedFields: editedFields
+                                    )
+                                },
+                                onSetType: { changeType(of: set, to: $0, index: index) },
                                 onCompleted: { if allowsRestTimers { onCompletedSet(set) } },
                                 onDelete: { deleteSet(set) }
                             )
@@ -2445,6 +2550,7 @@ private struct ExerciseLogCard: View {
 	                            defaultsToFailure: failureTrainingEnabled && set.setType != .warmup,
 	                            effortScale: effortScale,
 	                            displayUnit: displayUnit,
+                                supportsResistanceBands: supportsResistanceBands,
                                 focusedInput: $focusedInput,
                                 openSwipeSetID: $openSwipeSetID,
 	                            onChange: { recompute(changedSet: set) },
@@ -2507,7 +2613,6 @@ private struct ExerciseLogCard: View {
             }
         }
         .onAppear {
-            prefillPinnedNote()
             refreshAwardsCache()
         }
         .onDisappear {
@@ -2530,6 +2635,7 @@ private struct ExerciseLogCard: View {
                         ExerciseThumbnail(exercise: exercise, size: 38)
                         ExerciseNameLabel(name: exercise.name, font: .system(size: 18, weight: .bold))
                     }
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
             } else {
@@ -2608,7 +2714,9 @@ private struct ExerciseLogCard: View {
         if workoutExercise.notes == nil {
             actions.append(ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
                 workoutExercise.notes = ""
-                try? modelContext.save()
+                workoutExercise.updatedAt = .now
+                noteFocusRequested = true
+                modelContext.saveUserChanges()
             })
         }
         actions.append(ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) })
@@ -2635,7 +2743,7 @@ private struct ExerciseLogCard: View {
                     if showsPreviousTapHint {
                         Image(systemName: "hand.tap")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                             .accessibilityHidden(true)
                     }
                 }
@@ -2651,9 +2759,10 @@ private struct ExerciseLogCard: View {
                             .font(.system(size: 9, weight: .bold))
                     }
                     .frame(width: grid.weight)
+                    .minimumTouchTarget()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .accessibilityLabel("Switch \(exercise?.name ?? "exercise") weight unit")
 	            }
 	            if isCardio { Text("MIN").frame(width: grid.weight) } else { Text("REPS").frame(width: grid.reps) }
@@ -2669,6 +2778,12 @@ private struct ExerciseLogCard: View {
     /// 1-based number among numbered (working-type) sets only.
     private func workingNumber(upTo index: Int, in sets: [SetModel]) -> Int {
         sets.prefix(index + 1).filter { SetTypeStyle.of($0.setType).numbered }.count
+    }
+
+    /// Myo-reps are unnumbered in the inline working-set grid, but their
+    /// dedicated runner still needs a human 1-based identity of its own.
+    private func myoRepNumber(upTo index: Int, in sets: [SetModel]) -> Int {
+        sets.prefix(index + 1).filter { $0.setType == .myoRep }.count
     }
 
 	    /// Records this set holds right now, judged against history plus the
@@ -2709,6 +2824,10 @@ private struct ExerciseLogCard: View {
     }
 
     private func suggestedReps(for set: SetModel, index: Int) -> Int? {
+        if set.setType == .myoRep,
+           let activationSuggestion = myoActivationSuggestionOverrides[set.id] {
+            return activationSuggestion
+        }
         if progressionLeads(for: set) {
             return set.reps ?? previousSet(for: set, at: index)?.reps
         }
@@ -2754,6 +2873,9 @@ private struct ExerciseLogCard: View {
             failureTrainingEnabled: failureTrainingEnabled,
             allowsCompletedSet: allowsCompletedSet
         )
+        if set.setType == .myoRep {
+            myoActivationSuggestionOverrides.removeValue(forKey: set.id)
+        }
         editedSuggestionSetIDs.insert(set.id)
     }
 
@@ -2761,7 +2883,7 @@ private struct ExerciseLogCard: View {
         HStack(spacing: 8) {
             Image(systemName: progressionIcon(suggestion.kindRaw))
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
             Text(suggestion.rationale)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
@@ -2772,6 +2894,7 @@ private struct ExerciseLogCard: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(theme.textTertiary)
                     .frame(width: 28, height: 28)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss suggestion and keep last session's values")
@@ -2857,15 +2980,7 @@ private struct ExerciseLogCard: View {
         // changing their global unit.
         exercise.preferredWeightUnit = next == Fmt.unit ? nil : next
         exercise.updatedAt = Date()
-        try? modelContext.save()
-    }
-
-    private func prefillPinnedNote() {
-        if workoutExercise.notes == nil, let pinnedNote {
-            workoutExercise.notes = pinnedNote.note
-            workoutExercise.notePinned = true
-            try? modelContext.save()
-        }
+        modelContext.saveUserChanges()
     }
 
     /// Warm-up ramp: the user's configured ramp (default 40/60/80% × 10/6/3,
@@ -3029,6 +3144,7 @@ private struct ExerciseLogCard: View {
     }
 
     private func changeType(of set: SetModel, to type: SetType, index: Int) {
+        let oldType = set.setType
         let editedFields = editedSuggestionFields[set.id] ?? []
         let suggestionBacked = suggestionBacked(for: set)
         let preservesEnteredWeight = set.modeWeight != nil
@@ -3062,6 +3178,18 @@ private struct ExerciseLogCard: View {
                 preservesEnteredWeight: preservesEnteredWeight,
                 preservesEnteredReps: preservesEnteredReps
             )
+        }
+        if type == .myoRep, oldType != .myoRep {
+            // Prefill policy resolves the correct activation suggestion (same
+            // type history, then the row's visible value). Move that value out
+            // of the performed field until the lifter explicitly logs it.
+            myoActivationSuggestionOverrides[set.id] = set.reps
+            set.reps = nil
+            set.side2Reps = nil
+            set.miniReps = []
+            set.side2MiniReps = []
+        } else if type != .myoRep {
+            myoActivationSuggestionOverrides.removeValue(forKey: set.id)
         }
         recompute(changedSet: set)
     }
@@ -3142,8 +3270,14 @@ private struct ExerciseLogCard: View {
     }
 
     private func saveNow() {
-        try? modelContext.save()
-        onWorkoutChanged()
+        modelContext.saveUserChanges { onWorkoutChanged() }
+    }
+
+    private var supportsResistanceBands: Bool {
+        ResistanceBandSupport.isBandExercise(
+            name: exercise?.name,
+            equipment: exercise?.equipment
+        )
     }
 }
 
@@ -3186,6 +3320,7 @@ private struct SetRow: View {
     let defaultsToFailure: Bool
     let effortScale: EffortScale
     let displayUnit: WeightUnit
+    let supportsResistanceBands: Bool
     let focusedInput: FocusState<SetInputFocus?>.Binding
     /// The set whose swipe-to-delete tray is open, shared across sibling rows so
     /// only one opens at a time.
@@ -3225,6 +3360,7 @@ private struct SetRow: View {
         defaultsToFailure: Bool,
         effortScale: EffortScale = .rpe,
         displayUnit: WeightUnit,
+        supportsResistanceBands: Bool,
         focusedInput: FocusState<SetInputFocus?>.Binding,
         openSwipeSetID: Binding<UUID?>,
         onChange: @escaping () -> Void,
@@ -3257,6 +3393,7 @@ private struct SetRow: View {
         self.defaultsToFailure = defaultsToFailure
         self.effortScale = effortScale
         self.displayUnit = displayUnit
+        self.supportsResistanceBands = supportsResistanceBands
         self.focusedInput = focusedInput
         self._openSwipeSetID = openSwipeSetID
         self.onChange = onChange
@@ -3279,7 +3416,7 @@ private struct SetRow: View {
         self.onDelete = onDelete
     }
 
-    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType) }
+    private var style: SetTypeStyle { SetTypeStyle.of(self.set.setType, theme: theme) }
     private var isDone: Bool { self.set.completedAt != nil }
     private var isDrop: Bool { self.set.setType == .drop }
     private var suggestedWeightText: String {
@@ -3399,9 +3536,14 @@ private struct SetRow: View {
                     .font(.tag)
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
-                Button("Stop") { RestTimerController.shared.skip() }
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(style.color)
+                Button {
+                    RestTimerController.shared.skip()
+                } label: {
+                    Text("Stop")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(style.color)
+                        .minimumTouchTarget()
+                }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Stop AMRAP timer early")
             } else {
@@ -3432,6 +3574,7 @@ private struct SetRow: View {
 
                 Button {
                     let seconds = amrapSeconds
+                    let persistElapsedDuration = onChange
                     set.durationSeconds = seconds
                     RestTimerController.shared.start(
                         seconds: seconds,
@@ -3439,9 +3582,10 @@ private struct SetRow: View {
                         ownerID: set.id,
                         soundOnEnd: true,
                         endNotification: (title: "Time's up", body: "Log the reps you got."),
-                        onComplete: { [weak set] ranSeconds in
+                        onComplete: { [set] ranSeconds in
                             // Stopping early counts the window actually used.
-                            set?.durationSeconds = ranSeconds
+                            set.durationSeconds = ranSeconds
+                            persistElapsedDuration()
                         }
                     )
                     onChange()
@@ -3541,6 +3685,7 @@ private struct SetRow: View {
                     // stays readable even when the RPE column is showing.
                     .minimumScaleFactor(0.75)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .disabled(previousSet == nil)
@@ -3952,7 +4097,7 @@ private struct SetRow: View {
     ) -> some View {
         let label = accessibilityLabel(for: field)
 
-        return ZStack {
+        return ZStack(alignment: .leading) {
             if text.wrappedValue.isEmpty {
                 Text(placeholder)
                     .font(.bodyStrong)
@@ -3962,6 +4107,16 @@ private struct SetRow: View {
                     // large Dynamic Type sizes.
                     .minimumScaleFactor(0.8)
                     .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity)
+            }
+
+            if field == .weight, supportsResistanceBands {
+                ResistanceBandLoadMenu(
+                    selectedWeightKilograms: effectiveBandWeight,
+                    unit: displayUnit,
+                    onSelect: applyBandWeight
+                )
+                .zIndex(1)
             }
 
             TextField("", text: text)
@@ -3972,6 +4127,7 @@ private struct SetRow: View {
                 .font(.bodyStrong)
                 .foregroundStyle(theme.textPrimary)
                 .textFieldStyle(.plain)
+                .padding(.leading, field == .weight && supportsResistanceBands ? 22 : 0)
                 .accessibilityLabel(label)
                 .onSubmit {
                     if let next = nextInputField(after: field) {
@@ -3985,6 +4141,22 @@ private struct SetRow: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var effectiveBandWeight: Double? {
+        isShowingSuggestion(for: .weight) ? suggestedWeight : set.modeWeight
+    }
+
+    private func applyBandWeight(_ kilograms: Double) {
+        clearFocus()
+        weightDraft = Fmt.load(kilograms, unit: displayUnit)
+        editedDraftFields.insert(.weight)
+        set.setModeWeight(kilograms)
+        if usesSuggestedValues {
+            suggestionFieldOverrides[.weight] = true
+            onSuggestionFieldEdited(.weight, true)
+        }
+        onChange()
     }
 
     private func rpePickerField(width: CGFloat) -> some View {

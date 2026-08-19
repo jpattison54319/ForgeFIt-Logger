@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -10,6 +11,7 @@ import UIKit
 /// active theme can be injected via the SwiftUI environment and swapped at
 /// runtime in a future update.
 struct AppTheme {
+    let family: ThemeFamily
 
     // Canvas & surfaces
     let background: Color
@@ -20,8 +22,14 @@ struct AppTheme {
 
     // Brand — Active Sage primary, Fresh Mint secondary
     let accent: Color
+    /// Brand color when used as foreground content on a canvas or surface.
+    let accentForeground: Color
+    /// Foreground content placed directly on an accent-filled control.
+    let onAccent: Color
     let accentSoft: Color
     let secondaryAccent: Color
+    let secondaryAccentForeground: Color
+    let onSecondaryAccent: Color
     let warmup: Color
     let success: Color
     let danger: Color
@@ -74,32 +82,7 @@ extension AppTheme {
     /// Mint accent duotone. `.sage` is kept as an alias so existing call
     /// sites that want a theme-independent fixed reference (badge colors,
     /// share-card rendering, tests) keep their exact current look.
-    static let sageDark = AppTheme(
-        background: Color(hex: 0x0E1116),
-        surface: Color(hex: 0x181B21),
-        surfaceElevated: Color(hex: 0x20242B),
-        surfaceHighlight: Color(hex: 0x282D35),
-        separator: Color(hex: 0x333942),
-        accent: Color(hex: 0x55B374),
-        accentSoft: Color(hex: 0x55B374).opacity(0.18),
-        secondaryAccent: Color(hex: 0x34D399),
-        warmup: Color(hex: 0xF5B93A),
-        success: Color(hex: 0x35D07A),
-        danger: Color(hex: 0xFF5A6E),
-        recoveryLow: Color(hex: 0xFF5A6E),
-        recoveryMid: Color(hex: 0xF5B93A),
-        recoveryHigh: Color(hex: 0x35D07A),
-        zone1: Color(hex: 0x8E8B99),
-        zone2: Color(hex: 0x2AD4C6),
-        zone3: Color(hex: 0xF5C518),
-        zone4: Color(hex: 0xFF9F0A),
-        zone5: Color(hex: 0xFF5A6E),
-        stickyFill: Color(hex: 0xF6D66B),
-        stickyInk: Color(hex: 0x2A2410),
-        textPrimary: Color(hex: 0xFFFFFF),
-        textSecondary: Color(hex: 0xA4ABA6),
-        textTertiary: Color(hex: 0x747A74)
-    )
+    static let sageDark = make(family: .sage, appearance: .dark)
 
     static let sage = sageDark
 
@@ -109,37 +92,67 @@ extension AppTheme {
     /// near-black canvas but wash out on white). Sticky-note colors are
     /// intentionally unchanged — they represent a fixed "paper" surface, not
     /// part of the app chrome.
-    static let sageLight = AppTheme(
-        background: Color(hex: 0xF3F5F1),
-        surface: Color(hex: 0xFFFFFF),
-        surfaceElevated: Color(hex: 0xFFFFFF),
-        surfaceHighlight: Color(hex: 0xE8F3EA),
-        separator: Color(hex: 0xDEE3DE),
-        accent: Color(hex: 0x2F9E58),
-        accentSoft: Color(hex: 0x2F9E58).opacity(0.14),
-        secondaryAccent: Color(hex: 0x159873),
-        warmup: Color(hex: 0xB8790A),
-        success: Color(hex: 0x1E9A55),
-        danger: Color(hex: 0xE0334C),
-        recoveryLow: Color(hex: 0xE0334C),
-        recoveryMid: Color(hex: 0xB8790A),
-        recoveryHigh: Color(hex: 0x1E9A55),
-        zone1: Color(hex: 0x6B6876),
-        zone2: Color(hex: 0x0E9A8E),
-        zone3: Color(hex: 0x9A7D00),
-        zone4: Color(hex: 0xC97400),
-        zone5: Color(hex: 0xE0334C),
-        stickyFill: Color(hex: 0xF6D66B),
-        stickyInk: Color(hex: 0x2A2410),
-        textPrimary: Color(hex: 0x14171A),
-        textSecondary: Color(hex: 0x50594F),
-        textTertiary: Color(hex: 0x82897F)
-    )
+    static let sageLight = make(family: .sage, appearance: .light)
 
     /// Resolves which variant is active for a chosen `ThemeMode` + the
     /// device's live system appearance.
+    static func active(
+        family: ThemeFamily,
+        mode: ThemeMode,
+        system: ColorScheme
+    ) -> AppTheme {
+        make(
+            family: family,
+            appearance: mode.resolvedColorScheme(system: system) == .dark ? .dark : .light
+        )
+    }
+
     static func active(for mode: ThemeMode, system: ColorScheme) -> AppTheme {
-        mode.resolvedColorScheme(system: system) == .dark ? .sageDark : .sageLight
+        active(family: .sage, mode: mode, system: system)
+    }
+
+    /// Share exports intentionally stay dark for predictable rendering while
+    /// still carrying the user's selected color family.
+    static func export(family: ThemeFamily) -> AppTheme {
+        make(family: family, appearance: .dark)
+    }
+
+    private static func make(
+        family: ThemeFamily,
+        appearance: ForgeThemeAppearance
+    ) -> AppTheme {
+        let palette = ForgeThemeCatalog.palette(for: family, appearance: appearance)
+        return AppTheme(
+            family: family,
+            background: Color(hex: palette.background),
+            surface: Color(hex: palette.surface),
+            surfaceElevated: Color(hex: palette.surfaceElevated),
+            surfaceHighlight: Color(hex: palette.surfaceHighlight),
+            separator: Color(hex: palette.separator),
+            accent: Color(hex: palette.accent),
+            accentForeground: Color(hex: palette.accentForeground),
+            onAccent: Color(hex: palette.onAccent),
+            accentSoft: Color(hex: palette.accent).opacity(palette.accentSoftOpacity),
+            secondaryAccent: Color(hex: palette.secondaryAccent),
+            secondaryAccentForeground: Color(hex: palette.secondaryAccentForeground),
+            onSecondaryAccent: Color(hex: palette.onSecondaryAccent),
+            warmup: Color(hex: palette.warmup),
+            success: Color(hex: palette.success),
+            danger: Color(hex: palette.danger),
+            recoveryLow: Color(hex: palette.recoveryLow),
+            recoveryMid: Color(hex: palette.recoveryMid),
+            recoveryHigh: Color(hex: palette.recoveryHigh),
+            zone1: Color(hex: palette.zone1),
+            zone2: Color(hex: palette.zone2),
+            zone3: Color(hex: palette.zone3),
+            zone4: Color(hex: palette.zone4),
+            zone5: Color(hex: palette.zone5),
+            stickyFill: Color(hex: palette.stickyFill),
+            stickyInk: Color(hex: palette.stickyInk),
+            textPrimary: Color(hex: palette.textPrimary),
+            textSecondary: Color(hex: palette.textSecondary),
+            textTertiary: Color(hex: palette.textTertiary)
+        )
     }
 }
 
@@ -148,17 +161,11 @@ extension AppTheme {
 /// The user's chosen appearance. `.system` tracks the device's live
 /// light/dark setting; `.light`/`.dark` pin the app regardless of the
 /// device setting. Persisted via `ThemeManager`, surfaced in Settings.
-enum ThemeMode: String, CaseIterable, Identifiable {
-    case system, light, dark
+typealias ThemeMode = ForgeThemeMode
 
-    var id: String { rawValue }
-
+extension ForgeThemeMode {
     var label: String {
-        switch self {
-        case .system: "System"
-        case .light: "Light"
-        case .dark: "Dark"
-        }
+        displayName
     }
 
     func resolvedColorScheme(system: ColorScheme) -> ColorScheme {

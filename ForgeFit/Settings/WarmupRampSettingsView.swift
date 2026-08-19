@@ -64,7 +64,8 @@ struct WarmupRampSettingsView: View {
                         Button(action: addStage) {
                             Label("Add warm-up set", systemImage: "plus.circle.fill")
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("add-warmup-stage")
@@ -94,9 +95,11 @@ struct WarmupRampSettingsView: View {
                             Image(systemName: "minus.circle.fill")
                                 .font(.system(size: 18))
                                 .foregroundStyle(theme.textTertiary)
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove warm-up \(index + 1)")
+                        .accessibilityIdentifier("remove-warmup-stage-\(index + 1)")
                     }
                 }
                 Stepper(value: weightBinding(index), in: 5...95, step: 5) {

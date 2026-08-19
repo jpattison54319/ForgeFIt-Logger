@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Top-most settings section: three-column connection status hero for Apple
-/// Health, Apple Watch, and Bluetooth HR monitor.
+/// Top-most settings section: connection status hero for Apple Health, Apple
+/// Watch, and — when the feature is available — a Bluetooth HR monitor.
 struct SettingsHeroSection: View {
     let healthConnected: Bool
     let watchPaired: Bool
-    let hrmConnected: Bool
+    let hrmConnected: Bool?
 
     var body: some View {
         Section {

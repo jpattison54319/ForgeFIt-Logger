@@ -53,7 +53,15 @@ struct IntervalPlanBuilderView: View {
         sort: \IntervalPresetModel.createdAt, order: .reverse
     ) private var userPresets: [IntervalPresetModel]
 
+    private var activeIntervalPresets: [IntervalPresetModel] {
+        userPresets.filter { $0.storedIntervalPlan != nil }
+    }
+
     private let onSave: (String?) -> Void
+    private let commitAction: ((String?) -> Bool)?
+    /// Non-nil only for the routine-card convenience initializer. That path
+    /// owns a durable commit rather than merely handing JSON to its caller.
+    private let routineExercise: RoutineExerciseModel?
 
     @State private var warmup: Int
     @State private var repeats: Int
@@ -89,11 +97,19 @@ struct IntervalPlanBuilderView: View {
     /// "Save as preset" name-prompt state.
     @State private var showSavePrompt = false
     @State private var presetName = ""
+    @State private var presetCreationAttempt: IntervalPresetCreationAttempt?
     /// Presents the soft-delete management list for user presets.
     @State private var showManageSheet = false
 
-    init(planJSON: String?, onSave: @escaping (String?) -> Void) {
+    init(
+        planJSON: String?,
+        routineExercise: RoutineExerciseModel? = nil,
+        commitAction: ((String?) -> Bool)? = nil,
+        onSave: @escaping (String?) -> Void
+    ) {
         self.onSave = onSave
+        self.commitAction = commitAction
+        self.routineExercise = routineExercise
         let existing = IntervalPlan.decode(from: planJSON)
         // Derive the mode from the stored shape: steps win (intervals), then
         // a session goal/band (target), then a plan-wide zone (lock).
@@ -135,6 +151,17 @@ struct IntervalPlanBuilderView: View {
         _customSteps = State(initialValue: (existing?.steps ?? []).map(EditableStep.init))
     }
 
+    init(
+        planJSON: String?,
+        commit: @escaping (String?) -> Bool
+    ) {
+        self.init(
+            planJSON: planJSON,
+            commitAction: commit,
+            onSave: { _ in }
+        )
+    }
+
     /// Edit a routine exercise's stored template in place.
     init(routineExercise: RoutineExerciseModel) {
         let legacyTarget = routineExercise.sets.sorted { $0.position < $1.position }.first
@@ -148,21 +175,12 @@ struct IntervalPlanBuilderView: View {
             }
         }
 
-        self.init(planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil) { json in
-            routineExercise.intervalPlanJSON = json
-            routineExercise.updatedAt = Date()
-
-            // Older routines stored duration/distance on their synthetic set.
-            // Keep that compatibility projection aligned until those fields can
-            // be removed from the persisted/exported routine format.
-            let savedGoal = IntervalPlan.decode(from: json)?.goal
-            legacyTarget?.targetDurationSeconds = savedGoal?.kind == .duration
-                ? Int(savedGoal?.value ?? 0)
-                : nil
-            legacyTarget?.targetDistanceMeters = savedGoal?.kind == .distance
-                ? savedGoal?.value
-                : nil
-        }
+        self.init(
+            planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil,
+            routineExercise: routineExercise,
+            commitAction: nil,
+            onSave: { _ in }
+        )
     }
 
     private var workPaceBand: IntervalPlan.Target? {
@@ -261,9 +279,16 @@ struct IntervalPlanBuilderView: View {
                         .accessibilityIdentifier("cardio-goal-save")
                 }
             }
-            .alert("Save preset", isPresented: $showSavePrompt) {
+            .alert("Save preset", isPresented: Binding(
+                get: { showSavePrompt },
+                set: { isPresented in
+                    if !isPresented, presetCreationAttempt == nil {
+                        showSavePrompt = false
+                    }
+                }
+            )) {
                 TextField("Preset name", text: $presetName)
-                Button("Cancel", role: .cancel) { presetName = "" }
+                Button("Cancel", role: .cancel) { cancelPresetCreation() }
                 Button("Save") { saveAsPreset() }
             } message: {
                 Text("Save this interval structure to reuse it later.")
@@ -287,6 +312,7 @@ struct IntervalPlanBuilderView: View {
                     ForEach(GoalMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("cardio-goal-mode")
                 Text(mode.blurb)
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
@@ -310,6 +336,7 @@ struct IntervalPlanBuilderView: View {
                     Text("Climb").tag(IntervalPlan.SessionGoal.Kind.elevation)
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("cardio-goal-kind")
 
                 switch goalKind {
@@ -337,7 +364,7 @@ struct IntervalPlanBuilderView: View {
 
                 Label("Voice alert when reached", systemImage: "speaker.wave.2.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
                     .accessibilityIdentifier("cardio-goal-voice-alert")
 
                 if goalKind == .elevation {
@@ -387,6 +414,7 @@ struct IntervalPlanBuilderView: View {
                                 .padding(.vertical, 10)
                                 .background(selected ? theme.zoneColor(z) : theme.surfaceElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("zone-lock-\(z)")
@@ -413,7 +441,7 @@ struct IntervalPlanBuilderView: View {
                     HStack {
                         Text("Rounds").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                         Spacer()
-                        Text("\(repeats)×").font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                        Text("\(repeats)×").font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -442,6 +470,7 @@ struct IntervalPlanBuilderView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 150)
+                .frame(minHeight: TouchTarget.minimum)
                 .accessibilityIdentifier("work-length-type")
             }
             if workByDistance {
@@ -450,7 +479,7 @@ struct IntervalPlanBuilderView: View {
                         Text("Each rep").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(IntervalPlan.metricDistance(workDistance))
-                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
             } else {
@@ -459,7 +488,7 @@ struct IntervalPlanBuilderView: View {
                         Text("Each rep").font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(work == 0 ? "Off" : Fmt.durationShort(work))
-                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccent)
+                            .font(.bodyStrong).foregroundStyle(theme.secondaryAccentForeground)
                     }
                 }
             }
@@ -493,7 +522,8 @@ struct IntervalPlanBuilderView: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).opacity(0.6)
                 }
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
+                .minimumTouchTarget()
             }
             .accessibilityIdentifier("customize-steps")
         }
@@ -518,7 +548,7 @@ struct IntervalPlanBuilderView: View {
                         Text(step.isDistanceBased
                              ? IntervalPlan.metricDistance(step.distanceMeters ?? 0)
                              : Fmt.durationShort(step.seconds))
-                            .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                            .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                         if let zone = step.hrZone {
                             Text("Z\(zone)").font(.system(size: 10, weight: .heavy))
                                 .foregroundStyle(theme.zoneColor(zone))
@@ -533,7 +563,8 @@ struct IntervalPlanBuilderView: View {
                         Text("Edit steps")
                     }
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondaryAccent)
+                    .foregroundStyle(theme.secondaryAccentForeground)
+                    .minimumTouchTarget()
                 }
                 .accessibilityIdentifier("edit-custom-steps")
             }
@@ -547,7 +578,7 @@ struct IntervalPlanBuilderView: View {
                 Spacer()
                 let current = plan
                 Text(totalText(for: current))
-                    .font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccent)
+                    .font(.system(size: 18, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
             }
         }
     }
@@ -567,12 +598,15 @@ struct IntervalPlanBuilderView: View {
                 HStack {
                     Text("Presets").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Spacer()
-                    Button("Save current") {
+                    Button {
                         presetName = ""
                         showSavePrompt = true
+                    } label: {
+                        Text("Save current")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(plan.isMeaningful ? theme.secondaryAccent : theme.textTertiary)
+                            .minimumTouchTarget()
                     }
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(plan.isMeaningful ? theme.secondaryAccent : theme.textTertiary)
                     .disabled(!plan.isMeaningful)
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -582,8 +616,8 @@ struct IntervalPlanBuilderView: View {
                                 apply(preset.plan)
                             }
                         }
-                        ForEach(userPresets) { preset in
-                            if let plan = IntervalPlan.decode(from: preset.planJSON) {
+                        ForEach(activeIntervalPresets) { preset in
+                            if let plan = preset.storedIntervalPlan {
                                 presetChip(name: preset.name, plan: plan, isUser: true) {
                                     apply(plan)
                                 }
@@ -591,10 +625,15 @@ struct IntervalPlanBuilderView: View {
                         }
                     }
                 }
-                if !userPresets.isEmpty {
-                    Button("Manage saved presets") { showManageSheet = true }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
+                if !activeIntervalPresets.isEmpty {
+                    Button {
+                        showManageSheet = true
+                    } label: {
+                        Text("Manage saved presets")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .minimumTouchTarget()
+                    }
                 }
             }
         }
@@ -607,7 +646,7 @@ struct IntervalPlanBuilderView: View {
                     if isUser {
                         Image(systemName: "bookmark.fill")
                             .font(.system(size: 9))
-                            .foregroundStyle(theme.secondaryAccent)
+                            .foregroundStyle(theme.secondaryAccentForeground)
                     }
                     Text(name)
                         .font(.system(size: 13, weight: .bold))
@@ -650,11 +689,28 @@ struct IntervalPlanBuilderView: View {
 
     private func saveAsPreset() {
         let trimmed = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
-        presetName = ""
         guard !trimmed.isEmpty, plan.isMeaningful, let json = plan.encodedJSON() else { return }
-        let preset = IntervalPresetModel(userID: ForgeFitDemo.userID, name: trimmed, planJSON: json)
-        modelContext.insert(preset)
-        try? modelContext.save()
+        let attempt = presetCreationAttempt ?? IntervalPresetCreationAttempt(
+            name: trimmed,
+            planJSON: json,
+            in: modelContext
+        )
+        presetCreationAttempt = attempt
+        attempt.update(name: trimmed, planJSON: json)
+        attempt.commit(into: modelContext) { _ in
+            presetCreationAttempt = nil
+            presetName = ""
+            showSavePrompt = false
+        }
+    }
+
+    private func cancelPresetCreation() {
+        if presetCreationAttempt != nil {
+            PersistentChangeSaveCenter.shared.dismiss()
+        }
+        presetCreationAttempt = nil
+        presetName = ""
+        showSavePrompt = false
     }
 
     private func stepZoneRow(_ label: String, selection: Binding<Int>) -> some View {
@@ -667,6 +723,7 @@ struct IntervalPlanBuilderView: View {
             }
             .pickerStyle(.menu)
             .tint(selection.wrappedValue == 0 ? theme.textTertiary : theme.zoneColor(selection.wrappedValue))
+            .minimumTouchTarget()
         }
     }
 
@@ -682,8 +739,20 @@ struct IntervalPlanBuilderView: View {
     }
 
     private func save() {
-        onSave(plan.isMeaningful ? plan.encodedJSON() : nil)
-        dismiss()
+        let planJSON = plan.isMeaningful ? plan.encodedJSON() : nil
+        if let routineExercise {
+            RoutineIntervalPlanPersistence.apply(
+                planJSON,
+                to: routineExercise,
+                in: modelContext,
+                onCommit: dismiss.callAsFunction
+            )
+        } else if let commitAction {
+            if commitAction(planJSON) { dismiss() }
+        } else {
+            onSave(planJSON)
+            dismiss()
+        }
     }
 }
 
@@ -737,6 +806,7 @@ struct PaceEntryField: View {
             .frame(width: 64, height: 40)
             .background(theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .minimumTouchTarget()
             .focused($isFocused)
             .onAppear { draft = Self.text(for: secondsPerKm) }
             .onChange(of: draft) { _, newDraft in
@@ -780,7 +850,7 @@ struct PaceEntryField: View {
 
 /// Editor-friendly mirror of `IntervalPlan.Step`: labels regenerate on save,
 /// so the editor only tracks the structural fields.
-struct EditableStep: Identifiable, Equatable {
+nonisolated struct EditableStep: Identifiable, Equatable {
     let id: UUID
     var kind: IntervalPlan.Step.Kind
     var seconds: Int
@@ -874,7 +944,7 @@ struct CustomStepsEditor: View {
                                  ? IntervalPlan.metricDistance(step.distanceMeters ?? 0)
                                  : Fmt.durationShort(step.seconds))
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(theme.secondaryAccent)
+                                .foregroundStyle(theme.secondaryAccentForeground)
                             if let zone = step.hrZone {
                                 Text("Z\(zone)")
                                     .font(.system(size: 10, weight: .heavy))
@@ -968,6 +1038,7 @@ struct StepDetailEditor: View {
                     Text("Distance").tag(true)
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .listRowBackground(theme.surfaceElevated)
                 .accessibilityIdentifier("step-length-type")
 
@@ -980,7 +1051,7 @@ struct StepDetailEditor: View {
                             Text("Distance")
                             Spacer()
                             Text(IntervalPlan.metricDistance(step.distanceMeters ?? 400))
-                                .foregroundStyle(theme.secondaryAccent).bold()
+                                .foregroundStyle(theme.secondaryAccentForeground).bold()
                         }
                     }
                     .listRowBackground(theme.surfaceElevated)
@@ -990,7 +1061,7 @@ struct StepDetailEditor: View {
                             Text("Duration")
                             Spacer()
                             Text(Fmt.durationShort(step.seconds))
-                                .foregroundStyle(theme.secondaryAccent).bold()
+                                .foregroundStyle(theme.secondaryAccentForeground).bold()
                         }
                     }
                     .listRowBackground(theme.surfaceElevated)
@@ -1003,6 +1074,7 @@ struct StepDetailEditor: View {
                     ForEach(1...5, id: \.self) { Text("Z\($0)").tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .frame(minHeight: TouchTarget.minimum)
                 .listRowBackground(theme.surfaceElevated)
             }
 
@@ -1106,10 +1178,14 @@ private struct IntervalPresetManagerView: View {
         sort: \IntervalPresetModel.createdAt, order: .reverse
     ) private var presets: [IntervalPresetModel]
 
+    private var intervalPresets: [IntervalPresetModel] {
+        presets.filter { $0.storedIntervalPlan != nil }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
-                if presets.isEmpty {
+                if intervalPresets.isEmpty {
                     ContentUnavailableView {
                         Label("No saved presets", systemImage: "bookmark")
                     } description: {
@@ -1121,10 +1197,10 @@ private struct IntervalPresetManagerView: View {
                     }
                 } else {
                     List {
-                        ForEach(presets) { preset in
+                        ForEach(intervalPresets) { preset in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(preset.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                if let plan = IntervalPlan.decode(from: preset.planJSON) {
+                                if let plan = preset.storedIntervalPlan {
                                     Text(plan.structureSummary)
                                         .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                                 }
@@ -1146,12 +1222,9 @@ private struct IntervalPresetManagerView: View {
     }
 
     private func delete(_ offsets: IndexSet) {
-        let now = Date()
-        for index in offsets {
-            let preset = presets[index]
-            preset.deletedAt = now
-            preset.updatedAt = now
+        let presets = offsets.compactMap { index in
+            intervalPresets.indices.contains(index) ? intervalPresets[index] : nil
         }
-        try? modelContext.save()
+        IntervalPresetPersistence.softDelete(presets, in: modelContext)
     }
 }

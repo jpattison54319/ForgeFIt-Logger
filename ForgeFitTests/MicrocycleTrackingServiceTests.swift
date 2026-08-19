@@ -7,6 +7,10 @@ import Testing
 
 @MainActor
 struct MicrocycleTrackingServiceTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private let timeZone = TimeZone(identifier: "America/New_York")!
 
     private var calendar: Calendar {
@@ -194,6 +198,63 @@ struct MicrocycleTrackingServiceTests {
             now: date(2026, 8, 4)
         ))
         #expect(current.routines.isEmpty)
+    }
+
+    @Test func isolatedReconcileRefreshesPersistedRoutineOrderInTheActiveWindow() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Tracked")
+        let first = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "A",
+            folderID: folder.id,
+            position: 0
+        )
+        let second = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "B",
+            folderID: folder.id,
+            position: 1
+        )
+        context.insert(folder)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [first, second],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 10,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+
+        // This is the organizer's durable projection: positions are swapped
+        // before the app's isolated lifecycle reconciliation refreshes the
+        // active microcycle checklist.
+        first.position = 1
+        first.updatedAt = date(2026, 8, 2)
+        second.position = 0
+        second.updatedAt = date(2026, 8, 2)
+        try context.save()
+        _ = try MicrocycleTrackingService.reconcileIsolated(
+            from: context,
+            now: date(2026, 8, 2)
+        )
+
+        let fresh = ModelContext(container)
+        let persistedTracking = try #require(
+            fresh.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+                .first(where: { $0.id == tracking.id })
+        )
+        let current = try #require(MicrocycleTrackingService.currentWindow(
+            for: persistedTracking,
+            windows: try fresh.fetch(FetchDescriptor<MicrocycleWindowModel>()),
+            now: date(2026, 8, 2)
+        ))
+        #expect(current.routines.map(\.name) == ["B", "A"])
+        #expect(current.routines.map(\.position) == [0, 1])
     }
 
     @Test func colocatedAlternatesFreezeAsOneRequirementAndEitherMemberCompletesIt() throws {
@@ -449,6 +510,7 @@ struct MicrocycleTrackingServiceTests {
 
         #expect(!first.isActive)
         #expect(first.stateRaw == "ended")
+        #expect(first.endedAt == date(2026, 8, 2))
         #expect(second.isActive)
         #expect(MicrocycleTrackingService.activeTracking([first, second])?.id == second.id)
 
@@ -634,5 +696,329 @@ struct MicrocycleTrackingServiceTests {
         #expect(windows[1].startsAt == date(2026, 8, 11, 0))
         #expect(windows[1].endsAt == date(2026, 8, 20, 0))
         #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 9)
+    }
+
+    @Test func restartingCurrentCycleBeginsDayOneAndPreservesPlanHistoryAndLength() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Restart Plan")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        let secondRoutine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Lower",
+            folderID: folder.id,
+            position: 1
+        )
+        context.insert(folder)
+        context.insert(routine)
+        context.insert(secondRoutine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine, secondRoutine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        tracking.showsOnHome = false
+        let firstWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let assignment = MicrocycleDayAssignment(
+            day: date(2026, 8, 3),
+            workoutID: UUID(),
+            assignedAt: date(2026, 8, 3, 13)
+        )
+        firstWindow.dayAssignments = [assignment]
+        let workoutBeforeRestart = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: routine.id,
+            startedAt: date(2026, 8, 3),
+            endedAt: date(2026, 8, 3, 13)
+        )
+        let workoutOnRestartDay = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: secondRoutine.id,
+            startedAt: date(2026, 8, 5),
+            endedAt: date(2026, 8, 5, 13)
+        )
+        context.insert(workoutBeforeRestart)
+        context.insert(workoutOnRestartDay)
+        try context.save()
+        try MicrocycleTrackingService.addDayToCurrentWindow(
+            tracking,
+            in: context,
+            now: date(2026, 8, 3)
+        )
+
+        try MicrocycleTrackingService.restartCurrentCycle(
+            tracking,
+            in: context,
+            now: date(2026, 8, 5, 13)
+        )
+
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id }
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 2)
+        #expect(windows[0].id == firstWindow.id)
+        #expect(windows[0].startsAt == date(2026, 8, 1, 0))
+        #expect(windows[0].endsAt == date(2026, 8, 5, 0))
+        #expect(windows[0].dayAssignments == [assignment])
+        #expect(windows[1].index == 1)
+        #expect(windows[1].startsAt == date(2026, 8, 5, 0))
+        #expect(windows[1].endsAt == date(2026, 8, 15, 0))
+        #expect(windows[1].routines == firstWindow.routines)
+        #expect(MicrocycleTrackingService.dayNumber(
+            for: windows[1],
+            now: date(2026, 8, 5, 13)
+        ) == 1)
+        #expect(MicrocycleTrackingService.windowDurationDays(for: windows[1]) == 10)
+        let restartedProgress = MicrocycleTrackingService.progress(
+            for: windows[1],
+            windows: windows,
+            workouts: [workoutBeforeRestart, workoutOnRestartDay]
+        )
+        #expect(restartedProgress.completedCount == 1)
+        #expect(restartedProgress.routines.first(where: {
+            $0.routine.id == routine.id
+        })?.isCompleted == false)
+        #expect(restartedProgress.routines.first(where: {
+            $0.routine.id == secondRoutine.id
+        })?.isCompleted == true)
+        #expect(tracking.durationDays == 9)
+        #expect(folder.defaultMicrocycleLengthDays == 9)
+        #expect(!tracking.showsOnHome)
+        #expect(MicrocycleTrackingService.currentWindow(
+            for: tracking,
+            windows: windows,
+            now: date(2026, 8, 5, 13)
+        )?.id == windows[1].id)
+    }
+
+    @Test func restartingOnDayOneDoesNotCreateAnotherWindow() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Day One")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+
+        try MicrocycleTrackingService.restartCurrentCycle(
+            tracking,
+            in: context,
+            now: date(2026, 8, 1, 13)
+        )
+
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
+    }
+
+    @Test func failedStartLeavesNoTrackingWindowOrFolderMutation() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let originalUpdatedAt = folder.updatedAt
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.start(
+                folder: folder,
+                routines: [routine],
+                folders: [folder],
+                startDate: date(2026, 8, 1),
+                durationDays: 9,
+                in: context,
+                now: date(2026, 8, 1),
+                timeZone: timeZone,
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(folder.defaultMicrocycleLengthDays == nil)
+        #expect(folder.updatedAt == originalUpdatedAt)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleTrackingModel>()).isEmpty)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).isEmpty)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        #expect(try freshContext.fetch(FetchDescriptor<MicrocycleTrackingModel>()).isEmpty)
+        #expect(try freshContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).isEmpty)
+        let persistedFolder = try #require(
+            freshContext.fetch(FetchDescriptor<RoutineFolderModel>()).first
+        )
+        #expect(persistedFolder.defaultMicrocycleLengthDays == nil)
+    }
+
+    @Test func failedEndAddDayAndRestartRestoreTheActiveRunBeforeAnyLaterSave() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let window = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let originalEnd = window.endsAt
+        let originalTrackingUpdatedAt = tracking.updatedAt
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.addDayToCurrentWindow(
+                tracking,
+                in: context,
+                now: date(2026, 8, 3),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(window.endsAt == originalEnd)
+        #expect(tracking.updatedAt == originalTrackingUpdatedAt)
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.restartCurrentCycle(
+                tracking,
+                in: context,
+                now: date(2026, 8, 3),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(window.endsAt == originalEnd)
+        #expect(tracking.updatedAt == originalTrackingUpdatedAt)
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.end(
+                tracking,
+                in: context,
+                now: date(2026, 8, 3),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(tracking.isActive)
+        #expect(tracking.endedAt == nil)
+        #expect(tracking.updatedAt == originalTrackingUpdatedAt)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        let persistedTracking = try #require(
+            freshContext.fetch(FetchDescriptor<MicrocycleTrackingModel>()).first
+        )
+        let persistedWindow = try #require(
+            freshContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        #expect(persistedTracking.isActive)
+        #expect(persistedWindow.endsAt == originalEnd)
+    }
+
+    @Test func failedRolloverRemovesThePendingNextWindow() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        _ = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 2,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.reconcile(
+                in: context,
+                now: date(2026, 8, 4),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        #expect(try freshContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).count == 1)
+    }
+
+    @Test func automaticReconcileDoesNotCommitAnUnrelatedMainContextEdit() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Durable Name",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        _ = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 9,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+
+        routine.name = "Pending Editor Name"
+        _ = try MicrocycleTrackingService.reconcileIsolated(
+            from: context,
+            now: date(2026, 8, 2)
+        )
+
+        let freshContext = ModelContext(container)
+        let persistedRoutine = try #require(
+            freshContext.fetch(FetchDescriptor<RoutineModel>()).first
+        )
+        #expect(persistedRoutine.name == "Durable Name")
+        #expect(routine.name == "Pending Editor Name")
     }
 }

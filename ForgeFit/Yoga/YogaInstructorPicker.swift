@@ -12,7 +12,7 @@ struct YogaInstructorPicker: View {
                 Text("Instructor")
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
-                Text("Applies to every yoga pose")
+                Text("Changes every pose image and voice")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textSecondary)
             }

@@ -48,6 +48,8 @@ enum WorkoutShareShape {
 /// One share-card format the preview carousel offers. `full` is the existing
 /// tall card; the rest are fixed-size social formats.
 enum ShareCardStyle: String, CaseIterable, Identifiable {
+    static let preferenceKey = "shareCardStyle.last"
+
     case trainingLog
     case metrics
     case minimal
@@ -100,7 +102,7 @@ struct ShareCardChrome {
             ZStack {
                 RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous).fill(theme.accent)
                 Image(systemName: systemImage)
-                    .font(.system(size: compact ? 16 : 20, weight: .bold)).foregroundStyle(.white)
+                    .font(.system(size: compact ? 16 : 20, weight: .bold)).foregroundStyle(theme.onAccent)
             }
             .frame(width: compact ? 36 : 44, height: compact ? 36 : 44)
             VStack(alignment: .leading, spacing: 2) {
@@ -177,7 +179,7 @@ struct ShareCardChrome {
 
     func footer() -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "dumbbell.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(theme.accent)
+            Image(systemName: "dumbbell.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(theme.accentForeground)
             Text("Tracked with ForgeFit").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
             Spacer()
         }

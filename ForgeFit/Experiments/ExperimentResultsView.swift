@@ -28,6 +28,7 @@ struct ExperimentResultsView: View {
     @State private var analysisResult: ExperimentResult?
     @State private var experimentRollup = ExperimentTrainingRollup()
     @State private var isAnalysisLoading = true
+    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
 
     init(
         experiment: ExperimentModel,
@@ -75,6 +76,7 @@ struct ExperimentResultsView: View {
             entries: .init(entries + comparisonEntries),
             workouts: .init(workouts),
             exercises: .init(exercises),
+            isLiveWorkoutActive: performanceGate.isLiveWorkoutActive,
             customTrackerPairs: customTrackerPairs
                 .map { "\($0.key.uuidString):\($0.value.uuidString)" }
                 .sorted()
@@ -151,10 +153,13 @@ struct ExperimentResultsView: View {
         }
         .onAppear {
             if !experiment.isActive {
-                ExperimentUIStore.markResultsViewed(experiment, in: modelContext)
+                PersistentChangeSaveCenter.shared.perform {
+                    try ExperimentUIStore.markResultsViewed(experiment, in: modelContext)
+                }
             }
         }
         .task(id: analysisTaskID) {
+            guard performanceGate.allowsNonWorkoutWork else { return }
             await refreshAnalysis()
         }
         .onChange(of: reference) {
@@ -819,6 +824,7 @@ struct ExperimentResultsView: View {
     }
 
     private func refreshAnalysis() async {
+        guard performanceGate.allowsNonWorkoutWork else { return }
         let capturedNow = Date.now
         isAnalysisLoading = true
         analysisResult = nil
@@ -829,7 +835,8 @@ struct ExperimentResultsView: View {
         // graph. The evaluated result is then cached instead of being rebuilt
         // on every SwiftUI body pass.
         await Task.yield()
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled,
+              performanceGate.allowsNonWorkoutWork else { return }
 
         do {
             let rollup = ExperimentTrainingRollup.make(
@@ -850,11 +857,13 @@ struct ExperimentResultsView: View {
                 healthSnapshot: .empty,
                 now: capturedNow
             )
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             experimentRollup = rollup
             analysisResult = provisionalResult
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             analysisError = error.localizedDescription
             healthSnapshot = .empty
             isAnalysisLoading = false
@@ -880,14 +889,16 @@ struct ExperimentResultsView: View {
         do {
             snapshot = try await ExperimentHealthLoader.load(request: request)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             // Health permissions or availability do not invalidate the exact
             // local training/custom comparison already on screen.
             healthSnapshot = .empty
             isAnalysisLoading = false
             return
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled,
+              performanceGate.allowsNonWorkoutWork else { return }
         healthSnapshot = snapshot
         do {
             analysisResult = try ExperimentAnalysisAdapter.result(
@@ -905,6 +916,8 @@ struct ExperimentResultsView: View {
             analysisResult = nil
             analysisError = error.localizedDescription
         }
+        guard !Task.isCancelled,
+              performanceGate.allowsNonWorkoutWork else { return }
         isAnalysisLoading = false
     }
 
@@ -1016,9 +1029,13 @@ struct ExperimentResultsView: View {
               let json = String(data: data, encoding: .utf8) else {
             return
         }
-        experiment.savedComparisonJSON = json
-        experiment.updatedAt = .now
-        try? modelContext.save()
+        PersistentChangeSaveCenter.shared.perform {
+            try ExperimentUIStore.updateSavedComparison(
+                json,
+                for: experiment,
+                in: modelContext
+            )
+        }
     }
 }
 
@@ -1085,6 +1102,7 @@ private struct AnalysisTaskID: Hashable {
     let entries: CollectionRevision
     let workouts: CollectionRevision
     let exercises: CollectionRevision
+    let isLiveWorkoutActive: Bool
     let customTrackerPairs: [String]
 }
 
@@ -1100,8 +1118,11 @@ private extension AnalysisTaskID.CollectionRevision {
     }
 
     init(_ models: [WorkoutModel]) {
-        count = models.count
-        latestUpdate = models.map(\.updatedAt).max() ?? .distantPast
+        let completed = models.filter {
+            $0.endedAt != nil && $0.deletedAt == nil
+        }
+        count = completed.count
+        latestUpdate = completed.map(\.updatedAt).max() ?? .distantPast
     }
 
     init(_ models: [ExerciseLibraryModel]) {
@@ -1335,7 +1356,7 @@ private extension ExperimentAllDataView {
         if let steps = session.totalSteps {
             rows.append(.init(label: "Steps", value: steps.formatted()))
         }
-        if let poses = session.posesCompleted {
+        if let poses = session.logicalYogaPosesCompleted {
             rows.append(.init(label: "Poses completed", value: poses.formatted()))
         }
         return rows
@@ -1640,7 +1661,7 @@ private struct ExperimentCustomTrackerResultCard: View {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
                     Image(systemName: tracker.type.experimentSystemImage)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tracker.label)
                             .font(.bodyStrong)

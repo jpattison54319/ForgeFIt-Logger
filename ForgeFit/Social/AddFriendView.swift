@@ -22,6 +22,7 @@ struct AddFriendView: View {
                         Text("@").font(.bodyStrong).foregroundStyle(theme.textSecondary)
                         TextField("handle or pasted link", text: $query)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .minimumTouchTarget()
                             .onSubmit { Task { await search() } }
                         if searching { ProgressView().controlSize(.small) }
                     }

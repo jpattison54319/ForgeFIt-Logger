@@ -49,7 +49,7 @@ struct PlateCalculatorView: View {
                         Card {
                             Label("Edit plates & bar", systemImage: "slider.horizontal.3")
                                 .font(.bodyStrong)
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -92,7 +92,8 @@ struct PlateCalculatorView: View {
                         }
                     } label: {
                         Text("\(inventory.barWeight.formatted(.number.precision(.fractionLength(0...1)))) \(displayUnit.suffix)")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                 }
             }
@@ -162,7 +163,7 @@ struct PlateChip: View {
         let medium = weight >= (unit == .lb ? 25 : 10)
         Text(weight.formatted(.number.precision(.fractionLength(0...2))))
             .font(.system(size: heavy ? 15 : 13, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
+            .foregroundStyle(heavy || medium ? theme.onAccent : theme.textPrimary)
             .frame(width: heavy ? 52 : (medium ? 44 : 38), height: heavy ? 52 : (medium ? 44 : 38))
             .background(
                 Circle().fill(heavy ? theme.accent : (medium ? theme.accent.opacity(0.75) : theme.surfaceHighlight))
@@ -198,7 +199,8 @@ struct PlateInventoryEditor: View {
                         }
                     } label: {
                         Text("\(inventory.barWeight.formatted(.number.precision(.fractionLength(0...1)))) \(unit.suffix)")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -216,9 +218,12 @@ struct PlateInventoryEditor: View {
                         .onChange(of: plate.pairs) { PlateInventoryStore.save(inventory) }
                     }
                 }
-                Button("Reset to standard") {
+                Button {
                     inventory = .standard(unit: unit)
                     PlateInventoryStore.save(inventory)
+                } label: {
+                    Text("Reset to standard")
+                        .minimumTouchTarget()
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)

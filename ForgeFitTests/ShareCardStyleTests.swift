@@ -12,6 +12,11 @@ import UIKit
 /// hollow or overflowing share image.
 @MainActor
 struct ShareCardStyleTests {
+    @Test func selectedStyleIsPortableAndResettable() {
+        #expect(AppPreferenceKeys.backedUp.contains(ShareCardStyle.preferenceKey))
+        #expect(AppPreferenceKeys.allResettable.contains(ShareCardStyle.preferenceKey))
+    }
+
     private let userID = UUID()
 
     private func strengthExercise(
@@ -84,6 +89,41 @@ struct ShareCardStyleTests {
         #expect(WorkoutShareShape.hybrid.supportsBetweenSetRecovery)
         #expect(!WorkoutShareShape.cardio.supportsBetweenSetRecovery)
         #expect(!WorkoutShareShape.yoga.supportsBetweenSetRecovery)
+    }
+
+    @Test func soleCardioActivityUsesOneUnifiedWorkoutDetailScope() {
+        let exercise = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
+        let session = cardioSession(linkedTo: exercise)
+        let workout = WorkoutModel(
+            userID: userID,
+            exercises: [exercise],
+            cardioSessions: [session]
+        )
+
+        let presentation = WorkoutPresentationPlan.make(for: workout)
+
+        #expect(presentation.modalities == [.cardio])
+        #expect(presentation.items.count == 1)
+        #expect(presentation.unifiedCardioSessionID == session.id)
+        #expect(presentation.usesUnifiedCardioDetail)
+    }
+
+    @Test func distinctWorkoutAndActivityScopesRemainSeparate() {
+        let first = cardioSession()
+        let second = cardioSession()
+        let multipleCardio = WorkoutModel(userID: userID, cardioSessions: [first, second])
+        #expect(!WorkoutPresentationPlan.make(for: multipleCardio).usesUnifiedCardioDetail)
+
+        let strength = strengthExercise()
+        let mixed = WorkoutModel(
+            userID: userID,
+            exercises: [strength],
+            cardioSessions: [cardioSession()]
+        )
+        #expect(!WorkoutPresentationPlan.make(for: mixed).usesUnifiedCardioDetail)
+
+        let yoga = WorkoutModel(userID: userID, cardioSessions: [cardioSession(yoga: true)])
+        #expect(!WorkoutPresentationPlan.make(for: yoga).usesUnifiedCardioDetail)
     }
 
     @Test func legacyConditioningRowsCollapseIntoOneMixedTimelineBlock() throws {
@@ -452,8 +492,8 @@ struct ShareCardStyleTests {
         context.insert(workout)
 
         let facts = ConditioningSharePresentation.workoutFacts(for: workout, durationSeconds: 300)
-        #expect(facts.map(\.label) == ["Time", "Work", "Format"])
-        #expect(facts.map(\.value) == ["5:00", "90 reps", "Descending ladder"])
+        #expect(facts.map(\.label) == ["Time", "Work", "Rep rate"])
+        #expect(facts.map(\.value) == ["5:00", "90 reps", "18/min"])
         #expect(facts.filter { $0.value == "5:00" }.count == 1)
 
         let theme = AppTheme.sageDark
@@ -495,7 +535,7 @@ struct ShareCardStyleTests {
         #expect(ConditioningSharePresentation.facts(for: context, durationSeconds: 90) == [
             .init(label: "Time", value: "1:30"),
             .init(label: "Status", value: "Incomplete"),
-            .init(label: "Work", value: "0 reps")
+            .init(label: "Rounds", value: "0 / 10")
         ])
 
         var capped = section
@@ -520,7 +560,114 @@ struct ShareCardStyleTests {
         )
 
         #expect(!block.showsSectionName)
+        #expect(block.showsPerformance)
         #expect(ConditioningSharePresentation.prescription(section) == "10 rounds")
+    }
+
+    @Test func conditioningPacingFactsExposeAverageAndSecondHalfSlowdown() {
+        let section = ConditioningSection(
+            name: "Four rounds",
+            format: .forTime,
+            rounds: 4,
+            movements: [ConditioningMovement(exerciseID: UUID(), targetValue: 100)]
+        )
+        let result = ConditioningSectionResult(
+            id: section.id,
+            format: .forTime,
+            scoreKind: .elapsedTime,
+            elapsedSeconds: 240,
+            fullRounds: 4,
+            totalReps: 400,
+            roundCompletionElapsedSeconds: [45, 95, 160, 240],
+            completed: true
+        )
+        let context = ConditioningSharePresentation.Context(
+            plan: ConditioningPlan(sections: [section]),
+            result: ConditioningResult(sectionResults: [result])
+        )
+
+        #expect(ConditioningSharePresentation.facts(for: context, durationSeconds: 240) == [
+            .init(label: "Time", value: "4:00"),
+            .init(label: "Avg round", value: "1:00"),
+            .init(label: "2nd half", value: "53% slower")
+        ])
+        #expect(ConditioningSharePresentation.performanceFacts(section: section, result: result) == [
+            .init(label: "Avg round", value: "1:00"),
+            .init(label: "2nd half", value: "53% slower"),
+            .init(label: "Fastest", value: "45s"),
+            .init(label: "Rep rate", value: "100/min"),
+            .init(label: "Rounds", value: "4 / 4")
+        ])
+    }
+
+    @Test func conditioningMetricsMatchEachTimedFormat() {
+        let movement = ConditioningMovement(exerciseID: UUID(), targetValue: 10)
+
+        let emom = ConditioningSection(
+            name: "EMOM",
+            format: .emom,
+            rounds: 10,
+            movements: [movement]
+        )
+        let emomResult = ConditioningSectionResult(
+            id: emom.id,
+            format: .emom,
+            scoreKind: .completedIntervals,
+            elapsedSeconds: 600,
+            fullRounds: 8,
+            totalReps: 80,
+            completedIntervals: 8,
+            completed: false
+        )
+        #expect(ConditioningSharePresentation.performanceFacts(section: emom, result: emomResult) == [
+            .init(label: "Intervals", value: "8 / 10"),
+            .init(label: "Missed", value: "2"),
+            .init(label: "Rep rate", value: "8/min")
+        ])
+
+        let intervals = ConditioningSection(
+            name: "Intervals",
+            format: .intervals,
+            durationSeconds: 300,
+            rounds: 5,
+            workSeconds: 45,
+            restSeconds: 15,
+            movements: [movement]
+        )
+        let intervalResult = ConditioningSectionResult(
+            id: intervals.id,
+            format: .intervals,
+            scoreKind: .totalReps,
+            elapsedSeconds: 300,
+            fullRounds: 5,
+            totalReps: 50,
+            completed: true
+        )
+        #expect(ConditioningSharePresentation.performanceFacts(section: intervals, result: intervalResult) == [
+            .init(label: "Intervals", value: "5 / 5"),
+            .init(label: "Avg / interval", value: "10"),
+            .init(label: "Rep rate", value: "10/min")
+        ])
+
+        let load = ConditioningSection(
+            name: "Heavy complex",
+            format: .maxLoad,
+            rounds: 5,
+            movements: [movement]
+        )
+        let loadResult = ConditioningSectionResult(
+            id: load.id,
+            format: .maxLoad,
+            scoreKind: .load,
+            elapsedSeconds: 420,
+            fullRounds: 5,
+            load: 100,
+            completed: true
+        )
+        #expect(ConditioningSharePresentation.performanceFacts(section: load, result: loadResult) == [
+            .init(label: "Attempts", value: "5"),
+            .init(label: "Time", value: "7:00")
+        ])
     }
 
     // MARK: - Page availability

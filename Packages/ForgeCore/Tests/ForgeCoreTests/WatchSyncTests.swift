@@ -110,7 +110,9 @@ struct WatchSyncTests {
         let setID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
         let cardioID = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
         let blockID = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        let workoutID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         let metrics = WatchLiveMetrics(
+            workoutID: workoutID,
             heartRate: 151,
             avgHR: 143,
             maxHR: 168,
@@ -185,13 +187,24 @@ struct WatchSyncTests {
             guard case .conditioningBlockEvent(let decodedID, let decodedEvent) = $0 else { return false }
             return decodedID == blockID && decodedEvent == conditioningEvent
         }
-        try expectCommand(.finishWorkout(metrics: metrics, savedToHealth: true)) {
-            guard case .finishWorkout(let decodedMetrics, let savedToHealth) = $0 else { return false }
-            return decodedMetrics == metrics && savedToHealth
+        try expectCommand(.finishWorkout(workoutID: workoutID, metrics: metrics, savedToHealth: true)) {
+            guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = $0 else { return false }
+            return decodedID == workoutID && decodedMetrics == metrics && savedToHealth
         }
-        try expectCommand(.discardWorkout) {
-            guard case .discardWorkout = $0 else { return false }
-            return true
+        try expectCommand(.discardWorkout(workoutID: workoutID)) {
+            guard case .discardWorkout(let decodedID) = $0 else { return false }
+            return decodedID == workoutID
+        }
+        // The optional identity round-trips as nil too — the form a legacy
+        // payload decodes into and the shape phone→watch sends without a
+        // target workout carry.
+        try expectCommand(.finishWorkout(workoutID: nil, metrics: nil, savedToHealth: false)) {
+            guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = $0 else { return false }
+            return decodedID == nil && decodedMetrics == nil && !savedToHealth
+        }
+        try expectCommand(.discardWorkout(workoutID: nil)) {
+            guard case .discardWorkout(let decodedID) = $0 else { return false }
+            return decodedID == nil
         }
         try expectCommand(.workoutFinished) {
             guard case .workoutFinished = $0 else { return false }
@@ -256,6 +269,90 @@ struct WatchSyncTests {
         #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) == snapshot)
     }
 
+    @Test func idleWidgetSnapshotExpiresAtCalendarDayBoundary() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let late = Date(timeIntervalSince1970: 1_800_057_540)
+        let sameDay = late.addingTimeInterval(30)
+        let nextDay = try #require(calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: late)
+        ))
+
+        let idle = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: late,
+            readinessScore: 74
+        )
+        let workout = ForgeFitWidgetSnapshot(
+            mode: .activeWorkout,
+            updatedAt: late,
+            workoutTitle: "Legs"
+        )
+
+        #expect(idle.isCurrent(at: sameDay, calendar: calendar))
+        #expect(!idle.isCurrent(at: nextDay, calendar: calendar))
+        #expect(workout.isCurrent(at: nextDay, calendar: calendar))
+    }
+
+    @Test func complicationDeliverySignatureChangesForNewDayAndNewReadiness() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let dayOne = calendar.startOfDay(
+            for: Date(timeIntervalSince1970: 1_800_057_540)
+        ).addingTimeInterval(12 * 60 * 60)
+        let dayTwo = try #require(calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: dayOne)
+        ))
+
+        let first = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                updatedAt: dayOne
+            ),
+            calendar: calendar
+        ))
+        let duplicate = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                updatedAt: dayOne.addingTimeInterval(60)
+            ),
+            calendar: calendar
+        ))
+        let clearedNextDay = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(updatedAt: dayTwo),
+            calendar: calendar
+        ))
+        let freshNextDay = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 78,
+                readinessAction: "Train",
+                updatedAt: dayTwo.addingTimeInterval(60)
+            ),
+            calendar: calendar
+        ))
+        let workout = WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                workout: WatchWorkoutSnapshot(
+                    workoutID: UUID(),
+                    title: "Legs",
+                    startedAt: dayTwo
+                )
+            ),
+            calendar: calendar
+        )
+
+        #expect(first == duplicate)
+        #expect(first != clearedNextDay)
+        #expect(clearedNextDay != freshNextDay)
+        #expect(workout == nil)
+    }
+
     private func expectCommand(
         _ command: WatchCommand,
         matches: (WatchCommand) -> Bool
@@ -280,7 +377,9 @@ extension WatchSyncTests {
     }
 
     @Test func liveMetricsPayloadRoundTripsUnderTheFallbackKey() throws {
+        let workoutID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         let metrics = WatchLiveMetrics(
+            workoutID: workoutID,
             heartRate: 158,
             avgHR: 149,
             maxHR: 171,
@@ -304,12 +403,82 @@ extension WatchSyncTests {
         #expect(decodedMetrics == metrics)
     }
 
+    @Test func legacyLiveMetricsWithoutWorkoutIdentityDecodeAsUnattributed() throws {
+        let legacyJSON = """
+        {"liveMetrics":{"_0":{"heartRate":158,"avgHR":149,"maxHR":171,"activeEnergyKcal":410.2,"distanceMeters":3021.5,"hrZoneSeconds":[5,40,90,30,0],"asOf":1800000900}}}
+        """
+        let decoded = try #require(
+            WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8))
+        )
+        guard case .liveMetrics(let metrics) = decoded else {
+            Issue.record("expected .liveMetrics case")
+            return
+        }
+        #expect(metrics.workoutID == nil)
+        #expect(metrics.heartRate == 158)
+        #expect(!WatchLiveMetricsAttributionPolicy.mayApply(
+            metricsWorkoutID: metrics.workoutID,
+            activeWorkoutID: UUID()
+        ))
+    }
+
     @Test func liveHeartRateExpiresInsteadOfPresentingAFrozenReading() {
         let sampledAt = Date(timeIntervalSince1970: 1_800_000_000)
         let metrics = WatchLiveMetrics(heartRate: 158, asOf: sampledAt)
 
         #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(14)) == 158)
         #expect(metrics.freshHeartRate(at: sampledAt.addingTimeInterval(16)) == nil)
+    }
+}
+
+// MARK: - Recovered outdoor routes (FF-010)
+
+extension WatchSyncTests {
+    @Test func recoveredRouteStartsOnlyForAnActiveOutdoorSession() {
+        #expect(WatchRouteCollectionPolicy.shouldStart(
+            isOutdoor: true,
+            isSessionActive: true,
+            isAlreadyCollecting: false
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldStart(
+            isOutdoor: false,
+            isSessionActive: true,
+            isAlreadyCollecting: false
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldStart(
+            isOutdoor: true,
+            isSessionActive: false,
+            isAlreadyCollecting: false
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldStart(
+            isOutdoor: true,
+            isSessionActive: true,
+            isAlreadyCollecting: true
+        ))
+    }
+
+    @Test func recoveredRouteRejectsCachedOrInvalidLocations() {
+        let resumedAt = Date(timeIntervalSince1970: 10_000)
+        #expect(WatchRouteCollectionPolicy.shouldInsertLocation(
+            timestamp: resumedAt,
+            horizontalAccuracy: 5,
+            segmentStartedAt: resumedAt
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldInsertLocation(
+            timestamp: resumedAt.addingTimeInterval(-0.001),
+            horizontalAccuracy: 5,
+            segmentStartedAt: resumedAt
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldInsertLocation(
+            timestamp: resumedAt.addingTimeInterval(1),
+            horizontalAccuracy: -1,
+            segmentStartedAt: resumedAt
+        ))
+        #expect(!WatchRouteCollectionPolicy.shouldInsertLocation(
+            timestamp: resumedAt.addingTimeInterval(1),
+            horizontalAccuracy: 101,
+            segmentStartedAt: resumedAt
+        ))
     }
 }
 
@@ -415,6 +584,84 @@ extension WatchSyncTests {
         #expect(decoded.readiness == 75)
         #expect(decoded.readinessAction == nil)
         #expect(decoded.readinessDetail == nil)
+        #expect(decoded.themeFamily == nil)
+        #expect(decoded.themeMode == nil)
+        #expect(decoded.effectiveThemeFamily == .sage)
+        #expect(decoded.effectiveThemeMode == .dark)
+    }
+}
+
+// MARK: - Terminal-command identity (FF-002)
+
+extension WatchSyncTests {
+    /// Wire-compatibility decision (FF-002): `workoutID` is additive-optional
+    /// on the terminal commands, matching the codebase's established
+    /// mixed-version decode pattern. A pre-binding build's `finishWorkout`
+    /// (no `workoutID` key) still decodes — carrying `nil` — so old Watch →
+    /// new Phone delivery is not dropped at the codec. The phone handler then
+    /// treats `nil` exactly like a mismatch: refuse, never apply to whatever
+    /// is active.
+    @Test func legacyFinishWorkoutWithoutWorkoutIDStillDecodesAsUnbound() throws {
+        let legacyJSON = """
+        {"finishWorkout":{"metrics":{"heartRate":151,"avgHR":143,"maxHR":168,"activeEnergyKcal":345.5,"hrZoneSeconds":[10,20,30,40,50],"asOf":1800000400},"savedToHealth":true}}
+        """
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8)))
+
+        guard case .finishWorkout(let decodedID, let decodedMetrics, let savedToHealth) = decoded else {
+            Issue.record("expected .finishWorkout case")
+            return
+        }
+        let expectedMetrics = WatchLiveMetrics(
+            heartRate: 151,
+            avgHR: 143,
+            maxHR: 168,
+            activeEnergyKcal: 345.5,
+            hrZoneSeconds: [10, 20, 30, 40, 50],
+            asOf: Date(timeIntervalSince1970: 1_800_000_400)
+        )
+        #expect(decodedID == nil)
+        #expect(decodedMetrics == expectedMetrics)
+        #expect(savedToHealth)
+    }
+
+    /// A pre-binding `discardWorkout` carried no associated values, and the
+    /// synthesized codec emits the case key with an EMPTY object payload
+    /// (`{"discardWorkout":{}}` — manager-verified against the pre-change
+    /// enum). The new codec must decode that exact legacy form as
+    /// `.discardWorkout(workoutID: nil)`, which the phone handler refuses —
+    /// so an old Watch's discard can never be honored for the wrong workout.
+    @Test func legacyDiscardWorkoutDecodesAsUnbound() throws {
+        let legacyJSON = #"{"discardWorkout":{}}"#
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8)))
+
+        guard case .discardWorkout(let decodedID) = decoded else {
+            Issue.record("expected .discardWorkout case")
+            return
+        }
+        #expect(decodedID == nil)
+    }
+
+    // MARK: Terminal-command identity policy — pure decision surface
+
+    /// The phone gate: an identity-less or mismatched terminal command is
+    /// never executed. Matching identity is the only path through.
+    @Test func terminalCommandPolicyExecutesOnlyForTheNamedWorkout() {
+        let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+        #expect(WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: a))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: b))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: a, activeWorkoutID: nil))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: nil, activeWorkoutID: a))
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: nil, activeWorkoutID: nil))
+    }
+
+    /// The watch gate (WatchStore calls this because the Watch target has no
+    /// unit-test target of its own): finish/discard are refused while the
+    /// visible workout is a phone-start placeholder awaiting identity.
+    @Test func terminalCommandPolicyRefusesWhileIdentityIsPending() {
+        #expect(WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: false))
+        #expect(!WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: true))
     }
 }
 
@@ -448,5 +695,262 @@ extension WatchSyncTests {
         let decoded = try #require(WatchWire.decode(WatchAppContext.self, from: data))
         #expect(decoded.workout?.restIsMicro == nil)
         #expect(decoded.workout?.restEndsAt != nil)
+    }
+}
+
+// MARK: - Engine workout identity (FF-003)
+
+extension WatchSyncTests {
+    private static let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+    private static let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+    /// The confirmed FF-003 trigger: recovery/context against snapshot B while
+    /// the live session belongs to A must never resume streaming under B — the
+    /// stale session is ended and a fresh one is started for the current
+    /// workout.
+    @Test func mismatchedSnapshotRestartsInsteadOfResumingUnderB() {
+        let resolution = WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: Self.a,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: Self.b
+        )
+        #expect(resolution == .endSessionAndStartCurrent)
+        #expect(resolution != .keepStreaming)
+    }
+
+    /// Matching identity recovers and resumes without restart.
+    @Test func matchingIdentityKeepsStreaming() {
+        let resolution = WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: Self.a,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: Self.a
+        )
+        #expect(resolution == .keepStreaming)
+    }
+
+    /// A live session with no authoritative snapshot yet is quarantined, not
+    /// cancelled — WCSession being slow is not evidence the workout ended.
+    @Test func liveSessionWithNoAuthoritativeContextIsQuarantined() {
+        let resolution = WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: Self.a,
+            hasAuthoritativeContext: false,
+            contextWorkoutID: nil
+        )
+        #expect(resolution == .awaitContext)
+        #expect(resolution != .endSession)
+        #expect(resolution != .endSessionAndStartCurrent)
+    }
+
+    /// The quarantine holds even when a mirror workout is visible but it is
+    /// only the watch-local placeholder (not an authoritative snapshot).
+    @Test func liveSessionWithOnlyAPlaceholderMirrorIsQuarantined() {
+        let resolution = WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: false,
+            contextWorkoutID: Self.a
+        )
+        #expect(resolution == .awaitContext)
+    }
+
+    /// An authoritative context that declares no workout ends the live
+    /// session — the phone has authoritatively said the workout is over.
+    @Test func authoritativeNilWorkoutEndsTheLiveSession() {
+        let resolution = WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: Self.a,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: nil
+        )
+        #expect(resolution == .endSession)
+    }
+
+    /// An unverifiable session (nil identity — legacy/upgrade) can never be
+    /// assumed to belong to the current workout: with a workout it is ended
+    /// and restarted, with an authoritative nil it is ended.
+    @Test func unverifiableSessionCannotStreamUnderAnyWorkout() {
+        #expect(WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: Self.a
+        ) == .endSessionAndStartCurrent)
+        #expect(WatchEngineIdentityPolicy.resolve(
+            engineHasSession: true,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: nil
+        ) == .endSession)
+    }
+
+    /// No live session: an authoritative workout starts one; otherwise idle.
+    @Test func noSessionStartsForTheAuthoritativeWorkoutOrIdles() {
+        #expect(WatchEngineIdentityPolicy.resolve(
+            engineHasSession: false,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: Self.a
+        ) == .startSession)
+        #expect(WatchEngineIdentityPolicy.resolve(
+            engineHasSession: false,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: true,
+            contextWorkoutID: nil
+        ) == .idle)
+        #expect(WatchEngineIdentityPolicy.resolve(
+            engineHasSession: false,
+            sessionWorkoutID: nil,
+            hasAuthoritativeContext: false,
+            contextWorkoutID: nil
+        ) == .idle)
+    }
+
+    /// Live metrics are only emitted while the streaming session is verifiably
+    /// the current workout's AND the phone has resolved a pending handoff
+    /// identity. A quarantined session (no mirror), a pending handoff, and a
+    /// mismatched session all suppress the stream.
+    @Test func metricsStreamOnlyUnderAMatchingResolvedIdentity() {
+        // Normal streaming: identity matches the mirror.
+        #expect(WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: Self.a,
+            isAwaitingAuthoritativeIdentity: false,
+            contextWorkoutID: Self.a
+        ))
+        // Mismatch: A's session must not stream under B.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: Self.a,
+            isAwaitingAuthoritativeIdentity: false,
+            contextWorkoutID: Self.b
+        ))
+        // Quarantine: no authoritative mirror yet.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: Self.a,
+            isAwaitingAuthoritativeIdentity: false,
+            contextWorkoutID: nil
+        ))
+        // Pending handoff: identity not yet bound — never streams, even if the
+        // visible (placeholder) workoutID happens to match.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: Self.a,
+            isAwaitingAuthoritativeIdentity: true,
+            contextWorkoutID: Self.a
+        ))
+        // Unverified session (nil identity) never streams.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: nil,
+            isAwaitingAuthoritativeIdentity: false,
+            contextWorkoutID: Self.a
+        ))
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: nil,
+            isAwaitingAuthoritativeIdentity: false,
+            contextWorkoutID: nil
+        ))
+    }
+
+    /// The pending-handoff invariant: a nil-identity handoff session must not
+    /// stream before the first authoritative snapshot binds it. This pins the
+    /// exact gate the WatchStore applies while `isAwaitingWorkoutIdentity`.
+    @Test func pendingHandoffNeverStreamsBeforeBinding() {
+        // Before binding: awaiting flag set, identity nil → blocked.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: nil,
+            isAwaitingAuthoritativeIdentity: true,
+            contextWorkoutID: Self.a
+        ))
+        // Even if the identity were somehow present, the awaiting flag alone
+        // blocks until the authoritative snapshot resolves the handoff.
+        #expect(!WatchEngineIdentityPolicy.mayStreamMetrics(
+            sessionWorkoutID: Self.a,
+            isAwaitingAuthoritativeIdentity: true,
+            contextWorkoutID: Self.a
+        ))
+    }
+
+    @Test func pendingHandoffBindingRequiresDurableEngineMarkerAndNilIdentity() {
+        #expect(WatchEngineIdentityPolicy.mayBindPendingHandoff(
+            sessionWorkoutID: nil,
+            isPendingHandoff: true,
+            contextWorkoutID: Self.b
+        ))
+        // A recovered A session must be cancelled/restarted for B even if a
+        // phone-start placeholder is visible in the UI.
+        #expect(!WatchEngineIdentityPolicy.mayBindPendingHandoff(
+            sessionWorkoutID: Self.a,
+            isPendingHandoff: true,
+            contextWorkoutID: Self.b
+        ))
+        #expect(!WatchEngineIdentityPolicy.mayBindPendingHandoff(
+            sessionWorkoutID: nil,
+            isPendingHandoff: false,
+            contextWorkoutID: Self.b
+        ))
+        #expect(!WatchEngineIdentityPolicy.mayBindPendingHandoff(
+            sessionWorkoutID: nil,
+            isPendingHandoff: true,
+            contextWorkoutID: nil
+        ))
+    }
+
+    @Test func liveMetricsApplyOnlyToTheirExactWorkout() {
+        #expect(WatchLiveMetricsAttributionPolicy.mayApply(
+            metricsWorkoutID: Self.a,
+            activeWorkoutID: Self.a
+        ))
+        #expect(!WatchLiveMetricsAttributionPolicy.mayApply(
+            metricsWorkoutID: Self.a,
+            activeWorkoutID: Self.b
+        ))
+        #expect(!WatchLiveMetricsAttributionPolicy.mayApply(
+            metricsWorkoutID: nil,
+            activeWorkoutID: Self.a
+        ))
+        #expect(!WatchLiveMetricsAttributionPolicy.mayApply(
+            metricsWorkoutID: Self.a,
+            activeWorkoutID: nil
+        ))
+    }
+}
+
+// MARK: - Engine session identity persistence (FF-003)
+
+extension WatchSyncTests {
+    /// The durable identity store round-trips a bound workout, clears on nil,
+    /// and reports nil for a missing or invalid value — all against an
+    /// isolated UserDefaults suite that is always removed afterwards.
+    @Test func sessionIdentityStorePersistsClearsAndHandlesMissing() throws {
+        let suiteName = "WatchSessionIdentityStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Missing → nil.
+        #expect(WatchSessionIdentityStore.load(defaults: defaults) == nil)
+        #expect(!WatchSessionIdentityStore.isPendingHandoff(defaults: defaults))
+
+        // Save a pending handoff → survives relaunch without fabricating an
+        // identity, then binding clears the pending marker.
+        WatchSessionIdentityStore.savePendingHandoff(true, defaults: defaults)
+        #expect(WatchSessionIdentityStore.load(defaults: defaults) == nil)
+        #expect(WatchSessionIdentityStore.isPendingHandoff(defaults: defaults))
+
+        // Save a bound identity → round-trips.
+        let workoutID = UUID()
+        WatchSessionIdentityStore.save(workoutID, defaults: defaults)
+        WatchSessionIdentityStore.savePendingHandoff(false, defaults: defaults)
+        #expect(WatchSessionIdentityStore.load(defaults: defaults) == workoutID)
+        #expect(!WatchSessionIdentityStore.isPendingHandoff(defaults: defaults))
+
+        // Clear removes both pieces of state.
+        WatchSessionIdentityStore.savePendingHandoff(true, defaults: defaults)
+        WatchSessionIdentityStore.clear(defaults: defaults)
+        #expect(WatchSessionIdentityStore.load(defaults: defaults) == nil)
+        #expect(!WatchSessionIdentityStore.isPendingHandoff(defaults: defaults))
+
+        // Invalid stored value → nil (defensive decode).
+        defaults.set("not-a-uuid", forKey: WatchSessionIdentityStore.key)
+        #expect(WatchSessionIdentityStore.load(defaults: defaults) == nil)
     }
 }

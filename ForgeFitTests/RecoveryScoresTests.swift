@@ -145,7 +145,31 @@ struct RecoveryScoresTests {
 
         #expect(try #require(lats.recentExposure) > #require(chest.recentExposure))
         #expect(try #require(lats.state.value) < #require(chest.state.value))
-        #expect(lats.referenceDose == chest.referenceDose)
+        #expect(try #require(lats.referenceDose) > 0)
+        #expect(try #require(chest.referenceDose) > 0)
+        #expect(lats.methodID == "muscle_exposure_v3")
+    }
+
+    @Test func eachMuscleUsesItsOwnTypicalSessionDose() throws {
+        let bench = exercise("Bench Press", muscles: ["chest"])
+        let pulldown = exercise("Lat Pulldown", muscles: ["lats"])
+        let history = (1...7).flatMap { index in
+            let age = Double(4 + index * 7) * 86_400
+            return [
+                strengthWorkout(startedAt: now.addingTimeInterval(-age), exercise: bench, sets: 4, rpe: 8),
+                strengthWorkout(startedAt: now.addingTimeInterval(-(age + 3_600)), exercise: pulldown, sets: 12, rpe: 8),
+            ]
+        }
+
+        let muscles = RecoveryEngine(
+            workouts: history,
+            exercises: [bench, pulldown],
+            now: now
+        ).report().recovery.muscles
+        let chestReference = try #require(muscles.first { $0.muscle == "chest" }?.referenceDose)
+        let latReference = try #require(muscles.first { $0.muscle == "lats" }?.referenceDose)
+
+        #expect(latReference == chestReference * 3)
     }
 
     @Test func backParentCountsEachSetOnceWhileChildrenKeepExactExposure() throws {
@@ -216,7 +240,44 @@ struct RecoveryScoresTests {
         }
     }
 
-    // MARK: - Cardio freshness: same-method recent load
+    @Test func freshnessIncludesBodyRegionsAndCoreChildren() throws {
+        let crunch = exercise(
+            "Cable Crunch",
+            muscles: ["abs"],
+            secondaryMuscles: ["obliques"]
+        )
+        let workout = strengthWorkout(
+            startedAt: now.addingTimeInterval(-2 * 3_600),
+            exercise: crunch,
+            sets: 4,
+            rpe: 8
+        )
+
+        let muscles = RecoveryEngine(workouts: [workout], exercises: [crunch], now: now)
+            .report().recovery.muscles
+        let expected = MuscleTaxonomy.freshnessGroups.flatMap { [$0.name] + $0.children }
+
+        #expect(muscles.map(\.muscle) == expected)
+        #expect(try #require(muscles.first { $0.muscle == "core" }?.recentExposure) > 0)
+        #expect(try #require(muscles.first { $0.muscle == "abdominals" }?.recentExposure) > 0)
+        #expect(try #require(muscles.first { $0.muscle == "obliques" }?.recentExposure) > 0)
+    }
+
+    @Test func complexSetsAndEffortChangeMuscleDose() throws {
+        let chest = exercise("Chest Press", muscles: ["chest"])
+        let easy = strengthWorkout(startedAt: now.addingTimeInterval(-2 * 3_600), exercise: chest, sets: 1, rpe: 6)
+        let hardDrop = strengthWorkout(startedAt: now.addingTimeInterval(-2 * 3_600), exercise: chest, sets: 1, rpe: 10)
+        hardDrop.exercises[0].sets[0].setType = .drop
+
+        let easyDose = try #require(RecoveryEngine(workouts: [easy], exercises: [chest], now: now)
+            .report().recovery.muscles.first { $0.muscle == "chest" }?.recentExposure)
+        let hardDropDose = try #require(RecoveryEngine(workouts: [hardDrop], exercises: [chest], now: now)
+            .report().recovery.muscles.first { $0.muscle == "chest" }?.recentExposure)
+
+        #expect(hardDropDose > easyDose)
+    }
+
+    // MARK: - Cardio freshness: unified cardiovascular load
 
     @Test func higherSessionRPELoadProducesLowerCardioFreshness() {
         let reference = (1...6).map { index in
@@ -238,6 +299,115 @@ struct RecoveryScoresTests {
         let report = RecoveryEngine(workouts: [workout], exercises: [bench], now: now).report()
 
         #expect(report.recovery.cardio.state.value == nil)
+    }
+
+    @Test func measuredCircuitStrengthContributesToCardioFreshness() throws {
+        let squat = exercise("Circuit Squat", muscles: ["quadriceps"])
+        let circuit = strengthWorkout(
+            startedAt: now.addingTimeInterval(-3_600),
+            exercise: squat,
+            sets: 6,
+            rpe: 8
+        )
+        circuit.hrZoneSeconds = [0, 600, 1_200, 0, 0]
+
+        let cardio = RecoveryEngine(workouts: [circuit], exercises: [squat], now: now)
+            .report().recovery.cardio
+
+        #expect(try #require(cardio.state.value) < 0.6)
+        #expect(cardio.evidence == .measuredHeartRate)
+        #expect(cardio.methodID == "cardio_exposure_v3")
+    }
+
+    @Test func strengthRPEWithoutMeasuredHeartRateDoesNotInventCardioLoad() {
+        let squat = exercise("Traditional Squat", muscles: ["quadriceps"])
+        let strength = strengthWorkout(
+            startedAt: now.addingTimeInterval(-3_600),
+            exercise: squat,
+            sets: 6,
+            rpe: 9
+        )
+        strength.wholeSessionRPE = 9
+        strength.avgHR = 160
+
+        let cardio = RecoveryEngine(workouts: [strength], exercises: [squat], now: now)
+            .report().recovery.cardio
+
+        #expect(cardio.state.value == nil)
+    }
+
+    @Test func measuredConditioningSeriesContributesWithoutRPE() throws {
+        let series = CardioSampleSeries(samples: (0...180).map {
+            CardioSampleSeries.Sample(t: $0 * 10, hr: 150)
+        })
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            durationSeconds: 1_800,
+            hrZoneSeconds: [0, 0, 1_800, 0, 0],
+            sampleSeriesJSON: series.encodedJSON()
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Conditioning",
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            cardioSessions: [session]
+        )
+
+        let cardio = RecoveryEngine(workouts: [workout], now: now).report().recovery.cardio
+
+        #expect(abs(try #require(cardio.state.value) - 0.5) < 0.001)
+        #expect(cardio.evidence == .measuredHeartRate)
+    }
+
+    @Test func conditioningUsesSelectiveRPEFallback() throws {
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            durationSeconds: 1_800,
+            effort: 8
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Conditioning",
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            cardioSessions: [session]
+        )
+
+        let cardio = RecoveryEngine(workouts: [workout], now: now).report().recovery.cardio
+
+        #expect(abs(try #require(cardio.state.value) - 0.5) < 0.001)
+        #expect(cardio.evidence == .perceivedEffort)
+    }
+
+    @Test func measuredWholeWorkoutZonesTakePrecedenceOverSessionRPE() throws {
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            durationSeconds: 1_800,
+            effort: 10
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Conditioning",
+            startedAt: now.addingTimeInterval(-1_800),
+            endedAt: now,
+            hrZoneSeconds: [0, 0, 1_800, 0, 0],
+            cardioSessions: [session]
+        )
+
+        let cardio = RecoveryEngine(workouts: [workout], now: now).report().recovery.cardio
+
+        #expect(abs(try #require(cardio.state.value) - 0.5) < 0.001)
+        #expect(cardio.evidence == .measuredHeartRate)
     }
 
     // MARK: - Systemic score and data gating

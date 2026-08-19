@@ -39,18 +39,70 @@ enum CardioModality: String, CaseIterable, Identifiable {
 
 /// Central place to create workout sessions so every entry point (Home quick
 /// start, the Workout tab, cardio tiles) builds identical, consistent data.
+@MainActor
 enum WorkoutFactory {
 
+    enum PersistenceError: LocalizedError {
+        case committedWorkoutUnavailable
+
+        var errorDescription: String? {
+            "The workout was saved, but ForgeFit couldn't open it. Try again."
+        }
+    }
+
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
+    /// Workout creation happens in an isolated context. A failed graph can
+    /// therefore never leak into the app's shared context and hitch a ride on
+    /// an unrelated later save. UI/runtime effects run only after the durable
+    /// row resolves back into the caller's context.
+    private static func commit(
+        _ workout: WorkoutModel,
+        from persistenceContext: ModelContext,
+        into sourceContext: ModelContext,
+        saveCenter: PersistentChangeSaveCenter,
+        save: @escaping SaveOperation,
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        var committedWorkout: WorkoutModel?
+        let workoutID = workout.id
+        saveCenter.perform({
+            try save(persistenceContext)
+            committedWorkout = try sourceContext.fetch(
+                FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+            ).first
+            guard committedWorkout != nil else {
+                throw PersistenceError.committedWorkoutUnavailable
+            }
+        }, onSuccess: {
+            if let committedWorkout { onCommit(committedWorkout) }
+        })
+        return committedWorkout
+    }
+
     @discardableResult
-    static func startEmpty(in context: ModelContext) -> WorkoutModel {
+    static func startEmpty(
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
         let workout = WorkoutModel(
             userID: ForgeFitDemo.userID,
             title: "Workout",
             sourceDevice: "iphone"
         )
-        context.insert(workout)
-        try? context.save()
-        return workout
+        persistenceContext.insert(workout)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 
     @discardableResult
@@ -58,8 +110,14 @@ enum WorkoutFactory {
         routine: RoutineModel,
         exercises: [ExerciseLibraryModel],
         setupNotes: [UserExerciseNoteModel] = [],
-        in context: ModelContext
-    ) -> WorkoutModel {
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        prepare: @escaping @MainActor (WorkoutModel, ModelContext) -> Void = { _, _ in },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
         let workout = WorkoutModel(
             userID: ForgeFitDemo.userID,
             routineID: routine.id,
@@ -67,7 +125,7 @@ enum WorkoutFactory {
             sourceDevice: "iphone"
         )
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let resolvedSetupNotes = setupNotes + ((try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
+        let resolvedSetupNotes = setupNotes + ((try? persistenceContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
         let effortPreferences = WorkoutEffortPolicy.current()
         var cardioSessions: [CardioSessionModel] = []
         var workoutBlocks = routine.blocks.map { routineBlock in
@@ -138,9 +196,14 @@ enum WorkoutFactory {
             .sorted { $0.position < $1.position }
             .map { routineExercise in
                 let exercise = exerciseByID[routineExercise.exerciseID]
-                let setupNote = resolvedSetupNotes.first {
-                    $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID
-                }
+                let setupNote = resolvedSetupNotes
+                    .filter {
+                        $0.exerciseID == routineExercise.exerciseID
+                            && $0.userID == ForgeFitDemo.userID
+                            && ExerciseNotePolicy.authoredText($0.note) != nil
+                    }
+                    .max { $0.updatedAt < $1.updatedAt }
+                let routineNote = ExerciseNotePolicy.authoredText(routineExercise.notes)
                 // Cardio exercises log as sessions, not set rows. Yoga now
                 // lives in first-class blocks and is filtered above.
                 let isSessionBased = exercise?.isCardio == true
@@ -186,8 +249,8 @@ enum WorkoutFactory {
                     exerciseID: routineExercise.exerciseID,
                     position: routineExercise.position,
                     supersetGroup: routineExercise.supersetGroup,
-                    notes: routineExercise.notes ?? setupNote?.note,
-                    notePinned: routineExercise.notes == nil && setupNote != nil,
+                    notes: routineNote ?? setupNote.flatMap { ExerciseNotePolicy.authoredText($0.note) },
+                    notePinned: routineNote == nil && setupNote != nil,
                     intervalPlanJSON: routineExercise.intervalPlanJSON,
                     yogaFlowJSON: routineExercise.yogaFlowJSON,
                     sourceRoutineExerciseID: routineExercise.id,
@@ -224,7 +287,7 @@ enum WorkoutFactory {
         for (index, item) in OrderedWorkoutItem.ordered(in: workout).enumerated() {
             item.position = index
         }
-        context.insert(workout)
+        persistenceContext.insert(workout)
         // Progression: advance pending targets from each exercise's last
         // session and record the explained suggestions. Single choke point —
         // Home, coach's version, quick starts, and watch starts all land here.
@@ -232,13 +295,20 @@ enum WorkoutFactory {
         // along here too, so a held exercise starts held no matter which
         // entry point started the workout — and Corner's progression preview
         // reads the identical overrides, so preview always matches start.
-        let holds = CoachWeeklyReview.activeProgressionHolds(in: context)
+        let holds = CoachWeeklyReview.activeProgressionHolds(in: persistenceContext)
         ProgressionPlanner.apply(
-            to: workout, routine: routine, exercises: exercises, in: context,
+            to: workout, routine: routine, exercises: exercises, in: persistenceContext,
             heldExerciseIDs: holds.ids, holdReasons: holds.reasons
         )
-        try? context.save()
-        return workout
+        prepare(workout, persistenceContext)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 
     private static func makeBlockSession(
@@ -263,8 +333,13 @@ enum WorkoutFactory {
         flow: YogaFlowPlan,
         named title: String,
         exercises: [ExerciseLibraryModel],
-        in context: ModelContext
-    ) -> WorkoutModel {
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
         let startedAt = Date()
         let block = WorkoutBlockModel(
             userID: ForgeFitDemo.userID,
@@ -289,13 +364,28 @@ enum WorkoutFactory {
             cardioSessions: [session],
             blocks: [block]
         )
-        context.insert(workout)
-        try? context.save()
-        return workout
+        persistenceContext.insert(workout)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 
     @discardableResult
-    static func startCardio(_ modality: CardioModality, exercises: [ExerciseLibraryModel], in context: ModelContext) -> WorkoutModel {
+    static func startCardio(
+        _ modality: CardioModality,
+        exercises: [ExerciseLibraryModel],
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
         let startedAt = Date()
         let exercise = exercises.first { $0.id == modality.exerciseID }
         let workoutExercise = exercise.map {
@@ -316,8 +406,14 @@ enum WorkoutFactory {
             exercises: workoutExercise.map { [$0] } ?? [],
             cardioSessions: [cardioSession]
         )
-        context.insert(workout)
-        try? context.save()
-        return workout
+        persistenceContext.insert(workout)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
     }
 }

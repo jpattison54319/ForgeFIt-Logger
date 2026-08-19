@@ -29,7 +29,7 @@ enum TrainingFocus: String, CaseIterable, Identifiable {
 
     /// Home quick-start seeds as `HomeQuickStartAction` id strings
     /// ("cardio:<modality>", "routine:<uuid>", "yoga:<flow-slug>") — must stay
-    /// in sync with `HomeQuickStartAction.encode` in HomeView.
+    /// in sync with `HomeQuickStartAction.encodeList` in HomeView.
     func quickStartIDs(routineIDs: [UUID]) -> [String] {
         let routineActions = routineIDs.prefix(2).map { "routine:\($0.uuidString)" }
         switch self {

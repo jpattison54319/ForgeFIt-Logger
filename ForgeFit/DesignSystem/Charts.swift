@@ -77,6 +77,7 @@ struct TimeChartRangePicker: View {
             .padding(.vertical, 6)
             .background(theme.surfaceElevated)
             .clipShape(Capsule())
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Chart time range")
@@ -88,8 +89,23 @@ struct LineTrendChart: View {
     let points: [MetricPoint]
     var color: Color? = nil
     var yLabel: String? = nil
+    var valueFormatter: @MainActor (Double) -> String = {
+        $0.formatted(.number.precision(.fractionLength(0...1)))
+    }
+    var axisValueFormatter: @MainActor (Double) -> String = {
+        $0.formatted(.number.precision(.fractionLength(0...1)))
+    }
+    var yAxisUnitLabel: String? = nil
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
+
+    private var selectedPoint: MetricPoint? {
+        guard let selectedDate else { return nil }
+        return points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
 
     var body: some View {
         let lineColor = color ?? theme.accent
@@ -108,25 +124,55 @@ struct LineTrendChart: View {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
-            }
-            if let last = points.last {
-                PointMark(x: .value("Date", last.date), y: .value("Value", last.value))
+                PointMark(x: .value("Date", point.date), y: .value("Value", point.value))
                     .foregroundStyle(lineColor)
-                    .symbolSize(80)
+                    .symbolSize(28)
+                    .accessibilityLabel(
+                        "\(yLabel ?? "Value"), \(point.date.formatted(date: .abbreviated, time: .omitted))"
+                    )
+                    .accessibilityValue(valueFormatter(point.value))
+            }
+            if let selectedPoint {
+                RuleMark(x: .value("Selected date", selectedPoint.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [(yLabel ?? "Value", valueFormatter(selectedPoint.value))]
+                        )
+                    }
+                PointMark(x: .value("Selected date", selectedPoint.date), y: .value("Value", selectedPoint.value))
+                    .foregroundStyle(lineColor)
+                    .symbolSize(90)
+                    .accessibilityHidden(true)
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 2)) { value in
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .foregroundStyle(theme.textTertiary)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 2)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
-                AxisValueLabel().foregroundStyle(theme.textTertiary)
+                AxisValueLabel {
+                    if let measurement = value.as(Double.self) {
+                        Text(axisValueFormatter(measurement)).foregroundStyle(theme.textTertiary)
+                    }
+                }
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            if let label = yAxisUnitLabel ?? yLabel {
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 180)
     }
 }
@@ -146,6 +192,14 @@ struct HRVBaselineBandChart: View {
     let upperBound: Double
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
+
+    private var selectedPoint: Point? {
+        guard let selectedDate else { return nil }
+        return points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
 
     var body: some View {
         Chart {
@@ -161,27 +215,49 @@ struct HRVBaselineBandChart: View {
             ForEach(points) { point in
                 LineMark(x: .value("Date", point.date), y: .value("HRV", point.value))
                     .interpolationMethod(.catmullRom)
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .lineStyle(StrokeStyle(lineWidth: 2))
+                PointMark(x: .value("Date", point.date), y: .value("HRV", point.value))
+                    .foregroundStyle(theme.accentForeground)
+                    .symbolSize(24)
+                    .accessibilityLabel(point.date.formatted(date: .abbreviated, time: .omitted))
+                    .accessibilityValue("\(Int(point.value.rounded())) ms")
             }
-            if let last = points.last {
-                PointMark(x: .value("Date", last.date), y: .value("HRV", last.value))
-                    .foregroundStyle(theme.accent)
+            if let selectedPoint {
+                RuleMark(x: .value("Selected date", selectedPoint.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [("HRV", "\(Int(selectedPoint.value.rounded())) ms")]
+                        )
+                    }
+                PointMark(x: .value("Selected date", selectedPoint.date), y: .value("HRV", selectedPoint.value))
+                    .foregroundStyle(theme.accentForeground)
                     .symbolSize(90)
+                    .accessibilityHidden(true)
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 2)) { _ in
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .foregroundStyle(theme.textTertiary)
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text("HRV (ms)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 160)
     }
 }
@@ -194,6 +270,7 @@ struct CriticalPaceCurveView: View {
     var prior: [TrainingAnalytics.CriticalPacePoint] = []
 
     @Environment(\.theme) private var theme
+    @State private var selectedWindow: String?
 
     private func unitPace(_ secPerKm: Double) -> Double {
         secPerKm * (Fmt.distanceUnit.metersPerUnit / 1000)
@@ -205,9 +282,17 @@ struct CriticalPaceCurveView: View {
         let s = Int(secInUnit.rounded())
         return String(format: "%d:%02d", s / 60, s % 60)
     }
+    private var paceUnit: String { "min\(Fmt.distanceUnit.paceSuffix)" }
     private var orderedLabels: [String] {
         let windows = Set(current.map(\.windowSeconds)).union(prior.map(\.windowSeconds))
         return windows.sorted().map(windowLabel)
+    }
+    private var selectedLabel: String? {
+        guard let selectedWindow else { return nil }
+        return orderedLabels.min {
+            abs((orderedLabels.firstIndex(of: $0) ?? 0) - (orderedLabels.firstIndex(of: selectedWindow) ?? 0))
+                < abs((orderedLabels.firstIndex(of: $1) ?? 0) - (orderedLabels.firstIndex(of: selectedWindow) ?? 0))
+        }
     }
 
     var body: some View {
@@ -218,17 +303,37 @@ struct CriticalPaceCurveView: View {
                          series: .value("Period", "Previous"))
                     .foregroundStyle(theme.textTertiary)
                     .lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
+                PointMark(x: .value("Window", windowLabel(point.windowSeconds)),
+                          y: .value("Pace", unitPace(point.paceSecPerKm)))
+                    .foregroundStyle(theme.textTertiary)
+                    .symbolSize(30)
             }
             ForEach(current) { point in
                 LineMark(x: .value("Window", windowLabel(point.windowSeconds)),
                          y: .value("Pace", unitPace(point.paceSecPerKm)),
                          series: .value("Period", "Now"))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                 PointMark(x: .value("Window", windowLabel(point.windowSeconds)),
                           y: .value("Pace", unitPace(point.paceSecPerKm)))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.accentForeground)
                     .symbolSize(60)
+            }
+            if let selectedLabel {
+                let currentPoint = current.first { windowLabel($0.windowSeconds) == selectedLabel }
+                let priorPoint = prior.first { windowLabel($0.windowSeconds) == selectedLabel }
+                RuleMark(x: .value("Selected window", selectedLabel))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedLabel,
+                            lines: [
+                                currentPoint.map { ("Current", "\(paceLabel(unitPace($0.paceSecPerKm))) \(paceUnit)") },
+                                priorPoint.map { ("Previous", "\(paceLabel(unitPace($0.paceSecPerKm))) \(paceUnit)") },
+                            ].compactMap { $0 }
+                        )
+                    }
             }
         }
         .chartXScale(domain: orderedLabels)
@@ -246,6 +351,12 @@ struct CriticalPaceCurveView: View {
                 AxisValueLabel().foregroundStyle(theme.textTertiary)
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            Text("Pace (\(paceUnit))")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+        }
+        .pressHoldChartXSelection(value: $selectedWindow)
         .frame(height: 180)
     }
 }
@@ -273,6 +384,7 @@ struct HeartRateTrendChart: View {
     var height: CGFloat = 160
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
 
     private var avg: Int {
         guard !samples.isEmpty else { return 0 }
@@ -281,6 +393,13 @@ struct HeartRateTrendChart: View {
 
     private var legendKinds: [Band.Kind] {
         Band.Kind.allCases.filter { kind in bands.contains { $0.kind == kind } }
+    }
+
+    private var selectedSample: (date: Date, bpm: Int)? {
+        guard let selectedDate else { return nil }
+        return samples.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
     }
 
     var body: some View {
@@ -308,25 +427,52 @@ struct HeartRateTrendChart: View {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
+                PointMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
+                    .foregroundStyle(theme.danger)
+                    .symbolSize(samples.count > 80 ? 8 : 18)
+                    .accessibilityLabel(sample.date.formatted(date: .omitted, time: .shortened))
+                    .accessibilityValue("\(sample.bpm) bpm")
             }
             if avg > 0 {
                 RuleMark(y: .value("Average", avg))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     .foregroundStyle(theme.textTertiary)
             }
+            if let selectedSample {
+                RuleMark(x: .value("Selected time", selectedSample.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedSample.date.formatted(date: .omitted, time: .shortened),
+                            lines: [("Heart rate", "\(selectedSample.bpm) bpm")]
+                        )
+                    }
+                PointMark(x: .value("Selected time", selectedSample.date), y: .value("BPM", selectedSample.bpm))
+                    .foregroundStyle(theme.danger)
+                    .symbolSize(90)
+                    .accessibilityHidden(true)
+            }
             }
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
                     AxisValueLabel(format: .dateTime.hour().minute())
                         .foregroundStyle(theme.textTertiary)
                 }
             }
             .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                     AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
                     AxisValueLabel().foregroundStyle(theme.textTertiary)
                 }
             }
+            .chartYAxisLabel(position: .top, alignment: .leading) {
+                Text("Heart rate (bpm)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .pressHoldChartXSelection(value: $selectedDate)
             .frame(height: bands.isEmpty ? height : max(64, height - 20))
 
             if !legendKinds.isEmpty {
@@ -404,8 +550,23 @@ extension HeartRateTrendChart {
 struct BarTrendChart: View {
     let points: [MetricPoint]
     var color: Color? = nil
+    var valueFormatter: @MainActor (Double) -> String = {
+        $0.formatted(.number.precision(.fractionLength(0...1)))
+    }
+    var axisValueFormatter: @MainActor (Double) -> String = {
+        $0.formatted(.number.precision(.fractionLength(0...1)))
+    }
+    var yAxisLabel: String? = nil
 
     @Environment(\.theme) private var theme
+    @State private var selectedDate: Date?
+
+    private var selectedPoint: MetricPoint? {
+        guard let selectedDate else { return nil }
+        return points.min {
+            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
+        }
+    }
 
     var body: some View {
         let barColor = color ?? theme.accent
@@ -417,6 +578,19 @@ struct BarTrendChart: View {
                 )
                 .foregroundStyle(barColor)
                 .cornerRadius(4)
+                .accessibilityLabel(point.date.formatted(date: .abbreviated, time: .omitted))
+                .accessibilityValue(valueFormatter(point.value))
+            }
+            if let selectedPoint {
+                RuleMark(x: .value("Selected date", selectedPoint.date))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        ChartSelectionCallout(
+                            title: selectedPoint.date.formatted(date: .abbreviated, time: .omitted),
+                            lines: [("Value", valueFormatter(selectedPoint.value))]
+                        )
+                    }
             }
         }
         .chartXAxis {
@@ -426,11 +600,23 @@ struct BarTrendChart: View {
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
-                AxisValueLabel().foregroundStyle(theme.textTertiary)
+                AxisValueLabel {
+                    if let measurement = value.as(Double.self) {
+                        Text(axisValueFormatter(measurement)).foregroundStyle(theme.textTertiary)
+                    }
+                }
             }
         }
+        .chartYAxisLabel(position: .top, alignment: .leading) {
+            if let yAxisLabel {
+                Text(yAxisLabel)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 200)
     }
 }

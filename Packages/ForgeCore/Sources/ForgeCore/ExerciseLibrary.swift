@@ -117,6 +117,11 @@ public struct ExerciseLibrarySnapshot: Equatable, Sendable {
         if candidate.contains(query) { return 75 }
 
         let candidateTokens = candidate.split(separator: " ").map(String.init)
+        let queryTokens = query.split(separator: " ").map(String.init)
+        if queryTokens.count > 1,
+           allTokensMatchByPrefix(queryTokens, in: candidateTokens) {
+            return 82
+        }
         if candidateTokens.contains(query) { return 72 }
         if candidateTokens.contains(where: { $0.hasPrefix(query) }) { return 68 }
 
@@ -125,6 +130,23 @@ public struct ExerciseLibrarySnapshot: Equatable, Sendable {
         if candidateTokens.contains(where: { levenshtein($0, query) <= threshold }) { return 58 }
 
         return 0
+    }
+
+    /// Multi-word exercise searches are token-prefix matches rather than one
+    /// literal substring. This keeps normal type-ahead behavior while allowing
+    /// small suffix differences such as `tricep push` → `triceps pushdown`.
+    private static func allTokensMatchByPrefix(
+        _ queryTokens: [String],
+        in candidateTokens: [String]
+    ) -> Bool {
+        var remainingCandidates = candidateTokens
+        for queryToken in queryTokens {
+            guard let match = remainingCandidates.firstIndex(where: {
+                $0.hasPrefix(queryToken)
+            }) else { return false }
+            remainingCandidates.remove(at: match)
+        }
+        return true
     }
 
     private static func normalized(_ value: String) -> String {

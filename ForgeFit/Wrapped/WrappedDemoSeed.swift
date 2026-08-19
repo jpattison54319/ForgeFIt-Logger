@@ -69,6 +69,7 @@ enum WrappedDemoSeed {
             session.endedAt = start.addingTimeInterval(Double(minutes) * 60)
             session.durationSeconds = minutes * 60
             session.distanceMeters = Double(minutes) * 165
+            session.distanceSource = .userEntered
             session.avgHR = 156
             session.maxHR = 176
             session.hrZoneSeconds = [60, 240, Int(Double(minutes) * 12), Int(Double(minutes) * 30), Int(Double(minutes) * 6)]

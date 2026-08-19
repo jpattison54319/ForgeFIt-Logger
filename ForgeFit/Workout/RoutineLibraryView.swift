@@ -58,7 +58,7 @@ struct RoutineLibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
             .sheet(item: $selectedProgram) { program in
@@ -126,7 +126,7 @@ struct RoutineLibraryView: View {
                         Spacer()
                         Text("\(program.sessionsPerWeek)x/wk")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
 
                     Text(program.description)
@@ -138,7 +138,7 @@ struct RoutineLibraryView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "folder.fill")
                                 .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(theme.accentForeground)
                             Text(dayNames.joined(separator: " · "))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(theme.textSecondary)
@@ -237,7 +237,7 @@ struct RoutineLibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { selectedProgram = nil }
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(theme.accentForeground)
                 }
             }
             .navigationDestination(for: UUID.self) { exerciseID in
@@ -260,6 +260,7 @@ struct RoutineLibraryView: View {
                             // disclosure chevron is sage — via the shared label.
                             ExerciseNameLabel(name: exercise.name, font: .system(size: 15, weight: .semibold))
                                 .lineLimit(2)
+                                .minimumTouchTarget()
                         }
                         .buttonStyle(.plain)
                     } else {

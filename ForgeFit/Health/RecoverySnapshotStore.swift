@@ -31,6 +31,9 @@ nonisolated struct HomeDashboardCache: Codable, Equatable, Sendable {
     var healthCaption: String
     var healthEvaluatedCount: Int
     var healthOutsideRangeCount: Int
+    /// Optional so a same-day cache written by an older app build still
+    /// decodes; Home shows neutral loading indicators until Health refreshes.
+    var vitals: VitalsTilePresentation? = nil
     // Non-Home surfaces use the exact same finished report. Optional defaults
     // preserve decoding of caches written by older app builds.
     var preWorkoutAdjustment: String? = nil
@@ -83,19 +86,24 @@ final class RecoverySnapshotStore {
 
     // v2 corrected the historical daily/trend separation. Keep the storage key
     // for decode compatibility; v2 analytics provenance lives on workouts.
-    private let defaultsKey = "recoverySnapshots.v2"
+    static let defaultsKey = "recoverySnapshots.v2"
     // v3 reruns the merge-style backfill once to add strain to existing v2
     // recovery snapshots without discarding their captured daily/trend values.
-    private let backfillKey = "recoverySnapshotsBackfilled.v3"
-    private let calendar = Calendar.current
+    static let backfillKey = "recoverySnapshotsBackfilled.v3"
+    private let defaults: UserDefaults
+    private let calendar: Calendar
 
     /// Snapshots keyed by `startOfDay`.
     private(set) var snapshots: [Date: RecoverySnapshot] = [:]
 
-    init() { load() }
+    init(defaults: UserDefaults = .standard, calendar: Calendar = .current) {
+        self.defaults = defaults
+        self.calendar = calendar
+        load()
+    }
 
     var needsBackfill: Bool {
-        !UserDefaults.standard.bool(forKey: backfillKey)
+        !defaults.bool(forKey: Self.backfillKey)
     }
 
     func snapshot(for day: Date) -> RecoverySnapshot? {
@@ -186,8 +194,17 @@ final class RecoverySnapshotStore {
                 changed = true
             }
         }
-        UserDefaults.standard.set(true, forKey: backfillKey)
+        defaults.set(true, forKey: Self.backfillKey)
         if changed { persist() }
+    }
+
+    /// Erases every local recovery snapshot and migration marker. Recovery is
+    /// deliberately excluded from CloudKit and the sanitized backup, but a
+    /// full account reset must also clear this live singleton's memory.
+    func clearAll() {
+        snapshots = [:]
+        defaults.removeObject(forKey: Self.defaultsKey)
+        defaults.removeObject(forKey: Self.backfillKey)
     }
 
     #if DEBUG
@@ -195,9 +212,7 @@ final class RecoverySnapshotStore {
     /// tests, so the calendar rings can be seen without real health history.
     /// Test isolation: wipe all snapshots (and their persisted copy).
     func removeAllForTesting() {
-        snapshots = [:]
-        UserDefaults.standard.removeObject(forKey: backfillKey)
-        persist()
+        clearAll()
     }
 
     /// UI automation: today already has a captured render, so a cold launch
@@ -234,6 +249,40 @@ final class RecoverySnapshotStore {
                 healthCaption: "4 health signals checked",
                 healthEvaluatedCount: 4,
                 healthOutsideRangeCount: 0,
+                vitals: VitalsTilePresentation(indicators: [
+                    VitalIndicatorPresentation(
+                        kind: .heartRate,
+                        name: "Sleeping HR",
+                        valueText: "52 bpm",
+                        relationText: "below usual, favorable",
+                        interpretation: .favorable,
+                        position: 0.82
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .respiratoryRate,
+                        name: "Respiratory rate",
+                        valueText: "14.5 br/min",
+                        relationText: "within usual band",
+                        interpretation: .typical,
+                        position: 0.5
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .bloodOxygen,
+                        name: "Blood oxygen",
+                        valueText: "98%",
+                        relationText: "above usual, favorable",
+                        interpretation: .favorable,
+                        position: 0.78
+                    ),
+                    VitalIndicatorPresentation(
+                        kind: .hrv,
+                        name: "HRV",
+                        valueText: "66 ms",
+                        relationText: "within usual band",
+                        interpretation: .typical,
+                        position: 0.55
+                    ),
+                ]),
                 preWorkoutAdjustment: "Train as planned.",
                 readinessMethodID: "recovery-index-v2",
                 readinessCoverage: 1))
@@ -270,12 +319,12 @@ final class RecoverySnapshotStore {
             dict[String(pair.key.timeIntervalSince1970)] = pair.value
         }
         if let data = try? JSONEncoder().encode(coded) {
-            UserDefaults.standard.set(data, forKey: defaultsKey)
+            defaults.set(data, forKey: Self.defaultsKey)
         }
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+        guard let data = defaults.data(forKey: Self.defaultsKey),
               let coded = try? JSONDecoder().decode([String: RecoverySnapshot].self, from: data) else { return }
         snapshots = coded.reduce(into: [Date: RecoverySnapshot]()) { dict, pair in
             if let seconds = TimeInterval(pair.key) {

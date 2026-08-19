@@ -7,6 +7,10 @@ import Testing
 
 @MainActor
 struct MicrocycleDayAssignmentServiceTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private let timeZone = TimeZone(identifier: "America/New_York")!
 
     private var calendar: Calendar {
@@ -107,7 +111,7 @@ struct MicrocycleDayAssignmentServiceTests {
         ).completedCount == 0)
     }
 
-    @Test func pickerOffersOnlyUncreditedCompletedWorkoutsForDueRoutines() throws {
+    @Test func pickerOffersOnlyUncreditedCompletedWorkoutsForTrackedRoutines() throws {
         let routineID = UUID()
         let trackingID = UUID()
         let firstWindow = makeWindow(
@@ -164,6 +168,80 @@ struct MicrocycleDayAssignmentServiceTests {
         #expect(candidates.map(\.id) == [available.id])
     }
 
+    @Test func pickerAllowsRepeatingACompletedRoutineWithoutSatisfyingTheNextRoutine() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let firstRoutineID = UUID()
+        let secondRoutineID = UUID()
+        let window = MicrocycleWindowModel(
+            userID: ForgeFitDemo.userID,
+            trackingID: UUID(),
+            folderID: UUID(),
+            folderName: "Upper Lower",
+            index: 0,
+            startsAt: date(2026, 8, 1, 0),
+            endsAt: date(2026, 8, 11, 0),
+            timeZoneIdentifier: timeZone.identifier,
+            routines: [
+                .init(id: firstRoutineID, name: "Upper", position: 0),
+                .init(id: secondRoutineID, name: "Lower", position: 1),
+            ]
+        )
+        let creditedWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: firstRoutineID,
+            title: "Upper",
+            startedAt: date(2026, 8, 2),
+            endedAt: date(2026, 8, 2, 13)
+        )
+        let repeatedWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: firstRoutineID,
+            title: "Upper",
+            startedAt: date(2026, 7, 29),
+            endedAt: date(2026, 7, 29, 13)
+        )
+        context.insert(window)
+        context.insert(creditedWorkout)
+        context.insert(repeatedWorkout)
+        try context.save()
+
+        let candidates = MicrocycleDayAssignmentService.eligibleWorkouts(
+            for: date(2026, 8, 3),
+            in: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout],
+            now: date(2026, 8, 8)
+        )
+
+        #expect(candidates.map(\.id) == [repeatedWorkout.id])
+
+        try MicrocycleDayAssignmentService.assign(
+            repeatedWorkout,
+            to: date(2026, 8, 3),
+            in: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout],
+            restDays: [],
+            context: context,
+            now: date(2026, 8, 8)
+        )
+
+        let progress = MicrocycleTrackingService.progress(
+            for: window,
+            windows: [window],
+            workouts: [creditedWorkout, repeatedWorkout]
+        )
+        #expect(progress.completedCount == 1)
+        #expect(progress.routines[0].isCompleted)
+        #expect(!progress.routines[1].isCompleted)
+        #expect(MicrocycleDayAssignmentService.dayWorkouts(
+            on: date(2026, 8, 3),
+            in: window,
+            workouts: [creditedWorkout, repeatedWorkout]
+        ).map(\.id) == [repeatedWorkout.id])
+    }
+
     @Test func futureDaysCannotBeBackfilled() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }
@@ -192,6 +270,107 @@ struct MicrocycleDayAssignmentServiceTests {
                 now: date(2026, 8, 7)
             )
         }
+    }
+
+    @Test func failedAssignmentRestoresWindowAndRestDayBeforeAnyLaterSave() throws {
+        let (container, context) = try TestStore.make()
+        let routineID = UUID()
+        let window = makeWindow(
+            routineID: routineID,
+            startsAt: date(2026, 8, 1, 0),
+            endsAt: date(2026, 8, 11, 0)
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: routineID,
+            startedAt: date(2026, 7, 29),
+            endedAt: date(2026, 7, 29, 13)
+        )
+        let restDay = RestDayModel(
+            userID: ForgeFitDemo.userID,
+            date: date(2026, 8, 2, 0),
+            timeZoneIdentifier: timeZone.identifier
+        )
+        context.insert(window)
+        context.insert(workout)
+        context.insert(restDay)
+        try context.save()
+        let originalWindowUpdatedAt = window.updatedAt
+        let originalRestUpdatedAt = restDay.updatedAt
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleDayAssignmentService.assign(
+                workout,
+                to: date(2026, 8, 2),
+                in: window,
+                windows: [window],
+                workouts: [workout],
+                restDays: [restDay],
+                context: context,
+                now: date(2026, 8, 8),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(window.dayAssignments.isEmpty)
+        #expect(window.updatedAt == originalWindowUpdatedAt)
+        #expect(restDay.deletedAt == nil)
+        #expect(restDay.updatedAt == originalRestUpdatedAt)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        let persistedWindow = try #require(
+            freshContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let persistedRestDay = try #require(
+            freshContext.fetch(FetchDescriptor<RestDayModel>()).first
+        )
+        #expect(persistedWindow.dayAssignments.isEmpty)
+        #expect(persistedRestDay.deletedAt == nil)
+    }
+
+    @Test func failedAssignmentRemovalRestoresThePersistedLink() throws {
+        let (container, context) = try TestStore.make()
+        let routineID = UUID()
+        let workoutID = UUID()
+        let assignment = MicrocycleDayAssignment(
+            day: date(2026, 8, 2, 0),
+            workoutID: workoutID,
+            assignedAt: date(2026, 8, 8)
+        )
+        let window = MicrocycleWindowModel(
+            userID: ForgeFitDemo.userID,
+            trackingID: UUID(),
+            folderID: UUID(),
+            folderName: "Upper",
+            index: 0,
+            startsAt: date(2026, 8, 1, 0),
+            endsAt: date(2026, 8, 11, 0),
+            timeZoneIdentifier: timeZone.identifier,
+            routines: [.init(id: routineID, name: "Upper", position: 0)],
+            dayAssignments: [assignment]
+        )
+        context.insert(window)
+        try context.save()
+        let originalUpdatedAt = window.updatedAt
+
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleDayAssignmentService.remove(
+                assignment,
+                from: window,
+                context: context,
+                now: date(2026, 8, 9),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        #expect(window.dayAssignments == [assignment])
+        #expect(window.updatedAt == originalUpdatedAt)
+
+        try context.save()
+        let freshContext = ModelContext(container)
+        let persistedWindow = try #require(
+            freshContext.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        #expect(persistedWindow.dayAssignments == [assignment])
     }
 
     private func makeWindow(

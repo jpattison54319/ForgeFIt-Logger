@@ -42,11 +42,16 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Apple Health"].buttons.firstMatch.isHittable,
                       "The Health explanation should retain a visible native back path.")
 
-        let connect = app.buttons["onboarding-connect-health"]
-        let skip = app.buttons["onboarding-continue-without-health"]
-        assertPrimaryAction(connect, named: "Connect Apple Health")
-        assertPrimaryAction(skip, named: "Continue without Health")
-        skip.tap()
+        // Guideline 5.1.1(iv): the explainer must lead to Apple's permission
+        // sheet, so Continue is the only control and there is no way to skip
+        // past the request.
+        let healthContinue = app.buttons["onboarding-continue-health"]
+        assertPrimaryAction(healthContinue, named: "Continue")
+        XCTAssertFalse(app.buttons["onboarding-continue-without-health"].exists,
+                       "The Health step must not offer a way around the permission request.")
+        XCTAssertFalse(app.buttons["onboarding-open-health-settings"].exists,
+                       "The Health step must present exactly one forward action.")
+        healthContinue.tap()
 
         XCTAssertTrue(app.buttons["tab-home"].waitForExistence(timeout: 8),
                       "Finishing onboarding should reveal the main app.")
@@ -67,7 +72,9 @@ final class OnboardingUITests: XCTestCase {
     @MainActor
     private func launchNewUserApp() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-didOnboard", "NO"]
+        // Onboarding's Continue always requests HealthKit authorization now, and
+        // the real system sheet cannot be driven from a test, so stub it out.
+        app.launchArguments = ["--stub-health-authorization", "-didOnboard", "NO"]
         app.launch()
         XCTAssertTrue(app.buttons["onboarding-get-started"].waitForExistence(timeout: 10))
         return app

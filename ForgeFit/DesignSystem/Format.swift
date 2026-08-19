@@ -78,16 +78,18 @@ enum Fmt {
         return "\(load(value, unit: unit)) \(unit.suffix)"
     }
 
+    /// Parses typed load text (user's display unit) and converts it to the
+    /// internal kilogram store via the unit's own conversion. Every weight
+    /// entry path — runner/block weight fields, quick-increment fans, plate
+    /// calculator, routine editor — converges here; parse rules live in
+    /// `WeightInputParser` (ForgeCore) and never depend on `Locale.current`.
     static func loadKilograms(from text: String, unit: WeightUnit = Fmt.unit) -> Double? {
-        let normalized = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ",", with: "")
-        guard let displayValue = Double(normalized) else { return nil }
+        guard let displayValue = WeightInputParser.parse(text) else { return nil }
         return unit.kilograms(fromDisplayValue: displayValue)
     }
 
     /// "43min" / "1h 12min" / "45s".
-    static func durationShort(_ seconds: Int?) -> String {
+    nonisolated static func durationShort(_ seconds: Int?) -> String {
         guard let seconds, seconds > 0 else { return "0s" }
         let h = seconds / 3600
         let m = (seconds % 3600) / 60
@@ -98,12 +100,12 @@ enum Fmt {
     }
 
     /// Compact clock for rest timers and countdowns: "2:00", "0:15".
-    static func restTimer(_ seconds: Int) -> String {
+    nonisolated static func restTimer(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// Elapsed clock for the active-workout header: "1s" / "12:04".
-    static func elapsed(_ seconds: Int) -> String {
+    nonisolated static func elapsed(_ seconds: Int) -> String {
         if seconds < 60 { return "\(seconds)s" }
         let h = seconds / 3600
         let m = (seconds % 3600) / 60
@@ -113,7 +115,11 @@ enum Fmt {
     }
 
     /// Land distance in the user's chosen unit (km or mi), e.g. "5.20 km".
-    static func distance(_ meters: Double?, unit: DistanceUnit = Fmt.distanceUnit) -> String {
+    static func distance(_ meters: Double?) -> String {
+        distance(meters, unit: distanceUnit)
+    }
+
+    nonisolated static func distance(_ meters: Double?, unit: DistanceUnit) -> String {
         guard let meters else { return "—" }
         let value = unit.distance(fromMeters: meters)
         return "\(value.formatted(.number.precision(.fractionLength(0...2)))) \(unit.abbreviation)"
@@ -121,13 +127,17 @@ enum Fmt {
 
     /// Cardio distance that respects the modality: pool swims stay in meters,
     /// everything else uses the user's km/mi preference.
-    static func cardioDistance(_ meters: Double?, kind: CardioKind, unit: DistanceUnit = Fmt.distanceUnit) -> String {
+    static func cardioDistance(_ meters: Double?, kind: CardioKind) -> String {
+        cardioDistance(meters, kind: kind, unit: distanceUnit)
+    }
+
+    nonisolated static func cardioDistance(_ meters: Double?, kind: CardioKind, unit: DistanceUnit) -> String {
         guard let meters else { return "—" }
         if kind.usesFixedMeters { return "\(Int(meters)) m" }
         return distance(meters, unit: unit)
     }
 
-    static func bpm(_ value: Int?) -> String {
+    nonisolated static func bpm(_ value: Int?) -> String {
         guard let value else { return "—" }
         return "\(value)"
     }

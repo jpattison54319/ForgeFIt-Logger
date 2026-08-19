@@ -12,6 +12,14 @@ nonisolated enum CardioRouteMath {
         Locale.current.measurementSystem == .us ? 1609.344 : 1000
     }
 
+    /// The single source of truth for "athlete-authored interval structure":
+    /// a split with a step label that was not produced by after-the-fact
+    /// detection. Completion and auto-detection both defer to this predicate
+    /// so stored manual laps are never mistaken for derived ones.
+    static func isManualIntervalSplit(_ split: CardioSplitModel) -> Bool {
+        split.label != nil && !split.autoDetected
+    }
+
     static func distanceMeters(_ a: CardioRoutePointModel, _ b: CardioRoutePointModel) -> Double {
         let lhs = CLLocation(latitude: a.latitude, longitude: a.longitude)
         let rhs = CLLocation(latitude: b.latitude, longitude: b.longitude)
@@ -19,8 +27,20 @@ nonisolated enum CardioRouteMath {
     }
 
     static func replaceSplits(for session: CardioSessionModel, in context: ModelContext, splitDistanceMeters: Double = defaultSplitDistanceMeters) {
-        for split in session.splits {
+        // Manual interval splits (labeled, not auto-detected) are the athlete's
+        // own work — a recorded route must never substitute derived distance
+        // laps for them. Distance and auto-detected laps are disposable derived
+        // views and may be regenerated; manual interval structure is not.
+        let manualSplits = session.splits.filter { CardioRouteMath.isManualIntervalSplit($0) }
+        for split in session.splits where split.label == nil || split.autoDetected {
             context.delete(split)
+        }
+
+        guard manualSplits.isEmpty else {
+            // Keep the interval structure as the split view; the route points
+            // and session distance still carry the route/distance data.
+            session.splits = manualSplits
+            return
         }
         session.splits = []
 
@@ -105,7 +125,104 @@ nonisolated enum CardioRouteMath {
             context.insert(point)
             session.routePoints.append(point)
         }
+        if session.routePoints.count >= 2 {
+            session.distanceSource = .route
+        }
         replaceSplits(for: session, in: context)
+    }
+}
+
+/// Scalar and relationship state touched by a cardio/yoga terminal mutation.
+/// SwiftData rollback restores the store transaction, but a view or Watch
+/// command can still hold model references with their just-mutated values.
+/// Terminal callers restore this snapshot before presenting/publishing the
+/// still-live session after a failed save.
+@MainActor
+struct CardioSessionPersistenceSnapshot {
+    private let startedAt: Date
+    private let liveStartedAt: Date?
+    private let endedAt: Date?
+    private let durationSeconds: Int?
+    private let distanceMeters: Double?
+    private let distanceSourceRaw: String?
+    private let elevationGainMeters: Double?
+    private let updatedAt: Date
+    private let yogaStyleRaw: String?
+    private let flexibilityExposureJSON: String?
+    private let posesCompleted: Int?
+    private let routePoints: [CardioRoutePointModel]
+    private let splits: [CardioSplitModel]
+
+    init(_ session: CardioSessionModel) {
+        startedAt = session.startedAt
+        liveStartedAt = session.liveStartedAt
+        endedAt = session.endedAt
+        durationSeconds = session.durationSeconds
+        distanceMeters = session.distanceMeters
+        distanceSourceRaw = session.distanceSourceRaw
+        elevationGainMeters = session.elevationGainMeters
+        updatedAt = session.updatedAt
+        yogaStyleRaw = session.yogaStyleRaw
+        flexibilityExposureJSON = session.flexibilityExposureJSON
+        posesCompleted = session.posesCompleted
+        routePoints = session.routePoints
+        splits = session.splits
+    }
+
+    func restore(_ session: CardioSessionModel) {
+        session.startedAt = startedAt
+        session.liveStartedAt = liveStartedAt
+        session.endedAt = endedAt
+        session.durationSeconds = durationSeconds
+        session.distanceMeters = distanceMeters
+        session.distanceSourceRaw = distanceSourceRaw
+        session.elevationGainMeters = elevationGainMeters
+        session.updatedAt = updatedAt
+        session.yogaStyleRaw = yogaStyleRaw
+        session.flexibilityExposureJSON = flexibilityExposureJSON
+        session.posesCompleted = posesCompleted
+        session.routePoints = routePoints
+        session.splits = splits
+    }
+}
+
+/// One retryable start contract for phone and Watch cardio/yoga surfaces.
+/// A failed write restores the not-started model immediately; the retained
+/// Retry reapplies the exact timestamp and launches runtime only after commit.
+@MainActor
+enum CardioSessionStartPersistence {
+    @discardableResult
+    static func perform(
+        session: CardioSessionModel,
+        startedAt: Date,
+        updatedAt: Date? = nil,
+        resetsStartedAt: Bool = true,
+        context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping (ModelContext) throws -> Void = { try $0.save() },
+        applyAdditionalMutation: @escaping @MainActor @Sendable () -> Void = {},
+        restoreAdditionalMutation: @escaping @MainActor @Sendable () -> Void = {},
+        onFailure: @escaping @MainActor @Sendable () -> Void = {},
+        onCommit: @escaping @MainActor @Sendable () -> Void
+    ) -> Bool {
+        let sessionBeforeStart = CardioSessionPersistenceSnapshot(session)
+        let resolvedSaveCenter = saveCenter ?? .shared
+        return resolvedSaveCenter.perform({
+            applyAdditionalMutation()
+            session.liveStartedAt = startedAt
+            if resetsStartedAt {
+                session.startedAt = startedAt
+            }
+            session.updatedAt = updatedAt ?? startedAt
+            do {
+                try save(context)
+            } catch {
+                sessionBeforeStart.restore(session)
+                restoreAdditionalMutation()
+                onFailure()
+                throw error
+            }
+        }, onSuccess: onCommit)
     }
 }
 
@@ -258,12 +375,27 @@ final class CardioRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     func stop(session: CardioSessionModel, in context: ModelContext) {
         defer { cancel() }
+        persistRecordedRoute(session: session, in: context)
+    }
+
+    /// Stages the current route inside the workout's terminal transaction but
+    /// keeps GPS ownership alive until that save commits. If persistence
+    /// fails, the logger remains live and route collection can continue; a
+    /// successful finish calls `cancel(sessionID:)` immediately afterward.
+    func stageRouteForTerminalSave(session: CardioSessionModel, in context: ModelContext) {
+        persistRecordedRoute(session: session, in: context)
+    }
+
+    private func persistRecordedRoute(session: CardioSessionModel, in context: ModelContext) {
         guard recordingSessionID == session.id, !locations.isEmpty else { return }
         CardioRouteMath.replaceRoute(for: session, locations: locations, in: context)
         session.distanceMeters = session.routePoints.count > 1
             ? zip(session.routePoints.sorted { $0.timestamp < $1.timestamp }, session.routePoints.sorted { $0.timestamp < $1.timestamp }.dropFirst())
                 .reduce(0) { $0 + CardioRouteMath.distanceMeters($1.0, $1.1) }
             : session.distanceMeters
+        if session.routePoints.count > 1 {
+            session.distanceSource = .route
+        }
         session.elevationGainMeters = elevationGain(session.routePoints)
         session.updatedAt = Date()
     }

@@ -167,13 +167,15 @@ struct RecoveryDaySummaryCard: View {
         let assessment = healthAssessment
         let loading = isLoadingHealth && selectedMetric == nil
         return MetricSummaryTile(
-            title: "Health",
+            title: "Vitals",
             systemImage: "waveform.path.ecg.rectangle.fill",
             value: loading ? "Loading" : assessment.headline,
             caption: loading ? "Checking Apple Health" : assessment.caption,
             tint: assessment.evaluatedCount == 0
                 ? theme.textTertiary
-                : assessment.outsideRangeCount > 0 ? theme.recoveryLow : theme.success,
+                : assessment.adverseCount > 0
+                    ? theme.recoveryLow
+                    : assessment.favorableCount > 0 ? theme.success : theme.zone2,
             isLoading: loading,
             showsDisclosure: false
         )

@@ -1,3 +1,4 @@
+import ForgeCore
 import SwiftUI
 
 /// Settings: connect Apple Health & Fitness (read + write), Apple Watch live-sync
@@ -9,8 +10,7 @@ struct SettingsView: View {
 
     @State private var watch = WatchLink.shared
     @State private var ble = BLEHeartRateService.shared
-    @State private var connected = HealthService.shared.isConnected
-    @State private var connecting = false
+    @State private var healthAuthorization = HealthAuthorizationStore.shared
     @State private var showHRMPairing = false
     @State private var showHistoryImporter = false
     @State private var showExportSheet = false
@@ -21,18 +21,19 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 SettingsHeroSection(
-                    healthConnected: connected,
+                    healthConnected: healthAuthorization.state.isConnected,
                     watchPaired: watch.isPaired,
-                    hrmConnected: ble.state == .connected
+                    hrmConnected: FeatureFlags.bluetoothHeartRate ? ble.state == .connected : nil
                 )
                 SettingsAppearanceSection()
+                SettingsAppSection()
                 SettingsHealthSection(
-                    connected: $connected,
-                    connecting: $connecting,
                     showHistoryImporter: $showHistoryImporter
                 )
                 SettingsWatchSection()
-                SettingsHRMSection(showHRMPairing: $showHRMPairing)
+                if FeatureFlags.bluetoothHeartRate {
+                    SettingsHRMSection(showHRMPairing: $showHRMPairing)
+                }
                 SettingsTrainingSection()
                 SettingsUnitsSection()
                 SettingsEquipmentSection()
@@ -56,24 +57,35 @@ struct SettingsView: View {
             }
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
+                case .theme:
+                    ThemePickerView()
                 case .heartRateZones:
                     HRZoneSettingsView()
                 case .warmupRamp:
                     WarmupRampSettingsView()
                 case .platesAndBars:
                     PlatesAndBarsDetailView()
+                case .resistanceBands:
+                    ResistanceBandSettingsView()
                 case .reminders:
                     RemindersDetailView()
+                case .yogaGuidance:
+                    YogaGuidanceSettingsView()
+                case .iCloudBackup:
+                    BackupSettingsView()
                 case .privacyPolicy:
                     PrivacyPolicyView()
                 }
             }
         }
+        .accessibilityIdentifier("settings-theme-\(theme.family.rawValue)")
         .sheet(isPresented: $showHistoryImporter) {
             WorkoutHistoryImportView()
         }
         .sheet(isPresented: $showHRMPairing) {
-            HRMPairingSheet()
+            if FeatureFlags.bluetoothHeartRate {
+                HRMPairingSheet()
+            }
         }
         .sheet(isPresented: $showExportSheet) {
             ExportDataSheet()
@@ -90,7 +102,7 @@ struct SettingsView: View {
         .onAppear {
             watch.activate()
             ble.reconnectIfRemembered()
-            connected = HealthService.shared.isConnected
+            healthAuthorization.refresh()
         }
     }
 }

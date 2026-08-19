@@ -88,7 +88,7 @@ struct FlexibilityInsightsCard: View {
             if minutes.restorative > 0 {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text("\(minutes.active) active")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.accent)
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.accentForeground)
                     Text("\(minutes.restorative) restorative")
                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.warmup)
                 }

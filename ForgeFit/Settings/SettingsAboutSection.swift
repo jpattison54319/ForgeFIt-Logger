@@ -32,7 +32,7 @@ struct SettingsAboutSection: View {
         } header: {
             SettingsSectionHeader(title: "About")
         } footer: {
-            Text("Workouts, health metrics, and check-ins stay on this phone. Routines and your exercise library sync through your own iCloud account so they follow you between devices. ForgeFit has no server of its own, so none of it reaches us.")
+            Text("Routines and your exercise library sync through your private iCloud account. Workout history is backed up automatically to your iCloud Drive without Apple Health data. Health metrics and check-ins stay on this phone. ForgeFit has no server of its own, so none of it reaches us.")
         }
     }
 

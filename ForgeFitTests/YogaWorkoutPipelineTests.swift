@@ -34,7 +34,10 @@ struct YogaWorkoutPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [pose], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [pose], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.isEmpty)
         let block = try #require(workout.blocks.first)
@@ -60,7 +63,10 @@ struct YogaWorkoutPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [pose], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [pose], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.isEmpty)
         let block = try #require(workout.blocks.first)
@@ -80,7 +86,10 @@ struct YogaWorkoutPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [sessionExercise], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [sessionExercise], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.exercises.isEmpty)
         let block = try #require(workout.blocks.first)
@@ -99,14 +108,23 @@ struct YogaWorkoutPipelineTests {
         context.insert(pose)
         try context.save()
 
-        let flow = YogaFlowPlan.singlePose(from: pose, style: .vinyasa)
-        let workout = WorkoutFactory.startYoga(flow: flow, named: "Morning Flow", exercises: [pose], in: context)
+        var flow = YogaFlowPlan.singlePose(from: pose, style: .vinyasa)
+        flow.voiceGuidanceEnabled = false
+        let committedWorkout = WorkoutFactory.startYoga(
+            flow: flow,
+            named: "Morning Flow",
+            exercises: [pose],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
 
         #expect(workout.title == "Morning Flow")
         #expect(workout.exercises.isEmpty)
         let block = try #require(workout.blocks.first)
         #expect(block.kind == .yoga)
         #expect(YogaFlowPlan.decode(from: block.planSnapshotJSON) == flow)
+        #expect(YogaFlowPlan.decode(from: block.planSnapshotJSON)?.voiceGuidanceEnabled == false)
         let session = try #require(workout.cardioSessions.first)
         #expect(session.isYogaSession)
         #expect(session.workoutBlockID == block.id)
@@ -135,7 +153,10 @@ struct YogaWorkoutPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [bench, pushdown], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [bench, pushdown], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
         let kinds = OrderedWorkoutItem.ordered(in: workout).map { item in
             switch item {
             case .exercise(let exercise): exercise.exerciseID == bench.id ? "bench" : "pushdown"
@@ -179,10 +200,11 @@ struct YogaWorkoutPipelineTests {
         context.insert(completed)
         try context.save()
 
-        YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
-        defer { YogaFlowRunnerHub.shared.stop(for: session.id) }
+        let hub = YogaFlowRunnerHub()
+        hub.start(plan: plan, session: session, context: context)
+        defer { hub.stop(for: session.id) }
 
-        let runner = try #require(YogaFlowRunnerHub.shared.runner(for: session.id))
+        let runner = try #require(hub.runner(for: session.id))
         #expect(runner.currentIndex == 1)
         #expect(runner.currentStep?.displayName == "Low Lunge")
         _ = container
@@ -200,7 +222,10 @@ struct YogaWorkoutPipelineTests {
         context.insert(routine)
         try context.save()
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [bench], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [bench], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
         #expect(workout.exercises.first?.sets.count == 1)
         #expect(workout.cardioSessions.isEmpty)
         #expect(workout.exercises.first?.yogaFlowJSON == nil)

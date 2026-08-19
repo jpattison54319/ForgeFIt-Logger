@@ -79,7 +79,7 @@ struct QuickActionsBubble: View {
         ) {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: expandedMirror)
         .sensoryFeedback(.selection, trigger: actionTick)
@@ -159,19 +159,30 @@ struct QuickActionsBubble: View {
         switch action.kind {
         case .emptyWorkout:
             appState.requestStart {
-                _ = WorkoutFactory.startEmpty(in: modelContext)
-                appState.showingLogger = true
+                _ = WorkoutFactory.startEmpty(
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             }
         case .cardio(let modality):
             appState.requestStart {
-                _ = WorkoutFactory.startCardio(modality, exercises: exercises, in: modelContext)
-                appState.showingLogger = true
+                _ = WorkoutFactory.startCardio(
+                    modality,
+                    exercises: exercises,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             }
         case .routine(let id):
             appState.requestStart {
                 guard let routine = routines.first(where: { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
-                _ = WorkoutFactory.start(routine: routine, exercises: exercises, setupNotes: setupNotes, in: modelContext)
-                appState.showingLogger = true
+                _ = WorkoutFactory.start(
+                    routine: routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
+                )
             }
         case .yoga(let slug):
             appState.requestStart {
@@ -180,9 +191,9 @@ struct QuickActionsBubble: View {
                     flow: YogaFlowCatalog.plan(for: seed),
                     named: seed.name,
                     exercises: exercises,
-                    in: modelContext
+                    in: modelContext,
+                    onCommit: { _ in appState.showingLogger = true }
                 )
-                appState.showingLogger = true
             }
         case .logBodyweight:
             onLogBodyweight()

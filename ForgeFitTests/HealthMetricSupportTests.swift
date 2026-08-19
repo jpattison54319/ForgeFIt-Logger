@@ -10,11 +10,22 @@ struct HealthMetricSupportTests {
         return calendar
     }()
 
+    @Test func usualBandOwnsMostOfTheVitalPlot() {
+        #expect(VitalBandScale.outerFraction == 0.20)
+        #expect(VitalBandScale.usualFraction == 0.60)
+        #expect(VitalBandScale.usualUpperBound == 0.80)
+    }
+
     @Test func noReadingsDoesNotInventAHealthScore() {
         let assessment = HealthRangeAssessment.make(metrics: [], calendar: calendar)
         #expect(assessment.headline == "No readings")
         #expect(assessment.evaluatedCount == 0)
         #expect(assessment.outsideRangeCount == 0)
+        #expect(assessment.favorableCount == 0)
+        #expect(assessment.adverseCount == 0)
+        #expect(VitalsTilePresentation.make(assessment: assessment).indicators.allSatisfy {
+            $0.interpretation == .unavailable
+        })
     }
 
     @Test func stableOvernightSignalsAreAllInPersonalRange() {
@@ -26,19 +37,48 @@ struct HealthMetricSupportTests {
         #expect(assessment.readings.count == 4)
         #expect(assessment.evaluatedCount == 4)
         #expect(assessment.outsideRangeCount == 0)
+        #expect(assessment.readings.map(\.kind) == VitalMetricKind.allCases)
         #expect(assessment.headline == "Within usual bands")
+        #expect(VitalsTilePresentation.make(assessment: assessment).indicators.allSatisfy {
+            $0.interpretation == .typical
+                && (VitalBandScale.usualLowerBound...VitalBandScale.usualUpperBound).contains($0.position)
+        })
     }
 
-    @Test func HealthTileCountsSignalsOutsidePersonalRange() {
+    @Test func adverseDirectionsAreTheOnlyReadingsThatNeedAttention() {
         let assessment = HealthRangeAssessment.make(
             metrics: history(latestHRV: 38, latestHeartRate: 72),
             calendar: calendar
         )
 
         #expect(assessment.outsideRangeCount == 2)
-        #expect(assessment.headline == "2 outside usual band")
-        #expect(assessment.readings.first { $0.id == "hrv" }?.status == .belowRange)
-        #expect(assessment.readings.first { $0.id == "resting-heart-rate" }?.status == .aboveRange)
+        #expect(assessment.adverseCount == 2)
+        #expect(assessment.favorableCount == 0)
+        #expect(assessment.headline == "2 need attention")
+        #expect(assessment.readings.first { $0.kind == .hrv }?.status == .belowRange)
+        #expect(assessment.readings.first { $0.kind == .heartRate }?.status == .aboveRange)
+    }
+
+    @Test func reportedFavorableDirectionsMoveIntoTheGreenZone() {
+        let assessment = HealthRangeAssessment.make(
+            metrics: history(
+                latestHRV: 75,
+                latestHeartRate: 54,
+                latestOxygenSaturation: 100
+            ),
+            calendar: calendar
+        )
+        let presentation = VitalsTilePresentation.make(assessment: assessment)
+        let favorable = presentation.indicators.filter { $0.interpretation == .favorable }
+
+        #expect(assessment.outsideRangeCount == 3)
+        #expect(assessment.adverseCount == 0)
+        #expect(assessment.favorableCount == 3)
+        #expect(assessment.headline == "3 favorable shifts")
+        #expect(favorable.map(\.kind) == [.heartRate, .bloodOxygen, .hrv])
+        #expect(favorable.allSatisfy { $0.position > VitalBandScale.usualUpperBound })
+        #expect(presentation.accessibilityValue.contains("Sleeping HR, 54 bpm, below usual, favorable"))
+        #expect(presentation.accessibilityValue.contains("HRV, 75 ms, above usual, favorable"))
     }
 
     @Test func respiratoryRateAndBloodOxygenUsePersonalRanges() {
@@ -53,8 +93,32 @@ struct HealthMetricSupportTests {
         )
 
         #expect(assessment.outsideRangeCount == 2)
-        #expect(assessment.readings.first { $0.id == "respiratory-rate" }?.status == .aboveRange)
-        #expect(assessment.readings.first { $0.id == "blood-oxygen" }?.status == .belowRange)
+        #expect(assessment.adverseCount == 2)
+        #expect(assessment.readings.first { $0.kind == .respiratoryRate }?.status == .aboveRange)
+        #expect(assessment.readings.first { $0.kind == .bloodOxygen }?.status == .belowRange)
+        #expect(VitalsTilePresentation.make(assessment: assessment).indicators
+            .filter { $0.interpretation == .adverse }
+            .allSatisfy { $0.position < VitalBandScale.usualLowerBound })
+    }
+
+    @Test func lowerRespiratoryRateAndHigherOxygenAreFavorable() {
+        let assessment = HealthRangeAssessment.make(
+            metrics: history(
+                latestHRV: 61,
+                latestHeartRate: 58,
+                latestRespiratoryRate: 12,
+                latestOxygenSaturation: 100
+            ),
+            calendar: calendar
+        )
+        let presentation = VitalsTilePresentation.make(assessment: assessment)
+        let respiratory = presentation.indicators.first { $0.kind == .respiratoryRate }
+        let oxygen = presentation.indicators.first { $0.kind == .bloodOxygen }
+
+        #expect(respiratory?.interpretation == .favorable)
+        #expect(oxygen?.interpretation == .favorable)
+        #expect(respiratory.map { $0.position > VitalBandScale.usualUpperBound } == true)
+        #expect(oxygen.map { $0.position > VitalBandScale.usualUpperBound } == true)
     }
 
     @Test func fewerThanTwentyEightReadingsIsLabeledBuilding() {
@@ -66,6 +130,9 @@ struct HealthMetricSupportTests {
 
         #expect(assessment.headline == "Building")
         #expect(assessment.evaluatedCount == 0)
+        #expect(VitalsTilePresentation.make(assessment: assessment).indicators.allSatisfy {
+            $0.position == 0.5 && $0.interpretation == .building
+        })
     }
 
     @Test func partialNightDoesNotSilentlySubstituteAllDayChannels() {
@@ -133,7 +200,35 @@ struct HealthMetricSupportTests {
 
         let assessment = HealthRangeAssessment.make(metrics: metrics, calendar: calendar)
 
-        #expect(assessment.readings.first { $0.id == "hrv" }?.status == .building)
+        #expect(assessment.readings.first { $0.kind == .hrv }?.status == .building)
+    }
+
+    @Test func normalizedPositionsClampExtremeValues() {
+        let highHRV = PersonalRangeReading(
+            kind: .hrv,
+            name: "HRV",
+            systemImage: VitalMetricKind.hrv.systemImage,
+            value: 100,
+            unit: "ms",
+            mean: 55,
+            lowerBound: 50,
+            upperBound: 60,
+            status: .aboveRange
+        )
+        let highHeartRate = PersonalRangeReading(
+            kind: .heartRate,
+            name: "Sleeping HR",
+            systemImage: VitalMetricKind.heartRate.systemImage,
+            value: 100,
+            unit: "bpm",
+            mean: 55,
+            lowerBound: 50,
+            upperBound: 60,
+            status: .aboveRange
+        )
+
+        #expect(highHRV.normalizedVitalPosition == 1)
+        #expect(highHeartRate.normalizedVitalPosition == 0)
     }
 
     @Test func dedicatedSleepingHeartRateIsNotRepeatedUnderOtherReadings() {

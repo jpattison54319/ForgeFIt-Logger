@@ -4,12 +4,24 @@ import SwiftUI
 /// that presents the reset confirmation sheet.
 struct SettingsDataSection: View {
     @Environment(\.theme) private var theme
+    @State private var backup = BackupScheduler.shared
     @Binding var showExportSheet: Bool
     @Binding var showCommunityDeletionSheet: Bool
     @Binding var showResetSheet: Bool
 
     var body: some View {
         Section {
+            NavigationLink(value: SettingsRoute.iCloudBackup) {
+                SettingsRowLabel(
+                    icon: backupIcon,
+                    iconTint: backupTint,
+                    title: "iCloud backup",
+                    subtitle: backupSubtitle
+                )
+            }
+            .themedListRow()
+            .accessibilityIdentifier("icloud-backup-row")
+
             Button {
                 showExportSheet = true
             } label: {
@@ -52,6 +64,46 @@ struct SettingsDataSection: View {
             .themedListRow()
         } header: {
             SettingsSectionHeader(title: "Data")
+        }
+    }
+
+    private var backupSubtitle: String {
+        switch backup.state {
+        case .waitingForFirstBackup:
+            "Workout history is waiting for its first automatic backup."
+        case .pending:
+            "Workout history changes are waiting to back up."
+        case .exporting:
+            "Backing up workout history now."
+        case .upToDate:
+            if let date = backup.lastSuccessAt {
+                "Workout history backed up \(date.formatted(date: .abbreviated, time: .shortened))."
+            } else {
+                "Workout history is backed up automatically."
+            }
+        case .unavailable:
+            "iCloud Drive is unavailable — tap to retry."
+        case .failed:
+            "Backup needs attention — tap to retry."
+        case .deleting:
+            "Deleting the workout-history backup."
+        }
+    }
+
+    private var backupIcon: String {
+        switch backup.state {
+        case .upToDate: "checkmark.icloud.fill"
+        case .unavailable, .failed: "exclamationmark.icloud.fill"
+        case .deleting: "trash.fill"
+        default: "icloud.and.arrow.up.fill"
+        }
+    }
+
+    private var backupTint: Color {
+        switch backup.state {
+        case .upToDate: theme.success
+        case .unavailable, .failed, .deleting: theme.danger
+        default: theme.accent
         }
     }
 }

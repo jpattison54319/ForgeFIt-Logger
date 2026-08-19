@@ -143,7 +143,7 @@ enum ExerciseCatalog {
 
     /// Insert any catalog exercises not already present. Idempotent.
     @MainActor
-    static func seed(into context: ModelContext) {
+    static func seed(into context: ModelContext, persist: Bool = true) throws {
         let seeds = load()
         guard !seeds.isEmpty else { return }
 
@@ -208,7 +208,7 @@ enum ExerciseCatalog {
                 changed += 1
             }
         }
-        if changed > 0 { try? context.save() }
+        if persist, changed > 0 { try context.save() }
     }
 
     // MARK: - Filter taxonomy for the picker
@@ -216,7 +216,7 @@ enum ExerciseCatalog {
     static let muscleGroups = [
         "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "back", "lats",
         "middle back", "upper back", "lower back", "traps", "quadriceps", "hamstrings",
-        "glutes", "calves", "forearms", "abductors", "adductors", "neck",
+        "glutes", "calves", "forearms", "abductors", "adductors", "obliques", "neck",
         // Pseudo-regions for yoga/mobility work, following the
         // `cardiovascular` precedent: broad stretch targets the strict muscle
         // list can't express.
@@ -357,7 +357,7 @@ struct ExerciseThumbnail: View {
             theme.surfaceElevated
             Image(systemName: exercise.isCardio ? "figure.run" : "dumbbell.fill")
                 .font(.system(size: size * 0.4, weight: .semibold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
         }
     }
 }

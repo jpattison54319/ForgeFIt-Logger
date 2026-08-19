@@ -5,6 +5,7 @@ import WidgetKit
 struct ForgeFitLauncherEntry: TimelineEntry {
     let date: Date
     let snapshot: ForgeFitWidgetSnapshot?
+    let themePreference: ForgeThemePreference
 
     /// Smart Stack ranking: an active workout is THE moment this widget
     /// matters — bid maximum relevance so it surfaces mid-session; idle
@@ -18,18 +19,30 @@ struct ForgeFitLauncherEntry: TimelineEntry {
 
 struct ForgeFitLauncherProvider: TimelineProvider {
     func placeholder(in context: Context) -> ForgeFitLauncherEntry {
-        ForgeFitLauncherEntry(date: Date(), snapshot: .placeholder)
+        ForgeFitLauncherEntry(
+            date: Date(),
+            snapshot: .placeholder,
+            themePreference: ForgeThemePreference()
+        )
     }
 
     func getSnapshot(in context: Context, completion: @escaping (ForgeFitLauncherEntry) -> Void) {
-        completion(ForgeFitLauncherEntry(date: Date(), snapshot: ForgeFitWidgetSnapshotStore.load() ?? .placeholder))
+        completion(ForgeFitLauncherEntry(
+            date: Date(),
+            snapshot: ForgeFitWidgetSnapshotStore.load() ?? .placeholder,
+            themePreference: ForgeThemePreferenceStore.load()
+        ))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<ForgeFitLauncherEntry>) -> Void) {
         let snapshot = ForgeFitWidgetSnapshotStore.load()
         let refresh = snapshot?.mode == .activeWorkout ? 5 * 60 : 60 * 60
         completion(Timeline(
-            entries: [ForgeFitLauncherEntry(date: Date(), snapshot: snapshot)],
+            entries: [ForgeFitLauncherEntry(
+                date: Date(),
+                snapshot: snapshot,
+                themePreference: ForgeThemePreferenceStore.load()
+            )],
             policy: .after(.now.addingTimeInterval(TimeInterval(refresh)))
         ))
     }
@@ -50,6 +63,7 @@ private struct ForgeFitLauncherView: View {
     let entry: ForgeFitLauncherEntry
     @Environment(\.widgetFamily) private var family
     @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Home Screen widgets render in three modes. Only `.fullColor` gets the
     /// brand palette: in `.accented` the system splits the view into two
@@ -58,9 +72,16 @@ private struct ForgeFitLauncherView: View {
     /// survives neither — it came out as a black slab on a tinted Home Screen.
     private var isFullColor: Bool { renderingMode == .fullColor }
 
-    private var primaryText: Color { isFullColor ? .white : .primary }
-    private var secondaryText: Color { isFullColor ? .white.opacity(0.72) : .secondary }
-    private var accent: Color { isFullColor ? WActivityTheme.accent : .primary }
+    private var usesBrandedCanvas: Bool { isFullColor && !isAccessory }
+    private var primaryText: Color { usesBrandedCanvas ? theme.textPrimary : .primary }
+    private var secondaryText: Color { usesBrandedCanvas ? theme.textSecondary : .secondary }
+    private var theme: ForgeWidgetTheme {
+        ForgeWidgetTheme(
+            preference: entry.themePreference,
+            systemColorScheme: colorScheme
+        )
+    }
+    private var accent: Color { isFullColor ? theme.accentForeground : .primary }
 
     var body: some View {
         content
@@ -74,7 +95,7 @@ private struct ForgeFitLauncherView: View {
                 // supply their own material. The modifier still has to be
                 // present in every case — WidgetKit requires one.
                 if isFullColor, !isAccessory {
-                    WActivityTheme.background
+                    theme.background
                 } else {
                     Color.clear
                 }
@@ -344,7 +365,7 @@ private struct ForgeFitLauncherView: View {
             Circle().stroke(primaryText.opacity(0.18), lineWidth: 5)
             Circle()
                 .trim(from: 0, to: CGFloat(max(0, min(score, 100))) / 100)
-                .stroke(isFullColor ? WActivityTheme.recoveryHigh : .primary, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .stroke(isFullColor ? theme.recoveryHigh : .primary, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(score)")
                 .font(.system(size: size * 0.32, weight: .bold, design: .rounded))

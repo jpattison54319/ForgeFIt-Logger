@@ -11,6 +11,7 @@ import Testing
 /// assisted pull-up's tonnage was assistance × reps ("551 lbs") instead of
 /// (bodyweight − assistance) × reps.
 @MainActor
+@Suite(.serialized)
 struct WeightModeTests {
     private let userID = ForgeFitDemo.userID
     private let backfillKey = "weightModeBackfilled.v1"
@@ -37,7 +38,10 @@ struct WeightModeTests {
         exercise.defaultWeightMode = .bodyweightAssisted
         let routine = makeRoutine(exercise: exercise, targetWeight: 25, in: context)
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [exercise], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
         let set = try #require(workout.exercises.first?.sets.first)
 
         #expect(set.weightMode == .bodyweightAssisted)
@@ -51,7 +55,10 @@ struct WeightModeTests {
         let exercise = ExerciseLibraryModel(name: "Bench Press")
         let routine = makeRoutine(exercise: exercise, targetWeight: 100, in: context)
 
-        let workout = WorkoutFactory.start(routine: routine, exercises: [exercise], in: context)
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine, exercises: [exercise], in: context, onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
         let set = try #require(workout.exercises.first?.sets.first)
 
         #expect(set.weightMode == .external)
@@ -90,6 +97,7 @@ struct WeightModeTests {
         workout.exercises = [workoutExercise]
         workout.endedAt = Date()
         context.insert(workout)
+        try context.save()
 
         WeightModeBackfill.convertIfNeeded(in: context)
         #expect(set.weightMode == .bodyweightAssisted)
@@ -120,6 +128,7 @@ struct WeightModeTests {
         workout.exercises = [workoutExercise]
         workout.endedAt = Date()
         context.insert(workout)
+        try context.save()
 
         WeightModeBackfill.convertIfNeeded(in: context)
         WeightModeBackfill.fillMissingBodyweight(
@@ -129,6 +138,62 @@ struct WeightModeTests {
         #expect(set.weight == 100)
         #expect(set.bodyweightKg == nil)
         #expect(set.totalVolume == 800)
+    }
+
+    @Test func failedConversionKeepsStampClearAndRetryDoesNotCommitOtherEdits() throws {
+        struct InjectedFailure: Error {}
+
+        UserDefaults.standard.removeObject(forKey: backfillKey)
+        defer { UserDefaults.standard.removeObject(forKey: backfillKey) }
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let exercise = ExerciseLibraryModel(name: "Assisted Pull-up")
+        exercise.defaultWeightMode = .bodyweightAssisted
+        let set = SetModel(userID: userID, position: 0, reps: 10, weight: 25)
+        set.completedAt = .now
+        let workoutExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            position: 0,
+            sets: [set]
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Historical pull-up",
+            endedAt: .now,
+            exercises: [workoutExercise]
+        )
+        let pendingRoutine = RoutineModel(userID: userID, name: "Initial")
+        context.insert(exercise)
+        context.insert(workout)
+        context.insert(pendingRoutine)
+        try context.save()
+        pendingRoutine.name = "Pending elsewhere"
+
+        WeightModeBackfill.convertIfNeeded(
+            in: context,
+            save: { _ in throw InjectedFailure() }
+        )
+        #expect(!UserDefaults.standard.bool(forKey: backfillKey))
+        #expect(set.weightMode == .external)
+
+        var verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<SetModel>()).first?.weightMode == .external)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Initial")
+
+        WeightModeBackfill.convertIfNeeded(in: context)
+        #expect(UserDefaults.standard.bool(forKey: backfillKey))
+        #expect(set.weightMode == .bodyweightAssisted)
+        #expect(set.assistanceWeight == 25)
+
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<SetModel>()).first?.weightMode == .bodyweightAssisted)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Initial")
+
+        try context.save()
+        verification = ModelContext(container)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).first?.name == "Pending elsewhere")
     }
 
     @Test func watchEditRoutesThroughTheModeField() throws {

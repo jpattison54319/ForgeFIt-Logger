@@ -7,8 +7,10 @@ import SwiftData
 /// library (names and sequences aren't copyrightable; the cue scripts and
 /// illustrations are ours). The pose's *dynamic* identity (name, target
 /// regions, hold default) is seeded into `ExerciseLibraryModel` rows; the
-/// *static* class content (Sanskrit name, spoken cues, contraindications)
-/// stays in this catalog, looked up by slug, so it never bloats CloudKit.
+/// *static* class content stays in the app bundle, looked up by slug, so it
+/// never bloats CloudKit. `cues` and `contraindications` remain here only for
+/// decoding the original catalog schema; guided classes use the separately
+/// reviewed `yoga_guidance.json` content.
 struct YogaPoseSeed: Decodable {
     struct Cues: Decodable {
         let entry: [String]
@@ -37,6 +39,16 @@ struct YogaPoseSeed: Decodable {
 }
 
 enum YogaPoseCatalog {
+    enum PersistenceError: LocalizedError {
+        case bundledCatalogUnavailable
+
+        var errorDescription: String? {
+            "ForgeFit couldn't load its bundled yoga pose catalog."
+        }
+    }
+
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
+
     /// Namespace prefixed onto slugs before hashing so pose IDs can never
     /// collide with the free-exercise-db catalog's slug-derived IDs.
     nonisolated private static let idNamespace = "yoga/"
@@ -109,9 +121,15 @@ enum YogaPoseCatalog {
     /// `yoga/<slug>` media slug — and never user-created or user-modified
     /// poses. CloudKit-safe: deletions sync like any other. Idempotent.
     @MainActor
-    static func pruneUnavailablePoses(into context: ModelContext) {
+    static func pruneUnavailablePoses(
+        into context: ModelContext,
+        persist: Bool = true,
+        save: @escaping SaveOperation = { try $0.save() }
+    ) throws {
+        let transaction = persist ? ModelContext(context.container) : context
+        if persist { transaction.autosaveEnabled = false }
         let validIDs = Set(catalogSlugs.map { id(forSlug: $0) }).union([sessionExerciseID])
-        let rows = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+        let rows = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let staleRows = rows.filter { row in
             guard let media = row.mediaSlug, media.hasPrefix(idNamespace) else { return false }
             return !validIDs.contains(row.id) && !row.userModified
@@ -119,29 +137,42 @@ enum YogaPoseCatalog {
         guard !staleRows.isEmpty else { return }
 
         let staleIDs = Set(staleRows.map(\.id))
-        let aliases = (try? context.fetch(FetchDescriptor<ExerciseAliasModel>())) ?? []
+        let aliases = try transaction.fetch(FetchDescriptor<ExerciseAliasModel>())
         for alias in aliases where staleIDs.contains(alias.exerciseID) {
-            context.delete(alias)
+            transaction.delete(alias)
         }
         for row in staleRows {
-            context.delete(row)
+            transaction.delete(row)
         }
-        try? context.save()
+        if persist {
+            do {
+                try save(transaction)
+            } catch {
+                transaction.rollback()
+                throw error
+            }
+        }
     }
 
     /// Insert or update the pose library. Idempotent; respects `userModified`
     /// the same way `ExerciseCatalog.seed` does.
     @MainActor
-    static func seed(into context: ModelContext) {
+    static func seed(
+        into context: ModelContext,
+        persist: Bool = true,
+        save: @escaping SaveOperation = { try $0.save() }
+    ) throws {
+        let transaction = persist ? ModelContext(context.container) : context
+        if persist { transaction.autosaveEnabled = false }
         let seeds = load()
-        guard !seeds.isEmpty else { return }
+        guard !seeds.isEmpty else { throw PersistenceError.bundledCatalogUnavailable }
 
-        let existing = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+        let existing = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let existingByID = Dictionary(
             existing.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let aliases = (try? context.fetch(FetchDescriptor<ExerciseAliasModel>())) ?? []
+        let aliases = try transaction.fetch(FetchDescriptor<ExerciseAliasModel>())
         let aliasesByID = Dictionary(
             aliases.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -150,7 +181,7 @@ enum YogaPoseCatalog {
         var changed = 0
         let session = existingByID[sessionExerciseID] ?? ExerciseLibraryModel(id: sessionExerciseID, name: "Yoga Session")
         if existingByID[sessionExerciseID] == nil {
-            context.insert(session)
+            transaction.insert(session)
             changed += 1
         }
         if upsertSessionFields(on: session) {
@@ -173,12 +204,12 @@ enum YogaPoseCatalog {
                     changed += 1
                 }
             } else {
-                context.insert(ExerciseAliasModel(id: aliasID, exerciseID: id, alias: seed.sanskrit))
+                transaction.insert(ExerciseAliasModel(id: aliasID, exerciseID: id, alias: seed.sanskrit))
                 changed += 1
             }
 
             if existingByID[id] == nil {
-                context.insert(model)
+                transaction.insert(model)
                 modelChanged = true
             } else if model.userModified {
                 continue
@@ -205,7 +236,10 @@ enum YogaPoseCatalog {
             // "yoga/<slug>" links the row back to this catalog and its
             // instructor-specific bundled image resources.
             set(\.mediaSlug, idNamespace + seed.slug)
-            set(\.instructions, seed.cues.entry + seed.cues.hold + [seed.cues.exit])
+            let reviewedInstructions = YogaGuidanceCatalog.guidance(forSlug: seed.slug)?
+                .cues.technique
+                .map(YogaGuidanceCatalog.resolvedForLibrary)
+            set(\.instructions, reviewedInstructions ?? (seed.cues.entry + seed.cues.hold + [seed.cues.exit]))
             if model.defaultWeightMode != .bodyweight {
                 model.defaultWeightMode = .bodyweight
                 modelChanged = true
@@ -216,7 +250,14 @@ enum YogaPoseCatalog {
                 changed += 1
             }
         }
-        if changed > 0 { try? context.save() }
+        if persist, changed > 0 {
+            do {
+                try save(transaction)
+            } catch {
+                transaction.rollback()
+                throw error
+            }
+        }
     }
 
     @MainActor

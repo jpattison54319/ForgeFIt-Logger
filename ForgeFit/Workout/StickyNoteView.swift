@@ -3,6 +3,17 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
+enum ExerciseNotePolicy {
+    /// Blank or whitespace-only text is not a note. Keeping that distinction
+    /// at the model boundary prevents an empty editor from being resurrected
+    /// when a lazy workout card scrolls back on screen.
+    static func authoredText(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+}
+
 /// A yellow sticky note attached to an exercise during a workout. The pin button
 /// (top-left) persists the note to the exercise so it reappears in future
 /// workouts (mirrored into `UserExerciseNoteModel`); unpinning keeps it on this
@@ -13,9 +24,13 @@ struct StickyNoteView: View {
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exerciseID: UUID
     let pinnedNote: UserExerciseNoteModel?
+    var focusRequested = false
+    var onFocusHandled: () -> Void = {}
+    var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
 
     @FocusState private var focused: Bool
-    @State private var newlyPinnedNote: UserExerciseNoteModel?
+    @State private var currentPinnedNote: UserExerciseNoteModel?
+    @State private var didResolvePinnedNote = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
@@ -62,7 +77,7 @@ struct StickyNoteView: View {
                         workoutExercise.notes = $0
                         workoutExercise.updatedAt = .now
                         syncPinnedIfNeeded()
-                        try? modelContext.save()
+                        modelContext.saveUserChanges()
                     }
                 ), axis: .vertical)
                 .font(.system(size: 15, weight: .medium))
@@ -86,19 +101,35 @@ struct StickyNoteView: View {
                 .shadow(color: .black.opacity(0.24), radius: 12, x: 0, y: 8)
         )
         .rotationEffect(.degrees(-0.6))
-        .onAppear { if (workoutExercise.notes ?? "").isEmpty { focused = true } }
+        .onAppear {
+            resolvePinnedNote()
+            if focusRequested {
+                focusIfRequested()
+            } else {
+                discardEmptyNoteIfNeeded()
+            }
+        }
+        .onChange(of: focusRequested) { _, requested in
+            if requested { focusIfRequested() }
+        }
+        .onChange(of: focused) { wasFocused, isFocused in
+            if wasFocused && !isFocused { discardEmptyNoteIfNeeded() }
+        }
+        .onDisappear(perform: discardEmptyNoteIfNeeded)
     }
 
     private func togglePin() {
+        resolvePinnedNote()
         workoutExercise.notePinned.toggle()
         if workoutExercise.notePinned {
             upsertPinnedNote()
-        } else if let persistedPinnedNote {
-            modelContext.delete(persistedPinnedNote)
-            newlyPinnedNote = nil
+        } else {
+            if let persistedPinnedNote { modelContext.delete(persistedPinnedNote) }
+            currentPinnedNote = nil
+            onPinnedNoteChanged(nil)
         }
         workoutExercise.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 
     private func syncPinnedIfNeeded() {
@@ -107,7 +138,13 @@ struct StickyNoteView: View {
     }
 
     private func upsertPinnedNote() {
-        let text = workoutExercise.notes ?? ""
+        resolvePinnedNote()
+        guard let text = ExerciseNotePolicy.authoredText(workoutExercise.notes) else {
+            if let persistedPinnedNote { modelContext.delete(persistedPinnedNote) }
+            currentPinnedNote = nil
+            onPinnedNoteChanged(nil)
+            return
+        }
         if let persistedPinnedNote {
             persistedPinnedNote.note = text
             persistedPinnedNote.updatedAt = .now
@@ -118,23 +155,45 @@ struct StickyNoteView: View {
                 note: text
             )
             modelContext.insert(note)
-            newlyPinnedNote = note
+            currentPinnedNote = note
+            onPinnedNoteChanged(note)
         }
     }
 
     private var persistedPinnedNote: UserExerciseNoteModel? {
-        pinnedNote ?? newlyPinnedNote
+        didResolvePinnedNote ? currentPinnedNote : pinnedNote
+    }
+
+    private func resolvePinnedNote() {
+        guard !didResolvePinnedNote else { return }
+        currentPinnedNote = pinnedNote
+        didResolvePinnedNote = true
+    }
+
+    private func focusIfRequested() {
+        guard focusRequested else { return }
+        focused = true
+        onFocusHandled()
+    }
+
+    private func discardEmptyNoteIfNeeded() {
+        guard workoutExercise.notes != nil,
+              ExerciseNotePolicy.authoredText(workoutExercise.notes) == nil else { return }
+        remove()
     }
 
     private func remove() {
+        resolvePinnedNote()
+        focused = false
         workoutExercise.notes = nil
-        if workoutExercise.notePinned, let persistedPinnedNote {
-            modelContext.delete(persistedPinnedNote)
-            newlyPinnedNote = nil
+        if workoutExercise.notePinned {
+            if let persistedPinnedNote { modelContext.delete(persistedPinnedNote) }
+            currentPinnedNote = nil
+            onPinnedNoteChanged(nil)
         }
         workoutExercise.notePinned = false
         workoutExercise.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }
 

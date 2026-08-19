@@ -15,6 +15,15 @@ struct SettingsEquipmentSection: View {
                 )
             }
             .themedListRow()
+            NavigationLink(value: SettingsRoute.resistanceBands) {
+                SettingsRowLabel(
+                    icon: "circle.hexagongrid.fill",
+                    iconTint: theme.secondaryAccent,
+                    title: "Resistance Bands",
+                    subtitle: "Color presets and their equivalent loads."
+                )
+            }
+            .themedListRow()
         } header: {
             SettingsSectionHeader(title: "Equipment")
         }

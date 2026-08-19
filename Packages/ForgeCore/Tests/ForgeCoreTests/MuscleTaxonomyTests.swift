@@ -9,6 +9,18 @@ struct MuscleTaxonomyTests {
         #expect(MuscleTaxonomy.children["chest"] == ["upper chest", "mid chest", "lower chest"])
     }
 
+    @Test func freshnessGroupsCoverEveryStrengthRegionWithoutChangingTaxonomyParents() {
+        let groups = MuscleTaxonomy.freshnessGroups
+        #expect(groups.map(\.name) == ["chest", "back", "shoulders", "arms", "legs", "core", "neck"])
+        #expect(groups.first { $0.name == "arms" }?.children == ["biceps", "triceps", "forearms"])
+        #expect(groups.first { $0.name == "legs" }?.children == [
+            "quadriceps", "hamstrings", "glutes", "calves", "abductors", "adductors",
+        ])
+        #expect(groups.first { $0.name == "core" }?.children == ["abdominals", "obliques"])
+        #expect(MuscleTaxonomy.parent(of: "quadriceps") == "quadriceps")
+        #expect(MuscleTaxonomy.parent(of: "biceps") == "biceps")
+    }
+
     @Test func canonicalNormalizesLegacyVariants() {
         #expect(MuscleTaxonomy.canonical("front_delts") == "front delts")
         #expect(MuscleTaxonomy.canonical("mid_back") == "middle back")
@@ -44,6 +56,7 @@ struct MuscleTaxonomyTests {
         #expect(MuscleTaxonomy.displayName("front_delts") == "Front Delts")
         #expect(MuscleTaxonomy.displayName("upper back") == "Upper Back")
         #expect(MuscleTaxonomy.displayName("chest") == "Chest")
+        #expect(MuscleTaxonomy.freshnessDisplayName("abdominals") == "Abs")
     }
 
     /// The analytics rollup promise: legacy and canonical spellings of the

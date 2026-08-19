@@ -40,6 +40,7 @@ struct SocialOptInView: View {
                                 Text("@").font(.bodyStrong).foregroundStyle(theme.textSecondary)
                                 TextField("yourhandle", text: $handle)
                                     .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .minimumTouchTarget()
                                     .accessibilityIdentifier("social-handle-field")
                                     .onChange(of: handle) { _, _ in scheduleCheck() }
                                 availabilityBadge
@@ -50,7 +51,10 @@ struct SocialOptInView: View {
                     }
 
                     SectionHeader("Display name")
-                    Card { TextField("Your name", text: $displayName) }
+                    Card {
+                        TextField("Your name", text: $displayName)
+                            .minimumTouchTarget()
+                    }
 
                     SectionHeader("Who can follow you")
                     Card {
@@ -106,6 +110,7 @@ struct SocialOptInView: View {
                 Spacer()
             }
             .contentShape(Rectangle())
+            .minimumTouchTarget()
         }
         .buttonStyle(.plain)
     }

@@ -56,6 +56,6 @@ struct WorkoutNoteEditor: View {
 
     private func persist() {
         workout.updatedAt = .now
-        try? modelContext.save()
+        modelContext.saveUserChanges()
     }
 }

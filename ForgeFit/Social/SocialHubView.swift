@@ -52,7 +52,7 @@ struct SocialHubView: View {
         VStack(alignment: .leading, spacing: Space.lg) {
             Card {
                 VStack(alignment: .leading, spacing: Space.md) {
-                    Image(systemName: "person.2.fill").font(.system(size: 28)).foregroundStyle(theme.accent)
+                    Image(systemName: "person.2.fill").font(.system(size: 28)).foregroundStyle(theme.accentForeground)
                     Text("Train with friends").font(.sectionTitle).foregroundStyle(theme.textPrimary)
                     Text("Follow friends to see their workouts and stats, and compare on leaderboards. Your workouts share as **training data only** — never health data. Private until you turn it on.")
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
@@ -113,7 +113,7 @@ struct SocialHubView: View {
 
     private func hubAction(_ icon: String, _ title: String) -> some View {
         VStack(spacing: Space.xs) {
-            Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundStyle(theme.accent)
+            Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundStyle(theme.accentForeground)
             Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
         }
         .frame(maxWidth: .infinity).padding(.vertical, Space.md)
@@ -123,7 +123,7 @@ struct SocialHubView: View {
     private func hubRow(_ icon: String, _ title: String, _ subtitle: String) -> some View {
         Card(padding: Space.md) {
             HStack(spacing: Space.md) {
-                Image(systemName: icon).font(.system(size: 18)).foregroundStyle(theme.accent).frame(width: 32)
+                Image(systemName: icon).font(.system(size: 18)).foregroundStyle(theme.accentForeground).frame(width: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
                     Text(subtitle).font(.system(size: 12)).foregroundStyle(theme.textSecondary)

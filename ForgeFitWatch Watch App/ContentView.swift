@@ -30,7 +30,9 @@ struct WatchHomeView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let readiness = context?.readiness {
+                // Day-gated: the retained context can be yesterday's, and a
+                // stale score here is worse than no score.
+                if let readiness = context?.currentReadiness() {
                     HStack(spacing: 10) {
                         Gauge(value: Double(readiness), in: 0...100) {
                             EmptyView()
@@ -43,7 +45,7 @@ struct WatchHomeView: View {
                         .scaleEffect(0.82)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Readiness").font(.system(size: 14, weight: .semibold))
-                            Text(context?.readinessAction ?? (readiness >= 70 ? "Ready to train" : readiness >= 40 ? "Take it steady" : "Go easy today"))
+                            Text(context?.currentReadinessAction() ?? (readiness >= 70 ? "Ready to train" : readiness >= 40 ? "Take it steady" : "Go easy today"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }

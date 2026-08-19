@@ -1,17 +1,12 @@
 import Foundation
 
-/// Deterministic, evidence-based yoga sequencing: turns a pose catalog plus a
+/// Deterministic yoga sequencing: turns a pose catalog plus a
 /// style/duration/difficulty request into a `YogaFlowPlan`.
 ///
-/// The sequencing follows the classical class arc taught across lineages
-/// (Iyengar's sequencing principles, common vinyasa krama): warm-up first to
-/// raise tissue temperature → standing/balance work while the nervous system
-/// is fresh → peak effort (backbends, core, inversions) → floor unwind
-/// (hip openers, forward folds, twists) to down-regulate → ALWAYS a resting
-/// closer (savasana-like) because the parasympathetic rebound is where the
-/// recovery benefit accrues. The closer's hold absorbs whatever time the body
-/// of the class didn't consume, so the plan lands exactly on target without
-/// ever truncating the rest.
+/// The template uses a conventional guided-class arc: warm-up, standing and
+/// balance work, more demanding shapes, floor-based shapes, and a resting
+/// closer. The closer absorbs whatever time the body of the class did not
+/// consume, so the plan lands exactly on target without truncating that rest.
 ///
 /// Lives in ForgeCore (not the app target) so both the phone and the watch
 /// can regenerate/preview flows from the same pure function, and because it
@@ -75,6 +70,10 @@ public enum YogaFlowGenerator {
         /// them — the generator budgets 2x their hold accordingly.
         public var unilateral: Bool
         public var defaultHoldSeconds: Int
+        /// App-supplied lower bound needed for its complete critical guidance
+        /// (pose name, self-contained setup, and exit). Defaults to one so
+        /// non-guided clients retain the original sequencing behavior.
+        public var minimumHoldSeconds: Int
 
         public init(
             slug: String,
@@ -83,7 +82,8 @@ public enum YogaFlowGenerator {
             category: Category,
             difficulty: Difficulty,
             unilateral: Bool = false,
-            defaultHoldSeconds: Int
+            defaultHoldSeconds: Int,
+            minimumHoldSeconds: Int = 1
         ) {
             self.slug = slug
             self.poseID = poseID
@@ -92,6 +92,7 @@ public enum YogaFlowGenerator {
             self.difficulty = difficulty
             self.unilateral = unilateral
             self.defaultHoldSeconds = defaultHoldSeconds
+            self.minimumHoldSeconds = max(1, minimumHoldSeconds)
         }
     }
 
@@ -200,10 +201,9 @@ public enum YogaFlowGenerator {
         let weight: Double
     }
 
-    /// Classical arc per style. Yin/restorative/gentle skip the standing arc
-    /// entirely — those practices are floor-based by definition (long passive
-    /// holds targeting connective tissue / parasympathetic tone), so only
-    /// hip openers, forward folds, and resting shapes are legal.
+    /// Conventional arc per style. ForgeFit's yin, restorative, and gentle
+    /// templates favor longer floor-based shapes, so they skip the standing
+    /// phase in generated flows.
     private static func phases(for style: YogaStyle) -> [Phase] {
         switch style {
         case .yin, .restorative, .gentle:
@@ -229,19 +229,20 @@ public enum YogaFlowGenerator {
         }
     }
 
-    /// Style-appropriate hold windows. Yin holds 2–5 minutes (the tissue
-    /// argument: fascia only responds to long loading), restorative 90–180s,
-    /// power keeps holds short and metabolic, hatha holds longer than vinyasa
-    /// because vinyasa links poses breath-to-movement.
+    /// Product-defined hold windows. Yin uses 2–5 minutes, restorative and
+    /// gentle use 90–180 seconds, power uses shorter holds, and hatha allows
+    /// longer holds than the vinyasa template.
     private static func adjustedHold(for pose: PoseInput, style: YogaStyle) -> Int {
         let base = pose.defaultHoldSeconds
+        let styled: Int
         switch style {
-        case .yin: return min(max(base, 120), 300)
-        case .restorative, .gentle: return min(max(base, 90), 180)
-        case .power: return min(max(base * 3 / 4, 15), 45)
-        case .vinyasa: return min(max(base, 20), 60)
-        case .hatha: return min(max(base, 30), 90)
+        case .yin: styled = min(max(base, 120), 300)
+        case .restorative, .gentle: styled = min(max(base, 90), 180)
+        case .power: styled = min(max(base * 3 / 4, 15), 45)
+        case .vinyasa: styled = min(max(base, 20), 60)
+        case .hatha: styled = min(max(base, 30), 90)
         }
+        return max(styled, pose.minimumHoldSeconds)
     }
 
     /// Minimum seconds reserved for the resting closer. Longer for the

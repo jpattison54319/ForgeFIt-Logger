@@ -223,28 +223,16 @@ nonisolated struct TrainingLoadCalculator {
     /// multiplied: free weights are not universally more fatiguing than machines.
     private func strengthLoad(_ workingSets: [SetModel]) -> Double {
         workingSets.reduce(0.0) { total, set in
-            let effort: Double
-            if let rpe = set.rpe {
-                effort = clampedEffort(rpe)
-            } else if let rir = set.rir {
-                effort = clampedEffort(10 - Double(rir))
-            } else {
-                effort = Self.defaultEffort
-            }
+            let effort = TrainingEffortMath.resolved(
+                rpe: set.rpe,
+                rir: set.rir,
+                defaultEffort: Self.defaultEffort
+            )
             return total
                 + Self.pointsPerEffectiveSet
                 * VolumeMath.effectiveSetCount(set.domainEntry)
-                * effortWeight(effort)
+                * TrainingEffortMath.weight(for: effort)
         }
-    }
-
-    /// RPE 8 anchors one effective set at 1.0. The bounded shape is a product
-    /// heuristic used only by the fallback, not a biological fatigue equation.
-    private func effortWeight(_ effort: Double) -> Double {
-        let value = clampedEffort(effort)
-        return value <= 8
-            ? max(0.55, 1 + (value - 8) * 0.15)
-            : min(1.45, 1 + (value - 8) * 0.225)
     }
 
     /// Imported/detail-less workouts may still contribute from duration. Empty
@@ -361,7 +349,7 @@ nonisolated struct TrainingLoadCalculator {
     }
 
     private func clampedEffort(_ effort: Double) -> Double {
-        min(10, max(0, effort))
+        TrainingEffortMath.clamped(effort)
     }
 
     private func healthUUID(for workout: WorkoutModel) -> UUID? {

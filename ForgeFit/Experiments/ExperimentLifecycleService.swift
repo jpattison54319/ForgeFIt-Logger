@@ -39,7 +39,8 @@ enum ExperimentLifecycleService {
     @discardableResult
     static func reconcile(
         in context: ModelContext,
-        now: Date = .now
+        now: Date = .now,
+        persist: Bool = true
     ) throws -> Reconciliation {
         let live = try liveExperiments(in: context)
         var result = Reconciliation()
@@ -58,13 +59,27 @@ enum ExperimentLifecycleService {
             result.duplicateActiveIDs = Array(stillActive.dropFirst().map(\.id))
         }
 
-        if changed {
+        if changed, persist {
             try context.save()
             for id in result.completedIDs {
                 ExperimentNotificationScheduler.cancelAll(experimentID: id)
             }
         }
         return result
+    }
+
+    /// Launch and foreground maintenance must not commit edits that another
+    /// screen is still holding in the shared context. Reconcile only durable
+    /// inputs in a short-lived transaction and publish completion side effects
+    /// after that transaction commits.
+    @discardableResult
+    static func reconcileIsolated(
+        from sourceContext: ModelContext,
+        now: Date = .now
+    ) throws -> Reconciliation {
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        return try reconcile(in: transaction, now: now)
     }
 }
 
@@ -140,13 +155,18 @@ enum ExperimentNotificationScheduler {
         latestScheduleToken[experimentID] = token
         let task = Task { @MainActor in
             _ = await previous?.value
-            guard latestScheduleToken[experimentID] == token else {
+            guard !Task.isCancelled,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                  latestScheduleToken[experimentID] == token else {
                 return false
             }
             return await performSchedule(snapshot, now: now, token: token)
         }
         scheduleTails[experimentID] = task
-        let accepted = await task.value
+        let accepted = await withTaskCancellationHandler(
+            operation: { await task.value },
+            onCancel: { task.cancel() }
+        )
         if latestScheduleToken[experimentID] == token {
             scheduleTails[experimentID] = nil
         }
@@ -158,10 +178,14 @@ enum ExperimentNotificationScheduler {
         now: Date,
         token: UUID
     ) async -> Bool {
+        guard !Task.isCancelled,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return false }
         removeAll(experimentID: snapshot.experimentID)
 
         let settings = await UNUserNotificationCenter.current().notificationSettings()
-        guard latestScheduleToken[snapshot.experimentID] == token else {
+        guard !Task.isCancelled,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              latestScheduleToken[snapshot.experimentID] == token else {
             removeAll(experimentID: snapshot.experimentID)
             return false
         }
@@ -183,7 +207,9 @@ enum ExperimentNotificationScheduler {
                 limit: reminderRequestLimit
             )
             for (slot, date) in dates.enumerated() {
-                guard latestScheduleToken[snapshot.experimentID] == token else {
+                guard !Task.isCancelled,
+                      LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                      latestScheduleToken[snapshot.experimentID] == token else {
                     removeAll(experimentID: snapshot.experimentID)
                     return false
                 }
@@ -208,14 +234,18 @@ enum ExperimentNotificationScheduler {
                 } catch {
                     continue
                 }
-                guard latestScheduleToken[snapshot.experimentID] == token else {
+                guard !Task.isCancelled,
+                      LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                      latestScheduleToken[snapshot.experimentID] == token else {
                     removeAll(experimentID: snapshot.experimentID)
                     return false
                 }
             }
         }
 
-        guard latestScheduleToken[snapshot.experimentID] == token else {
+        guard !Task.isCancelled,
+              LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              latestScheduleToken[snapshot.experimentID] == token else {
             removeAll(experimentID: snapshot.experimentID)
             return false
         }
@@ -241,7 +271,9 @@ enum ExperimentNotificationScheduler {
             } catch {
                 // The date-driven lifecycle still completes without a request.
             }
-            guard latestScheduleToken[snapshot.experimentID] == token else {
+            guard !Task.isCancelled,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+                  latestScheduleToken[snapshot.experimentID] == token else {
                 removeAll(experimentID: snapshot.experimentID)
                 return false
             }

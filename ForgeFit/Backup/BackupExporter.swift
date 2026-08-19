@@ -10,6 +10,64 @@ nonisolated struct BackupSnapshotMetadata: Sendable {
     let appVersion: String?
 }
 
+/// Structured outcome of a reset-time backup deletion. The reset flow maps
+/// this directly onto user-facing consequences, so every failure mode must be
+/// named explicitly — a swallowed delete must never read as "backup removed".
+nonisolated enum BackupDeletionResult: Sendable, Equatable {
+    /// Both backup files were removed (or none existed). The success stamp was
+    /// cleared and the exporter returned to idle.
+    case deleted
+    /// The ubiquity container could not be resolved (signed out, offline, or
+    /// inaccessible). The backup's fate is UNKNOWN — it may still exist — so
+    /// status becomes `.unavailable` while the success stamp is preserved.
+    case unavailable
+    /// The deletion was interrupted (task cancelled) before completing.
+    case cancelled
+    /// The deletion failed; the backup may still exist. Carries the reason.
+    case failed(String)
+}
+
+/// Injection seam for reset-time backup deletion. `BackupExporter` is the
+/// production implementation; tests inject stubs so offline, failure, and
+/// interruption paths run deterministically without touching iCloud.
+nonisolated protocol BackupDeleting: Sendable {
+    func deleteAllBackups() async -> BackupDeletionResult
+}
+
+/// Two-slot rotation that never moves `latest` out of the way. The prior
+/// latest is copied atomically to `previous` first; only then is `latest`
+/// atomically replaced with the new bytes. A failure or process interruption
+/// before promotion therefore leaves the old latest in place.
+nonisolated enum BackupFileRotation {
+    enum Step: CaseIterable, Equatable, Sendable {
+        case beforePreviousWrite
+        case afterPreviousWrite
+        case beforeLatestWrite
+        case afterLatestWrite
+    }
+
+    static func rotate(
+        newData: Data,
+        latestURL: URL,
+        previousURL: URL,
+        atStep: ((Step) throws -> Void)? = nil
+    ) throws {
+        let priorLatest = FileManager.default.fileExists(atPath: latestURL.path)
+            ? try Data(contentsOf: latestURL)
+            : nil
+
+        try atStep?(.beforePreviousWrite)
+        if let priorLatest {
+            try priorLatest.write(to: previousURL, options: .atomic)
+        }
+        try atStep?(.afterPreviousWrite)
+
+        try atStep?(.beforeLatestWrite)
+        try newData.write(to: latestURL, options: .atomic)
+        try atStep?(.afterLatestWrite)
+    }
+}
+
 /// Reads and maps the full log graph on a private context. Automatic backups
 /// are intentionally delayed until the app is idle, but that delay is not a
 /// performance boundary by itself: doing the eventual relationship faulting
@@ -19,15 +77,21 @@ nonisolated struct BackupSnapshotWorker: Sendable {
 
     func snapshot(metadata: BackupSnapshotMetadata) async throws -> ForgeFitBackupFile {
         let container = modelContainer
-        let task = Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .background) {
             try Task.checkCancellation()
             let context = ModelContext(container)
             let workouts = try context.fetch(FetchDescriptor<WorkoutModel>())
+            try Task.checkCancellation()
             let batches = try context.fetch(FetchDescriptor<WorkoutImportBatchModel>())
+            try Task.checkCancellation()
             let microcycleTrackings = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
+            try Task.checkCancellation()
             let microcycleWindows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            try Task.checkCancellation()
             let restDays = try context.fetch(FetchDescriptor<RestDayModel>())
+            try Task.checkCancellation()
             let exercises = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            try Task.checkCancellation()
             let names = Dictionary(
                 exercises.map { ($0.id, $0.name) },
                 uniquingKeysWith: { first, _ in first }
@@ -69,14 +133,13 @@ nonisolated struct BackupSnapshotWorker: Sendable {
 
 /// Writes the sanitized training-log backup into the user's own iCloud
 /// Drive (visible in Files → iCloud Drive → ForgeFit → Backups). The file
-/// contains ONLY user-authored training data — the DTO types in
-/// `BackupFormat.swift` cannot express health fields, and BackupFormatTests
-/// asserts nothing health-derived ever appears in the bytes. This is the
-/// 5.1.3(ii)-compliant replacement for syncing the log through CloudKit.
+/// contains user-recorded training data. Direct Health fields are absent from
+/// the DTOs, while `BackupMapper` filters HealthKit-imported workouts and
+/// Health-provenance values. BackupFormatTests guard both layers.
 actor BackupExporter {
     static let shared = BackupExporter()
 
-    enum Status: Equatable {
+    nonisolated enum Status: Equatable, Sendable {
         case idle
         case exporting
         /// Signed out of iCloud (ubiquity container unavailable).
@@ -120,8 +183,8 @@ actor BackupExporter {
         backupDirectoryURL()?.appendingPathComponent("ForgeFit-Backup-previous.\(Self.fileExtension)")
     }
 
-    /// Snapshot on a private SwiftData context, then map + compress + write on
-    /// this actor. Returns the resulting status.
+    /// Snapshot, encoding, compression, and coordinated writes all run below
+    /// interaction priority with cancellation boundaries between phases.
     @discardableResult
     func exportNow(container: ModelContainer) async -> Status {
         guard !Task.isCancelled else { return .idle }
@@ -134,41 +197,93 @@ actor BackupExporter {
         status = .exporting
         do {
             let file = try await Self.snapshotFile(container: container)
-            guard !Task.isCancelled else {
-                status = .idle
-                return status
-            }
-            let data = try BackupMapper.encode(file)
-            let compressed = try (data as NSData).compressed(using: .zlib) as Data
-
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let temp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("ForgeFit-Backup-\(UUID().uuidString).\(Self.fileExtension)")
-            try compressed.write(to: temp, options: .atomic)
-
-            // Coordinated rotate: latest → previous, temp → latest.
-            var coordinatorError: NSError?
-            var moveError: Error?
-            NSFileCoordinator().coordinate(writingItemAt: latestURL, options: .forReplacing, error: &coordinatorError) { url in
-                do {
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        _ = try? FileManager.default.removeItem(at: previousURL)
-                        try FileManager.default.moveItem(at: url, to: previousURL)
-                    }
-                    try FileManager.default.moveItem(at: temp, to: url)
-                } catch {
-                    moveError = error
-                }
-            }
-            if let error = coordinatorError ?? (moveError.map { $0 as NSError }) { throw error }
+            try Task.checkCancellation()
+            let compressed = try await Self.encodeAndCompress(file)
+            try Task.checkCancellation()
+            try await Self.writeBackup(
+                compressed,
+                directory: directory,
+                latestURL: latestURL,
+                previousURL: previousURL
+            )
+            try Task.checkCancellation()
 
             let stamp = Date()
             UserDefaults.standard.set(stamp, forKey: Self.lastSuccessKey)
             status = .done(stamp)
+        } catch is CancellationError {
+            // Lifecycle cancellation (a workout opened or the app moved to
+            // background) is expected. Keep the prior backup and let the
+            // scheduler retry later; never surface it as a user-facing error.
+            status = .idle
         } catch {
             status = .failed(error.localizedDescription)
         }
         return status
+    }
+
+    private nonisolated static func encodeAndCompress(
+        _ file: ForgeFitBackupFile
+    ) async throws -> Data {
+        let task = Task.detached(priority: .background) {
+            try Task.checkCancellation()
+            let data = try BackupMapper.encode(file)
+            try Task.checkCancellation()
+            let compressed = try (data as NSData).compressed(using: .zlib) as Data
+            try Task.checkCancellation()
+            return compressed
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    private nonisolated static func writeBackup(
+        _ compressed: Data,
+        directory: URL,
+        latestURL: URL,
+        previousURL: URL
+    ) async throws {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try Task.checkCancellation()
+
+            // Coordinate both slots. Cancellation can stop rotation before
+            // either atomic write without invalidating the prior latest file.
+            var coordinatorError: NSError?
+            var rotationError: Error?
+            NSFileCoordinator().coordinate(
+                writingItemAt: latestURL,
+                options: .forReplacing,
+                writingItemAt: previousURL,
+                options: .forReplacing,
+                error: &coordinatorError
+            ) { coordinatedLatest, coordinatedPrevious in
+                do {
+                    try BackupFileRotation.rotate(
+                        newData: compressed,
+                        latestURL: coordinatedLatest,
+                        previousURL: coordinatedPrevious,
+                        atStep: { _ in try Task.checkCancellation() }
+                    )
+                } catch {
+                    rotationError = error
+                }
+            }
+            if let error = coordinatorError ?? (rotationError.map { $0 as NSError }) {
+                throw error
+            }
+            try Task.checkCancellation()
+        }
+        try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
     }
 
     /// Reads either a zlib-compressed or plain-JSON backup file.
@@ -180,16 +295,60 @@ actor BackupExporter {
     }
 
     /// The privacy policy promises "Erase All Data also removes the backup".
-    func deleteAllBackups() {
-        guard let latest = latestBackupURL(), let previous = previousBackupURL() else { return }
-        for url in [latest, previous] {
-            var coordinatorError: NSError?
-            NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting, error: &coordinatorError) { url in
-                try? FileManager.default.removeItem(at: url)
-            }
+    /// Unlike the old fire-and-forget task, this awaits the coordinated
+    /// removal and reports a structured result. The success stamp is cleared
+    /// and status returns to idle ONLY when deletion actually completed; a
+    /// failure, interruption, or unavailable container preserves the success
+    /// stamp and leaves a non-idle status so no caller can mistake an
+    /// incomplete delete for a done one.
+    /// Coordinator and removal errors are surfaced, never swallowed.
+    @discardableResult
+    func deleteAllBackups() async -> BackupDeletionResult {
+        guard !Task.isCancelled else {
+            status = .failed("Backup deletion was interrupted.")
+            return .cancelled
+        }
+        guard let latest = latestBackupURL(), let previous = previousBackupURL() else {
+            // The ubiquity container could not be resolved (signed out,
+            // offline, or inaccessible). That proves nothing about the backup
+            // files themselves — it only proves we could not look for them —
+            // so the outcome is unresolved, not success: no stamp clear, no
+            // idle transition.
+            status = .unavailable
+            return .unavailable
+        }
+        do {
+            try Self.removeBackupFileIfPresent(at: latest)
+            try Task.checkCancellation()
+            try Self.removeBackupFileIfPresent(at: previous)
+        } catch is CancellationError {
+            status = .failed("Backup deletion was interrupted.")
+            return .cancelled
+        } catch {
+            status = .failed(error.localizedDescription)
+            return .failed(error.localizedDescription)
         }
         UserDefaults.standard.removeObject(forKey: Self.lastSuccessKey)
         status = .idle
+        return .deleted
+    }
+
+    /// Coordinated removal of one backup file. A missing file is success
+    /// (nothing to delete); any coordinator or removal error is thrown so the
+    /// caller can report the failure instead of assuming the backup is gone.
+    private static func removeBackupFileIfPresent(at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var coordinatorError: NSError?
+        var removeError: Error?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forDeleting, error: &coordinatorError) { deletionURL in
+            do {
+                try FileManager.default.removeItem(at: deletionURL)
+            } catch {
+                removeError = error
+            }
+        }
+        if let coordinatorError { throw coordinatorError }
+        if let removeError { throw removeError }
     }
 
     // MARK: - Snapshot
@@ -218,8 +377,9 @@ actor BackupExporter {
             case let string as String:
                 preferences[key] = .string(string)
             case let data as Data:
-                // JSON-blob prefs (quick starts, plate inventory) travel as
-                // base64 strings.
+                // Binary JSON preferences (plate inventory and warm-up ramp)
+                // travel as base64 strings. String-backed JSON, such as Home
+                // quick starts, is handled by the String case above.
                 preferences[key] = .string(data.base64EncodedString())
             case let array as [Int]:
                 // reminderWeekdays — encode as CSV string.
@@ -236,3 +396,6 @@ actor BackupExporter {
         )
     }
 }
+
+extension BackupExporter: BackupDeleting {}
+extension BackupExporter: BackupManaging {}

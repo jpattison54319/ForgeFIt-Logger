@@ -105,6 +105,38 @@ nonisolated struct TrainingAnalytics {
         case volume = "Volume"
         case reps = "Reps"
         var id: String { rawValue }
+
+        @MainActor
+        var axisLabel: String {
+            switch self {
+            case .duration: "Time (hours)"
+            case .volume: "Volume (\(Fmt.unit.shortSuffix))"
+            case .reps: "Reps"
+            }
+        }
+
+        @MainActor
+        func axisValue(_ value: Double) -> String {
+            switch self {
+            case .duration, .reps:
+                value.formatted(.number.precision(.fractionLength(0...1)))
+            case .volume:
+                Fmt.unit.displayValue(fromKilograms: value)
+                    .formatted(.number.precision(.fractionLength(0...1)))
+            }
+        }
+
+        @MainActor
+        func formatted(_ value: Double) -> String {
+            switch self {
+            case .duration:
+                "\(value.formatted(.number.precision(.fractionLength(0...1)))) hours"
+            case .volume:
+                Fmt.volume(value)
+            case .reps:
+                "\(Int(value.rounded())) reps"
+            }
+        }
     }
 
     /// One bucket per week for the last `weeks` weeks (oldest → newest).

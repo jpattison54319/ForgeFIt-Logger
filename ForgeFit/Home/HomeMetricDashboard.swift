@@ -53,7 +53,7 @@ struct HomeMetricGrid: View {
             .accessibilityIdentifier("daily-strain-card")
 
             NavigationLink(value: HomeRoute.health) {
-                healthTile
+                vitalsTile
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("home-health-card")
@@ -162,36 +162,18 @@ struct HomeMetricGrid: View {
         )
     }
 
-    private var healthTile: some View {
-        let headline: String
-        let caption: String
-        let evaluated: Int
-        let outside: Int
+    private var vitalsTile: some View {
+        let presentation: VitalsTilePresentation
         switch source {
         case .loading:
-            return loadingTile(title: "Health", systemImage: "waveform.path.ecg.rectangle.fill")
+            presentation = .loading
         case .cached(_, let cache):
-            headline = cache.healthHeadline
-            caption = cache.healthCaption
-            evaluated = cache.healthEvaluatedCount
-            outside = cache.healthOutsideRangeCount
+            presentation = cache.vitals ?? .loading
         case .live:
-            headline = health.headline
-            caption = health.caption
-            evaluated = health.evaluatedCount
-            outside = health.outsideRangeCount
+            presentation = .make(assessment: health)
         }
-        return MetricSummaryTile(
-            title: "Health",
-            systemImage: "waveform.path.ecg.rectangle.fill",
-            value: headline,
-            caption: caption,
-            tint: evaluated == 0
-                ? theme.textTertiary
-                : outside > 0 ? theme.recoveryLow : theme.success,
-            // Health is a set of readings, not a combined score. A progress
-            // fill made the in-range fraction look like another health grade.
-            progress: nil,
+        return VitalsSummaryTile(
+            presentation: presentation,
             isRefreshing: isRefreshing
         )
     }
@@ -210,6 +192,14 @@ struct HomeMetricGrid: View {
 }
 
 struct DailyStrainGaugePresentation: Equatable {
+    /// The gauge emphasizes the personal usual range without changing its
+    /// numeric bounds. The four outer deviation bands share the remaining arc.
+    static let usualVisualRange: ClosedRange<Double> = (1.0 / 3.0)...(2.0 / 3.0)
+
+    private static let muchLowerVisualUpper = usualVisualRange.lowerBound / 2
+    private static let muchHigherVisualLower = usualVisualRange.upperBound
+        + (1 - usualVisualRange.upperBound) / 2
+
     enum Band: Equatable {
         case muchLower
         case belowUsual
@@ -258,19 +248,39 @@ struct DailyStrainGaugePresentation: Equatable {
         switch clampedScore {
         case ..<farLowerBoundary:
             band = .muchLower
-            position = Self.interpolate(clampedScore, from: 0...farLowerBoundary, to: 0...0.2)
+            position = Self.interpolate(
+                clampedScore,
+                from: 0...farLowerBoundary,
+                to: 0...Self.muchLowerVisualUpper
+            )
         case ..<lower:
             band = .belowUsual
-            position = Self.interpolate(clampedScore, from: farLowerBoundary...lower, to: 0.2...0.4)
+            position = Self.interpolate(
+                clampedScore,
+                from: farLowerBoundary...lower,
+                to: Self.muchLowerVisualUpper...Self.usualVisualRange.lowerBound
+            )
         case ...upper:
             band = .usual
-            position = Self.interpolate(clampedScore, from: lower...upper, to: 0.4...0.6)
+            position = Self.interpolate(
+                clampedScore,
+                from: lower...upper,
+                to: Self.usualVisualRange
+            )
         case ...farUpperBoundary:
             band = .aboveUsual
-            position = Self.interpolate(clampedScore, from: upper...farUpperBoundary, to: 0.6...0.8)
+            position = Self.interpolate(
+                clampedScore,
+                from: upper...farUpperBoundary,
+                to: Self.usualVisualRange.upperBound...Self.muchHigherVisualLower
+            )
         default:
             band = .muchHigher
-            position = Self.interpolate(clampedScore, from: farUpperBoundary...10, to: 0.8...1)
+            position = Self.interpolate(
+                clampedScore,
+                from: farUpperBoundary...10,
+                to: Self.muchHigherVisualLower...1
+            )
         }
     }
 
@@ -448,17 +458,22 @@ struct StrainSemicircleGauge: View {
         radius: Double,
         lineWidth: Double
     ) -> some View {
-        ForEach(0..<5, id: \.self) { segment in
-            StrainSemicircleArc(center: center, radius: radius)
-                .trim(
-                    from: Double(segment) / 5 + 0.007,
-                    to: Double(segment + 1) / 5 - 0.007
-                )
-                .stroke(
-                    segment == 2 ? theme.success.opacity(0.22) : theme.surfaceElevated,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-        }
+        StrainSemicircleArc(center: center, radius: radius)
+            .stroke(
+                theme.surfaceElevated,
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+            )
+
+        StrainSemicircleArc(center: center, radius: radius)
+            .trim(
+                from: DailyStrainGaugePresentation.usualVisualRange.lowerBound,
+                to: DailyStrainGaugePresentation.usualVisualRange.upperBound
+            )
+            .stroke(
+                theme.success.opacity(0.22),
+                // The usual-range band owns both joins with square cuts.
+                style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt)
+            )
     }
 
     private func marker(
@@ -683,12 +698,22 @@ struct TrainingLoadGauge: View {
             }
             .frame(height: 6)
 
-            Text(detail)
-                .font(.system(size: 10))
-                .foregroundStyle(theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            if comparison.state != .ready || FeatureFlags.trainingLoadMethodDetail {
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("home-training-load-detail")
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Training load, \(label). \(detail)")
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        if comparison.state == .ready, !FeatureFlags.trainingLoadMethodDetail {
+            return "Training load, \(label)."
+        }
+        return "Training load, \(label). \(detail)"
     }
 }

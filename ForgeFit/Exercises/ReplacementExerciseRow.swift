@@ -20,6 +20,7 @@ struct ReplacementExerciseRow: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .minimumTouchTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("View details for \(exercise.name)")
@@ -28,7 +29,7 @@ struct ReplacementExerciseRow: View {
             Button("Swap to \(exercise.name)", systemImage: "arrow.triangle.2.circlepath", action: onSwap)
                 .labelStyle(.iconOnly)
                 .font(.system(size: 23, weight: .bold))
-                .foregroundStyle(theme.secondaryAccent)
+                .foregroundStyle(theme.secondaryAccentForeground)
                 .frame(width: 48, height: 48)
                 .background(theme.surfaceElevated, in: Circle())
                 .buttonStyle(.plain)

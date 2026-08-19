@@ -1,5 +1,6 @@
 import ForgeCore
 import ForgeData
+import SwiftData
 import SwiftUI
 
 /// Completed conditioning as one scored modality block. Persistence may hold
@@ -10,10 +11,14 @@ struct ConditioningHistoryCard: View {
     let result: ConditioningResult?
     let session: CardioSessionModel?
     let exercises: [ExerciseLibraryModel]
+    let workouts: [WorkoutModel]
     let hrSamples: [(date: Date, bpm: Int)]
+    var heartRateMetrics: WorkoutHeartRateResolution.Metrics? = nil
     let collapsible: Bool
 
     @Environment(\.theme) private var theme
+    @Query(sort: \IntervalPresetModel.updatedAt, order: .reverse)
+    private var presetRecords: [IntervalPresetModel]
     @State private var isExpanded = false
 
     private var hasRecordedWork: Bool {
@@ -25,6 +30,35 @@ struct ConditioningHistoryCard: View {
             return ConditioningSharePresentation.completionStatus(for: .init(plan: plan, result: result))
         }
         return session?.endedAt == nil ? .notLogged : .completed
+    }
+
+    private var heartRateSummary: CardioBlockSupport.HeartRateSummary? {
+        guard let session,
+              let window = CardioBlockSupport.blockWindow(
+                  startedAt: session.startedAt,
+                  liveStartedAt: session.liveStartedAt,
+                  endedAt: session.endedAt,
+                  durationSeconds: session.durationSeconds
+              ) else { return nil }
+        return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
+    }
+
+    private var displayAverageHR: Int? {
+        heartRateMetrics?.averageBPM ?? heartRateSummary?.averageBPM ?? session?.avgHR
+    }
+    private var displayMaximumHR: Int? {
+        heartRateMetrics?.maximumBPM ?? heartRateSummary?.maximumBPM ?? session?.maxHR
+    }
+    private var displayEnergyKcal: Double? {
+        heartRateMetrics?.activeEnergyKcal ?? session?.activeEnergyKcal
+    }
+    private var displayZoneSeconds: [Int]? {
+        if let zones = heartRateMetrics?.zoneSeconds {
+            return zones
+        }
+        guard let zones = session?.hrZoneSeconds,
+              zones.contains(where: { $0 > 0 }) else { return nil }
+        return zones
     }
 
     private var subtitle: String {
@@ -43,8 +77,8 @@ struct ConditioningHistoryCard: View {
         }
         guard let session else { return "No work recorded" }
         var parts = [Fmt.durationShort(session.durationSeconds)]
-        if let avgHR = session.avgHR { parts.append("\(avgHR) bpm") }
-        if let energy = session.activeEnergyKcal { parts.append("\(Int(energy)) kcal") }
+        if let avgHR = displayAverageHR { parts.append("\(avgHR) bpm") }
+        if let energy = displayEnergyKcal { parts.append("\(Int(energy)) kcal") }
         return parts.joined(separator: " · ")
     }
 
@@ -134,23 +168,45 @@ struct ConditioningHistoryCard: View {
                 exercises: exercises,
                 theme: theme,
                 showsResult: false,
+                showsPerformance: false,
                 showsSectionName: false
             )
+
+            ForEach(plan.sections) { section in
+                if let sectionResult = result?.sectionResults.first(where: { $0.id == section.id }),
+                   !ConditioningSharePresentation.performanceFacts(
+                       section: section,
+                       result: sectionResult
+                   ).isEmpty {
+                    ConditioningPerformanceView(
+                        section: section,
+                        result: sectionResult,
+                        sectionName: plan.sections.count > 1
+                            ? (section.name.isEmpty ? section.format.title : section.name)
+                            : nil
+                    )
+                }
+
+                performanceHistoryLink(
+                    section,
+                    showsSectionName: plan.sections.count > 1
+                )
+            }
         }
 
         if collapsible, let session, session.endedAt != nil {
             HStack {
-                StatColumn(label: "Avg HR", value: session.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Max HR", value: session.maxHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Energy", value: session.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
+                StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
+                StatColumn(label: "Max HR", value: displayMaximumHR.map(String.init) ?? "—", valueColor: theme.danger)
+                StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
-            if let avgHR = session.avgHR {
+            if let avgHR = displayAverageHR {
                 HRZoneBar(
                     avgHR: avgHR,
-                    maxHR: session.maxHR,
+                    maxHR: displayMaximumHR,
                     durationSeconds: session.durationSeconds,
-                    zoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
-                    source: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? .measured : .estimated
+                    zoneSeconds: displayZoneSeconds,
+                    source: displayZoneSeconds == nil ? .estimated : .measured
                 )
             }
             if let window = CardioBlockSupport.blockWindow(
@@ -168,5 +224,73 @@ struct ConditioningHistoryCard: View {
                 }
             }
         }
+    }
+
+    private func performanceHistoryLink(
+        _ section: ConditioningSection,
+        showsSectionName: Bool
+    ) -> some View {
+        let sectionTitle = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = sectionTitle.isEmpty ? section.format.title : sectionTitle
+        let preset = ConditioningPresetResolver.selection(
+            for: section,
+            records: presetRecords,
+            exercises: exercises
+        )
+        return NavigationLink {
+            if let preset {
+                ConditioningPresetDetailDestination(
+                    selection: preset,
+                    workouts: workouts,
+                    exercises: exercises
+                )
+            } else {
+                ConditioningPresetDetailView(
+                    title: resolvedTitle,
+                    section: section,
+                    workouts: workouts,
+                    exercises: exercises
+                )
+            }
+        } label: {
+            HStack(spacing: Space.sm) {
+                Image(systemName: "chart.xyaxis.line")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(theme.accentForeground)
+                    .frame(width: 28, height: 28)
+                    .background(theme.accent.opacity(0.12))
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(preset?.title ?? "Performance over time")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    if preset != nil {
+                        Text("Preset · Performance over time")
+                            .font(.label)
+                            .foregroundStyle(theme.textSecondary)
+                    } else if showsSectionName {
+                        Text(resolvedTitle)
+                            .font(.label)
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: Space.sm)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, Space.sm)
+            .frame(minHeight: 50)
+            .background(theme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View \(preset?.title ?? resolvedTitle) preset performance")
+        .accessibilityHint("Opens performance history and preset details")
+        .accessibilityIdentifier("conditioning-preset-history-link")
     }
 }

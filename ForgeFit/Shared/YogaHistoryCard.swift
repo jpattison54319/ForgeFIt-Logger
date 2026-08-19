@@ -11,6 +11,7 @@ struct YogaHistoryCard: View {
     let workoutExercise: WorkoutExerciseModel?
     let exercise: ExerciseLibraryModel?
     let hrSamples: [(date: Date, bpm: Int)]
+    var heartRateMetrics: WorkoutHeartRateResolution.Metrics? = nil
     let collapsible: Bool
 
     @Environment(\.theme) private var theme
@@ -28,6 +29,33 @@ struct YogaHistoryCard: View {
         return "\(style.title) Yoga"
     }
     private var durationSeconds: Int { session?.durationSeconds ?? plan?.totalSeconds ?? 0 }
+    private var heartRateSummary: CardioBlockSupport.HeartRateSummary? {
+        guard let session,
+              let window = CardioBlockSupport.blockWindow(
+                  startedAt: session.startedAt,
+                  liveStartedAt: session.liveStartedAt,
+                  endedAt: session.endedAt,
+                  durationSeconds: session.durationSeconds
+              ) else { return nil }
+        return CardioBlockSupport.heartRateSummary(samples: hrSamples, window: window)
+    }
+    private var displayAverageHR: Int? {
+        heartRateMetrics?.averageBPM ?? heartRateSummary?.averageBPM ?? session?.avgHR
+    }
+    private var displayMaximumHR: Int? {
+        heartRateMetrics?.maximumBPM ?? heartRateSummary?.maximumBPM ?? session?.maxHR
+    }
+    private var displayEnergyKcal: Double? {
+        heartRateMetrics?.activeEnergyKcal ?? session?.activeEnergyKcal
+    }
+    private var displayZoneSeconds: [Int]? {
+        if let zones = heartRateMetrics?.zoneSeconds {
+            return zones
+        }
+        guard let zones = session?.hrZoneSeconds,
+              zones.contains(where: { $0 > 0 }) else { return nil }
+        return zones
+    }
 
     var body: some View {
         Card(padding: Space.md) {
@@ -62,15 +90,19 @@ struct YogaHistoryCard: View {
     private func headerContent(showsChevron: Bool) -> some View {
         HStack(spacing: Space.sm) {
             Image(systemName: style.systemImage)
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .frame(width: 34, height: 34)
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(title).font(.bodyStrong).foregroundStyle(theme.accentForeground)
                 Text(session.map {
                     collapsible
-                        ? YogaHistoryPresentation.compactSummary(session: $0, plan: plan)
+                        ? YogaHistoryPresentation.compactSummary(
+                            session: $0,
+                            plan: plan,
+                            averageHeartRate: displayAverageHR
+                        )
                         : "Completed"
                 } ?? "Skipped")
                     .font(.system(size: 12))
@@ -106,8 +138,8 @@ struct YogaHistoryCard: View {
             HStack {
                 StatColumn(label: "Duration", value: Fmt.durationShort(durationSeconds), valueColor: theme.accent)
                 StatColumn(label: "Poses", value: poses.isEmpty ? "—" : "\(poses.count)")
-                StatColumn(label: "Avg HR", value: session?.avgHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Energy", value: session?.activeEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
+                StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
+                StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
             }
         }
 
@@ -128,7 +160,7 @@ struct YogaHistoryCard: View {
                         Text(Fmt.durationShort(pose.durationSeconds))
                             .font(.system(size: 13, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                     }
                 }
             }
@@ -153,13 +185,13 @@ struct YogaHistoryCard: View {
             }
         }
 
-        if collapsible, let session, let avgHR = session.avgHR {
+        if collapsible, let session, let avgHR = displayAverageHR {
             HRZoneBar(
                 avgHR: avgHR,
-                maxHR: session.maxHR,
+                maxHR: displayMaximumHR,
                 durationSeconds: session.durationSeconds,
-                zoneSeconds: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? session.hrZoneSeconds : nil,
-                source: session.hrZoneSeconds.contains(where: { $0 > 0 }) ? .measured : .estimated
+                zoneSeconds: displayZoneSeconds,
+                source: displayZoneSeconds == nil ? .estimated : .measured
             )
         }
         if collapsible,
@@ -187,7 +219,7 @@ struct YogaHistoryCard: View {
                     Spacer(minLength: 0)
                 }
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.accentForeground)
                 .contentShape(Rectangle())
                 .frame(minHeight: 44)
             }

@@ -332,8 +332,14 @@ nonisolated extension TrainingAnalytics {
     /// Efficiency Factor: distance covered per minute per heartbeat (or watts
     /// per heartbeat for power sports). Higher = more output per beat = fitter.
     /// Only meaningful at aerobic intensity — filter with `isAerobicSession`.
-    func efficiencyFactor(for session: CardioSessionModel) -> Double? {
-        guard let avgHR = session.avgHR, avgHR > 0 else { return nil }
+    func efficiencyFactor(
+        for session: CardioSessionModel,
+        averageHeartRate: Int? = nil
+    ) -> Double? {
+        guard let avgHR = resolvedAverageHeartRate(
+            for: session,
+            explicitAverage: averageHeartRate
+        ), avgHR > 0 else { return nil }
         if let watts = session.avgPowerWatts, watts > 0 {
             return watts / Double(avgHR)
         }
@@ -346,10 +352,29 @@ nonisolated extension TrainingAnalytics {
     /// A session is "aerobic" (comparable for EF trending) when its average HR
     /// sits in the endurance band (zones 1–3 of the user's model) and it's a
     /// real sustained effort — not a sprint session or a token few minutes.
-    func isAerobicSession(_ session: CardioSessionModel, config: HRZoneConfig) -> Bool {
-        guard let avgHR = session.avgHR,
+    func isAerobicSession(
+        _ session: CardioSessionModel,
+        config: HRZoneConfig,
+        averageHeartRate: Int? = nil
+    ) -> Bool {
+        guard let avgHR = resolvedAverageHeartRate(
+            for: session,
+            explicitAverage: averageHeartRate
+        ),
               let seconds = session.durationSeconds, seconds >= 600 else { return false }
         return config.zone(for: avgHR) <= 3 && (session.distanceMeters ?? 0) > 1000
+    }
+
+    private func resolvedAverageHeartRate(
+        for session: CardioSessionModel,
+        explicitAverage: Int?
+    ) -> Int? {
+        if let explicitAverage { return explicitAverage }
+        if let workout = session.workout,
+           WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout) {
+            return workout.avgHR ?? session.avgHR
+        }
+        return session.avgHR
     }
 
     /// EF over time for one modality's aerobic sessions — the cardio equivalent
@@ -649,7 +674,7 @@ extension TrainingAnalytics {
         return YogaOverview(
             sessions: items.count,
             minutes: items.reduce(0) { $0 + (($1.session.durationSeconds ?? 0) / 60) },
-            poses: items.reduce(0) { $0 + ($1.session.posesCompleted ?? 0) },
+            poses: items.reduce(0) { $0 + ($1.session.logicalYogaPosesCompleted ?? 0) },
             topRegions: Array(regions.prefix(6))
         )
     }

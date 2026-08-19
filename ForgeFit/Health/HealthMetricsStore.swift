@@ -67,6 +67,9 @@ final class HealthMetricsStore {
     /// Monotonic invalidation token for derived recovery reports. A correction
     /// changes values in place without changing the Health row count or date.
     private(set) var metricsRevision = 0
+    /// Explicit user preference applied uniformly to every nightly reading.
+    /// Observed sleep never rewrites this target.
+    private(set) var sleepTargetMinutes: Int
     /// The raw HealthKit series before integrity annotation — kept so a new
     /// user correction can be re-applied without re-querying HealthKit.
     @ObservationIgnored private var rawMetrics: [RecoveryEngine.DailyHealthMetric] = []
@@ -88,10 +91,18 @@ final class HealthMetricsStore {
     private(set) var activeRefreshCount = 0
     var isRefreshing: Bool { activeRefreshCount > 0 }
 
-    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    private struct RefreshOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    @ObservationIgnored private var refreshOperation: RefreshOperation?
+    @ObservationIgnored private var cancelledRefreshOperation: RefreshOperation?
+    @ObservationIgnored private var isLiveWorkoutActive = false
 
     init(worker: any HealthMetricsLoading = HealthMetricsWorker()) {
         self.worker = worker
+        sleepTargetMinutes = SleepTargetPreference.load()
     }
 
     #if DEBUG
@@ -105,9 +116,23 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         Task { @MainActor [weak self] in
             await self?.refreshCoalesced(force: force)
         }
+    }
+
+    /// Cancels the owned HealthKit refresh, not merely a caller awaiting it.
+    /// A later idle refresh starts from scratch so partial results can never be
+    /// published over the live logger.
+    func setLiveWorkoutActive(_ isActive: Bool) {
+        isLiveWorkoutActive = isActive
+        guard isActive else { return }
+        if let refreshOperation {
+            cancelledRefreshOperation = refreshOperation
+            refreshOperation.task.cancel()
+        }
+        refreshOperation = nil
     }
 
     /// Awaitable variant for pull-to-refresh: always re-queries HealthKit so
@@ -117,6 +142,7 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         await refreshCoalesced(force: true)
     }
 
@@ -127,14 +153,26 @@ final class HealthMetricsStore {
         #if DEBUG
         if demoSeeded { return }
         #endif
+        guard !isLiveWorkoutActive else { return }
         await refreshCoalesced(force: false)
     }
 
     /// Every trigger joins one shared query instead of starting another set of
     /// five HealthKit reads while launch's refresh is still in flight.
     private func refreshCoalesced(force: Bool) async {
-        if let refreshTask {
-            await refreshTask.value
+        guard !isLiveWorkoutActive else { return }
+        if let cancelledRefreshOperation {
+            await cancelledRefreshOperation.task.value
+            if self.cancelledRefreshOperation?.id == cancelledRefreshOperation.id {
+                self.cancelledRefreshOperation = nil
+            }
+            guard !isLiveWorkoutActive, !Task.isCancelled else { return }
+        }
+        if let refreshOperation {
+            // A coalesced waiter does not own the shared refresh. Lifecycle
+            // priority cancels it through `setLiveWorkoutActive`; one view
+            // disappearing must not starve every other waiter.
+            await refreshOperation.task.value
             return
         }
         if !force,
@@ -143,16 +181,20 @@ final class HealthMetricsStore {
             return
         }
 
+        let id = UUID()
         let task = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
             await self.performRefresh()
         }
-        refreshTask = task
+        refreshOperation = RefreshOperation(id: id, task: task)
         await task.value
-        refreshTask = nil
+        if refreshOperation?.id == id {
+            refreshOperation = nil
+        }
     }
 
     private func performRefresh() async {
+        guard !isLiveWorkoutActive, !Task.isCancelled else { return }
         activeRefreshCount += 1
         defer { activeRefreshCount -= 1 }
 
@@ -164,9 +206,9 @@ final class HealthMetricsStore {
             operation: { await workerTask.value },
             onCancel: { workerTask.cancel() }
         )
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         rawMetrics = result.daily
-        metrics = SleepOverrideStore.shared.process(result.daily)
+        metrics = processedSleepMetrics(result.daily)
         metricsRevision &+= 1
         extraSignals = result.extras
         activityMetrics = result.activity
@@ -179,8 +221,26 @@ final class HealthMetricsStore {
     /// cached raw series — call after a `SleepOverrideStore` change so the
     /// readiness score and the Home banner update without a HealthKit round-trip.
     func reprocessSleep() {
-        metrics = SleepOverrideStore.shared.process(rawMetrics)
+        metrics = processedSleepMetrics(rawMetrics)
         metricsRevision &+= 1
+    }
+
+    /// Updates the target without another HealthKit query so Home, Recovery,
+    /// cached sleep progress, and the open Sleep detail agree immediately.
+    func setSleepTarget(minutes: Int) {
+        let normalized = SleepTargetPreference.normalized(minutes)
+        guard normalized != sleepTargetMinutes else { return }
+        SleepTargetPreference.save(normalized)
+        sleepTargetMinutes = normalized
+        reprocessSleep()
+    }
+
+    private func processedSleepMetrics(
+        _ raw: [RecoveryEngine.DailyHealthMetric]
+    ) -> [RecoveryEngine.DailyHealthMetric] {
+        SleepOverrideStore.shared.process(
+            SleepTargetPreference.applying(sleepTargetMinutes, to: raw)
+        )
     }
 
     /// The latest measured night when it is still flagged after processing.
@@ -230,7 +290,7 @@ final class HealthMetricsStore {
             SleepOverrideStore.shared.clear(for: today)
         }
         rawMetrics = raw
-        metrics = SleepOverrideStore.shared.process(raw)
+        metrics = processedSleepMetrics(raw)
         metricsRevision &+= 1
         activityMetrics = (0...28).map { offset in
             let day = cal.date(byAdding: .day, value: -offset, to: today)!
@@ -241,6 +301,117 @@ final class HealthMetricsStore {
                 activeEnergyKcal: offset == 0 ? 620 : 390
             )
         }
+        lastRefreshed = Date()
+        demoSeeded = true
+    }
+
+    /// `--seed-appstore-demo`: a clean 70-night recovery series for App Store
+    /// capture. The partial-sleep fixture above deliberately seeds a *broken*
+    /// night; this one seeds a well-worn watch, so readiness, personal health
+    /// bands, and the sleep card all resolve to real computed values instead
+    /// of "Building". Deterministic (sinusoidal, no randomness) so a rerun
+    /// reproduces the same screenshots.
+    func seedAppStoreDemo() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        var raw: [RecoveryEngine.DailyHealthMetric] = []
+
+        for offset in stride(from: 69, through: 0, by: -1) {
+            guard let date = cal.date(byAdding: .day, value: -offset, to: today) else { continue }
+            let phase = Double(offset)
+            // Today reads slightly better than baseline on every channel —
+            // which is what makes "Proceed as planned" the honest call.
+            let isToday = offset == 0
+            let hrv = 64 + 7 * sin(phase / 5.3) + (isToday ? 1.5 : 0)
+            let sleepingHR = 49 + 3 * sin(phase / 4.1 + 1.2) - (isToday ? 0.5 : 0)
+            let sleepMinutes = 452 + 38 * sin(phase / 6.7) + (isToday ? 38 : 0)
+            let bedHour = 22
+            let bedMinute = 40 + Int(12 * sin(phase / 3.3))
+            let start = cal.date(
+                bySettingHour: bedHour,
+                minute: max(0, min(59, bedMinute)),
+                second: 0,
+                of: cal.date(byAdding: .day, value: -1, to: date) ?? date
+            )
+            let end = start.map { $0.addingTimeInterval(sleepMinutes * 60 + 1_800) }
+
+            raw.append(RecoveryEngine.DailyHealthMetric(
+                date: date,
+                hrvSDNN: (hrv - 4).rounded(),
+                restingHR: Int((sleepingHR + 5).rounded()),
+                respiratoryRate: (14.3 + 0.6 * sin(phase / 7.9) * 10).rounded() / 10,
+                oxygenSaturationPercent: (96.8 + 0.9 * sin(phase / 9.1) * 10).rounded() / 10,
+                sleepTotalMinutes: Int(sleepMinutes.rounded()),
+                source: "demo",
+                hrvSampleCount: 46,
+                nocturnalHRV: hrv.rounded(),
+                sleepingHR: Int(sleepingHR.rounded()),
+                sleepingHRSampleCount: 128,
+                sleepStart: start,
+                sleepEnd: end
+            ))
+        }
+
+        SleepOverrideStore.shared.clear(for: today)
+        rawMetrics = raw
+        metrics = processedSleepMetrics(raw)
+        metricsRevision &+= 1
+
+        extraSignals = [
+            RecoveryEngine.Signal(
+                name: "VO₂ max",
+                systemImage: "lungs.fill",
+                value: "48.2 ml/kg·min",
+                detail: "Up 1.4 over 90 days",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Respiratory rate",
+                systemImage: "wind",
+                value: "14.3 br/min",
+                detail: "Within your usual band",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Blood oxygen",
+                systemImage: "drop.fill",
+                value: "97%",
+                detail: "Within your usual band",
+                connected: true
+            ),
+            RecoveryEngine.Signal(
+                name: "Heart rate recovery",
+                systemImage: "arrow.down.heart.fill",
+                value: "38 bpm",
+                detail: "One minute after your last hard effort",
+                connected: true
+            ),
+        ]
+
+        activityMetrics = (0...56).compactMap { offset -> DailyActivityMetric? in
+            guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let phase = Double(offset)
+            let steps = (9_400 + 2_600 * sin(phase / 3.7)).rounded()
+            // Daily strain ranks today's steps against prior days *at the same
+            // time of day*, so the history needs the time-matched channel or
+            // the movement component drops out entirely and the card falls
+            // back to "More history needed".
+            return DailyActivityMetric(
+                date: day,
+                steps: offset == 0 ? 8_100 : steps,
+                exerciseMinutes: (46 + 22 * sin(phase / 2.9)).rounded(),
+                activeEnergyKcal: (620 + 180 * sin(phase / 4.3)).rounded(),
+                comparableTimeSteps: offset == 0 ? 8_100 : (steps * 0.86).rounded()
+            )
+        }
+
+        bodyweightSeries = (0...84).compactMap { offset -> (date: Date, value: Double)? in
+            guard let day = cal.date(byAdding: .day, value: -(84 - offset), to: today) else { return nil }
+            // 83.5 kg drifting to 82.1 kg — a recomposition, not a crash diet.
+            return (date: day, value: 83.5 - Double(offset) * 0.0167)
+        }
+
+        hrvGapDetected = false
         lastRefreshed = Date()
         demoSeeded = true
     }

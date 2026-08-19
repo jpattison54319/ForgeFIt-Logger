@@ -6,6 +6,10 @@ import Testing
 
 @MainActor
 struct RoutineProgramImportTests {
+    private enum ForcedSaveFailure: Error {
+        case failed
+    }
+
     private static let upperDay = RoutineTemplate(
         id: "upper-a", name: "Upper Body A", goal: "muscle gain", level: "intermediate",
         daysPerWeek: 4, estimatedMinutes: 55, equipment: ["barbell"], tags: [],
@@ -29,7 +33,12 @@ struct RoutineProgramImportTests {
     @Test func importProgramCreatesFolderWithRoutinesInside() throws {
         let (container, context) = try TestStore.make()
 
-        let folder = RoutineTemplateCatalog.importProgram(Self.program, templates: [Self.upperDay, Self.lowerDay], in: context)
+        let folder = try RoutineTemplateCatalog.importProgram(
+            Self.program,
+            templates: [Self.upperDay, Self.lowerDay],
+            in: context,
+            saveChanges: true
+        )
 
         let created = try #require(folder)
         #expect(created.name == "Upper / Lower Split")
@@ -47,8 +56,12 @@ struct RoutineProgramImportTests {
         let (container, context) = try TestStore.make()
         let templates = [Self.upperDay, Self.lowerDay]
 
-        let first = RoutineTemplateCatalog.importProgram(Self.program, templates: templates, in: context)
-        let second = RoutineTemplateCatalog.importProgram(Self.program, templates: templates, in: context)
+        let first = try RoutineTemplateCatalog.importProgram(
+            Self.program, templates: templates, in: context, saveChanges: true
+        )
+        let second = try RoutineTemplateCatalog.importProgram(
+            Self.program, templates: templates, in: context, saveChanges: true
+        )
 
         #expect(first?.name == "Upper / Lower Split")
         #expect(second?.name == "Upper / Lower Split 2")
@@ -67,11 +80,56 @@ struct RoutineProgramImportTests {
             description: "", focus: "strength", routineIDs: ["missing-day"], schedule: nil
         )
 
-        let folder = RoutineTemplateCatalog.importProgram(orphan, templates: [Self.upperDay], in: context)
+        let folder = try RoutineTemplateCatalog.importProgram(
+            orphan,
+            templates: [Self.upperDay],
+            in: context,
+            saveChanges: true
+        )
 
         #expect(folder == nil)
         #expect(try context.fetch(FetchDescriptor<RoutineFolderModel>()).isEmpty)
         _ = container
+    }
+
+    @Test func failedUserImportLeavesNoGraphAndRetryCommitsExactlyOneProgram() async throws {
+        let (container, context) = try TestStore.make()
+        let center = PersistentChangeSaveCenter()
+        let attempt = RoutineProgramImportAttempt(
+            program: Self.program,
+            templates: [Self.upperDay, Self.lowerDay],
+            in: context
+        )
+        var saves = 0
+        var committedFolderID: UUID?
+
+        let didImport = attempt.commit(
+            into: context,
+            saveCenter: center,
+            save: { isolatedContext in
+                saves += 1
+                if saves == 1 { throw ForcedSaveFailure.failed }
+                try isolatedContext.save()
+            },
+            onCommit: { committedFolderID = $0.id }
+        )
+        #expect(!didImport)
+        #expect(committedFolderID == nil)
+        var fresh = ModelContext(container)
+        #expect(try fresh.fetch(FetchDescriptor<RoutineFolderModel>()).isEmpty)
+        #expect(try fresh.fetch(FetchDescriptor<RoutineModel>()).isEmpty)
+
+        center.retry()
+        try await Task.sleep(for: .milliseconds(20))
+
+        fresh = ModelContext(container)
+        let folders = try fresh.fetch(FetchDescriptor<RoutineFolderModel>())
+        let routines = try fresh.fetch(FetchDescriptor<RoutineModel>())
+        #expect(saves == 2)
+        #expect(folders.count == 1)
+        #expect(folders.first?.id == committedFolderID)
+        #expect(routines.count == 2)
+        #expect(routines.allSatisfy { $0.folderID == folders.first?.id })
     }
 
     @Test func validProgramsRequiresEveryDayToResolve() {

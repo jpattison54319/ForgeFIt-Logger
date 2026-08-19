@@ -33,10 +33,23 @@ Architecture:
   series (`CardioSeriesService`), and is written to Apple Health (downsampled
   to 1/5 s, `healthWriteEnabled`-gated, skipped when the watch already saved
   the session).
-- `AppInfo.plist` gained `NSBluetoothAlwaysUsageDescription` and the
-  `bluetooth-central` background mode (stream survives phone lock).
+- `AppInfo.plist` carries `NSBluetoothAlwaysUsageDescription`.
 
 Pairing UI: Settings → Heart Rate Monitor (`HRMPairingSheet`).
+
+**Gated off for 1.0 — `FeatureFlags.bluetoothHeartRate`.** App Review cited the
+`bluetooth-central` background mode under Guideline 2.5.4 (2026-08-18) and asked
+for a physical-device recording of Bluetooth in use; with no strap on hand to
+film, the background mode was removed from `AppInfo.plist` and the entry points
+were hidden with it — the Settings row, the pairing sheet, the HRM column in the
+connection hero, and the workout-start reconnect. Everything described above is
+otherwise unchanged: `BLEHeartRateService` still compiles and still works, and
+`CBCentralManager` is built lazily inside `reconnectIfRemembered()`, so gating
+that one call means it is never constructed and iOS never asks for Bluetooth
+permission. Re-enabling needs the flag *and* `bluetooth-central` restored to
+`AppInfo.plist`, or a paired strap drops whenever the app leaves the foreground.
+`NSBluetoothAlwaysUsageDescription` was deliberately left in place so flipping
+the flag alone cannot crash `CBCentralManager` init.
 
 ### Recovery scores for Garmin users (via Garmin Connect → Apple Health)
 

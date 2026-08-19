@@ -20,40 +20,70 @@ import SwiftData
 ///   mass was known yet.
 @MainActor
 enum WeightModeBackfill {
-    private static let convertKey = "weightModeBackfilled.v1"
+    static let convertKey = "weightModeBackfilled.v1"
+    typealias SaveOperation = @MainActor (ModelContext) throws -> Void
 
-    static func convertIfNeeded(in context: ModelContext) {
+    static func convertIfNeeded(
+        in sourceContext: ModelContext,
+        save: SaveOperation = { try $0.save() }
+    ) {
         guard !UserDefaults.standard.bool(forKey: convertKey) else { return }
-        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-        let modeByExerciseID: [UUID: WeightMode] = exercises.reduce(into: [:]) { dict, exercise in
-            guard exercise.defaultWeightMode != .external else { return }
-            dict[exercise.id] = exercise.defaultWeightMode
-        }
-        guard !modeByExerciseID.isEmpty else {
-            UserDefaults.standard.set(true, forKey: convertKey)
-            return
-        }
-        let workouts = (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
-        for workout in workouts where workout.deletedAt == nil {
-            var changed = false
-            for workoutExercise in workout.exercises {
-                guard let mode = modeByExerciseID[workoutExercise.exerciseID] else { continue }
-                for set in workoutExercise.sets where set.weightMode == .external {
-                    let value = set.weight
-                    set.weightMode = mode
-                    // Only move when the mode field is empty — never clobber a
-                    // value that somehow already lives where it belongs.
-                    if set.modeWeight == nil, let value {
-                        set.weight = nil
-                        set.setModeWeight(value)
+        let transaction = ModelContext(sourceContext.container)
+        transaction.autosaveEnabled = false
+        do {
+            let exercises = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            let modeByExerciseID: [UUID: WeightMode] = exercises.reduce(into: [:]) { dict, exercise in
+                guard exercise.defaultWeightMode != .external else { return }
+                dict[exercise.id] = exercise.defaultWeightMode
+            }
+            guard !modeByExerciseID.isEmpty else {
+                UserDefaults.standard.set(true, forKey: convertKey)
+                return
+            }
+            let workouts = try transaction.fetch(FetchDescriptor<WorkoutModel>())
+            var touchedIDs = Set<UUID>()
+            var touchedSetIDs = Set<UUID>()
+            for workout in workouts where workout.deletedAt == nil {
+                var changed = false
+                for workoutExercise in workout.exercises {
+                    guard let mode = modeByExerciseID[workoutExercise.exerciseID] else { continue }
+                    for set in workoutExercise.sets where set.weightMode == .external {
+                        let value = set.weight
+                        set.weightMode = mode
+                        // Only move when the mode field is empty — never clobber a
+                        // value that somehow already lives where it belongs.
+                        if set.modeWeight == nil, let value {
+                            set.weight = nil
+                            set.setModeWeight(value)
+                        }
+                        changed = true
+                        touchedSetIDs.insert(set.id)
                     }
-                    changed = true
+                }
+                if changed {
+                    workout.recomputeTotalVolume()
+                    touchedIDs.insert(workout.id)
                 }
             }
-            if changed { workout.recomputeTotalVolume() }
+            if transaction.hasChanges {
+                try save(transaction)
+            }
+            if !touchedSetIDs.isEmpty {
+                // Relationship fetches can leave already-materialized child
+                // objects stale. Resolve the changed sets directly before
+                // the UI or the bodyweight follow-up pass reads them.
+                _ = try sourceContext.fetch(FetchDescriptor<SetModel>())
+                    .filter { touchedSetIDs.contains($0.id) }
+            }
+            if !touchedIDs.isEmpty {
+                _ = try sourceContext.fetch(FetchDescriptor<WorkoutModel>())
+                    .filter { touchedIDs.contains($0.id) }
+            }
+            UserDefaults.standard.set(true, forKey: convertKey)
+        } catch {
+            // The private transaction is discarded and the stamp stays clear,
+            // so the next foreground pass retries the migration exactly.
         }
-        try? context.save()
-        UserDefaults.standard.set(true, forKey: convertKey)
     }
 
     static func fillMissingBodyweight(

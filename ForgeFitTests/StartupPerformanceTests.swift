@@ -27,6 +27,30 @@ private actor CountingHealthMetricsLoader: HealthMetricsLoading {
     }
 }
 
+private actor CancellableHealthMetricsLoader: HealthMetricsLoading {
+    private var started = false
+    private var cancellations = 0
+
+    func load() async -> HealthMetricsRefreshResult {
+        started = true
+        do {
+            try await Task.sleep(for: .seconds(30))
+        } catch is CancellationError {
+            cancellations += 1
+        } catch { }
+        return HealthMetricsRefreshResult(
+            daily: [],
+            extras: [],
+            activity: [],
+            bodyweight: [],
+            hrvGapDetected: false
+        )
+    }
+
+    func hasStarted() -> Bool { started }
+    func cancellationCount() -> Int { cancellations }
+}
+
 @MainActor
 struct StartupPerformanceTests {
     @Test
@@ -41,6 +65,26 @@ struct StartupPerformanceTests {
         #expect(await loader.callCount() == 1)
         #expect(!(await loader.didExecuteOnMainThread()))
         #expect(store.lastRefreshed != nil)
+        #expect(!store.isRefreshing)
+    }
+
+    @Test
+    func liveWorkoutCancelsTheOwnedHealthRefreshWithoutPublishing() async {
+        let loader = CancellableHealthMetricsLoader()
+        let store = HealthMetricsStore(worker: loader)
+        let refresh = Task { await store.refreshNow() }
+
+        for _ in 0..<1_000 {
+            if await loader.hasStarted() { break }
+            await Task.yield()
+        }
+        #expect(await loader.hasStarted())
+
+        store.setLiveWorkoutActive(true)
+        await refresh.value
+
+        #expect(await loader.cancellationCount() == 1)
+        #expect(store.lastRefreshed == nil)
         #expect(!store.isRefreshing)
     }
 

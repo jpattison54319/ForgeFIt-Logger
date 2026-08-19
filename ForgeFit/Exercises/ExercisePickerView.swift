@@ -56,6 +56,12 @@ struct ExercisePickerView: View {
     @State private var modalityFilter: Modality?
     @State private var replacementEquipmentFilter: ExerciseSwapSuggester.EquipmentFilter?
     @State private var selected: Set<UUID> = []
+    /// Exercises created while a selection was in flight — a fallback for
+    /// resolving them before the `@Query` republishes. See `selectedExercises`.
+    @State private var createdDuringSelection: [ExerciseLibraryModel] = []
+    /// Set to a just-created exercise so the list scrolls it into view.
+    /// Cleared as soon as the scroll is issued.
+    @State private var scrollTarget: UUID?
     @State private var showCreate = false
     @State private var showConditioningBuilder = false
     @State private var showYogaBuilder = false
@@ -239,7 +245,7 @@ struct ExercisePickerView: View {
 
                 if !selected.isEmpty {
                     PrimaryButton(title: "Add \(selected.count) exercise\(selected.count == 1 ? "" : "s")") {
-                        commit(exercises.filter { selected.contains($0.id) })
+                        commit(selectedExercises)
                     }
                     .padding(.horizontal, Space.lg)
                     .padding(.bottom, Space.sm)
@@ -254,6 +260,7 @@ struct ExercisePickerView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showCreate = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Create exercise")
                         .accessibilityIdentifier("create-exercise-button")
                 }
             }
@@ -261,24 +268,25 @@ struct ExercisePickerView: View {
                 CreateExerciseView(
                     initialName: search.trimmingCharacters(in: .whitespacesAndNewlines),
                     initialModality: modalityFilter ?? .strength
-                ) { created in commit([created]) }
+                ) { created in absorbCreated(created) }
             }
             .sheet(isPresented: $showConditioningBuilder) {
                 ConditioningBlockBuilderView(
                     planJSON: nil,
                     exercises: exercises,
-                    workouts: history
-                ) { json in
-                    onAddConditioningBlock?(json)
-                    dismiss()
-                }
+                    workouts: history,
+                    onSave: { json in
+                        onAddConditioningBlock?(json)
+                        dismiss()
+                    }
+                )
             }
             .sheet(isPresented: $showYogaBuilder) {
-                YogaFlowBuilderView(planJSON: nil) { json in
+                YogaFlowBuilderView(planJSON: nil, onSave: { json in
                     guard let json else { return }
                     onAddYogaBlock?(json)
                     dismiss()
-                }
+                })
             }
             .fullScreenCover(item: $detailExercise) { exercise in
                 NavigationStack {
@@ -397,19 +405,49 @@ struct ExercisePickerView: View {
     }
 
     private var list: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: Space.sm) {
-                let picks = suggested
-                if !picks.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles").font(.tag)
-                        Text("Suggested").font(.system(size: 13, weight: .bold))
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: Space.sm) {
+                    let picks = suggested
+                    if !picks.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles").font(.tag)
+                            Text("Suggested").font(.system(size: 13, weight: .bold))
+                            Spacer()
+                        }
+                        .foregroundStyle(theme.accentForeground)
+                        .padding(.horizontal, Space.lg)
+
+                        ForEach(picks) { exercise in
+                            Group {
+                                if replacementTarget != nil {
+                                    ReplacementExerciseRow(
+                                        exercise: exercise,
+                                        onShowDetails: { detailExercise = exercise },
+                                        onSwap: { commit([exercise]) }
+                                    )
+                                } else {
+                                    ExerciseRowLabel(
+                                        exercise: exercise,
+                                        selected: selected.contains(exercise.id),
+                                        onSelect: { toggle(exercise) },
+                                        onInfo: { detailExercise = exercise }
+                                    )
+                                }
+                            }
+                            .padding(.horizontal, Space.lg)
+                        }
+                    }
+
+                    HStack {
+                        Text(picks.isEmpty ? "\(filtered.count) exercises" : "All exercises")
+                            .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                         Spacer()
                     }
-                    .foregroundStyle(theme.accent)
                     .padding(.horizontal, Space.lg)
+                    .padding(.top, picks.isEmpty ? 0 : Space.sm)
 
-                    ForEach(picks) { exercise in
+                    ForEach(filtered) { exercise in
                         Group {
                             if replacementTarget != nil {
                                 ReplacementExerciseRow(
@@ -428,46 +466,29 @@ struct ExercisePickerView: View {
                         }
                         .padding(.horizontal, Space.lg)
                     }
-                }
 
-                HStack {
-                    Text(picks.isEmpty ? "\(filtered.count) exercises" : "All exercises")
-                        .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
-                    Spacer()
-                }
-                .padding(.horizontal, Space.lg)
-                .padding(.top, picks.isEmpty ? 0 : Space.sm)
-
-                ForEach(filtered) { exercise in
-                    Group {
-                        if replacementTarget != nil {
-                            ReplacementExerciseRow(
-                                exercise: exercise,
-                                onShowDetails: { detailExercise = exercise },
-                                onSwap: { commit([exercise]) }
-                            )
-                        } else {
-                            ExerciseRowLabel(
-                                exercise: exercise,
-                                selected: selected.contains(exercise.id),
-                                onSelect: { toggle(exercise) },
-                                onInfo: { detailExercise = exercise }
-                            )
-                        }
+                    // Escape hatch under the results: if none of the matches is the
+                    // exercise being searched for, create it with the name prefilled.
+                    if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        createFromSearchButton
+                            .padding(.horizontal, Space.lg)
+                            .padding(.top, Space.sm)
                     }
-                    .padding(.horizontal, Space.lg)
                 }
-
-                // Escape hatch under the results: if none of the matches is the
-                // exercise being searched for, create it with the name prefilled.
-                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    createFromSearchButton
-                        .padding(.horizontal, Space.lg)
-                        .padding(.top, Space.sm)
-                }
+                .padding(.vertical, Space.sm)
+                .padding(.bottom, 90)
             }
-            .padding(.vertical, Space.sm)
-            .padding(.bottom, 90)
+            // A just-created exercise joins the selection immediately, so
+            // bring it on screen — in a name-sorted catalog this size it
+            // would otherwise be counted in "Add N" from somewhere the
+            // user can't see.
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                scrollTarget = nil
+            }
         }
     }
 
@@ -492,7 +513,7 @@ struct ExercisePickerView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
             }
-            .foregroundStyle(theme.accent)
+            .foregroundStyle(theme.accentForeground)
             .padding(Space.md)
             .frame(maxWidth: .infinity)
             .background(theme.accentSoft)
@@ -539,6 +560,59 @@ struct ExercisePickerView: View {
         )
     }
 
+    /// Exercises behind the "Add N" button, in the library's display order.
+    ///
+    /// Selection is tracked by id and resolved against the raw `@Query`, so an
+    /// exercise created while a selection is in flight can be selected a beat
+    /// before the query republishes. Without the second pass it would be
+    /// counted in "Add N" and then silently dropped from what's added.
+    private var selectedExercises: [ExerciseLibraryModel] {
+        var list = exercises.filter { selected.contains($0.id) }
+        let present = Set(list.map(\.id))
+        list += createdDuringSelection.filter {
+            selected.contains($0.id) && !present.contains($0.id)
+        }
+        return list
+    }
+
+    /// Creating an exercise must never discard a selection already in flight.
+    /// With nothing selected, "create" is a one-shot add and still commits
+    /// straight through to the caller. With a selection in flight the new
+    /// exercise joins it and the picker stays open, so the whole set goes in
+    /// as one bulk add.
+    private func absorbCreated(_ created: ExerciseLibraryModel) {
+        guard !selected.isEmpty else { commit([created]); return }
+        reveal(created)
+        createdDuringSelection.append(created)
+        selected.insert(created.id)
+        scrollTarget = created.id
+    }
+
+    /// Keeps the promise the selection count makes. The new exercise is
+    /// counted in "Add N" immediately, so relax exactly the narrowing state
+    /// that would hide it from the list — and nothing else. Constraints the
+    /// caller imposed (preset modality, exclusions) are never touched.
+    private func reveal(_ created: ExerciseLibraryModel) {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        // `contains` is the search scorer's strongest match, so a name that
+        // contains the query is guaranteed to rank; anything else is cleared
+        // rather than guessed at.
+        if !query.isEmpty, !created.name.lowercased().contains(query.lowercased()) {
+            search = ""
+        }
+        if let muscle,
+           !created.primaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }),
+           !created.secondaryMuscles.contains(where: { MuscleTaxonomy.matches($0, group: muscle) }) {
+            self.muscle = nil
+        }
+        if let equipment, created.equipment != equipment {
+            self.equipment = nil
+        }
+        if presetModality == nil, let modalityFilter, created.modality != modalityFilter {
+            self.modalityFilter = nil
+        }
+    }
+
     private func commit(_ list: [ExerciseLibraryModel]) {
         // The library can hold duplicate rows for one exercise id (CloudKit
         // sync / re-seed races — same condition the display list dedupes
@@ -559,69 +633,102 @@ private struct ExerciseRowLabel: View {
     let onInfo: () -> Void
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Button(action: onSelect) {
+        Group {
+            if exercise.isYoga {
                 HStack(spacing: Space.md) {
                     ExerciseThumbnail(exercise: exercise)
                     VStack(alignment: .leading, spacing: 2) {
-                        // Full name, wrapped — users are *finding* an exercise
-                        // here, so truncating to "…" hides the differentiator
-                        // (routine-card previews still truncate by design).
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
+                            Button(action: onInfo) {
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(exercise.name)
+                                        .font(.bodyStrong)
+                                        .foregroundStyle(theme.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(theme.accentForeground)
+                                }
+                                .minimumTouchTarget()
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Exercise details for \(exercise.name)")
+                            .accessibilityIdentifier("exercise-info-\(exercise.name)")
+
+                            if exercise.ownerID != nil {
+                                Tag(text: "Custom", color: theme.accent, background: theme.accentSoft)
+                            }
                         }
                         Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
                             .compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
-                        if exercise.isCardio {
-                            Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
-                                .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
-                        } else if exercise.isYoga {
-                            Text(yogaSubtitle)
-                                .font(.system(size: 12)).foregroundStyle(theme.secondaryAccent).lineLimit(1)
-                        }
                     }
                     Spacer()
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 22))
-                        .foregroundStyle(selected ? theme.accent : theme.textTertiary)
-                        .contentTransition(.symbolEffect(.replace))
-                        .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+
+                    Button(action: onSelect) {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22))
+                            .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                            .contentTransition(.symbolEffect(.replace))
+                            .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selected ? "Deselect \(exercise.name)" : "Select \(exercise.name)")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("exercise-row-\(exercise.name)")
+                }
+            } else {
+                HStack(spacing: Space.md) {
+                    Button(action: onSelect) {
+                        HStack(spacing: Space.md) {
+                            ExerciseThumbnail(exercise: exercise)
+                            VStack(alignment: .leading, spacing: 2) {
+                                // Full name, wrapped — users are *finding* an exercise
+                                // here, so truncating to "…" hides the differentiator
+                                // (routine-card previews still truncate by design).
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(exercise.name).font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if exercise.ownerID != nil { Tag(text: "Custom", color: theme.accent, background: theme.accentSoft) }
+                                }
+                                Text([exercise.primaryMuscles.first?.capitalized, exercise.equipment?.capitalized]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                    .font(.system(size: 13)).foregroundStyle(theme.textSecondary).lineLimit(1)
+                                if exercise.isCardio {
+                                    Text(exercise.resolvedCardioKind.metricLabels.prefix(4).joined(separator: " · "))
+                                        .font(.system(size: 12)).foregroundStyle(theme.secondaryAccentForeground).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 22))
+                                .foregroundStyle(selected ? theme.accent : theme.textTertiary)
+                                .contentTransition(.symbolEffect(.replace))
+                                .symbolEffect(.bounce, value: reduceMotion ? false : selected)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("exercise-row-\(exercise.name)")
+
+                    Button(action: onInfo) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(theme.accentForeground)
+                            .frame(width: 44, height: 44)   // HIG minimum touch target
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Exercise details for \(exercise.name)")
+                    .accessibilityIdentifier("exercise-info-\(exercise.name)")
                 }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("exercise-row-\(exercise.name)")
-
-            Button(action: onInfo) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 44, height: 44)   // HIG minimum touch target
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Exercise details for \(exercise.name)")
-            .accessibilityIdentifier("exercise-info-\(exercise.name)")
         }
         .padding(Space.md)
         .background(selected ? theme.accentSoft : theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .animation(Motion.tap, value: selected)
-    }
-
-    /// "Sanskrit name · hold 30s" — Sanskrit from the bundled catalog, so
-    /// custom poses just show the hold.
-    private var yogaSubtitle: String {
-        var parts: [String] = []
-        if let sanskrit = YogaPoseCatalog.pose(forSlug: YogaPoseCatalog.slug(for: exercise))?.sanskrit {
-            parts.append(sanskrit)
-        }
-        if let hold = exercise.defaultHoldSeconds {
-            parts.append("Hold \(hold)s")
-        }
-        return parts.isEmpty ? "Yoga" : parts.joined(separator: " · ")
     }
 }
 
@@ -643,6 +750,7 @@ struct FilterChip: View {
             active ? .regular.tint(theme.accent.opacity(0.5)).interactive() : .regular.interactive(),
             in: Capsule()
         )
+        .minimumTouchTarget()
         .animation(Motion.tap, value: active)
     }
 }
@@ -773,6 +881,7 @@ struct CreateExerciseView: View {
                         Text("Yoga").tag(Modality.yoga)
                     }
                     .pickerStyle(.segmented)
+                    .frame(minHeight: TouchTarget.minimum)
                     .accessibilityIdentifier("exercise-modality")
 
                     Card {
@@ -814,12 +923,12 @@ struct CreateExerciseView: View {
                                                         .fixedSize(horizontal: false, vertical: true)
                                                     Text("Use this instead")
                                                         .font(.system(size: 11, weight: .semibold))
-                                                        .foregroundStyle(theme.accent)
+                                                        .foregroundStyle(theme.accentForeground)
                                                 }
                                                 Spacer(minLength: 0)
                                                 Image(systemName: "plus.circle.fill")
                                                     .font(.system(size: 18))
-                                                    .foregroundStyle(theme.accent)
+                                                    .foregroundStyle(theme.accentForeground)
                                             }
                                             .padding(8)
                                             .background(theme.surfaceElevated)
@@ -900,7 +1009,7 @@ struct CreateExerciseView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Save" : "Create") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
                 }
             }
         }
@@ -925,7 +1034,8 @@ struct CreateExerciseView: View {
                         }
                     } label: {
                         Text(WeightModeOption.from(weightMode).label)
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -942,7 +1052,8 @@ struct CreateExerciseView: View {
                         Button("Unilateral") { isUnilateral = true }
                     } label: {
                         Text(isUnilateral ? "Unilateral" : "Bilateral")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -956,6 +1067,7 @@ struct CreateExerciseView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 170)
+                    .frame(minHeight: TouchTarget.minimum)
                 }
             }
         }
@@ -987,7 +1099,8 @@ struct CreateExerciseView: View {
                             Text(cardioKindChoice == nil ? "Auto · \(resolvedKind.title)" : resolvedKind.title)
                                 .font(.bodyStrong)
                         }
-                        .foregroundStyle(theme.secondaryAccent)
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                        .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("cardio-type-picker")
                 }
@@ -1030,7 +1143,8 @@ struct CreateExerciseView: View {
                         }
                     } label: {
                         Text(Self.holdLabel(defaultHoldSeconds))
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                     .accessibilityIdentifier("yoga-default-hold")
                 }
@@ -1048,7 +1162,8 @@ struct CreateExerciseView: View {
                         Button("One side at a time") { isUnilateral = true }
                     } label: {
                         Text(isUnilateral ? "One at a time" : "Both at once")
-                            .font(.bodyStrong).foregroundStyle(theme.accent)
+                            .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                            .minimumTouchTarget()
                     }
                 }
                 Divider().overlay(theme.separator)
@@ -1106,6 +1221,7 @@ struct CreateExerciseView: View {
                          : "\(secondaryMuscles.count) selected")
                         .font(.bodyStrong)
                         .foregroundStyle(secondaryMuscles.isEmpty ? theme.textTertiary : theme.accent)
+                        .minimumTouchTarget()
                 }
                 .menuActionDismissBehavior(.disabled)
                 .accessibilityIdentifier("secondary-muscle-picker")
@@ -1167,7 +1283,8 @@ struct CreateExerciseView: View {
                 }
             } label: {
                 Text(MuscleTaxonomy.displayName(selection.wrappedValue))
-                    .font(.bodyStrong).foregroundStyle(theme.accent)
+                    .font(.bodyStrong).foregroundStyle(theme.accentForeground)
+                    .minimumTouchTarget()
             }
             .accessibilityIdentifier("primary-muscle-picker")
         }
@@ -1182,7 +1299,10 @@ struct CreateExerciseView: View {
                     Button(opt.capitalized) { selection.wrappedValue = opt }
                 }
             } label: {
-                Text(selection.wrappedValue.capitalized).font(.bodyStrong).foregroundStyle(theme.accent)
+                Text(selection.wrappedValue.capitalized)
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.accentForeground)
+                    .minimumTouchTarget()
             }
         }
     }
@@ -1193,84 +1313,98 @@ struct CreateExerciseView: View {
         // and flash the "already exists" card while the sheet dismisses.
         isSaving = true
         duplicateCandidates = []
-        if let editing {
-            apply(to: editing)
-            editing.userModified = true
-            editing.needsReview = false
-            editing.classificationSource = ClassificationSource.manual
-            editing.classificationConfidence = 1.0
-            editing.updatedAt = Date()
-            upsertSanskritAlias(for: editing)
-            try? modelContext.save()
-            onCreate(editing)
-        } else {
-            let exercise = ExerciseLibraryModel(ownerID: ForgeFitDemo.userID, name: name)
-            apply(to: exercise)
-            modelContext.insert(exercise)
-            upsertSanskritAlias(for: exercise)
-            try? modelContext.save()
-            onCreate(exercise)
-        }
-        dismiss()
-    }
+        let draftName = name.trimmingCharacters(in: .whitespaces)
+        let draftModality = modality
+        let draftIsCardio = modality == .cardio
+        let draftIsYoga = modality == .yoga
+        let draftKind = resolvedKind
+        let draftPrimaryMuscle = primaryMuscle
+        let draftSecondaryMuscles = secondaryMuscles
+            .subtracting([primaryMuscle])
+            .sorted()
+        let draftEquipment = equipment
+        let draftWeightMode = weightMode
+        let draftPreferredUnitRaw = preferredUnit?.rawValue
+        let draftCardioKindRaw = cardioKindChoice?.rawValue
+        let draftIsUnilateral = isUnilateral
+        let draftDefaultHoldSeconds = defaultHoldSeconds
+        let draftSanskritName = sanskritName.trimmingCharacters(in: .whitespaces)
+        let wasYoga = editing?.isYoga == true
+        let isEditing = editing != nil
+        let updatedAt = Date()
 
-    /// Write the current form state onto an exercise model. Shared by the create
-    /// and edit paths so both stay in lockstep.
-    private func apply(to exercise: ExerciseLibraryModel) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        // Every field branches on the selected modality, so values left over
-        // from the other modes' hidden forms can never leak into the save.
-        let kind = resolvedKind
-        let isYoga = modality == .yoga
-        exercise.name = trimmed
-        exercise.modality = modality  // writes modalityRaw and keeps isCardio in sync
-        exercise.movementPattern = isCardio ? "cardio" : (isYoga ? "yoga" : nil)
-        exercise.primaryMuscles = isCardio ? kind.musclesWorked : [primaryMuscle]
-        exercise.secondaryMuscles = isCardio ? [] : secondaryMuscles.subtracting([primaryMuscle]).sorted()
-        exercise.equipment = equipment
-        exercise.defaultWeightMode = isCardio || isYoga ? .bodyweight : weightMode
-        exercise.preferredWeightUnitRaw = isCardio || isYoga ? nil : preferredUnit?.rawValue
-        exercise.cardioKindRaw = isCardio ? cardioKindChoice?.rawValue : nil
-        // Yoga keeps laterality (one-sided poses run L/R in guided flows).
-        exercise.isUnilateral = isCardio ? false : isUnilateral
-        exercise.defaultHoldSeconds = isYoga ? defaultHoldSeconds : nil
-        switch modality {
-        case .strength: exercise.category = "strength"
-        case .cardio: exercise.category = "cardio"
-        case .yoga: exercise.category = "yoga"
-        }
-    }
-
-    /// Keep the pose's Sanskrit alias in step with the form: update the one we
-    /// manage, create it when first filled in, remove it when cleared.
-    private func upsertSanskritAlias(for exercise: ExerciseLibraryModel) {
-        guard modality == .yoga || editing?.isYoga == true else { return }
-        let trimmed = sanskritName.trimmingCharacters(in: .whitespaces)
-        let exerciseID = exercise.id
-        let existing = (try? modelContext.fetch(
-            FetchDescriptor<ExerciseAliasModel>(predicate: #Predicate { $0.exerciseID == exerciseID })
-        )) ?? []
-
-        if modality == .yoga, !trimmed.isEmpty {
-            // Seeded catalog aliases (ownerID nil) belong to the re-seed and
-            // would be reverted next launch — user edits live on their own
-            // user-owned alias row instead.
-            if let owned = existing.first(where: { $0.ownerID != nil }) {
-                if owned.alias != trimmed { owned.alias = trimmed }
-            } else if !existing.contains(where: { $0.alias == trimmed }) {
-                modelContext.insert(ExerciseAliasModel(
-                    exerciseID: exerciseID,
-                    ownerID: ForgeFitDemo.userID,
-                    alias: trimmed
-                ))
+        let applyDraft: @MainActor (ExerciseLibraryModel) -> Void = { exercise in
+            exercise.name = draftName
+            exercise.modality = draftModality
+            exercise.movementPattern = draftIsCardio ? "cardio" : (draftIsYoga ? "yoga" : nil)
+            exercise.primaryMuscles = draftIsCardio ? draftKind.musclesWorked : [draftPrimaryMuscle]
+            exercise.secondaryMuscles = draftIsCardio ? [] : draftSecondaryMuscles
+            exercise.equipment = draftEquipment
+            exercise.defaultWeightMode = draftIsCardio || draftIsYoga ? .bodyweight : draftWeightMode
+            exercise.preferredWeightUnitRaw = draftIsCardio || draftIsYoga ? nil : draftPreferredUnitRaw
+            exercise.cardioKindRaw = draftIsCardio ? draftCardioKindRaw : nil
+            exercise.isUnilateral = draftIsCardio ? false : draftIsUnilateral
+            exercise.defaultHoldSeconds = draftIsYoga ? draftDefaultHoldSeconds : nil
+            switch draftModality {
+            case .strength: exercise.category = "strength"
+            case .cardio: exercise.category = "cardio"
+            case .yoga: exercise.category = "yoga"
             }
-        } else {
-            // Cleared, or the pose was retyped to another modality: only drop
-            // user-owned aliases; seeded (catalog) aliases are not ours to remove.
-            for alias in existing where alias.ownerID != nil {
-                modelContext.delete(alias)
+            if isEditing {
+                exercise.userModified = true
+                exercise.needsReview = false
+                exercise.classificationSource = ClassificationSource.manual
+                exercise.classificationConfidence = 1.0
             }
+            exercise.updatedAt = updatedAt
         }
+
+        let attempt = editing.map {
+            ExercisePersistenceAttempt(editing: $0, in: modelContext)
+        } ?? ExercisePersistenceAttempt(creatingName: draftName, in: modelContext)
+        let succeeded = attempt.commit(
+            into: modelContext,
+            mutate: { exercise, persistenceContext in
+                applyDraft(exercise)
+                guard draftIsYoga || wasYoga else { return }
+                let exerciseID = exercise.id
+                let existing = try persistenceContext.fetch(
+                    FetchDescriptor<ExerciseAliasModel>(
+                        predicate: #Predicate { $0.exerciseID == exerciseID }
+                    )
+                )
+
+                if draftIsYoga, !draftSanskritName.isEmpty {
+                    if let owned = existing.first(where: { $0.ownerID != nil }) {
+                        if owned.alias != draftSanskritName { owned.alias = draftSanskritName }
+                    } else if !existing.contains(where: { $0.alias == draftSanskritName }) {
+                        persistenceContext.insert(ExerciseAliasModel(
+                            exerciseID: exerciseID,
+                            ownerID: ForgeFitDemo.userID,
+                            alias: draftSanskritName
+                        ))
+                    }
+                } else {
+                    for alias in existing where alias.ownerID != nil {
+                        persistenceContext.delete(alias)
+                    }
+                }
+            },
+            onCommit: { committedExercise in
+                // SwiftData can retain an already-loaded source-context
+                // instance after the isolated save. Mirror only now, once the
+                // durable write has succeeded.
+                if let editing {
+                    applyDraft(editing)
+                    onCreate(editing)
+                } else {
+                    onCreate(committedExercise)
+                }
+                dismiss()
+            }
+        )
+
+        if !succeeded { isSaving = false }
     }
 }
 

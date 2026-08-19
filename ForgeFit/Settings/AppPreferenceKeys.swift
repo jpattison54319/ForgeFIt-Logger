@@ -15,6 +15,7 @@ import Foundation
 /// rate, i.e. health data; reset clears it explicitly, backup excludes it.
 enum AppPreferenceKeys {
     static let workoutUngroupedCollapsedKey = "workoutUngroupedCollapsed"
+    static let microcycleHistoryEducationShownKey = "microcycleHistoryEducationShown"
 
     static let backedUp: [String] = [
         "didOnboard",
@@ -22,11 +23,14 @@ enum AppPreferenceKeys {
         "weightUnitRaw",
         "distanceUnitRaw",
         "trainingFocusRaw",
-        "homeQuickStartActions.v1",
+        ShareCardStyle.preferenceKey,
+        HomeQuickStartAction.preferenceKey,
         AppQuickActionStore.key,
         CyclePreferenceMigration.activeMesocycleKey,
         CyclePreferenceMigration.activeMicrocycleKey,
         ThemeManager.modeDefaultsKey,
+        ThemeManager.familyDefaultsKey,
+        DefaultLaunchTab.key,
         "liveSyncEnabled",
         "healthWriteEnabled",
         WorkoutEffortPolicy.loggingEnabledKey,
@@ -43,21 +47,26 @@ enum AppPreferenceKeys {
         "zoneVoiceCues",
         "paceVoiceCues",
         "yogaVoiceCues",
-        "yogaVoiceID",
-        "yogaVoiceRate",
         YogaInstructor.preferenceKey,
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
-    ]
+        ResistanceBandProfileStore.key,
+    ] + StatisticsSectionPreference.allCases.map(\.defaultsKey)
 
     static let localOnly: [String] = [
         "initialTab",
         "insightsBuilderEnabled",
+        WrappedReportService.lastAutomaticAttemptKey,
+        ImportedExerciseBackfill.didRunKey,
+        WeightModeBackfill.convertKey,
+        BLEHeartRateService.rememberedIDKey,
+        BLEHeartRateService.rememberedNameKey,
         "autoStartRoutine",
         "openSettings",
         LaunchSeedPolicy.defaultsKey,
         PlanMaintenancePolicy.defaultsKey,
         CyclePreferenceMigration.migrationKey,
+        microcycleHistoryEducationShownKey,
         "lastActiveDate",
         "hasCompletedFirstLaunch",
         "welcomeBackPendingGapDays",
@@ -66,11 +75,22 @@ enum AppPreferenceKeys {
         "morningReadinessLastFiredDay",
         "storeSplitMigration.v1.done",
         "backupLastSuccessAt",
+        BackupScheduler.lastFailureMessageKey,
+        BackupScheduler.lastFailureAtKey,
         HealthWorkoutImporter.lastAutomaticAttemptKey,
         ExperimentNotificationRoute.pendingURLDefaultsKey,
         ExperimentNotificationRoute.pendingExperimentIDDefaultsKey,
+        SocialService.shareOutboxKey,
+        SocialService.legacyPendingUnpublishKey,
         PlanImportService.importedPackagesDefaultsKey,
         workoutUngroupedCollapsedKey,
+        SleepTargetPreference.key,
+        SleepOverrideStore.defaultsKey,
+        SleepOverrideStore.eagerDeleteRepairKey,
+        RecoverySnapshotStore.defaultsKey,
+        RecoverySnapshotStore.backfillKey,
+        YogaGuidanceCatalog.recentGuidanceKey,
+        YogaGuidanceCatalog.safetyAcknowledgementKey,
     ]
 
     /// Retired preferences kept only so Erase All Data also cleans installs
@@ -80,6 +100,8 @@ enum AppPreferenceKeys {
         "streakNudgeEnabled",
         "activeMacroFolderID",
         "activeMesoFolderID",
+        "yogaVoiceID",
+        "yogaVoiceRate",
     ]
 
     static var allResettable: [String] { backedUp + localOnly + deprecated }

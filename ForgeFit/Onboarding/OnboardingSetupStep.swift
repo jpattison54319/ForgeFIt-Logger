@@ -17,7 +17,7 @@ struct OnboardingSetupStep: View {
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text("Step 1 of 2")
                             .font(.label)
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(theme.accentForeground)
                         Text("Set up ForgeFit")
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)
@@ -56,6 +56,7 @@ struct OnboardingSetupStep: View {
                                 Text("kg").tag(WeightUnit.kg)
                             }
                             .pickerStyle(.segmented)
+                            .frame(minHeight: TouchTarget.minimum)
                         }
                     }
                 }
