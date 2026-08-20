@@ -412,13 +412,13 @@ final class ReadinessDelivery {
         )
         ReadinessSurfacePublisher.publishFresh(result.recovery)
         // A background wake may never have shown a scene, so the Watch link
-        // can still be unconfigured; without this the publish silently no-ops
-        // and the wrist keeps yesterday's number.
+        // can still be unconfigured and its session unactivated; without both
+        // of these the publish silently no-ops and the wrist keeps yesterday's
+        // number.
         if let container {
             WatchLink.shared.configureIfNeeded(container: container)
         }
-        WatchLink.shared.activate()
-        WatchLink.shared.publishState(policy: .immediate)
+        await WatchLink.shared.publishStateWhenActivated()
         return result.recovery
     }
 
