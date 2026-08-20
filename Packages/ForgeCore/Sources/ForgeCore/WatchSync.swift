@@ -613,6 +613,13 @@ public enum ForgeFitWidgetSnapshotStore {
         guard let data = try? encoder.encode(snapshot) else { return }
         defaults.set(data, forKey: key)
     }
+
+    /// Remove the snapshot entirely, leaving readers with no data rather than
+    /// an empty one. Account reset needs this: the snapshot lives in the app
+    /// group and outlives every store the reset clears.
+    public static func clear(defaults: UserDefaults = UserDefaults(suiteName: suiteName) ?? .standard) {
+        defaults.removeObject(forKey: key)
+    }
 }
 
 // MARK: - Commands (both directions)

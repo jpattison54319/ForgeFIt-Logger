@@ -109,6 +109,20 @@ enum ReadinessSurfacePublisher {
         #endif
     }
 
+    /// Wipe every readiness surface unconditionally.
+    ///
+    /// Account reset is the one caller that must defeat `publishIdle`'s
+    /// preservation: the score it would keep is exactly the health-derived
+    /// value the reset exists to remove. The app-group snapshot outlives every
+    /// store the reset clears, so without this the number stays on the widget
+    /// and the next publish puts it back on the Watch.
+    static func clear() {
+        ForgeFitWidgetSnapshotStore.clear()
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
+        #endif
+    }
+
     /// Return the widget surfaces to idle without discarding a score that is
     /// still today's.
     ///
@@ -129,9 +143,15 @@ enum ReadinessSurfacePublisher {
         // background refresh records the day's channels without it, and a
         // finishing workout has just overwritten the published snapshot with
         // its own live-set payload — so the day's recorded score, not the
-        // snapshot, is what can still be recovered here. No action text is
-        // invented for it; the readers already have a caption for that.
-        if let score = RecoverySnapshotStore.shared.snapshot(for: now)?.displayScore {
+        // snapshot, is what can still be recovered here.
+        //
+        // Deliberately the ACUTE index only, never the seven-day trend that
+        // `RecoveryEngine.Report.displayScore` falls back to. Every widget and
+        // complication face renders a score as "N% ready" over a filled gauge,
+        // which is a claim about today; Home can afford the trend because it
+        // labels it ("7-day trend · …") and drops the ring fill, and this path
+        // carries no caption to label it with. No acute score means no score.
+        if let score = RecoverySnapshotStore.shared.snapshot(for: now)?.daily {
             publish(ForgeFitWidgetSnapshot(
                 mode: .idle,
                 readinessScore: Int((score * 100).rounded())

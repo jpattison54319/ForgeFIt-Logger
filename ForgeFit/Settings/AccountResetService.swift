@@ -58,6 +58,10 @@ enum AccountResetService {
         cancelAppNotifications()
         ExperimentExportService.cleanupAll()
         clearAppDefaults()
+        // `clearLiveSurfaces` published to the Watch while the health stores
+        // were still populated. Publish again now they are empty, so the wrist
+        // is not left holding the readiness the reset just removed.
+        WatchLink.shared.publishState(policy: .immediate)
         // The privacy policy promises reset also removes the iCloud Drive
         // backup. Await the deletion: the reset must not be declared complete
         // (and the shell must not move to onboarding) until we know whether
@@ -173,6 +177,11 @@ enum AccountResetService {
         // never backed up, but reset must still clear it).
         UserDefaults(suiteName: ForgeFitWidgetSnapshotStore.suiteName)?
             .removeObject(forKey: HRZoneConfigStore.key)
+        // The readiness snapshot shares that suite and is equally
+        // health-derived. It used to be wiped incidentally, by the blank
+        // snapshot `cancelLiveRuntime` wrote; now that idle publishes preserve
+        // a same-day score, the reset has to say so itself.
+        ReadinessSurfacePublisher.clear()
         ForgeThemePreferenceStore.reset()
         Fmt.unit = .lb
         Fmt.distanceUnit = .km
