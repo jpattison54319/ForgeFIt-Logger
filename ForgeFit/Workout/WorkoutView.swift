@@ -766,9 +766,14 @@ struct WorkoutHomeView: View {
             let sharedRoutines = hasChildren
                 ? microcycles.flatMap { routines(in: $0) }
                 : routines(in: folder)
-            let sections = hasChildren
-                ? microcycles.map { FolderShareCard.Section(title: $0.name, routines: routines(in: $0)) }
-                : [FolderShareCard.Section(title: nil, routines: sharedRoutines)]
+            let groups = hasChildren
+                ? microcycles.map { FolderShareSlotBuilder.Group(title: $0.name, routines: routines(in: $0)) }
+                : [FolderShareSlotBuilder.Group(title: nil, routines: sharedRoutines)]
+            let sections = FolderShareSlotBuilder.sections(
+                groups,
+                alternations: alternations,
+                availableRoutines: activeRoutines
+            )
             guard let image = FolderShareRenderer.image(
                 name: folder.name,
                 isMesocycle: hasChildren,

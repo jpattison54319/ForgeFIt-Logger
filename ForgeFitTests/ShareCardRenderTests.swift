@@ -246,6 +246,59 @@ struct ShareCardRenderTests {
         #expect(macro != nil)
     }
 
+    /// An alternating pair must survive into the shared image: both members
+    /// land in one slot, and a partner kept outside the cycle rides along.
+    @Test func folderCardPairsAlternatingRoutines() {
+        func routine(_ name: String) -> RoutineModel {
+            let re = RoutineExerciseModel(
+                userID: userID, exerciseID: squatID, position: 0,
+                sets: [RoutineSetModel(userID: userID, targetRepsLow: 5, targetRepsHigh: 5, targetWeight: 140)]
+            )
+            return RoutineModel(userID: userID, name: name, exercises: [re])
+        }
+        let legA = routine("Leg A")
+        let legB = routine("Leg B")
+        let push = routine("Push")
+        let alternation = RoutineAlternationModel(
+            userID: userID, ownerRoutineID: legA.id, partnerRoutineID: legB.id
+        )
+
+        // Both members inside the cycle collapse into a single slot.
+        let colocated = FolderShareSlotBuilder.sections(
+            [.init(title: nil, routines: [legA, legB, push])],
+            alternations: [alternation],
+            availableRoutines: [legA, legB, push]
+        )
+        #expect(colocated.count == 1)
+        #expect(colocated[0].slots.count == 2)
+        #expect(colocated[0].slots[0].isAlternating)
+        #expect(colocated[0].slots[0].routines.map(\.name) == ["Leg A", "Leg B"])
+        #expect(colocated[0].slots[1].routines.map(\.name) == ["Push"])
+
+        // A partner filed outside the cycle still shows up beside its owner.
+        let external = FolderShareSlotBuilder.sections(
+            [.init(title: nil, routines: [legA, push])],
+            alternations: [alternation],
+            availableRoutines: [legA, legB, push]
+        )
+        #expect(external[0].slots[0].routines.map(\.name) == ["Leg A", "Leg B"])
+
+        // Across a mesocycle, a pair split over two microcycles renders once.
+        let split = FolderShareSlotBuilder.sections(
+            [.init(title: "Week 1", routines: [legA]), .init(title: "Week 2", routines: [legB, push])],
+            alternations: [alternation],
+            availableRoutines: [legA, legB, push]
+        )
+        #expect(split[0].slots.map(\.routines.count) == [2])
+        #expect(split[1].slots.map { $0.routines.map(\.name) } == [["Push"]])
+
+        let image = FolderShareRenderer.image(
+            name: "Hypertrophy Block", isMesocycle: false,
+            sections: colocated, exercises: library, theme: .sage
+        )
+        #expect(image != nil)
+    }
+
     /// Every representative Wrapped page kind must render as a share card —
     /// a page that draws blank ships a broken share button.
     @Test func wrappedPagesRenderAsShareCards() {
