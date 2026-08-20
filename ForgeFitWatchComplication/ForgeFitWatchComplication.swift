@@ -81,6 +81,24 @@ struct ForgeFitComplicationView: View {
 
     private var snapshot: ForgeFitWidgetSnapshot? { entry.snapshot }
     private var isWorkout: Bool { snapshot?.mode == .activeWorkout }
+    private var isDailyReadiness: Bool {
+        snapshot?.readinessBasis == .daily
+    }
+    private var readinessText: String {
+        guard let score = snapshot?.readinessScore else { return "Readiness" }
+        switch snapshot?.readinessBasis {
+        case .daily: return "\(score)% ready"
+        case .trend: return "\(score)% trend"
+        case nil: return "\(score)% readiness"
+        }
+    }
+    private var readinessBasisText: String {
+        switch snapshot?.readinessBasis {
+        case .daily: return "Today's readiness"
+        case .trend: return "7-day trend"
+        case nil: return "Readiness score"
+        }
+    }
     private var palette: ForgeThemePalette {
         ForgeThemeCatalog.palette(
             for: entry.themePreference.family,
@@ -103,13 +121,23 @@ struct ForgeFitComplicationView: View {
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                     }
                 } else if let score = snapshot?.readinessScore {
-                    Gauge(value: Double(score), in: 0...100) {
-                        Image(systemName: "bolt.heart.fill")
-                    } currentValueLabel: {
-                        Text("\(score)").font(.system(size: 15, weight: .bold, design: .rounded))
+                    if isDailyReadiness {
+                        Gauge(value: Double(score), in: 0...100) {
+                            Image(systemName: "bolt.heart.fill")
+                        } currentValueLabel: {
+                            Text("\(score)").font(.system(size: 15, weight: .bold, design: .rounded))
+                        }
+                        .gaugeStyle(.accessoryCircular)
+                        .tint(accent)
+                    } else {
+                        VStack(spacing: 0) {
+                            Text("\(score)")
+                                .font(.system(size: 17, weight: .bold, design: .rounded))
+                            Text(snapshot?.readinessBasis == .trend ? "trend" : "score")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .gaugeStyle(.accessoryCircular)
-                    .tint(accent)
                 } else {
                     Image(systemName: "dumbbell.fill").font(.system(size: 18, weight: .bold))
                 }
@@ -125,9 +153,9 @@ struct ForgeFitComplicationView: View {
                         Text(snapshot?.workoutTitle ?? "Workout").font(.headline).lineLimit(1)
                         Text("\(snapshot?.completedSets ?? 0) of \(snapshot?.totalSets ?? 0) sets")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else if let score = snapshot?.readinessScore {
-                        Text("\(score)% ready").font(.headline)
-                        Text(snapshot?.readinessAction ?? "Today's readiness")
+                    } else if snapshot?.readinessScore != nil {
+                        Text(readinessText).font(.headline)
+                        Text(snapshot?.readinessAction ?? readinessBasisText)
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     } else {
                         Text("ForgeFit").font(.headline)
@@ -139,8 +167,8 @@ struct ForgeFitComplicationView: View {
         case .accessoryInline:
             if isWorkout {
                 Label("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0) sets", systemImage: "dumbbell.fill")
-            } else if let score = snapshot?.readinessScore {
-                Label("\(score)% ready", systemImage: "bolt.heart.fill")
+            } else if snapshot?.readinessScore != nil {
+                Label(readinessText, systemImage: "bolt.heart.fill")
             } else {
                 Label("ForgeFit", systemImage: "dumbbell.fill")
             }
@@ -152,8 +180,8 @@ struct ForgeFitComplicationView: View {
                 .widgetLabel {
                     if isWorkout {
                         Text("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0)")
-                    } else if let score = snapshot?.readinessScore {
-                        Text("\(score)% ready")
+                    } else if snapshot?.readinessScore != nil {
+                        Text(readinessText)
                     } else {
                         Text("ForgeFit")
                     }

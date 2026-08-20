@@ -21,6 +21,11 @@ enum ReadinessSurfacePublisher {
         ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: dashboard.recoveryDisplayScore.map { Int(($0 * 100).rounded()) },
+            readinessBasis: dashboard.recoveryDisplayScore.flatMap { _ in
+                dashboard.readinessIsDaily.map {
+                    $0 ? .daily : .trend
+                }
+            },
             readinessAction: RecoveryEngine.Action(rawValue: dashboard.actionRaw)?.title,
             readinessDetail: dashboard.preWorkoutAdjustment ?? dashboard.recommendation,
             reasonChips: Array(dashboard.reasonTexts.prefix(3))
@@ -31,6 +36,9 @@ enum ReadinessSurfacePublisher {
         publish(ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: report.displayScore.map { Int(($0 * 100).rounded()) },
+            readinessBasis: report.displayScore.map {
+                report.recovery.daily.state.value != nil ? .daily : .trend
+            },
             readinessAction: report.action.title,
             readinessDetail: report.preWorkoutAdjustment,
             reasonChips: Array(report.reasonChips.prefix(3).map(\.text))
@@ -47,7 +55,11 @@ enum ReadinessSurfacePublisher {
 
     @discardableResult
     static func apply(_ dashboard: HomeDashboardCache, to workout: WorkoutModel) -> Bool {
-        guard let displayScore = dashboard.recoveryDisplayScore else { return false }
+        // A trend can be shown on Home, but it cannot be stamped onto a
+        // workout as "readiness at start". That field is a claim about the
+        // current day and therefore requires the acute index explicitly.
+        guard dashboard.readinessIsDaily == true,
+              let displayScore = dashboard.recoveryDisplayScore else { return false }
         workout.readinessAtStart = Int((displayScore * 100).rounded())
         workout.readinessMethodID = dashboard.readinessMethodID
         workout.readinessCoverageAtStart = dashboard.readinessCoverage
@@ -99,14 +111,87 @@ enum ReadinessSurfacePublisher {
     }
 
     static func publish(_ snapshot: ForgeFitWidgetSnapshot) {
-        if let existing = ForgeFitWidgetSnapshotStore.load() {
-            var comparison = snapshot
-            comparison.updatedAt = existing.updatedAt
-            guard comparison != existing else { return }
+        if let existing = ForgeFitWidgetSnapshotStore.load(),
+           snapshot.rendersSameContent(as: existing) {
+            return
         }
         ForgeFitWidgetSnapshotStore.save(snapshot)
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
         #endif
+    }
+
+    /// Wipe every readiness surface unconditionally.
+    ///
+    /// Account reset is the one caller that must defeat `publishIdle`'s
+    /// preservation: the score it would keep is exactly the health-derived
+    /// value the reset exists to remove. The app-group snapshot outlives every
+    /// store the reset clears, so without this the number stays on the widget
+    /// and the next publish puts it back on the Watch.
+    static func clear() {
+        ForgeFitWidgetSnapshotStore.clear()
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
+        #endif
+    }
+
+    /// Return the widget surfaces to idle without discarding a score that is
+    /// still today's.
+    ///
+    /// Callers reach here when they have no dashboard cache to render from —
+    /// a workout just ended, or the app foregrounded before Home has run its
+    /// analytics. Publishing a bare idle snapshot in that state overwrote a
+    /// real score that another producer (the pre-dawn background refresh) had
+    /// already computed, and the Watch complication then had nothing to show
+    /// for the rest of the day. Staleness is handled where it belongs, by the
+    /// `isCurrent` day gate every reader already applies; this only has to
+    /// avoid destroying data it cannot replace.
+    static func shouldPreserveCurrentIdleSnapshot(
+        _ snapshot: ForgeFitWidgetSnapshot?,
+        now: Date = .now
+    ) -> Bool {
+        guard let snapshot,
+              snapshot.mode == .idle,
+              snapshot.isCurrent(at: now),
+              snapshot.readinessScore == nil,
+              snapshot.readinessBasis == nil,
+              snapshot.readinessAction == nil,
+              snapshot.readinessDetail == nil,
+              snapshot.reasonChips.isEmpty else { return false }
+        return true
+    }
+
+    static func publishIdle(now: Date = .now) {
+        if let dashboard = currentDashboard(now: now) {
+            publish(idleSnapshot(from: dashboard))
+            return
+        }
+        // The dashboard cache only exists once Home has rendered. The
+        // background refresh records the day's channels without it, and a
+        // finishing workout has just overwritten the published snapshot with
+        // its own live-set payload — so the day's recorded score, not the
+        // snapshot, is what can still be recovered here.
+        //
+        // Deliberately the ACUTE index only, never the seven-day trend that
+        // `RecoveryEngine.Report.displayScore` falls back to. Every widget and
+        // complication face renders a score as "N% ready" over a filled gauge,
+        // which is a claim about today; Home can afford the trend because it
+        // labels it ("7-day trend · …") and drops the ring fill, and this path
+        // carries no caption to label it with. No acute score means no score.
+        if let score = RecoverySnapshotStore.shared.snapshot(for: now)?.daily {
+            publish(ForgeFitWidgetSnapshot(
+                mode: .idle,
+                readinessScore: Int((score * 100).rounded()),
+                readinessBasis: .daily
+            ))
+            return
+        }
+        if Self.shouldPreserveCurrentIdleSnapshot(
+            ForgeFitWidgetSnapshotStore.load(),
+            now: now
+        ) {
+            return
+        }
+        publish(ForgeFitWidgetSnapshot(mode: .idle))
     }
 }

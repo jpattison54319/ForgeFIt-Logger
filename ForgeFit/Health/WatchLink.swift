@@ -53,6 +53,17 @@ final class WatchLink: NSObject {
         #endif
     }
 
+    /// Wire the link only if the app hasn't already.
+    ///
+    /// Background wake-ups (the readiness refresh) can run in a process that
+    /// never presented a scene, where `configure` was never called and every
+    /// publish silently no-ops on the nil context. Foreground configuration
+    /// stays authoritative when it exists.
+    func configureIfNeeded(container: ModelContainer) {
+        guard modelContext == nil else { return }
+        configure(context: container.mainContext)
+    }
+
     /// Give the link data access; called once from ContentView.
     func configure(context: ModelContext) {
         modelContext = context
@@ -89,6 +100,30 @@ final class WatchLink: NSObject {
             interactionPublisher.cancel()
             publishStateNow()
         }
+    }
+
+    /// Publish once the session is actually usable, waiting out an activation
+    /// that was only just requested.
+    ///
+    /// `activate()` is asynchronous. A background wake that activates and
+    /// publishes in the same turn finds `activationState == .notActivated`,
+    /// and `publishStateNow` drops the push on its guard. The delegate's own
+    /// post-activation publish cannot rescue it either: the background task
+    /// calls `setTaskCompleted` as soon as its body returns, and iOS suspends
+    /// the process before a debounced publish can run. Waiting here is what
+    /// lets the wrist update with neither device touched.
+    func publishStateWhenActivated(timeout: Duration = .seconds(5)) async {
+        #if canImport(WatchConnectivity)
+        guard WCSession.isSupported() else { return }
+        activate()
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while WCSession.default.activationState != .activated {
+            guard ContinuousClock.now < deadline else { return }
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+        }
+        publishState(policy: .immediate)
+        #endif
     }
 
     /// Compatibility for existing lifecycle call sites while policies migrate.
@@ -254,6 +289,8 @@ final class WatchLink: NSObject {
             }
             : nil
         let readiness = active?.readinessAtStart ?? idleReadiness?.readinessScore
+        let readinessBasis: ForgeFitWidgetSnapshot.ReadinessBasis? =
+            active?.readinessAtStart != nil ? .daily : idleReadiness?.readinessBasis
 
         var snapshot: WatchWorkoutSnapshot?
         if let active {
@@ -387,6 +424,7 @@ final class WatchLink: NSObject {
             readiness: readiness,
             readinessAction: idleReadiness?.readinessAction,
             readinessDetail: idleReadiness?.readinessDetail,
+            readinessBasis: readinessBasis,
             unitSuffix: Fmt.unit.suffix,
             distanceUnit: Fmt.distanceUnit,
             hrZoneConfig: HRZoneConfigStore.load(),

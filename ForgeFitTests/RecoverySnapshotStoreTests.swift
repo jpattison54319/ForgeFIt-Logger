@@ -144,6 +144,7 @@ struct RecoverySnapshotStoreTests {
     private func demoDashboard(recommendation: String = "Green light — push today.") -> HomeDashboardCache {
         HomeDashboardCache(
             recoveryDisplayScore: 0.82,
+            readinessIsDaily: true,
             baselineReady: true,
             actionRaw: "push",
             recommendation: recommendation,
@@ -249,6 +250,7 @@ struct RecoverySnapshotStoreTests {
         let data = Data(#"{"recoveryDisplayScore":0.82,"baselineReady":true,"actionRaw":"push","recommendation":"Go","reasonTexts":[],"sleepValue":"7h","sleepCaption":"Good","sleepProgress":0.9,"sleepLooksPartial":false,"healthHeadline":"All in range","healthCaption":"4 checked","healthEvaluatedCount":4,"healthOutsideRangeCount":0}"#.utf8)
         let dashboard = try JSONDecoder().decode(HomeDashboardCache.self, from: data)
         #expect(dashboard.recoveryDisplayScore == 0.82)
+        #expect(dashboard.readinessIsDaily == nil)
         #expect(dashboard.preWorkoutAdjustment == nil)
         #expect(dashboard.readinessMethodID == nil)
         #expect(dashboard.readinessCoverage == nil)
@@ -267,6 +269,40 @@ struct RecoverySnapshotStoreTests {
         #expect(workout.readinessAtStart == 82)
         #expect(workout.readinessMethodID == "recovery-index-v2")
         #expect(workout.readinessCoverageAtStart == 0.91)
+    }
+
+    @Test func trendDashboardIsLabeledAndCannotStampWorkoutReadiness() {
+        var dashboard = demoDashboard()
+        dashboard.readinessIsDaily = false
+
+        let widget = ReadinessSurfacePublisher.idleSnapshot(from: dashboard)
+        #expect(widget.readinessScore == 82)
+        #expect(widget.readinessBasis == .trend)
+
+        let workout = WorkoutModel(userID: ForgeFitDemo.userID, startedAt: Date())
+        #expect(!ReadinessSurfacePublisher.apply(dashboard, to: workout))
+        #expect(workout.readinessAtStart == nil)
+    }
+
+    @Test func idlePublisherDoesNotPreserveACurrentScoredSnapshotWithoutAcuteData() {
+        let now = Date()
+        let trend = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: now,
+            readinessScore: 64,
+            readinessBasis: .trend
+        )
+        let daily = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            updatedAt: now,
+            readinessScore: 82,
+            readinessBasis: .daily
+        )
+        let empty = ForgeFitWidgetSnapshot(mode: .idle, updatedAt: now)
+
+        #expect(!ReadinessSurfacePublisher.shouldPreserveCurrentIdleSnapshot(trend, now: now))
+        #expect(!ReadinessSurfacePublisher.shouldPreserveCurrentIdleSnapshot(daily, now: now))
+        #expect(ReadinessSurfacePublisher.shouldPreserveCurrentIdleSnapshot(empty, now: now))
     }
 
     @Test func delayedWorkoutStampIsIsolatedAndExactRetryPersists() throws {

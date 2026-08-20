@@ -147,7 +147,9 @@ final class ReadinessDelivery {
                 pendingRefreshAfterWorkout = true
                 return
             }
-            await refreshMorningNotificationNow()
+            let report = await refreshReadinessSurfacesNow()
+            guard !Task.isCancelled else { return }
+            await refreshMorningNotificationNow(precomputed: report)
         }
         externalRefreshTasks[id] = work
         task.expirationHandler = { work.cancel() }
@@ -197,7 +199,9 @@ final class ReadinessDelivery {
                             ReadinessDelivery.shared.pendingRefreshAfterWorkout = true
                             return
                         }
-                        await ReadinessDelivery.shared.refreshMorningNotificationNow()
+                        let report = await ReadinessDelivery.shared.refreshReadinessSurfacesNow()
+                        guard !Task.isCancelled else { return }
+                        await ReadinessDelivery.shared.refreshMorningNotificationNow(precomputed: report)
                     }
                     ReadinessDelivery.shared.externalRefreshTasks[id] = work
                 }
@@ -227,7 +231,7 @@ final class ReadinessDelivery {
         }
     }
 
-    private func refreshMorningNotificationNow() async {
+    private func refreshMorningNotificationNow(precomputed: RecoveryEngine.Report? = nil) async {
         guard !isLiveWorkoutActive else {
             pendingRefreshAfterWorkout = true
             return
@@ -261,7 +265,14 @@ final class ReadinessDelivery {
             return
         }
 
-        let report = await computeReport()
+        // Background wakes get a few seconds total; reuse the report the
+        // surface refresh just finished rather than scoring the day twice.
+        let report: RecoveryEngine.Report?
+        if let precomputed {
+            report = precomputed
+        } else {
+            report = await computeReport()
+        }
         guard !Task.isCancelled, !isLiveWorkoutActive else {
             pendingRefreshAfterWorkout = true
             return
@@ -335,13 +346,18 @@ final class ReadinessDelivery {
                 pendingRefreshAfterWorkout = true
                 return
             }
-            await refreshMorningNotificationNow()
+            // This is the replay of a wake-up that was suppressed mid-workout,
+            // so it owes the surfaces the same refresh that wake-up would have
+            // done — the workout that finished is itself a readiness input.
+            let report = await refreshReadinessSurfacesNow()
+            guard !Task.isCancelled else { return }
+            await refreshMorningNotificationNow(precomputed: report)
             guard !Task.isCancelled else { return }
             resumeTask = nil
         }
     }
 
-    private func computeReport() async -> RecoveryEngine.Report? {
+    private func computeAnalytics() async -> HomeAnalyticsResult? {
         guard let container else { return nil }
         let metricsStore = HealthMetricsStore.shared
         let input = HomeAnalyticsInput(
@@ -352,7 +368,58 @@ final class ReadinessDelivery {
             now: Date()
         )
         let worker = HomeAnalyticsWorker(modelContainer: container)
-        return try? await worker.calculateCurrent(input).recovery
+        return try? await worker.calculateCurrent(input)
+    }
+
+    private func computeReport() async -> RecoveryEngine.Report? {
+        guard let result = await computeAnalytics() else { return nil }
+        return result.recovery
+    }
+
+    // MARK: - Readiness surfaces
+
+    /// Put a background-computed score on every readiness surface.
+    ///
+    /// Home is the only other producer, and it runs solely while its tab is
+    /// on screen — so before this existed, a new day had no score anywhere
+    /// (phone widget, Watch app, watch-face complication) until the user
+    /// opened the app to Home. The wake-ups that already recompute for the
+    /// morning notification had the finished report in hand and dropped it.
+    ///
+    /// Deliberately independent of the notification's own gating: the push is
+    /// suppressed when the user has turned it off or has already seen today's
+    /// readiness, neither of which says anything about whether the surfaces
+    /// are current.
+    @discardableResult
+    private func refreshReadinessSurfacesNow() async -> RecoveryEngine.Report? {
+        guard !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
+            return nil
+        }
+        guard let result = await computeAnalytics() else { return nil }
+        guard !Task.isCancelled, !isLiveWorkoutActive else {
+            pendingRefreshAfterWorkout = true
+            return nil
+        }
+        // The calendar's daily/trend/strain channels, but NOT the dashboard
+        // cache: that field is documented as "Home exactly as last rendered",
+        // and nothing has rendered here.
+        RecoverySnapshotStore.shared.recordToday(
+            daily: result.recovery.recovery.daily.state.value,
+            trend: result.recovery.recovery.systemic.state.value,
+            strain: result.strain.score,
+            strainTarget: result.strain.targetRange
+        )
+        ReadinessSurfacePublisher.publishFresh(result.recovery)
+        // A background wake may never have shown a scene, so the Watch link
+        // can still be unconfigured and its session unactivated; without both
+        // of these the publish silently no-ops and the wrist keeps yesterday's
+        // number.
+        if let container {
+            WatchLink.shared.configureIfNeeded(container: container)
+        }
+        await WatchLink.shared.publishStateWhenActivated()
+        return result.recovery
     }
 
     private func nextOccurrence(hour: Int, minute: Int) -> Date {
