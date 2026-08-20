@@ -14,11 +14,10 @@ import SwiftData
 nonisolated struct HomeDashboardCache: Codable, Equatable, Sendable {
     // Recovery tile + recommendation hero.
     var recoveryDisplayScore: Double?
-    /// True when `recoveryDisplayScore` is the seven-day trend rather than
-    /// today's acute index — the same distinction Home renders as
-    /// "7-day trend · …" with a grey tint and no ring fill. Optional with a
-    /// default so caches written by older builds still decode.
-    var recoveryIsTrendOnly: Bool? = nil
+    /// Whether the displayed recovery number is today's acute index. A nil
+    /// value means an older cache did not record provenance; consumers must
+    /// not turn that legacy ambiguity into a "ready" claim.
+    var readinessIsDaily: Bool? = nil
     var baselineReady: Bool
     var actionRaw: String
     var recommendation: String
@@ -74,9 +73,6 @@ nonisolated struct RecoverySnapshot: Codable, Equatable, Sendable {
 
     /// A reading worth storing has at least one real score.
     var hasData: Bool { daily != nil || trend != nil || strain != nil }
-
-    /// The day has a score, but only the seven-day trend backs it.
-    var isTrendOnly: Bool { daily == nil && trend != nil }
 
 }
 
@@ -246,6 +242,7 @@ final class RecoverySnapshotStore {
             strainTargetUpper: 5.6,
             dashboard: HomeDashboardCache(
                 recoveryDisplayScore: 0.82,
+                readinessIsDaily: true,
                 baselineReady: true,
                 actionRaw: RecoveryEngine.Action.trainAsPlanned.rawValue,
                 recommendation: "No recovery-based restriction was detected. Use your warm-up to confirm.",

@@ -289,6 +289,8 @@ final class WatchLink: NSObject {
             }
             : nil
         let readiness = active?.readinessAtStart ?? idleReadiness?.readinessScore
+        let readinessBasis: ForgeFitWidgetSnapshot.ReadinessBasis? =
+            active?.readinessAtStart != nil ? .daily : idleReadiness?.readinessBasis
 
         var snapshot: WatchWorkoutSnapshot?
         if let active {
@@ -422,6 +424,7 @@ final class WatchLink: NSObject {
             readiness: readiness,
             readinessAction: idleReadiness?.readinessAction,
             readinessDetail: idleReadiness?.readinessDetail,
+            readinessBasis: readinessBasis,
             unitSuffix: Fmt.unit.suffix,
             distanceUnit: Fmt.distanceUnit,
             hrZoneConfig: HRZoneConfigStore.load(),

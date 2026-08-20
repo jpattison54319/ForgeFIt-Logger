@@ -71,6 +71,7 @@ struct WatchSyncTests {
             readiness: 82,
             readinessAction: "Train as planned",
             readinessDetail: "Train as planned.",
+            readinessBasis: .daily,
             unitSuffix: "lb",
             updatedAt: updatedAt
         )
@@ -267,6 +268,21 @@ struct WatchSyncTests {
         ForgeFitWidgetSnapshotStore.save(snapshot, defaults: defaults)
 
         #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) == snapshot)
+        ForgeFitWidgetSnapshotStore.clear(defaults: defaults)
+        #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) == nil)
+    }
+
+    @Test func legacyWidgetSnapshotWithoutReadinessBasisStillDecodesConservatively() throws {
+        let legacyJSON = """
+        {"mode":"idle","updatedAt":1800000500,"readinessScore":74,"reasonChips":[],"completedSets":0,"totalSets":0}
+        """
+
+        let decoded = try #require(
+            WatchWire.decode(ForgeFitWidgetSnapshot.self, from: Data(legacyJSON.utf8))
+        )
+
+        #expect(decoded.readinessScore == 74)
+        #expect(decoded.readinessBasis == nil)
     }
 
     @Test func idleWidgetSnapshotExpiresAtCalendarDayBoundary() throws {
@@ -312,6 +328,7 @@ struct WatchSyncTests {
             context: WatchAppContext(
                 readiness: 62,
                 readinessAction: "Recover",
+                readinessBasis: .daily,
                 updatedAt: dayOne
             ),
             calendar: calendar
@@ -320,6 +337,7 @@ struct WatchSyncTests {
             context: WatchAppContext(
                 readiness: 62,
                 readinessAction: "Recover",
+                readinessBasis: .daily,
                 updatedAt: dayOne.addingTimeInterval(60)
             ),
             calendar: calendar
@@ -332,6 +350,7 @@ struct WatchSyncTests {
             context: WatchAppContext(
                 readiness: 78,
                 readinessAction: "Train",
+                readinessBasis: .daily,
                 updatedAt: dayTwo.addingTimeInterval(60)
             ),
             calendar: calendar
@@ -351,6 +370,46 @@ struct WatchSyncTests {
         #expect(first != clearedNextDay)
         #expect(clearedNextDay != freshNextDay)
         #expect(workout == nil)
+    }
+
+    @Test func complicationDeliverySignatureChangesWhenReadinessBasisChanges() throws {
+        let date = Date(timeIntervalSince1970: 1_800_057_540)
+        let daily = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                readinessBasis: .daily,
+                updatedAt: date
+            )
+        ))
+        let trend = try #require(WatchComplicationDeliverySignature(
+            context: WatchAppContext(
+                readiness: 62,
+                readinessAction: "Recover",
+                readinessBasis: .trend,
+                updatedAt: date
+            )
+        ))
+
+        #expect(daily != trend)
+    }
+
+    @Test func readinessBasisFollowsTheSameDayGateAsTheScore() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let dayOne = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_800_057_540))
+            .addingTimeInterval(12 * 60 * 60)
+        let dayTwo = try #require(calendar.date(byAdding: .day, value: 1, to: dayOne))
+        let context = WatchAppContext(
+            readiness: 64,
+            readinessBasis: .trend,
+            updatedAt: dayOne
+        )
+
+        #expect(context.currentReadiness(at: dayOne, calendar: calendar) == 64)
+        #expect(context.currentReadinessBasis(at: dayOne, calendar: calendar) == .trend)
+        #expect(context.currentReadiness(at: dayTwo, calendar: calendar) == nil)
+        #expect(context.currentReadinessBasis(at: dayTwo, calendar: calendar) == nil)
     }
 
     private func expectCommand(
@@ -584,6 +643,7 @@ extension WatchSyncTests {
         #expect(decoded.readiness == 75)
         #expect(decoded.readinessAction == nil)
         #expect(decoded.readinessDetail == nil)
+        #expect(decoded.readinessBasis == nil)
         #expect(decoded.themeFamily == nil)
         #expect(decoded.themeMode == nil)
         #expect(decoded.effectiveThemeFamily == .sage)
@@ -1031,52 +1091,45 @@ extension WatchSyncTests {
 
     /// A seven-day trend must never be presented as today's verdict. Home
     /// makes this distinction; the widget and complication faces now do too.
-    @Test func trendOnlyScoreIsLabelledAndDoesNotFillTheGauge() {
+    @Test func trendOnlyScoreCarriesTrendProvenance() {
         let trend = ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: 62,
-            readinessIsTrendOnly: true
+            readinessBasis: .trend
         )
 
-        #expect(trend.readinessHeadline == "62% · 7-day")
-        #expect(trend.readinessAccessibilityLabel == "62 percent, seven day trend")
-        #expect(trend.readinessSymbol == "chart.line.uptrend.xyaxis")
-        #expect(!trend.readinessFillsGauge)
+        #expect(trend.readinessBasis == .trend)
+        #expect(trend.readinessBasis != .daily)
     }
 
     @Test func acuteScoreSpeaksForToday() {
         let acute = ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: 74,
-            readinessIsTrendOnly: false
+            readinessBasis: .daily
         )
 
-        #expect(acute.readinessHeadline == "74% ready")
-        #expect(acute.readinessAccessibilityLabel == "74 percent ready")
-        #expect(acute.readinessSymbol == "bolt.heart.fill")
-        #expect(acute.readinessFillsGauge)
+        #expect(acute.readinessBasis == .daily)
     }
 
     @Test func noScoreHasNoHeadlineAndNoGauge() {
         let empty = ForgeFitWidgetSnapshot(mode: .idle)
 
-        #expect(empty.readinessHeadline == nil)
-        #expect(empty.readinessAccessibilityLabel == nil)
-        #expect(!empty.readinessFillsGauge)
+        #expect(empty.readinessScore == nil)
+        #expect(empty.readinessBasis == nil)
     }
 
     /// The marker is additive: a snapshot encoded before it existed decodes
-    /// with the flag absent and keeps rendering exactly as it used to.
-    @Test func snapshotWithoutTheTrendMarkerStillDecodes() throws {
+    /// with the basis absent and is rendered conservatively by new faces.
+    @Test func snapshotWithoutTheTrendBasisStillDecodes() throws {
         let legacy = #"{"mode":"idle","updatedAt":1800000000,"readinessScore":74,"reasonChips":[],"completedSets":0,"totalSets":0}"#
 
         let decoded = try #require(
             WatchWire.decode(ForgeFitWidgetSnapshot.self, from: Data(legacy.utf8))
         )
 
-        #expect(decoded.readinessIsTrendOnly == nil)
-        #expect(decoded.readinessHeadline == "74% ready")
-        #expect(decoded.readinessFillsGauge)
+        #expect(decoded.readinessBasis == nil)
+        #expect(decoded.readinessScore == 74)
     }
 
     /// Flipping between trend and acute changes what the face draws, so it has
@@ -1085,10 +1138,10 @@ extension WatchSyncTests {
         let acute = ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: 62,
-            readinessIsTrendOnly: false
+            readinessBasis: .daily
         )
         var trend = acute
-        trend.readinessIsTrendOnly = true
+        trend.readinessBasis = .trend
 
         #expect(!acute.rendersSameContent(as: trend))
     }

@@ -663,6 +663,7 @@ final class WatchStore: NSObject {
                 mode: .idle,
                 updatedAt: context.updatedAt,
                 readinessScore: context.currentReadiness(),
+                readinessBasis: context.currentReadinessBasis(),
                 readinessAction: context.currentReadinessAction(),
                 readinessDetail: context.currentReadinessDetail()
             )

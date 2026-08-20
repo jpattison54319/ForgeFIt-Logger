@@ -131,22 +131,23 @@ private struct ForgeFitLauncherView: View {
                         Text("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0)")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                     }
-                } else if let score = snapshot?.readinessScore, snapshot?.readinessFillsGauge == true {
-                    Gauge(value: Double(score), in: 0...100) {
-                        Image(systemName: "bolt.heart.fill")
-                    } currentValueLabel: {
-                        Text("\(score)")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                    }
-                    .gaugeStyle(.accessoryCircular)
                 } else if let score = snapshot?.readinessScore {
-                    // Seven-day trend: the number without the ring, matching
-                    // how Home declines to render it as today's verdict.
-                    VStack(spacing: 0) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("\(score)")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    if isDailyReadiness {
+                        Gauge(value: Double(score), in: 0...100) {
+                            Image(systemName: "bolt.heart.fill")
+                        } currentValueLabel: {
+                            Text("\(score)")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                        }
+                        .gaugeStyle(.accessoryCircular)
+                    } else {
+                        VStack(spacing: 0) {
+                            Text("\(score)")
+                                .font(.system(size: 17, weight: .bold, design: .rounded))
+                            Text(snapshot?.readinessBasis == .trend ? "trend" : "score")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 } else {
                     Image(systemName: "bolt.heart.fill")
@@ -157,16 +158,16 @@ private struct ForgeFitLauncherView: View {
 
         case .accessoryRectangular:
             HStack(spacing: 8) {
-                Image(systemName: snapshot?.mode == .activeWorkout ? "dumbbell.fill" : (snapshot?.readinessSymbol ?? "bolt.heart.fill"))
+                Image(systemName: snapshot?.mode == .activeWorkout ? "dumbbell.fill" : "bolt.heart.fill")
                     .font(.system(size: 18, weight: .bold))
                 VStack(alignment: .leading, spacing: 1) {
                     if snapshot?.mode == .activeWorkout {
                         Text(snapshot?.workoutTitle ?? "Workout").font(.headline).lineLimit(1)
                         Text("\(snapshot?.completedSets ?? 0) of \(snapshot?.totalSets ?? 0) sets")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else if let headline = snapshot?.readinessHeadline {
-                        Text(headline).font(.headline)
-                        Text(snapshot?.readinessAction ?? "Today's readiness")
+                    } else if snapshot?.readinessScore != nil {
+                        Text(readinessText).font(.headline)
+                        Text(snapshot?.readinessAction ?? readinessHeader)
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     } else {
                         Text("ForgeFit").font(.headline)
@@ -180,8 +181,8 @@ private struct ForgeFitLauncherView: View {
         case .accessoryInline:
             if snapshot?.mode == .activeWorkout {
                 Label("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0) sets", systemImage: "dumbbell.fill")
-            } else if let headline = snapshot?.readinessHeadline {
-                Label(headline, systemImage: snapshot?.readinessSymbol ?? "bolt.heart.fill")
+            } else if snapshot?.readinessScore != nil {
+                Label(readinessText, systemImage: "bolt.heart.fill")
             } else {
                 Label("ForgeFit", systemImage: "dumbbell.fill")
             }
@@ -195,11 +196,33 @@ private struct ForgeFitLauncherView: View {
         if snapshot?.mode == .activeWorkout {
             return "\(snapshot?.completedSets ?? 0) of \(snapshot?.totalSets ?? 0) sets complete"
         }
-        if let label = snapshot?.readinessAccessibilityLabel { return label }
+        if let score = snapshot?.readinessScore {
+            switch snapshot?.readinessBasis {
+            case .daily: return "\(score) percent ready"
+            case .trend: return "\(score) percent seven-day recovery trend"
+            case nil: return "\(score) percent readiness score"
+            }
+        }
         return "ForgeFit"
     }
 
     private var snapshot: ForgeFitWidgetSnapshot? { entry.snapshot }
+    private var isDailyReadiness: Bool { snapshot?.readinessBasis == .daily }
+    private var readinessHeader: String {
+        switch snapshot?.readinessBasis {
+        case .daily: return "Readiness"
+        case .trend: return "7-day trend"
+        case nil: return "Readiness score"
+        }
+    }
+    private var readinessText: String {
+        guard let score = snapshot?.readinessScore else { return "Readiness" }
+        switch snapshot?.readinessBasis {
+        case .daily: return "\(score)% ready"
+        case .trend: return "\(score)% trend"
+        case nil: return "\(score)% readiness"
+        }
+    }
 
     private var smallWidget: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -213,8 +236,8 @@ private struct ForgeFitLauncherView: View {
                 Text(setProgressText)
                     .font(.caption.bold())
                     .foregroundStyle(secondaryText)
-            } else if let headline = snapshot?.readinessHeadline {
-                Text(headline)
+            } else if snapshot?.readinessScore != nil {
+                Text(readinessText)
                     .font(.headline)
                     .foregroundStyle(primaryText)
                 Text(snapshot?.readinessAction ?? "Open ForgeFit")
@@ -253,7 +276,7 @@ private struct ForgeFitLauncherView: View {
             } else if let score = snapshot?.readinessScore {
                 readinessRing(score: score, size: 58)
                 VStack(alignment: .leading, spacing: 5) {
-                    header("Readiness", icon: "heart.fill")
+                    header(readinessHeader, icon: "heart.fill")
                     Text(snapshot?.readinessAction ?? "Open ForgeFit")
                         .font(.title3.bold())
                         .foregroundStyle(primaryText)
@@ -300,7 +323,7 @@ private struct ForgeFitLauncherView: View {
                 HStack {
                     launcherIcon(size: 42)
                     VStack(alignment: .leading, spacing: 2) {
-                        header("Today", icon: "heart.fill")
+                        header(readinessHeader, icon: "heart.fill")
                         Text(snapshot?.readinessAction ?? "Open ForgeFit")
                             .font(.title2.bold())
                             .foregroundStyle(primaryText)
@@ -369,30 +392,18 @@ private struct ForgeFitLauncherView: View {
         return "Rest complete"
     }
 
-    /// The readiness dial. A seven-day trend leaves the track unfilled: the
-    /// fill is a statement about today, and Home makes the same distinction by
-    /// dropping its own ring progress rather than colouring a day it has no
-    /// readings for. The number stays either way — labelled, not vouching.
     private func readinessRing(score: Int, size: CGFloat) -> some View {
-        let fills = snapshot?.readinessFillsGauge ?? true
-        return ZStack {
+        ZStack {
             Circle().stroke(primaryText.opacity(0.18), lineWidth: 5)
-            if fills {
+            if isDailyReadiness {
                 Circle()
                     .trim(from: 0, to: CGFloat(max(0, min(score, 100))) / 100)
                     .stroke(isFullColor ? theme.recoveryHigh : .primary, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            VStack(spacing: 0) {
-                if !fills {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: size * 0.16, weight: .bold))
-                        .foregroundStyle(secondaryText)
-                }
-                Text("\(score)")
-                    .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
-                    .foregroundStyle(primaryText)
-            }
+            Text("\(score)")
+                .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
+                .foregroundStyle(primaryText)
         }
         .frame(width: size, height: size)
     }
@@ -458,6 +469,7 @@ private extension ForgeFitWidgetSnapshot {
         ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: 72,
+            readinessBasis: .daily,
             readinessAction: "Train as planned",
             readinessDetail: "Sleep okay and load steady.",
             reasonChips: ["Sleep okay", "Load steady"]

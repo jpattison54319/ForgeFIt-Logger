@@ -53,6 +53,7 @@ enum WatchAppStoreDemo {
             readiness: 96,
             readinessAction: "Proceed as planned",
             readinessDetail: "No adverse HRV deviation",
+            readinessBasis: .daily,
             unitSuffix: "lb",
             updatedAt: now,
             distanceUnit: .mi

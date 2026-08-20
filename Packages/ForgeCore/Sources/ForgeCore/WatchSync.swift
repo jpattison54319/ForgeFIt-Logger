@@ -45,6 +45,9 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     /// The phone owns the daily verdict so the watch never reinterprets bands.
     public var readinessAction: String?
     public var readinessDetail: String?
+    /// Provenance for the optional readiness number. Older contexts omit this
+    /// field and are rendered conservatively by the watch.
+    public var readinessBasis: ForgeFitWidgetSnapshot.ReadinessBasis?
     public var unitSuffix: String
     public var updatedAt: Date
     /// Optional so contexts encoded by an older watch/phone still decode; use
@@ -61,6 +64,7 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         readiness: Int? = nil,
         readinessAction: String? = nil,
         readinessDetail: String? = nil,
+        readinessBasis: ForgeFitWidgetSnapshot.ReadinessBasis? = nil,
         unitSuffix: String = "lb",
         updatedAt: Date = Date(),
         distanceUnit: DistanceUnit? = nil,
@@ -73,6 +77,7 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         self.readiness = readiness
         self.readinessAction = readinessAction
         self.readinessDetail = readinessDetail
+        self.readinessBasis = readinessBasis
         self.unitSuffix = unitSuffix
         self.updatedAt = updatedAt
         self.distanceUnit = distanceUnit
@@ -110,6 +115,11 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
         isReadinessCurrent(at: date, calendar: calendar) ? readinessDetail : nil
     }
 
+    /// `readinessBasis`, or nil once it belongs to a previous day.
+    public func currentReadinessBasis(at date: Date = .now, calendar: Calendar = .current) -> ForgeFitWidgetSnapshot.ReadinessBasis? {
+        isReadinessCurrent(at: date, calendar: calendar) ? readinessBasis : nil
+    }
+
     public var effectiveDistanceUnit: DistanceUnit { distanceUnit ?? .km }
     /// The user's HR-zone config, defaulting to the classic model.
     public var effectiveHRZoneConfig: HRZoneConfig { hrZoneConfig ?? HRZoneConfig() }
@@ -125,6 +135,7 @@ public struct WatchComplicationDeliverySignature: Codable, Equatable, Sendable {
     public let readiness: Int?
     public let readinessAction: String?
     public let readinessDetail: String?
+    public let readinessBasis: ForgeFitWidgetSnapshot.ReadinessBasis?
 
     public init?(context: WatchAppContext, calendar: Calendar = .current) {
         guard context.workout == nil else { return nil }
@@ -132,6 +143,7 @@ public struct WatchComplicationDeliverySignature: Codable, Equatable, Sendable {
         readiness = context.readiness
         readinessAction = context.readinessAction
         readinessDetail = context.readinessDetail
+        readinessBasis = context.readinessBasis
     }
 }
 
@@ -533,14 +545,21 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         case activeWorkout
     }
 
+    /// What a readiness number actually measures. This travels with the
+    /// snapshot because a bare integer is ambiguous: the Home screen may show
+    /// a seven-day trend while a filled "N% ready" gauge claims something
+    /// about today.
+    public enum ReadinessBasis: String, Codable, Sendable {
+        case daily
+        case trend
+    }
+
     public var mode: Mode
     public var updatedAt: Date
     public var readinessScore: Int?
-    /// True when `readinessScore` is the seven-day trend rather than today's
-    /// acute index. Additive-optional so snapshots written by older builds
-    /// still decode; absent means "not known to be a trend", which is how
-    /// every pre-existing snapshot behaved.
-    public var readinessIsTrendOnly: Bool?
+    /// Optional keeps snapshots written by older app versions decodable. A
+    /// new producer must set it whenever it publishes a score.
+    public var readinessBasis: ReadinessBasis?
     public var readinessAction: String?
     public var readinessDetail: String?
     public var reasonChips: [String]
@@ -556,7 +575,7 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         mode: Mode,
         updatedAt: Date = Date(),
         readinessScore: Int? = nil,
-        readinessIsTrendOnly: Bool? = nil,
+        readinessBasis: ReadinessBasis? = nil,
         readinessAction: String? = nil,
         readinessDetail: String? = nil,
         reasonChips: [String] = [],
@@ -571,7 +590,7 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         self.mode = mode
         self.updatedAt = updatedAt
         self.readinessScore = readinessScore
-        self.readinessIsTrendOnly = readinessIsTrendOnly
+        self.readinessBasis = readinessBasis
         self.readinessAction = readinessAction
         self.readinessDetail = readinessDetail
         self.reasonChips = reasonChips
@@ -588,37 +607,6 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
     /// remain valid across midnight because their own lifecycle ends them.
     public func isCurrent(at date: Date = .now, calendar: Calendar = .current) -> Bool {
         mode == .activeWorkout || calendar.isDate(updatedAt, inSameDayAs: date)
-    }
-
-    /// The readiness headline, so no face can make a claim the score does not
-    /// support. The acute index speaks for today; the seven-day trend is
-    /// labelled as itself — mirroring Home, which prefixes "7-day trend · ",
-    /// greys the tint, and drops the ring fill rather than vouching for a day
-    /// it has no readings for.
-    public var readinessHeadline: String? {
-        guard let readinessScore else { return nil }
-        return readinessIsTrendOnly == true
-            ? "\(readinessScore)% · 7-day"
-            : "\(readinessScore)% ready"
-    }
-
-    /// Spoken form of `readinessHeadline`.
-    public var readinessAccessibilityLabel: String? {
-        guard let readinessScore else { return nil }
-        return readinessIsTrendOnly == true
-            ? "\(readinessScore) percent, seven day trend"
-            : "\(readinessScore) percent ready"
-    }
-
-    /// The symbol that belongs with the headline.
-    public var readinessSymbol: String {
-        readinessIsTrendOnly == true ? "chart.line.uptrend.xyaxis" : "bolt.heart.fill"
-    }
-
-    /// Whether a gauge or ring may be filled to the score. A trend is context,
-    /// not a verdict about today, so it renders as a bare number.
-    public var readinessFillsGauge: Bool {
-        readinessScore != nil && readinessIsTrendOnly != true
     }
 
     /// True when both snapshots would draw the same widget or complication.
