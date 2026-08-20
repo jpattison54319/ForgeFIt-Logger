@@ -36,7 +36,7 @@ enum ReadinessSurfacePublisher {
         publish(ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: report.displayScore.map { Int(($0 * 100).rounded()) },
-            readinessBasis: report.displayScore.map {
+            readinessBasis: report.displayScore.map { _ in
                 report.recovery.daily.state.value != nil ? .daily : .trend
             },
             readinessAction: report.action.title,
