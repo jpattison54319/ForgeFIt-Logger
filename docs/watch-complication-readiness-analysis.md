@@ -37,6 +37,11 @@ while the gap behind it was left open.
 
 ## What was still broken at build 78, and what this change does
 
+Defects 1–4 were found by analysis; 5 came out of review, as did the two
+lifecycle defects and the account-reset regression noted in the PR. The pattern
+worth carrying forward: every one of them was a *surface* that had been missed,
+not a mechanism that had been misunderstood.
+
 **1. The background recompute threw its result away.** `ReadinessDelivery` runs a
 `BGAppRefreshTask` at 05:45 and `HKObserverQuery` background delivery on sleep +
 HRV, and both computed a full `RecoveryEngine.Report` — then used it only to
@@ -60,12 +65,12 @@ had published.
 
 *Fixed:* a shared `ReadinessSurfacePublisher.publishIdle()`. It renders from the
 dashboard cache when Home has drawn; otherwise it rebuilds from the day's
-recorded channels (`RecoverySnapshot.displayScore`, mirroring
-`RecoveryEngine.Report.displayScore`); otherwise it keeps a current idle
-snapshot; and only then publishes an empty one. The middle fallback matters most
-on the workout-finish path, where the store holds an `.activeWorkout` snapshot
-and the readiness fields are already gone — preserving the snapshot alone would
-not have worked there.
+recorded **acute** index (`RecoverySnapshot.daily`, never the seven-day trend —
+see defect 5); otherwise it keeps a current idle snapshot, but only one that is
+completely empty (`shouldPreserveCurrentIdleSnapshot`); and only then publishes
+an empty one. The middle fallback matters most on the workout-finish path, where
+the store holds an `.activeWorkout` snapshot and the readiness fields are already
+gone — preserving the snapshot alone would not have worked there.
 
 **3. One logging session burned the day's complication reload budget.**
 `WatchStore.publishComplicationSnapshot` called
@@ -88,6 +93,27 @@ iPhone's own widget — and never `WatchLink.publishState()`; the only
 
 *Fixed:* the `.active` branch publishes. The watch asks on its foreground; the
 phone can only answer while running, and foregrounding is that moment.
+
+**5. A seven-day trend was published as today's readiness.** `publishFresh` and
+`idleSnapshot` published `RecoveryEngine.Report.displayScore`, which falls back
+to the seven-day trend when the acute gate has not passed. Home discloses that
+fallback three ways — a `"7-day trend · …"` caption, a grey tint, and no ring
+fill — but the widget and complication rendered the same number as `"N% ready"`
+over a filled gauge, and the watch app labelled it `"Readiness"` while inventing
+its own verdict from the number (`readiness >= 70 ? "Ready to train"`), which the
+wire protocol's own comment forbids: "the phone owns the daily verdict so the
+watch never reinterprets bands". `WorkoutModel.readinessAtStart` could be stamped
+from it too, persisting the claim into training history. This predates the branch
+(`c98cc28`), but publishing from the background made it routine rather than rare.
+
+*Fixed:* provenance travels with the number.
+`ForgeFitWidgetSnapshot.ReadinessBasis` (`.daily` / `.trend`) and the matching
+`WatchAppContext.readinessBasis` are set by every producer, day-gated by
+`currentReadinessBasis()` alongside the score, and included in
+`WatchComplicationDeliverySignature` so a basis flip earns its transfer. Each
+face decides its own presentation from the basis — three-way, because `nil`
+means an older producer did not say, and unknown provenance must not become a
+"ready" claim. `apply(_:to:)` refuses to stamp anything but `.daily`.
 
 ## Ruled out — verified correct, don't spend time here
 
