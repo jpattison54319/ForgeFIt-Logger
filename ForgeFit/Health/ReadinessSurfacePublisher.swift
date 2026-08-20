@@ -21,6 +21,7 @@ enum ReadinessSurfacePublisher {
         ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: dashboard.recoveryDisplayScore.map { Int(($0 * 100).rounded()) },
+            readinessIsTrendOnly: dashboard.recoveryIsTrendOnly,
             readinessAction: RecoveryEngine.Action(rawValue: dashboard.actionRaw)?.title,
             readinessDetail: dashboard.preWorkoutAdjustment ?? dashboard.recommendation,
             reasonChips: Array(dashboard.reasonTexts.prefix(3))
@@ -31,6 +32,8 @@ enum ReadinessSurfacePublisher {
         publish(ForgeFitWidgetSnapshot(
             mode: .idle,
             readinessScore: report.displayScore.map { Int(($0 * 100).rounded()) },
+            readinessIsTrendOnly: report.recovery.daily.state.value == nil
+                && report.recovery.systemic.state.value != nil,
             readinessAction: report.action.title,
             readinessDetail: report.preWorkoutAdjustment,
             reasonChips: Array(report.reasonChips.prefix(3).map(\.text))
@@ -143,18 +146,14 @@ enum ReadinessSurfacePublisher {
         // background refresh records the day's channels without it, and a
         // finishing workout has just overwritten the published snapshot with
         // its own live-set payload — so the day's recorded score, not the
-        // snapshot, is what can still be recovered here.
-        //
-        // Deliberately the ACUTE index only, never the seven-day trend that
-        // `RecoveryEngine.Report.displayScore` falls back to. Every widget and
-        // complication face renders a score as "N% ready" over a filled gauge,
-        // which is a claim about today; Home can afford the trend because it
-        // labels it ("7-day trend · …") and drops the ring fill, and this path
-        // carries no caption to label it with. No acute score means no score.
-        if let score = RecoverySnapshotStore.shared.snapshot(for: now)?.daily {
+        // snapshot, is what can still be recovered here. The trend marker
+        // travels with it so the faces label it rather than vouch for it.
+        if let day = RecoverySnapshotStore.shared.snapshot(for: now),
+           let score = day.daily ?? day.trend {
             publish(ForgeFitWidgetSnapshot(
                 mode: .idle,
-                readinessScore: Int((score * 100).rounded())
+                readinessScore: Int((score * 100).rounded()),
+                readinessIsTrendOnly: day.isTrendOnly
             ))
             return
         }

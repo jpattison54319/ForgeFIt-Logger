@@ -536,6 +536,11 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
     public var mode: Mode
     public var updatedAt: Date
     public var readinessScore: Int?
+    /// True when `readinessScore` is the seven-day trend rather than today's
+    /// acute index. Additive-optional so snapshots written by older builds
+    /// still decode; absent means "not known to be a trend", which is how
+    /// every pre-existing snapshot behaved.
+    public var readinessIsTrendOnly: Bool?
     public var readinessAction: String?
     public var readinessDetail: String?
     public var reasonChips: [String]
@@ -551,6 +556,7 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         mode: Mode,
         updatedAt: Date = Date(),
         readinessScore: Int? = nil,
+        readinessIsTrendOnly: Bool? = nil,
         readinessAction: String? = nil,
         readinessDetail: String? = nil,
         reasonChips: [String] = [],
@@ -565,6 +571,7 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
         self.mode = mode
         self.updatedAt = updatedAt
         self.readinessScore = readinessScore
+        self.readinessIsTrendOnly = readinessIsTrendOnly
         self.readinessAction = readinessAction
         self.readinessDetail = readinessDetail
         self.reasonChips = reasonChips
@@ -581,6 +588,37 @@ public struct ForgeFitWidgetSnapshot: Codable, Sendable, Equatable {
     /// remain valid across midnight because their own lifecycle ends them.
     public func isCurrent(at date: Date = .now, calendar: Calendar = .current) -> Bool {
         mode == .activeWorkout || calendar.isDate(updatedAt, inSameDayAs: date)
+    }
+
+    /// The readiness headline, so no face can make a claim the score does not
+    /// support. The acute index speaks for today; the seven-day trend is
+    /// labelled as itself — mirroring Home, which prefixes "7-day trend · ",
+    /// greys the tint, and drops the ring fill rather than vouching for a day
+    /// it has no readings for.
+    public var readinessHeadline: String? {
+        guard let readinessScore else { return nil }
+        return readinessIsTrendOnly == true
+            ? "\(readinessScore)% · 7-day"
+            : "\(readinessScore)% ready"
+    }
+
+    /// Spoken form of `readinessHeadline`.
+    public var readinessAccessibilityLabel: String? {
+        guard let readinessScore else { return nil }
+        return readinessIsTrendOnly == true
+            ? "\(readinessScore) percent, seven day trend"
+            : "\(readinessScore) percent ready"
+    }
+
+    /// The symbol that belongs with the headline.
+    public var readinessSymbol: String {
+        readinessIsTrendOnly == true ? "chart.line.uptrend.xyaxis" : "bolt.heart.fill"
+    }
+
+    /// Whether a gauge or ring may be filled to the score. A trend is context,
+    /// not a verdict about today, so it renders as a bare number.
+    public var readinessFillsGauge: Bool {
+        readinessScore != nil && readinessIsTrendOnly != true
     }
 
     /// True when both snapshots would draw the same widget or complication.

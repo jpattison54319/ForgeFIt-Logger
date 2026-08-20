@@ -102,7 +102,7 @@ struct ForgeFitComplicationView: View {
                         Text("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0)")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                     }
-                } else if let score = snapshot?.readinessScore {
+                } else if let score = snapshot?.readinessScore, snapshot?.readinessFillsGauge == true {
                     Gauge(value: Double(score), in: 0...100) {
                         Image(systemName: "bolt.heart.fill")
                     } currentValueLabel: {
@@ -110,6 +110,14 @@ struct ForgeFitComplicationView: View {
                     }
                     .gaugeStyle(.accessoryCircular)
                     .tint(accent)
+                } else if let score = snapshot?.readinessScore {
+                    // Seven-day trend: the number without the ring, matching
+                    // how Home declines to render it as today's verdict.
+                    VStack(spacing: 0) {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("\(score)").font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
                 } else {
                     Image(systemName: "dumbbell.fill").font(.system(size: 18, weight: .bold))
                 }
@@ -117,7 +125,7 @@ struct ForgeFitComplicationView: View {
 
         case .accessoryRectangular:
             HStack(spacing: 8) {
-                Image(systemName: isWorkout ? "dumbbell.fill" : "bolt.heart.fill")
+                Image(systemName: isWorkout ? "dumbbell.fill" : (snapshot?.readinessSymbol ?? "bolt.heart.fill"))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(accentForeground)
                 VStack(alignment: .leading, spacing: 1) {
@@ -125,8 +133,8 @@ struct ForgeFitComplicationView: View {
                         Text(snapshot?.workoutTitle ?? "Workout").font(.headline).lineLimit(1)
                         Text("\(snapshot?.completedSets ?? 0) of \(snapshot?.totalSets ?? 0) sets")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else if let score = snapshot?.readinessScore {
-                        Text("\(score)% ready").font(.headline)
+                    } else if let headline = snapshot?.readinessHeadline {
+                        Text(headline).font(.headline)
                         Text(snapshot?.readinessAction ?? "Today's readiness")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     } else {
@@ -139,21 +147,21 @@ struct ForgeFitComplicationView: View {
         case .accessoryInline:
             if isWorkout {
                 Label("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0) sets", systemImage: "dumbbell.fill")
-            } else if let score = snapshot?.readinessScore {
-                Label("\(score)% ready", systemImage: "bolt.heart.fill")
+            } else if let headline = snapshot?.readinessHeadline {
+                Label(headline, systemImage: snapshot?.readinessSymbol ?? "bolt.heart.fill")
             } else {
                 Label("ForgeFit", systemImage: "dumbbell.fill")
             }
 
         case .accessoryCorner:
-            Image(systemName: isWorkout ? "dumbbell.fill" : "bolt.heart.fill")
+            Image(systemName: isWorkout ? "dumbbell.fill" : (snapshot?.readinessSymbol ?? "bolt.heart.fill"))
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(accentForeground)
                 .widgetLabel {
                     if isWorkout {
                         Text("\(snapshot?.completedSets ?? 0)/\(snapshot?.totalSets ?? 0)")
-                    } else if let score = snapshot?.readinessScore {
-                        Text("\(score)% ready")
+                    } else if let headline = snapshot?.readinessHeadline {
+                        Text(headline)
                     } else {
                         Text("ForgeFit")
                     }

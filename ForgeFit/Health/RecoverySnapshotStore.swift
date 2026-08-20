@@ -14,6 +14,11 @@ import SwiftData
 nonisolated struct HomeDashboardCache: Codable, Equatable, Sendable {
     // Recovery tile + recommendation hero.
     var recoveryDisplayScore: Double?
+    /// True when `recoveryDisplayScore` is the seven-day trend rather than
+    /// today's acute index — the same distinction Home renders as
+    /// "7-day trend · …" with a grey tint and no ring fill. Optional with a
+    /// default so caches written by older builds still decode.
+    var recoveryIsTrendOnly: Bool? = nil
     var baselineReady: Bool
     var actionRaw: String
     var recommendation: String
@@ -69,6 +74,9 @@ nonisolated struct RecoverySnapshot: Codable, Equatable, Sendable {
 
     /// A reading worth storing has at least one real score.
     var hasData: Bool { daily != nil || trend != nil || strain != nil }
+
+    /// The day has a score, but only the seven-day trend backs it.
+    var isTrendOnly: Bool { daily == nil && trend != nil }
 
 }
 

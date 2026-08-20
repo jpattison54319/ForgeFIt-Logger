@@ -1026,4 +1026,91 @@ extension WatchSyncTests {
         #expect(snapshot.isCurrent(at: yesterday.addingTimeInterval(60)))
         #expect(!snapshot.isCurrent(at: yesterday.addingTimeInterval(60 * 60 * 24)))
     }
+
+    // MARK: - Trend vs today's readiness
+
+    /// A seven-day trend must never be presented as today's verdict. Home
+    /// makes this distinction; the widget and complication faces now do too.
+    @Test func trendOnlyScoreIsLabelledAndDoesNotFillTheGauge() {
+        let trend = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            readinessScore: 62,
+            readinessIsTrendOnly: true
+        )
+
+        #expect(trend.readinessHeadline == "62% · 7-day")
+        #expect(trend.readinessAccessibilityLabel == "62 percent, seven day trend")
+        #expect(trend.readinessSymbol == "chart.line.uptrend.xyaxis")
+        #expect(!trend.readinessFillsGauge)
+    }
+
+    @Test func acuteScoreSpeaksForToday() {
+        let acute = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            readinessScore: 74,
+            readinessIsTrendOnly: false
+        )
+
+        #expect(acute.readinessHeadline == "74% ready")
+        #expect(acute.readinessAccessibilityLabel == "74 percent ready")
+        #expect(acute.readinessSymbol == "bolt.heart.fill")
+        #expect(acute.readinessFillsGauge)
+    }
+
+    @Test func noScoreHasNoHeadlineAndNoGauge() {
+        let empty = ForgeFitWidgetSnapshot(mode: .idle)
+
+        #expect(empty.readinessHeadline == nil)
+        #expect(empty.readinessAccessibilityLabel == nil)
+        #expect(!empty.readinessFillsGauge)
+    }
+
+    /// The marker is additive: a snapshot encoded before it existed decodes
+    /// with the flag absent and keeps rendering exactly as it used to.
+    @Test func snapshotWithoutTheTrendMarkerStillDecodes() throws {
+        let legacy = #"{"mode":"idle","updatedAt":1800000000,"readinessScore":74,"reasonChips":[],"completedSets":0,"totalSets":0}"#
+
+        let decoded = try #require(
+            WatchWire.decode(ForgeFitWidgetSnapshot.self, from: Data(legacy.utf8))
+        )
+
+        #expect(decoded.readinessIsTrendOnly == nil)
+        #expect(decoded.readinessHeadline == "74% ready")
+        #expect(decoded.readinessFillsGauge)
+    }
+
+    /// Flipping between trend and acute changes what the face draws, so it has
+    /// to earn a reload even when the number itself is unchanged.
+    @Test func trendFlipCountsAsAContentChange() {
+        let acute = ForgeFitWidgetSnapshot(
+            mode: .idle,
+            readinessScore: 62,
+            readinessIsTrendOnly: false
+        )
+        var trend = acute
+        trend.readinessIsTrendOnly = true
+
+        #expect(!acute.rendersSameContent(as: trend))
+    }
+
+    // MARK: - Account reset
+
+    /// Reset must be able to remove the snapshot outright. It lives in the app
+    /// group and outlives every store the reset clears, so leaving an empty
+    /// snapshot behind is not the same as leaving none.
+    @Test func clearRemovesTheStoredSnapshot() throws {
+        let suite = "forgecore.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        ForgeFitWidgetSnapshotStore.save(
+            ForgeFitWidgetSnapshot(mode: .idle, readinessScore: 74),
+            defaults: defaults
+        )
+        #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) != nil)
+
+        ForgeFitWidgetSnapshotStore.clear(defaults: defaults)
+
+        #expect(ForgeFitWidgetSnapshotStore.load(defaults: defaults) == nil)
+    }
 }
