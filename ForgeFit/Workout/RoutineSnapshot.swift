@@ -22,6 +22,7 @@ struct RoutineSnapshot: Equatable {
         let targetDistanceMeters: Double?
         let plannedMiniSetCount: Int?
         let plannedMiniRepsJSON: String?
+        let createdAt: Date
 
         @MainActor
         init(of set: RoutineSetModel) {
@@ -37,6 +38,7 @@ struct RoutineSnapshot: Equatable {
             targetDistanceMeters = set.targetDistanceMeters
             plannedMiniSetCount = set.plannedMiniSetCount
             plannedMiniRepsJSON = set.plannedMiniRepsJSON
+            createdAt = set.createdAt
         }
     }
 
@@ -45,6 +47,8 @@ struct RoutineSnapshot: Equatable {
         let exerciseID: UUID
         let position: Int
         let supersetGroup: Int?
+        let progressionRuleID: UUID?
+        let progressionRuleJSON: String?
         let notes: String?
         let intervalPlanJSON: String?
         /// Captured alongside the interval plan: the yoga flow builder also
@@ -52,6 +56,7 @@ struct RoutineSnapshot: Equatable {
         /// flow edits — and flow-only edits skipped the discard prompt
         /// entirely (the synthesized Equatable never saw them).
         let yogaFlowJSON: String?
+        let createdAt: Date
         let sets: [SetSnapshot]
 
         @MainActor
@@ -60,9 +65,12 @@ struct RoutineSnapshot: Equatable {
             exerciseID = exercise.exerciseID
             position = exercise.position
             supersetGroup = exercise.supersetGroup
+            progressionRuleID = exercise.progressionRuleID
+            progressionRuleJSON = exercise.progressionRuleJSON
             notes = exercise.notes
             intervalPlanJSON = exercise.intervalPlanJSON
             yogaFlowJSON = exercise.yogaFlowJSON
+            createdAt = exercise.createdAt
             sets = exercise.sets.sorted { $0.position < $1.position }.map(SetSnapshot.init)
         }
     }
@@ -122,15 +130,23 @@ struct RoutineSnapshot: Equatable {
             if let existing = existingByID[exerciseSnapshot.id] {
                 model = existing
             } else {
-                model = RoutineExerciseModel(id: exerciseSnapshot.id, userID: routine.userID, exerciseID: exerciseSnapshot.exerciseID)
+                model = RoutineExerciseModel(
+                    id: exerciseSnapshot.id,
+                    userID: routine.userID,
+                    exerciseID: exerciseSnapshot.exerciseID,
+                    createdAt: exerciseSnapshot.createdAt
+                )
                 context.insert(model)
             }
             model.exerciseID = exerciseSnapshot.exerciseID
             model.position = exerciseSnapshot.position
             model.supersetGroup = exerciseSnapshot.supersetGroup
+            model.progressionRuleID = exerciseSnapshot.progressionRuleID
+            model.progressionRuleJSON = exerciseSnapshot.progressionRuleJSON
             model.notes = exerciseSnapshot.notes
             model.intervalPlanJSON = exerciseSnapshot.intervalPlanJSON
             model.yogaFlowJSON = exerciseSnapshot.yogaFlowJSON
+            model.createdAt = exerciseSnapshot.createdAt
             model.updatedAt = Date()
             restoreSets(exerciseSnapshot.sets, onto: model, userID: routine.userID, in: context)
             restored.append(model)
@@ -167,6 +183,7 @@ struct RoutineSnapshot: Equatable {
             context.delete(orphan)
         }
         routine.blocks = restoredBlocks
+        RoutineStructure.normalize(routine)
         routine.updatedAt = Date()
         return context.saveUserChanges(onSuccess: onCommit)
     }
@@ -187,7 +204,7 @@ struct RoutineSnapshot: Equatable {
             if let existing = existingByID[snapshot.id] {
                 model = existing
             } else {
-                model = RoutineSetModel(id: snapshot.id, userID: userID)
+                model = RoutineSetModel(id: snapshot.id, userID: userID, createdAt: snapshot.createdAt)
                 context.insert(model)
             }
             model.position = snapshot.position
@@ -201,6 +218,7 @@ struct RoutineSnapshot: Equatable {
             model.targetDistanceMeters = snapshot.targetDistanceMeters
             model.plannedMiniSetCount = snapshot.plannedMiniSetCount
             model.plannedMiniRepsJSON = snapshot.plannedMiniRepsJSON
+            model.createdAt = snapshot.createdAt
             restored.append(model)
         }
 

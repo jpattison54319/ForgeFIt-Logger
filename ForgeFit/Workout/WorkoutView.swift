@@ -305,7 +305,12 @@ struct WorkoutHomeView: View {
                     routine: routine,
                     exercises: exercises,
                     setupNotes: setupNotes,
-                    isNew: routine.id == newlyCreatedRoutineID
+                    isNew: routine.id == newlyCreatedRoutineID,
+                    onNewRoutineDiscarded: {
+                        if newlyCreatedRoutineID == routine.id {
+                            newlyCreatedRoutineID = nil
+                        }
+                    }
                 )
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -920,7 +925,7 @@ struct WorkoutHomeView: View {
         let attempt = RoutineCreationAttempt(
             name: activeRoutines.isEmpty ? "Full Body A" : "New Routine",
             folderID: folderID,
-            position: activeRoutines.count,
+            position: RoutineStructure.nextRoutinePosition(in: activeRoutines, folderID: folderID),
             in: modelContext
         )
         attempt.commit(into: modelContext) { routine in
@@ -947,7 +952,7 @@ struct WorkoutHomeView: View {
     private func duplicate(_ source: RoutineModel) {
         let attempt = RoutineCreationAttempt(
             duplicating: source,
-            position: activeRoutines.count,
+            position: RoutineStructure.nextRoutinePosition(in: activeRoutines, folderID: source.folderID),
             in: modelContext
         )
         attempt.commit(into: modelContext) { _ in }

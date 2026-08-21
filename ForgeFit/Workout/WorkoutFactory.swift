@@ -257,22 +257,11 @@ enum WorkoutFactory {
                     sets: pendingSets
                 )
                 if let exercise, exercise.isCardio {
-                    let target = routineExercise.sets.sorted { $0.position < $1.position }.first
                     let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
-                    // Routine targets start as live goals, never pre-filled
-                    // logged results: planned distance has not been covered,
-                    // and planned duration is not elapsed time. An explicit
-                    // goal already stored in the plan wins.
-                    var plan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)
-                        ?? IntervalPlan(steps: [])
-                    if plan.goal == nil {
-                        if let meters = target?.targetDistanceMeters, meters > 0 {
-                            plan.goal = .init(kind: .distance, value: meters)
-                        } else if let seconds = target?.targetDurationSeconds, seconds > 0 {
-                            plan.goal = .init(kind: .duration, value: Double(seconds))
-                        }
-                    }
-                    workoutExercise.intervalPlanJSON = plan.isMeaningful ? plan.encodedJSON() : nil
+                    // Only an explicitly authored interval-plan goal is a
+                    // goal. Legacy set durations/distances can be performed
+                    // history or old scaffolding and must never become a new
+                    // target by inference.
                     cardioSessions.append(CardioSessionModel(
                         userID: ForgeFitDemo.userID,
                         workoutExerciseID: workoutExercise.id,

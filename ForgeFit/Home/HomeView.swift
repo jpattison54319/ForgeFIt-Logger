@@ -27,6 +27,10 @@ struct HomeView: View {
     @State private var draggedQuickStartAction: HomeQuickStartAction?
     @State private var showQuickStartAdd = false
     @State private var editingRoutine: RoutineModel?
+    /// Distinguishes Home's just-created placeholder from an existing routine
+    /// opened for editing, so Back can remove an untouched "New Routine" and
+    /// its provisional Quick Start action instead of leaving junk behind.
+    @State private var newlyCreatedRoutineID: UUID?
     @State private var presentedWrappedReport: WrappedReportModel?
     @State private var reviewRequest: CoachReviewRequest?
     @State private var showingExperiments = false
@@ -581,7 +585,18 @@ struct HomeView: View {
                 WorkoutDetailView(workout: workout, exercises: exercises, history: workouts)
             }
             .navigationDestination(item: $editingRoutine) { routine in
-                RoutineEditorView(routine: routine, exercises: exercises, setupNotes: setupNotes)
+                RoutineEditorView(
+                    routine: routine,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    isNew: routine.id == newlyCreatedRoutineID,
+                    onNewRoutineDiscarded: {
+                        removeQuickStartAction(.routine(routine.id))
+                        if newlyCreatedRoutineID == routine.id {
+                            newlyCreatedRoutineID = nil
+                        }
+                    }
+                )
             }
             .navigationDestination(isPresented: $showingExperiments) {
                 ExperimentsDestinationView(workouts: workouts, exercises: exercises)
@@ -1530,12 +1545,13 @@ struct HomeView: View {
         let attempt = RoutineCreationAttempt(
             name: "New Routine",
             folderID: nil,
-            position: routines.count,
+            position: RoutineStructure.nextRoutinePosition(in: routines, folderID: nil),
             in: modelContext
         )
         attempt.commit(into: modelContext) { routine in
             addQuickStartAction(.routine(routine.id))
             showQuickStartAdd = false
+            newlyCreatedRoutineID = routine.id
             editingRoutine = routine
         }
     }

@@ -116,6 +116,30 @@ struct RoutineSnapshotTests {
         #expect(r.exercises[0].yogaFlowJSON == nil)
     }
 
+    /// Progression is editable from the routine overflow and saves eagerly.
+    /// It must participate in both dirty detection and a real discard, just
+    /// like target sets, interval plans, and Yoga flows.
+    @Test func progressionOnlyEditsAreDetectedAndRestored() throws {
+        let context = ModelContext(try TestStore.makeContainer())
+        let r = routine(in: context)
+        let originalRuleID = UUID()
+        let originalRule = ProgressionRule.fixedIncrement(step: 2.5).encodedJSON()
+        r.exercises[0].progressionRuleID = originalRuleID
+        r.exercises[0].progressionRuleJSON = originalRule
+        try context.save()
+        let snapshot = RoutineSnapshot(of: r)
+
+        r.exercises[0].progressionRuleID = nil
+        r.exercises[0].progressionRuleJSON = ProgressionRule.off.encodedJSON()
+        try context.save()
+        #expect(snapshot != RoutineSnapshot(of: r))
+
+        snapshot.restore(onto: r, in: context)
+        #expect(r.exercises[0].progressionRuleID == originalRuleID)
+        #expect(r.exercises[0].progressionRuleJSON == originalRule)
+        #expect(RoutineSnapshot(of: r) == snapshot)
+    }
+
     @Test func blockEditsAdditionsAndRemovalsAreRestored() throws {
         let context = ModelContext(try TestStore.makeContainer())
         let r = routine(in: context)

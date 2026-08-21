@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import ForgeData
 import SwiftData
 import Testing
@@ -89,6 +90,58 @@ struct RoutineProgramImportTests {
 
         #expect(folder == nil)
         #expect(try context.fetch(FetchDescriptor<RoutineFolderModel>()).isEmpty)
+        _ = container
+    }
+
+    @Test func cardioTemplateDurationImportsAsAnExplicitGoal() throws {
+        let (container, context) = try TestStore.make()
+        let slug = "Running_Treadmill"
+        let treadmill = ExerciseLibraryModel(
+            id: ExerciseCatalog.deterministicID(for: slug),
+            name: "Treadmill Run",
+            movementPattern: "cardio",
+            primaryMuscles: ["cardiovascular"],
+            equipment: "treadmill",
+            defaultWeightMode: .bodyweight,
+            isCardio: true,
+            category: "cardio"
+        )
+        context.insert(treadmill)
+        try context.save()
+        let template = RoutineTemplate(
+            id: "treadmill-base",
+            name: "Treadmill Base",
+            goal: "cardio base",
+            level: "beginner",
+            daysPerWeek: 2,
+            estimatedMinutes: 30,
+            equipment: ["machine"],
+            tags: ["cardio"],
+            description: "Open with an authored duration target.",
+            exercises: [RoutineTemplateExercise(
+                slug: slug,
+                sets: 1,
+                repsLow: nil,
+                repsHigh: nil,
+                durationSeconds: 1_800,
+                rpe: 4,
+                supersetGroup: nil
+            )]
+        )
+
+        let routine = try RoutineTemplateCatalog.importTemplate(
+            template,
+            folderID: nil,
+            existingRoutines: [],
+            in: context,
+            saveChanges: true
+        )
+
+        let imported = try #require(routine.exercises.first)
+        let plan = try #require(IntervalPlan.decode(from: imported.intervalPlanJSON))
+        #expect(imported.sets.isEmpty)
+        #expect(plan.goal?.kind == .duration)
+        #expect(plan.goal?.value == 1_800)
         _ = container
     }
 

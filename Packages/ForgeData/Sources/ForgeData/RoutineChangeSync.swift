@@ -65,6 +65,17 @@ public enum RoutineChangeSync {
             /// Matched routine set ids whose set type differs from the
             /// workout set that originated from them.
             public let setTypeChangedRoutineSetIDs: [UUID]
+            /// Exact routine-set lineage for the workout sets that remain in
+            /// the routine. Normally this mirrors `sourceRoutineSetID`. It is
+            /// explicit so a legacy split replacement can bind its fresh
+            /// replacement rows back to the unfinished routine targets rather
+            /// than treating every one as an added target.
+            public let matchedRoutineSetIDsByWorkoutSetID: [UUID: UUID]
+            /// Routine targets retained ahead of the replacement row. Old
+            /// versions split a live replacement into a completed history row
+            /// plus a fresh exercise row; those completed targets still belong
+            /// to the routine even though the history row itself must not.
+            public let retainedRoutineSetIDs: [UUID]
             /// The workout's guided yoga flow differs from the routine's
             /// (edited mid-session), so the routine's flow gets updated.
             public let flowChanged: Bool
@@ -78,6 +89,8 @@ public enum RoutineChangeSync {
                 addedWorkoutSetIDs: [UUID],
                 removedRoutineSetIDs: [UUID],
                 setTypeChangedRoutineSetIDs: [UUID],
+                matchedRoutineSetIDsByWorkoutSetID: [UUID: UUID] = [:],
+                retainedRoutineSetIDs: [UUID] = [],
                 flowChanged: Bool = false
             ) {
                 self.workoutExerciseID = workoutExerciseID
@@ -88,6 +101,8 @@ public enum RoutineChangeSync {
                 self.addedWorkoutSetIDs = addedWorkoutSetIDs
                 self.removedRoutineSetIDs = removedRoutineSetIDs
                 self.setTypeChangedRoutineSetIDs = setTypeChangedRoutineSetIDs
+                self.matchedRoutineSetIDsByWorkoutSetID = matchedRoutineSetIDsByWorkoutSetID
+                self.retainedRoutineSetIDs = retainedRoutineSetIDs
                 self.flowChanged = flowChanged
             }
         }
@@ -100,6 +115,10 @@ public enum RoutineChangeSync {
         public let addedBlockIDs: [UUID]
         public let removedRoutineBlockIDs: [UUID]
         public let blockPlans: [BlockPlan]
+        /// Completed history rows left behind by the pre-August-2026 split
+        /// replacement implementation. They remain part of workout history,
+        /// but are deliberately excluded from the routine graph.
+        public let historyOnlyWorkoutExerciseIDs: [UUID]
 
         public init(
             addedExerciseIDs: [UUID],
@@ -107,7 +126,8 @@ public enum RoutineChangeSync {
             exercisePlans: [ExercisePlan],
             addedBlockIDs: [UUID] = [],
             removedRoutineBlockIDs: [UUID] = [],
-            blockPlans: [BlockPlan] = []
+            blockPlans: [BlockPlan] = [],
+            historyOnlyWorkoutExerciseIDs: [UUID] = []
         ) {
             self.addedExerciseIDs = addedExerciseIDs
             self.removedRoutineExerciseIDs = removedRoutineExerciseIDs
@@ -115,6 +135,7 @@ public enum RoutineChangeSync {
             self.addedBlockIDs = addedBlockIDs
             self.removedRoutineBlockIDs = removedRoutineBlockIDs
             self.blockPlans = blockPlans
+            self.historyOnlyWorkoutExerciseIDs = historyOnlyWorkoutExerciseIDs
         }
 
         public var hasChanges: Bool {
@@ -175,36 +196,63 @@ public enum RoutineChangeSync {
     public static func detect(workout: WorkoutModel, routine: RoutineModel) -> Plan {
         let workoutExercises = workout.exercises
             .filter { $0.generatedByWorkoutBlockID == nil }
-            .sorted { $0.position < $1.position }
-        let routineExercises = routine.exercises.sorted { $0.position < $1.position }
+            .sorted(by: positionThenID)
+        let routineExercises = routine.exercises.sorted(by: positionThenID)
         let routineByID = Dictionary(routineExercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // c98cc28-era workouts split a replacement into two adjacent rows:
+        // completed work kept the routine lineage on the old exercise, while
+        // the replacement received nil lineage. Detect that exact persisted
+        // fingerprint so accepting "Update Routine" means replacement, not
+        // "keep old + add new". Current replacements are one-row/in-place;
+        // this compatibility path is intentionally narrow to avoid guessing
+        // about ordinary exercises the user deliberately added.
+        let legacySplits = legacySplitReplacements(
+            workoutExercises: workoutExercises,
+            routineByID: routineByID
+        )
+        let legacyByReplacementID = Dictionary(
+            legacySplits.map { ($0.replacementWorkoutExerciseID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let historyOnlyIDs = Set(legacySplits.map(\.historyWorkoutExerciseID))
 
         var addedExerciseIDs: [UUID] = []
         var exercisePlans: [Plan.ExercisePlan] = []
-        let referencedRoutineIDs = Set(workoutExercises.compactMap(\.sourceRoutineExerciseID))
+        var referencedRoutineIDs = Set<UUID>()
 
         for we in workoutExercises {
-            guard let routineID = we.sourceRoutineExerciseID,
-                  let re = routineByID[routineID] else {
+            guard !historyOnlyIDs.contains(we.id) else { continue }
+            let legacy = legacyByReplacementID[we.id]
+            let routineID = legacy?.routineExerciseID ?? we.sourceRoutineExerciseID
+            guard let routineID,
+                  let re = routineByID[routineID],
+                  referencedRoutineIDs.insert(routineID).inserted else {
                 addedExerciseIDs.append(we.id)
                 continue
             }
-            exercisePlans.append(plan(for: we, matchedTo: re))
+            exercisePlans.append(plan(
+                for: we,
+                matchedTo: re,
+                explicitSetMatches: legacy?.routineSetIDByWorkoutSetID ?? [:],
+                retainedRoutineSetIDs: legacy?.retainedRoutineSetIDs ?? []
+            ))
         }
 
         let removedRoutineExerciseIDs = routineExercises
             .filter { !referencedRoutineIDs.contains($0.id) }
             .map(\.id)
 
-        let workoutBlocks = workout.blocks.sorted { $0.position < $1.position }
-        let routineBlocks = routine.blocks.sorted { $0.position < $1.position }
+        let workoutBlocks = workout.blocks.sorted(by: positionThenID)
+        let routineBlocks = routine.blocks.sorted(by: positionThenID)
         let routineBlocksByID = Dictionary(routineBlocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let referencedRoutineBlockIDs = Set(workoutBlocks.compactMap(\.sourceRoutineBlockID))
+        var referencedRoutineBlockIDs = Set<UUID>()
         var addedBlockIDs: [UUID] = []
         var blockPlans: [Plan.BlockPlan] = []
         for block in workoutBlocks {
             guard let routineID = block.sourceRoutineBlockID,
-                  let routineBlock = routineBlocksByID[routineID] else {
+                  let routineBlock = routineBlocksByID[routineID],
+                  referencedRoutineBlockIDs.insert(routineID).inserted else {
                 addedBlockIDs.append(block.id)
                 continue
             }
@@ -225,7 +273,8 @@ public enum RoutineChangeSync {
             exercisePlans: exercisePlans,
             addedBlockIDs: addedBlockIDs,
             removedRoutineBlockIDs: removedRoutineBlockIDs,
-            blockPlans: blockPlans
+            blockPlans: blockPlans,
+            historyOnlyWorkoutExerciseIDs: historyOnlyIDs.sorted { $0.uuidString < $1.uuidString }
         )
     }
 
@@ -235,7 +284,9 @@ public enum RoutineChangeSync {
     /// reporting the cardio target as "removed".
     private static func plan(
         for we: WorkoutExerciseModel,
-        matchedTo re: RoutineExerciseModel
+        matchedTo re: RoutineExerciseModel,
+        explicitSetMatches: [UUID: UUID] = [:],
+        retainedRoutineSetIDs: [UUID] = []
     ) -> Plan.ExercisePlan {
         // In-place replace keeps the routine lineage and changes only the
         // exercise identity — the one structural change the diff used to
@@ -271,6 +322,8 @@ public enum RoutineChangeSync {
                 addedWorkoutSetIDs: [],
                 removedRoutineSetIDs: [],
                 setTypeChangedRoutineSetIDs: [],
+                matchedRoutineSetIDsByWorkoutSetID: [:],
+                retainedRoutineSetIDs: retainedRoutineSetIDs,
                 flowChanged: flowChanged
             )
         }
@@ -280,11 +333,15 @@ public enum RoutineChangeSync {
 
         var addedWorkoutSetIDs: [UUID] = []
         var setTypeChangedRoutineSetIDs: [UUID] = []
-        let referencedRoutineSetIDs = Set(workoutSets.compactMap(\.sourceRoutineSetID))
+        var matchedRoutineSetIDsByWorkoutSetID: [UUID: UUID] = [:]
+        var referencedRoutineSetIDs = Set(retainedRoutineSetIDs.filter { routineSetByID[$0] != nil })
 
         for ws in workoutSets {
-            if let routineSetID = ws.sourceRoutineSetID,
-               let rs = routineSetByID[routineSetID] {
+            let candidateID = explicitSetMatches[ws.id] ?? ws.sourceRoutineSetID
+            if let routineSetID = candidateID,
+               let rs = routineSetByID[routineSetID],
+               referencedRoutineSetIDs.insert(routineSetID).inserted {
+                matchedRoutineSetIDsByWorkoutSetID[ws.id] = routineSetID
                 if ws.setType != rs.setType {
                     setTypeChangedRoutineSetIDs.append(rs.id)
                 }
@@ -305,8 +362,112 @@ public enum RoutineChangeSync {
             supersetChanged: supersetChanged,
             addedWorkoutSetIDs: addedWorkoutSetIDs,
             removedRoutineSetIDs: removedRoutineSetIDs,
-            setTypeChangedRoutineSetIDs: setTypeChangedRoutineSetIDs
+            setTypeChangedRoutineSetIDs: setTypeChangedRoutineSetIDs,
+            matchedRoutineSetIDsByWorkoutSetID: matchedRoutineSetIDsByWorkoutSetID,
+            retainedRoutineSetIDs: retainedRoutineSetIDs
         )
+    }
+
+    // MARK: - Legacy replacement recovery
+
+    private struct LegacySplitReplacement {
+        let historyWorkoutExerciseID: UUID
+        let replacementWorkoutExerciseID: UUID
+        let routineExerciseID: UUID
+        let retainedRoutineSetIDs: [UUID]
+        let routineSetIDByWorkoutSetID: [UUID: UUID]
+    }
+
+    /// Recognizes only the exact graph shape written by the retired split
+    /// replacement implementation. The timestamp equality is its strongest
+    /// provenance marker: that implementation stamped the old row's
+    /// `updatedAt` and the replacement row's `createdAt` with the same `now`.
+    private static func legacySplitReplacements(
+        workoutExercises: [WorkoutExerciseModel],
+        routineByID: [UUID: RoutineExerciseModel]
+    ) -> [LegacySplitReplacement] {
+        guard workoutExercises.count > 1 else { return [] }
+        var results: [LegacySplitReplacement] = []
+        var consumed = Set<UUID>()
+
+        for index in workoutExercises.indices.dropLast() {
+            let history = workoutExercises[index]
+            let replacement = workoutExercises[index + 1]
+            guard !consumed.contains(history.id), !consumed.contains(replacement.id),
+                  let routineID = history.sourceRoutineExerciseID,
+                  let routineExercise = routineByID[routineID],
+                  history.exerciseID == routineExercise.exerciseID,
+                  replacement.sourceRoutineExerciseID == nil,
+                  replacement.exerciseID != history.exerciseID,
+                  replacement.position == history.position + 1,
+                  replacement.supersetGroup == nil,
+                  history.restSeconds == replacement.restSeconds,
+                  history.microRestSeconds == replacement.microRestSeconds,
+                  abs(history.updatedAt.timeIntervalSince(replacement.createdAt)) < 0.001
+            else { continue }
+
+            let routineSets = routineExercise.sets.sorted(by: positionThenID)
+            let routineSetByID = Dictionary(
+                routineSets.map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let completedHistorySets = history.sets.sorted(by: positionThenID)
+            guard !completedHistorySets.isEmpty,
+                  completedHistorySets.allSatisfy({ $0.completedAt != nil }),
+                  replacement.sets.allSatisfy({ $0.sourceRoutineSetID == nil })
+            else { continue }
+
+            let retained = completedHistorySets.compactMap(\.sourceRoutineSetID)
+            guard retained.count == completedHistorySets.count,
+                  Set(retained).count == retained.count,
+                  retained.allSatisfy({ routineSetByID[$0] != nil })
+            else { continue }
+
+            let retainedSet = Set(retained)
+            let retainedInRoutineOrder = routineSets.filter { retainedSet.contains($0.id) }.map(\.id)
+            let remainingRoutineIDs = routineSets.filter { !retainedSet.contains($0.id) }.map(\.id)
+            let replacementSets = replacement.sets.sorted(by: positionThenID)
+            var matches: [UUID: UUID] = [:]
+            for (workoutSet, routineSetID) in zip(replacementSets, remainingRoutineIDs) {
+                matches[workoutSet.id] = routineSetID
+            }
+
+            results.append(LegacySplitReplacement(
+                historyWorkoutExerciseID: history.id,
+                replacementWorkoutExerciseID: replacement.id,
+                routineExerciseID: routineID,
+                retainedRoutineSetIDs: retainedInRoutineOrder,
+                routineSetIDByWorkoutSetID: matches
+            ))
+            consumed.insert(history.id)
+            consumed.insert(replacement.id)
+        }
+        return results
+    }
+
+    private static func positionThenID<T: AnyObject>(_ lhs: T, _ rhs: T) -> Bool {
+        switch (lhs, rhs) {
+        case let (lhs as WorkoutExerciseModel, rhs as WorkoutExerciseModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case let (lhs as RoutineExerciseModel, rhs as RoutineExerciseModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case let (lhs as SetModel, rhs as SetModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case let (lhs as RoutineSetModel, rhs as RoutineSetModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case let (lhs as WorkoutBlockModel, rhs as WorkoutBlockModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        case let (lhs as RoutineBlockModel, rhs as RoutineBlockModel):
+            if lhs.position != rhs.position { return lhs.position < rhs.position }
+            return lhs.id.uuidString < rhs.id.uuidString
+        default:
+            return false
+        }
     }
 
     // MARK: - Apply
@@ -317,190 +478,306 @@ public enum RoutineChangeSync {
     /// (reps → `targetRepsLow`/`High`, weight → `targetWeight`, rpe →
     /// `targetRPE`, setType → setType, durationSeconds →
     /// `targetDurationSeconds`). Inserts new models into `context`.
-    public static func apply(_ plan: Plan, to routine: RoutineModel, from workout: WorkoutModel, in context: ModelContext) {
-        let workoutByID = Dictionary(
-            workout.exercises.filter { $0.generatedByWorkoutBlockID == nil }.map { ($0.id, $0) },
-            uniquingKeysWith: { a, _ in a }
+    public static func apply(
+        _ plan: Plan,
+        to routine: RoutineModel,
+        from workout: WorkoutModel,
+        in context: ModelContext,
+        now: Date = Date()
+    ) {
+        let originalExercises = routine.exercises
+        let originalBlocks = routine.blocks
+        let routineByID = Dictionary(
+            originalExercises.sorted(by: positionThenID).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
-        let routineExercises = routine.exercises.sorted { $0.position < $1.position }
-        let routineByID = Dictionary(routineExercises.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let workoutBlocksByID = Dictionary(workout.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let routineBlocksByID = Dictionary(routine.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let routineBlocksByID = Dictionary(
+            originalBlocks.sorted(by: positionThenID).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let exercisePlanByWorkoutID = Dictionary(
+            plan.exercisePlans.map { ($0.workoutExerciseID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let blockPlanByWorkoutID = Dictionary(
+            plan.blockPlans.map { ($0.workoutBlockID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let historyOnlyIDs = Set(plan.historyOnlyWorkoutExerciseIDs)
 
-        // 1. Remove exercises no longer present in the workout.
-        for removedID in plan.removedRoutineExerciseIDs {
-            if let re = routineByID[removedID] {
-                context.delete(re)
-            }
+        let visibleExercises = workout.exercises.filter {
+            $0.generatedByWorkoutBlockID == nil && !historyOnlyIDs.contains($0.id)
         }
-        for removedID in plan.removedRoutineBlockIDs {
-            if let block = routineBlocksByID[removedID] { context.delete(block) }
-        }
+        var orderedItems = visibleExercises.map(ReconciliationItem.exercise)
+            + workout.blocks.map(ReconciliationItem.block)
+        orderedItems.sort(by: reconciliationOrder)
 
-        // 2. Update matched exercises + their sets.
-        for ep in plan.exercisePlans {
-            guard let we = workoutByID[ep.workoutExerciseID],
-                  let re = ep.matchedRoutineExerciseID.flatMap({ routineByID[$0] }) else { continue }
-            if ep.exerciseChanged {
-                re.exerciseID = we.exerciseID
-                re.intervalPlanJSON = we.intervalPlanJSON
-                re.yogaFlowJSON = we.yogaFlowJSON
-            }
-            if ep.movedPosition { re.position = we.position }
-            if ep.supersetChanged { re.supersetGroup = we.supersetGroup }
-            if ep.flowChanged { re.yogaFlowJSON = we.yogaFlowJSON }
-            re.updatedAt = Date()
-            applySets(ep, workoutExercise: we, routineExercise: re, in: context)
+        var desiredExercises: [RoutineExerciseModel] = []
+        var desiredBlocks: [RoutineBlockModel] = []
 
-            // A swap across modalities empties the row's set list (the work
-            // moved into a cardio/yoga session), leaving the routine exercise
-            // with its old-shaped or no targets. Reseed the same target shape
-            // the added-exercise path uses so the routine stays editable.
-            if ep.exerciseChanged, we.sets.isEmpty,
-               let session = workout.cardioSessions.first(where: { $0.workoutExerciseID == we.id }) {
-                if session.modality == CardioSessionModel.yogaModality {
-                    re.yogaFlowJSON = we.yogaFlowJSON
-                    for rs in re.sets { context.delete(rs) }
-                    re.sets = []
-                } else if re.sets.contains(where: { $0.targetDurationSeconds == nil }) || re.sets.isEmpty {
-                    for rs in re.sets { context.delete(rs) }
-                    let cardioTarget = RoutineSetModel(
-                        userID: routine.userID,
-                        position: 0,
-                        targetDurationSeconds: session.durationSeconds ?? 1_800
-                    )
-                    context.insert(cardioTarget)
-                    re.sets = [cardioTarget]
+        for (position, item) in orderedItems.enumerated() {
+            switch item {
+            case .exercise(let workoutExercise):
+                let exercisePlan = exercisePlanByWorkoutID[workoutExercise.id]
+                let routineExerciseID = exercisePlan?.matchedRoutineExerciseID ?? workoutExercise.id
+                let isNew = exercisePlan?.matchedRoutineExerciseID == nil
+                let routineExercise = routineByID[routineExerciseID]
+                    ?? fetchRoutineExercise(id: routineExerciseID, in: context)
+                    ?? {
+                        let created = RoutineExerciseModel(
+                            id: routineExerciseID,
+                            userID: routine.userID,
+                            exerciseID: workoutExercise.exerciseID,
+                            position: position,
+                            supersetGroup: workoutExercise.supersetGroup,
+                            notes: isNew ? workoutExercise.notes : nil,
+                            intervalPlanJSON: workoutExercise.intervalPlanJSON,
+                            yogaFlowJSON: workoutExercise.yogaFlowJSON,
+                            createdAt: now,
+                            updatedAt: now
+                        )
+                        context.insert(created)
+                        return created
+                    }()
+
+                // Identity and order are the accepted structural truth. Keep
+                // standing notes/progression on matched rows; only a genuinely
+                // new row adopts the workout note.
+                routineExercise.exerciseID = workoutExercise.exerciseID
+                routineExercise.position = position
+                routineExercise.supersetGroup = workoutExercise.supersetGroup
+                if isNew { routineExercise.notes = workoutExercise.notes }
+                if isNew || exercisePlan?.exerciseChanged == true {
+                    routineExercise.intervalPlanJSON = workoutExercise.intervalPlanJSON
+                    routineExercise.yogaFlowJSON = workoutExercise.yogaFlowJSON
+                } else if exercisePlan?.flowChanged == true {
+                    routineExercise.yogaFlowJSON = workoutExercise.yogaFlowJSON
                 }
+                routineExercise.updatedAt = now
+
+                let effectivePlan = exercisePlan ?? Plan.ExercisePlan(
+                    workoutExerciseID: workoutExercise.id,
+                    matchedRoutineExerciseID: nil,
+                    movedPosition: false,
+                    supersetChanged: false,
+                    addedWorkoutSetIDs: workoutExercise.sets.map(\.id),
+                    removedRoutineSetIDs: [],
+                    setTypeChangedRoutineSetIDs: []
+                )
+                reconcileSets(
+                    effectivePlan,
+                    workoutExercise: workoutExercise,
+                    routineExercise: routineExercise,
+                    isNewExercise: isNew,
+                    in: context,
+                    now: now
+                )
+                desiredExercises.append(routineExercise)
+
+            case .block(let workoutBlock):
+                let blockPlan = blockPlanByWorkoutID[workoutBlock.id]
+                let routineBlockID = blockPlan?.matchedRoutineBlockID ?? workoutBlock.id
+                let isNew = blockPlan?.matchedRoutineBlockID == nil
+                let routineBlock = routineBlocksByID[routineBlockID]
+                    ?? fetchRoutineBlock(id: routineBlockID, in: context)
+                    ?? {
+                        let created = RoutineBlockModel(
+                            id: routineBlockID,
+                            userID: routine.userID,
+                            kind: workoutBlock.kind,
+                            position: position,
+                            planJSON: workoutBlock.planSnapshotJSON,
+                            createdAt: now,
+                            updatedAt: now
+                        )
+                        context.insert(created)
+                        return created
+                    }()
+                routineBlock.kind = workoutBlock.kind
+                routineBlock.position = position
+                if isNew || blockPlan?.planChanged == true {
+                    routineBlock.planJSON = workoutBlock.planSnapshotJSON
+                }
+                routineBlock.updatedAt = now
+                desiredBlocks.append(routineBlock)
             }
         }
 
-        // 3. Add exercises created mid-session.
-        for addedID in plan.addedExerciseIDs {
-            guard let we = workoutByID[addedID] else { continue }
-            let re = RoutineExerciseModel(
-                userID: routine.userID,
-                exerciseID: we.exerciseID,
-                position: we.position,
-                supersetGroup: we.supersetGroup,
-                notes: we.notes,
-                intervalPlanJSON: we.intervalPlanJSON,
-                yogaFlowJSON: we.yogaFlowJSON,
-                sets: []
-            )
-            context.insert(re)
-            routine.exercises.append(re)
-            // Seed routine sets from the workout's performed values. Cardio
-            // exercises carry no strength sets in the workout (a linked
-            // CardioSessionModel holds their data), so fall back to a single
-            // duration target seeded from the session — mirroring the routine
-            // editor's cardio target shape.
-            let sortedWorkoutSets = we.sets.sorted { $0.position < $1.position }
-            if sortedWorkoutSets.isEmpty {
-                let session = workout.cardioSessions.first { $0.workoutExerciseID == we.id }
-                if session?.modality == CardioSessionModel.yogaModality {
-                    // Yoga blocks carry no target sets — the flow is the target.
-                    re.yogaFlowJSON = we.yogaFlowJSON
-                } else {
-                    let cardioTarget = RoutineSetModel(
-                        userID: routine.userID,
-                        position: 0,
-                        targetDurationSeconds: session?.durationSeconds ?? 1_800
-                    )
-                    context.insert(cardioTarget)
-                    re.sets = [cardioTarget]
-                }
-            } else {
-                let newSets = sortedWorkoutSets.map { ws -> RoutineSetModel in
-                    let target = routineTarget(from: ws, userID: routine.userID)
-                    context.insert(target)
-                    return target
-                }
-                re.sets = newSets
-            }
+        // Assign the exact graph before deleting stale objects. Relying on a
+        // cascade delete alone leaves stale to-many snapshots in long-lived
+        // contexts — the mechanism behind "old + replacement" and bad order.
+        routine.exercises = desiredExercises
+        routine.blocks = desiredBlocks
+        let desiredExerciseObjects = Set(desiredExercises.map(ObjectIdentifier.init))
+        for orphan in originalExercises where !desiredExerciseObjects.contains(ObjectIdentifier(orphan)) {
+            context.delete(orphan)
+        }
+        let desiredBlockObjects = Set(desiredBlocks.map(ObjectIdentifier.init))
+        for orphan in originalBlocks where !desiredBlockObjects.contains(ObjectIdentifier(orphan)) {
+            context.delete(orphan)
         }
 
-        for blockPlan in plan.blockPlans {
-            guard let workoutBlock = workoutBlocksByID[blockPlan.workoutBlockID],
-                  let routineBlockID = blockPlan.matchedRoutineBlockID,
-                  let routineBlock = routineBlocksByID[routineBlockID] else { continue }
-            if blockPlan.movedPosition { routineBlock.position = workoutBlock.position }
-            if blockPlan.planChanged { routineBlock.planJSON = workoutBlock.planSnapshotJSON }
-            routineBlock.updatedAt = .now
-        }
-
-        for addedID in plan.addedBlockIDs {
-            guard let workoutBlock = workoutBlocksByID[addedID] else { continue }
-            let block = RoutineBlockModel(
-                userID: routine.userID,
-                kind: workoutBlock.kind,
-                position: workoutBlock.position,
-                planJSON: workoutBlock.planSnapshotJSON
-            )
-            context.insert(block)
-            routine.blocks.append(block)
-        }
-
-        if routine.blocks.contains(where: { $0.kind == .conditioning }) {
+        if desiredBlocks.contains(where: { $0.kind == .conditioning }) {
             routine.conditioningPlanJSON = nil
         }
-
-        routine.updatedAt = Date()
+        routine.updatedAt = now
     }
 
-    /// Applies set-level changes to a matched routine exercise: deletes removed
-    /// sets, updates set type on matched sets (preserving targets), and creates
-    /// new routine sets for sets added mid-session.
-    private static func applySets(
-        _ ep: Plan.ExercisePlan,
-        workoutExercise we: WorkoutExerciseModel,
-        routineExercise re: RoutineExerciseModel,
+    /// Rebuilds one exercise's exact target relationship. Existing lineage
+    /// preserves standing targets; new workout rows use their performed values.
+    /// IDs for new targets are the workout-set IDs, making a success mirror or
+    /// retry idempotent across SwiftData contexts.
+    private static func reconcileSets(
+        _ plan: Plan.ExercisePlan,
+        workoutExercise: WorkoutExerciseModel,
+        routineExercise: RoutineExerciseModel,
+        isNewExercise: Bool,
+        in context: ModelContext,
+        now: Date
+    ) {
+        let originalSets = routineExercise.sets
+        let routineSetByID = Dictionary(
+            originalSets.sorted(by: positionThenID).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let workoutSets = workoutExercise.sets.sorted(by: positionThenID)
+
+        // A session-backed row has no strength sets. Preserve untouched legacy
+        // data during an unrelated structural update, but never turn today's
+        // completed session duration into tomorrow's goal. Explicit cardio
+        // intent already lives on `intervalPlanJSON`.
+        if workoutSets.isEmpty {
+            let preservesExistingSessionTarget = !isNewExercise
+                && !plan.exerciseChanged
+                && plan.removedRoutineSetIDs.isEmpty
+            if preservesExistingSessionTarget {
+                let preserved = originalSets.sorted(by: positionThenID)
+                for (index, set) in preserved.enumerated() { set.position = index }
+                routineExercise.sets = preserved
+                return
+            }
+            replaceSets(on: routineExercise, with: [], original: originalSets, in: context)
+            return
+        }
+
+        var rebuilt: [RoutineSetModel] = []
+        var usedRoutineSetIDs = Set<UUID>()
+
+        for retainedID in plan.retainedRoutineSetIDs {
+            guard usedRoutineSetIDs.insert(retainedID).inserted,
+                  let retained = routineSetByID[retainedID]
+                    ?? fetchRoutineSet(id: retainedID, in: context) else { continue }
+            retained.position = rebuilt.count
+            rebuilt.append(retained)
+        }
+
+        let changedTypeIDs = Set(plan.setTypeChangedRoutineSetIDs)
+        for workoutSet in workoutSets {
+            let matchedID = plan.matchedRoutineSetIDsByWorkoutSetID[workoutSet.id]
+                ?? workoutSet.sourceRoutineSetID
+            let usableMatchedID = matchedID.flatMap {
+                usedRoutineSetIDs.insert($0).inserted ? $0 : nil
+            }
+
+            let target: RoutineSetModel
+            if let usableMatchedID,
+               let existing = routineSetByID[usableMatchedID]
+                ?? fetchRoutineSet(id: usableMatchedID, in: context) {
+                target = existing
+                if changedTypeIDs.contains(usableMatchedID) {
+                    target.setType = workoutSet.setType
+                    applyTypeSpecificPlan(from: workoutSet, to: target)
+                }
+            } else {
+                let deterministicID = workoutSet.id
+                if let existing = routineSetByID[deterministicID]
+                    ?? fetchRoutineSet(id: deterministicID, in: context) {
+                    target = existing
+                } else {
+                    target = routineTarget(
+                        from: workoutSet,
+                        id: deterministicID,
+                        userID: routineExercise.userID,
+                        createdAt: now
+                    )
+                    context.insert(target)
+                }
+                usedRoutineSetIDs.insert(deterministicID)
+            }
+            target.position = rebuilt.count
+            rebuilt.append(target)
+        }
+
+        replaceSets(on: routineExercise, with: rebuilt, original: originalSets, in: context)
+    }
+
+    private static func replaceSets(
+        on exercise: RoutineExerciseModel,
+        with desired: [RoutineSetModel],
+        original: [RoutineSetModel],
         in context: ModelContext
     ) {
-        // A session-based row (cardio target, yoga flow) carries no workout
-        // sets at all — its work lives in a CardioSessionModel. `detect`
-        // already skips set-level diffing for these; the rebuild below must
-        // skip them too, or it "rebuilds" the routine's target list from an
-        // empty workout list and silently wipes every cardio duration target
-        // in the routine on any accepted update.
-        let workoutSets = we.sets.sorted { $0.position < $1.position }
-        guard !(workoutSets.isEmpty && ep.removedRoutineSetIDs.isEmpty) else { return }
+        exercise.sets = desired
+        let desiredObjects = Set(desired.map(ObjectIdentifier.init))
+        for orphan in original where !desiredObjects.contains(ObjectIdentifier(orphan)) {
+            context.delete(orphan)
+        }
+    }
 
-        let routineSets = re.sets.sorted { $0.position < $1.position }
-        let routineSetByID = Dictionary(routineSets.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    private enum ReconciliationItem {
+        case exercise(WorkoutExerciseModel)
+        case block(WorkoutBlockModel)
 
-        // Delete removed sets.
-        for removedID in ep.removedRoutineSetIDs {
-            if let rs = routineSetByID[removedID] {
-                context.delete(rs)
+        var position: Int {
+            switch self {
+            case .exercise(let value): value.position
+            case .block(let value): value.position
             }
         }
 
-        // Update set type on matched sets (keep standing targets).
-        for changedID in ep.setTypeChangedRoutineSetIDs {
-            if let rs = routineSetByID[changedID],
-               let ws = we.sets.first(where: { $0.sourceRoutineSetID == changedID }) {
-                rs.setType = ws.setType
-                applyTypeSpecificPlan(from: ws, to: rs)
+        var id: UUID {
+            switch self {
+            case .exercise(let value): value.id
+            case .block(let value): value.id
             }
         }
 
-        // Rebuild the sets array in workout order, repositioning matched sets
-        // and creating new targets for added sets.
-        var rebuilt: [RoutineSetModel] = []
-        for ws in workoutSets {
-            if let routineSetID = ws.sourceRoutineSetID,
-               let rs = routineSetByID[routineSetID] {
-                rs.position = ws.position
-                rebuilt.append(rs)
-            } else {
-                let target = routineTarget(from: ws, userID: re.userID)
-                target.position = ws.position
-                context.insert(target)
-                rebuilt.append(target)
+        // Old workout graphs can contain a position collision. Blocks were
+        // explicitly placed into the mixed sequence, so keep them first at a
+        // tie and then canonicalize every position to remove the ambiguity.
+        var tiePriority: Int {
+            switch self {
+            case .block: 0
+            case .exercise: 1
             }
         }
-        re.sets = rebuilt
+    }
+
+    private static func reconciliationOrder(_ lhs: ReconciliationItem, _ rhs: ReconciliationItem) -> Bool {
+        if lhs.position != rhs.position { return lhs.position < rhs.position }
+        if lhs.tiePriority != rhs.tiePriority { return lhs.tiePriority < rhs.tiePriority }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    private static func fetchRoutineExercise(id: UUID, in context: ModelContext) -> RoutineExerciseModel? {
+        let requestedID = id
+        var descriptor = FetchDescriptor<RoutineExerciseModel>(predicate: #Predicate { $0.id == requestedID })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    private static func fetchRoutineSet(id: UUID, in context: ModelContext) -> RoutineSetModel? {
+        let requestedID = id
+        var descriptor = FetchDescriptor<RoutineSetModel>(predicate: #Predicate { $0.id == requestedID })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    private static func fetchRoutineBlock(id: UUID, in context: ModelContext) -> RoutineBlockModel? {
+        let requestedID = id
+        var descriptor = FetchDescriptor<RoutineBlockModel>(predicate: #Predicate { $0.id == requestedID })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 
     /// Type-specific shape is structural routine intent. When a flat set is
@@ -533,17 +810,26 @@ public enum RoutineChangeSync {
     /// weight/rpe/duration carry through. Structured sets carry their shape:
     /// the minis a lifter actually did become the plan (myo keeps the count,
     /// cluster keeps the segment reps as goals). Used only for newly added sets.
-    private static func routineTarget(from ws: SetModel, userID: UUID) -> RoutineSetModel {
+    private static func routineTarget(
+        from ws: SetModel,
+        id: UUID,
+        userID: UUID,
+        createdAt: Date
+    ) -> RoutineSetModel {
         let target = RoutineSetModel(
+            id: id,
             userID: userID,
             position: ws.position,
             setType: ws.setType,
             targetRepsLow: ws.reps,
             targetRepsHigh: ws.reps,
-            targetWeight: ws.weight,
+            // Assisted and added-bodyweight loads live in mode-specific
+            // fields. `modeWeight` is the number the user entered and saw.
+            targetWeight: ws.modeWeight,
             targetRPE: ws.rpe,
             targetRIR: ws.rir,
-            targetDurationSeconds: ws.durationSeconds
+            targetDurationSeconds: ws.durationSeconds,
+            createdAt: createdAt
         )
         applyTypeSpecificPlan(from: ws, to: target)
         return target

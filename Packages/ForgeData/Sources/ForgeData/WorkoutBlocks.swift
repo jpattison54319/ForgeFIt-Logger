@@ -126,8 +126,16 @@ public enum OrderedRoutineItem: Identifiable {
         (routine.exercises.map(Self.exercise) + routine.blocks.map(Self.block))
             .sorted {
                 if $0.position != $1.position { return $0.position < $1.position }
+                if $0.tiePriority != $1.tiePriority { return $0.tiePriority < $1.tiePriority }
                 return $0.id.uuidString < $1.id.uuidString
             }
+    }
+
+    private var tiePriority: Int {
+        switch self {
+        case .block: 0
+        case .exercise: 1
+        }
     }
 }
 
@@ -162,7 +170,77 @@ public enum OrderedWorkoutItem: Identifiable {
         return (visibleExercises.map(Self.exercise) + workout.blocks.map(Self.block))
             .sorted {
                 if $0.position != $1.position { return $0.position < $1.position }
+                if $0.tiePriority != $1.tiePriority { return $0.tiePriority < $1.tiePriority }
                 return $0.id.uuidString < $1.id.uuidString
             }
+    }
+
+    private var tiePriority: Int {
+        switch self {
+        case .block: 0
+        case .exercise: 1
+        }
+    }
+}
+
+/// Canonicalizes a routine's relationship graph at every editor/import commit.
+/// Relationship array order is not a stable SwiftData ordering contract, so
+/// visible order lives in contiguous `position` values across exercises and
+/// blocks, and within each exercise's targets. Duplicate references are
+/// removed by durable model ID before the relationship is assigned.
+public enum RoutineStructure {
+    @MainActor
+    public static func normalize(_ routine: RoutineModel) {
+        var seenExerciseIDs = Set<UUID>()
+        let exercises = routine.exercises
+            .sorted {
+                if $0.position != $1.position { return $0.position < $1.position }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            .filter { seenExerciseIDs.insert($0.id).inserted }
+
+        var seenBlockIDs = Set<UUID>()
+        let blocks = routine.blocks
+            .sorted {
+                if $0.position != $1.position { return $0.position < $1.position }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            .filter { seenBlockIDs.insert($0.id).inserted }
+
+        routine.exercises = exercises
+        routine.blocks = blocks
+        for (position, item) in OrderedRoutineItem.ordered(in: routine).enumerated() {
+            item.position = position
+        }
+
+        for exercise in exercises {
+            var seenSetIDs = Set<UUID>()
+            let targets = exercise.sets
+                .sorted {
+                    if $0.position != $1.position { return $0.position < $1.position }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                .filter { seenSetIDs.insert($0.id).inserted }
+            for (position, target) in targets.enumerated() { target.position = position }
+            exercise.sets = targets
+        }
+    }
+
+    /// Appends within one folder's own ordering space. Deleted/archived rows
+    /// never create unexplained gaps or move a new routine behind another
+    /// folder's unrelated position range.
+    @MainActor
+    public static func nextRoutinePosition(
+        in routines: [RoutineModel],
+        folderID: UUID?
+    ) -> Int {
+        let positions = routines.lazy
+            .filter {
+                $0.deletedAt == nil
+                    && $0.archivedAt == nil
+                    && $0.folderID == folderID
+            }
+            .map(\.position)
+        return (positions.max() ?? -1) + 1
     }
 }

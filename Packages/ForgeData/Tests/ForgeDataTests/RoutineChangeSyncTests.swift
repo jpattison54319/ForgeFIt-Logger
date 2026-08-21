@@ -202,6 +202,88 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(plan.exercisePlans.first?.removedRoutineSetIDs, [])
     }
 
+    func testAddingCompletedCardioDoesNotTurnPerformedDurationIntoRoutineGoal() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let routine = RoutineModel(userID: userID, name: "Mixed")
+        let workoutExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 0,
+            sets: []
+        )
+        let performedSession = CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: workoutExercise.id,
+            modality: "run",
+            durationSeconds: 535
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            routineID: routine.id,
+            title: routine.name,
+            exercises: [workoutExercise],
+            cardioSessions: [performedSession]
+        )
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertEqual(plan.addedExerciseIDs, [workoutExercise.id])
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let added = try XCTUnwrap(routine.exercises.first)
+        XCTAssertTrue(added.sets.isEmpty)
+        XCTAssertNil(added.intervalPlanJSON)
+    }
+
+    func testAddingCardioPreservesOnlyItsExplicitlyAuthoredGoal() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let routine = RoutineModel(userID: userID, name: "Mixed")
+        let explicitPlan = IntervalPlan(
+            steps: [],
+            goal: .init(kind: .duration, value: 1_200)
+        )
+        let workoutExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 0,
+            intervalPlanJSON: explicitPlan.encodedJSON(),
+            sets: []
+        )
+        let performedSession = CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: workoutExercise.id,
+            modality: "run",
+            durationSeconds: 535
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            routineID: routine.id,
+            title: routine.name,
+            exercises: [workoutExercise],
+            cardioSessions: [performedSession]
+        )
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let added = try XCTUnwrap(routine.exercises.first)
+        let storedPlan = try XCTUnwrap(IntervalPlan.decode(from: added.intervalPlanJSON))
+        XCTAssertEqual(storedPlan.goal, explicitPlan.goal)
+        XCTAssertEqual(storedPlan.goal?.value, 1_200)
+        XCTAssertTrue(added.sets.isEmpty)
+    }
+
     // MARK: - Apply
 
     func testApplyCreatesAddedSetFromPerformedValues() throws {
@@ -647,6 +729,171 @@ final class RoutineChangeSyncTests: XCTestCase {
 
         XCTAssertEqual(routine.conditioningPlanJSON, legacyConditioning)
         XCTAssertEqual(routine.blocks.first?.planJSON, #"{"flow":"edited"}"#)
+    }
+
+    /// Older builds split a replacement after completed work: the completed
+    /// original row kept routine lineage and a fresh replacement row had none.
+    /// The old diff therefore kept the original and appended the replacement.
+    /// Recover that exact persisted shape as one identity-preserving swap.
+    func testLegacySplitReplacementProducesOneExerciseInExactOrder() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let originalExerciseID = UUID()
+        let replacementExerciseID = UUID()
+
+        func target(_ position: Int, weight: Double) -> RoutineSetModel {
+            RoutineSetModel(
+                userID: userID,
+                position: position,
+                targetRepsLow: 8,
+                targetRepsHigh: 12,
+                targetWeight: weight
+            )
+        }
+        let before = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 0,
+            sets: [target(0, weight: 20)]
+        )
+        let originalTargets = [target(0, weight: 60), target(1, weight: 65), target(2, weight: 70)]
+        let replaced = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: originalExerciseID,
+            position: 1,
+            sets: originalTargets
+        )
+        let after = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: UUID(),
+            position: 2,
+            sets: [target(0, weight: 30)]
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Legacy Split",
+            exercises: [before, replaced, after]
+        )
+
+        let beforeWorkout = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: before.exerciseID,
+            position: 0,
+            sourceRoutineExerciseID: before.id,
+            sets: [SetModel(userID: userID, sourceRoutineSetID: before.sets[0].id)]
+        )
+        let splitAt = Date(timeIntervalSince1970: 12_345)
+        let completedHistory = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: originalExerciseID,
+            position: 1,
+            restSeconds: 120,
+            microRestSeconds: 20,
+            sourceRoutineExerciseID: replaced.id,
+            updatedAt: splitAt,
+            sets: [SetModel(
+                userID: userID,
+                position: 0,
+                reps: 10,
+                weight: 62.5,
+                sourceRoutineSetID: originalTargets[0].id,
+                completedAt: splitAt.addingTimeInterval(-30)
+            )]
+        )
+        let replacement = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: replacementExerciseID,
+            position: 2,
+            restSeconds: 120,
+            microRestSeconds: 20,
+            createdAt: splitAt,
+            updatedAt: splitAt,
+            sets: [
+                SetModel(userID: userID, position: 0, setType: .working, reps: 9, weight: 50),
+                SetModel(userID: userID, position: 1, setType: .working, reps: 8, weight: 50)
+            ]
+        )
+        let afterWorkout = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: after.exerciseID,
+            position: 3,
+            sourceRoutineExerciseID: after.id,
+            sets: [SetModel(userID: userID, sourceRoutineSetID: after.sets[0].id)]
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            routineID: routine.id,
+            exercises: [beforeWorkout, completedHistory, replacement, afterWorkout]
+        )
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+
+        let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+        XCTAssertEqual(plan.historyOnlyWorkoutExerciseIDs, [completedHistory.id])
+        XCTAssertTrue(plan.addedExerciseIDs.isEmpty)
+        XCTAssertTrue(plan.removedRoutineExerciseIDs.isEmpty)
+        XCTAssertEqual(
+            plan.exercisePlans.first { $0.workoutExerciseID == replacement.id }?.matchedRoutineExerciseID,
+            replaced.id
+        )
+        XCTAssertTrue(plan.summary.contains("swapped"))
+
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        // Applying the same accepted plan again is the caller-context mirror
+        // and retry shape. It must be idempotent — no duplicate IDs or rows.
+        RoutineChangeSync.apply(plan, to: routine, from: workout, in: context)
+        try context.save()
+
+        let verification = ModelContext(container)
+        let routineID = routine.id
+        let persisted = try XCTUnwrap(verification.fetch(FetchDescriptor<RoutineModel>(
+            predicate: #Predicate { $0.id == routineID }
+        )).first)
+        let ordered = persisted.exercises.sorted { $0.position < $1.position }
+        XCTAssertEqual(ordered.map(\.exerciseID), [before.exerciseID, replacementExerciseID, after.exerciseID])
+        XCTAssertEqual(ordered.map(\.position), [0, 1, 2])
+        XCTAssertEqual(ordered.filter { $0.id == replaced.id }.count, 1)
+        let persistedReplacement = try XCTUnwrap(ordered.first { $0.id == replaced.id })
+        XCTAssertEqual(persistedReplacement.sets.sorted { $0.position < $1.position }.map(\.id), originalTargets.map(\.id))
+        XCTAssertEqual(persistedReplacement.sets.sorted { $0.position < $1.position }.compactMap(\.targetWeight), [60, 65, 70])
+    }
+
+    func testNewModeSpecificSetsPersistTheVisibleAssistanceAndAddedLoad() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let userID = UUID()
+        let seeded = try seed(userID: userID, exerciseID: UUID(), in: context)
+        let workoutExercise = seeded.workout.exercises[0]
+
+        let assisted = SetModel(
+            userID: userID,
+            position: 1,
+            setType: .drop,
+            weightMode: .bodyweightAssisted,
+            assistanceWeight: 27.5,
+            bodyweightKg: 80
+        )
+        let added = SetModel(
+            userID: userID,
+            position: 2,
+            setType: .drop,
+            weightMode: .bodyweightAdded,
+            addedWeight: 7.5,
+            bodyweightKg: 80
+        )
+        context.insert(assisted)
+        context.insert(added)
+        workoutExercise.sets.append(contentsOf: [assisted, added])
+
+        let plan = RoutineChangeSync.detect(workout: seeded.workout, routine: seeded.routine)
+        RoutineChangeSync.apply(plan, to: seeded.routine, from: seeded.workout, in: context)
+        try context.save()
+
+        let targets = seeded.routine.exercises[0].sets.sorted { $0.position < $1.position }
+        XCTAssertEqual(targets[1].targetWeight, 27.5, "Assistance must not be read from raw external weight.")
+        XCTAssertEqual(targets[2].targetWeight, 7.5, "Added load must not be read from raw external weight.")
     }
 }
 

@@ -154,20 +154,31 @@ enum PlanImportService {
         var routineIDs: [UUID] = []
         var routineMap: [UUID: UUID] = [:]
         for source in document.routines { routineMap[source.id] = UUID() }
+        var standaloneOffset = 0
+        var nextPositionByImportedFolder: [UUID: Int] = [:]
 
-        for (offset, source) in document.routines.sorted(by: { $0.position < $1.position }).enumerated() {
+        for source in document.routines.sorted(by: {
+            if $0.position != $1.position { return $0.position < $1.position }
+            return $0.id.uuidString < $1.id.uuidString
+        }) {
             let routineID = routineMap[source.id] ?? UUID()
             routineIDs.append(routineID)
             let importedFolderID = source.folderID.flatMap { folderMap[$0] }
+            let importedPosition: Int
+            if let importedFolderID {
+                importedPosition = nextPositionByImportedFolder[importedFolderID, default: 0]
+                nextPositionByImportedFolder[importedFolderID] = importedPosition + 1
+            } else {
+                importedPosition = standalonePosition + standaloneOffset
+                standaloneOffset += 1
+            }
             let routine = RoutineModel(
                 id: routineID,
                 userID: userID,
                 name: source.name,
                 notes: source.notes,
                 folderID: importedFolderID,
-                position: document.kind == .routine || importedFolderID == nil
-                    ? standalonePosition + offset
-                    : source.position,
+                position: importedPosition,
                 createdAt: .now,
                 updatedAt: .now,
                 conditioningPlanJSON: try remapConditioning(source.conditioningPlanJSON, exerciseMap: exerciseMap),
@@ -219,6 +230,7 @@ enum PlanImportService {
             for (row, sharedRow) in zip(routine.exercises.sorted(by: { $0.position < $1.position }), source.exercises.sorted(by: { $0.position < $1.position })) {
                 row.progressionRuleJSON = sharedRow.progressionRuleJSON
             }
+            RoutineStructure.normalize(routine)
             context.insert(routine)
         }
 

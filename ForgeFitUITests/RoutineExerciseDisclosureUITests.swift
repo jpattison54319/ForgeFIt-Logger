@@ -49,6 +49,51 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
         XCTAssertFalse(summaryItem("Bayesian Cable Curl", routine: "Long Routine", in: app).exists)
     }
 
+    @MainActor
+    func testRoutineEditorActionsRemainAvailableAfterScrolling() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-didOnboard", "YES",
+            "-initialTab", "workout",
+            "--reset-store",
+            "--seed-routine-hierarchy-many-exercises",
+        ]
+        app.launch()
+
+        let menu = app.buttons["routine-menu-Long Routine"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 8))
+        tap(menu, in: app)
+
+        let edit = app.buttons["Edit Long Routine"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.tap()
+
+        let back = app.buttons["routine-editor-back-button"].firstMatch
+        let save = app.buttons["routine-editor-save-button"].firstMatch
+        let scroll = app.scrollViews["routine-editor-scroll"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertTrue(scroll.exists)
+        XCTAssertTrue(back.isHittable)
+        XCTAssertTrue(save.isHittable)
+        XCTAssertGreaterThanOrEqual(back.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(back.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(save.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(save.frame.height, 44)
+        let originalBackY = back.frame.midY
+        let originalSaveY = save.frame.midY
+
+        scroll.swipeUp()
+        scroll.swipeUp()
+        XCTAssertTrue(app.buttons["add-to-routine"].firstMatch.waitForExistence(timeout: 3))
+
+        XCTAssertTrue(back.isHittable, "Back must remain available throughout the routine.")
+        XCTAssertTrue(save.isHittable, "Save must remain available throughout the routine.")
+        XCTAssertEqual(back.frame.midY, originalBackY, accuracy: 2)
+        XCTAssertEqual(save.frame.midY, originalSaveY, accuracy: 2)
+        keepScreenshot(named: "Routine editor persistent glass actions", from: app)
+    }
+
     private func summaryItem(
         _ itemName: String,
         routine routineName: String,

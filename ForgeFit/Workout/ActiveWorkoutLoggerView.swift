@@ -633,11 +633,15 @@ struct ActiveWorkoutLoggerView: View {
                 } label: {
                     Text(isHistoricalEdit ? "Save" : "Finish")
                         .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(theme.accentForeground)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .minimumTouchTarget()
                 }
-                .buttonStyle(.glassProminent)
+                // Keep the accent identity without the opaque fill of
+                // glassProminent, so workout content remains visible through
+                // the persistent action as the user requested.
+                .buttonStyle(.glass)
                 .tint(theme.accent)
                 .buttonBorderShape(.capsule)
                 .accessibilityIdentifier("finish-workout-button")
@@ -1303,8 +1307,9 @@ struct ActiveWorkoutLoggerView: View {
         var removedRuntime: [RemovedSessionRuntime] = []
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
             removedRuntime = deleteCardioSessions(for: we.id)
+            workout.exercises.removeAll { $0.id == we.id }
             modelContext.delete(we)
-            normalizeOrderedPositions(excluding: we.id)
+            normalizeOrderedPositions()
             workout.recomputeTotalVolume()
             refreshLiveStats()
         }
@@ -1496,13 +1501,27 @@ struct ActiveWorkoutLoggerView: View {
         #endif
     }
 
-    private func finishAndDismiss(endedAt: Date) -> String? {
+    private func finishAndDismiss(
+        endedAt: Date,
+        summaryCommit: WorkoutFinisher.SummaryCommit
+    ) -> String? {
+        // Live rows debounce some writes to keep scrolling responsive. Flush
+        // their in-memory graph before opening the isolated terminal context,
+        // otherwise a fast Finish -> Save can make that context reconcile an
+        // older workout snapshot. A failed flush retains the pending changes
+        // in this context and keeps the workout open for an exact retry.
+        do {
+            try modelContext.save()
+        } catch {
+            return error.localizedDescription
+        }
         // Prefer live session metrics (watch or BLE monitor) when streaming.
         if let failure = WorkoutFinisher.finish(
             workoutID: workout.id,
             in: modelContext,
             liveMetrics: LiveMetricsHub.shared.liveMetrics,
-            endedAt: endedAt
+            endedAt: endedAt,
+            summaryCommit: summaryCommit
         ) {
             return failure
         }
@@ -1560,7 +1579,7 @@ private struct PostWorkoutSummaryView: View {
     /// Runs the finish pipeline; returns an error message when the terminal
     /// save failed (the workout is still live) so the sheet can alert instead
     /// of silently doing nothing.
-    let onSave: (Date) -> String?
+    let onSave: (Date, WorkoutFinisher.SummaryCommit) -> String?
     let onCancel: () -> Void
 
     /// Detected structural drift between this workout and its source routine,
@@ -1979,35 +1998,28 @@ private struct PostWorkoutSummaryView: View {
     }
 
     private func applyRoutineChangesAndSave() {
-        // Acquired before ANY routine mutation so a rapid second commit
+        // Acquired before the isolated transaction so a rapid second commit
         // cannot re-enter mid-apply.
         guard saveGate.tryBegin() else { return }
-        if let plan = routinePlan,
-           let routineID = workout.routineID,
-           let routine = fetchRoutine(id: routineID) {
-            RoutineChangeSync.apply(plan, to: routine, from: workout, in: modelContext)
-        }
-        // WorkoutFinisher's terminal save commits the routine update and the
-        // completed workout together. Keeping one durability boundary avoids
-        // reporting a stale first-save error if that same context succeeds a
-        // moment later while finishing the workout.
-        commitSaveUnderGate()
+        commitSaveUnderGate(updateRoutine: true)
     }
 
     private func commitSave() {
         guard saveGate.tryBegin() else { return }
-        commitSaveUnderGate()
+        commitSaveUnderGate(updateRoutine: false)
     }
 
-    private func commitSaveUnderGate() {
-        // All progression/RPE mutations happen only while the gate is held.
-        // Resolve what the lifter did with each suggestion (accepted at the
-        // suggested weight, edited to another, or untouched) before finishing.
-        ProgressionPlanner.resolveStatuses(for: workout, in: modelContext)
-        workout.wholeSessionRPE = sessionRPE.map(Double.init)
-        workout.wholeSessionRPERatedAt = sessionRPERatedAt
-        workout.wholeSessionRPEProtocolVersion = sessionRPE == nil ? nil : "whole-session-cr10-immediate-v1"
-        saveError = onSave(finishRequestedAt)
+    private func commitSaveUnderGate(updateRoutine: Bool) {
+        // The finisher applies these values, progression resolution, and the
+        // optional routine reconciliation inside one isolated terminal save.
+        // The long-lived context is mirrored only after that save succeeds.
+        let summaryCommit = WorkoutFinisher.SummaryCommit(
+            wholeSessionRPE: sessionRPE.map(Double.init),
+            wholeSessionRPERatedAt: sessionRPERatedAt,
+            wholeSessionRPEProtocolVersion: sessionRPE == nil ? nil : "whole-session-cr10-immediate-v1",
+            updateRoutine: updateRoutine
+        )
+        saveError = onSave(finishRequestedAt, summaryCommit)
         if saveError != nil {
             // A surfaced failure re-opens the gate so "Try saving again" works;
             // success keeps it held through dismissal.
@@ -3099,10 +3111,12 @@ private struct ExerciseLogCard: View {
         let drop = SetModel(
             userID: ForgeFitDemo.userID,
             setType: .drop,
-            weightMode: weightMode,
+            weightMode: set.weightMode,
             reps: nil
         )
-        drop.setModeWeight(dropPrefillWeight(from: set))
+        let bodyweight = set.bodyweightKg ?? HealthMetricsStore.shared.latestBodyweight
+        drop.bodyweightKg = bodyweight
+        drop.setModeWeight(dropPrefillWeight(from: set, index: index, bodyweightKg: bodyweight))
         modelContext.insert(drop)
         workoutExercise.sets.append(drop)
         var rows = sortedSets.filter { $0.id != drop.id }
@@ -3111,36 +3125,30 @@ private struct ExerciseLogCard: View {
         recompute()
     }
 
-    /// Drop-set pre-fill per weight mode. A drop means 25% LESS effective
-    /// load: for external and added weight that's 25% off the entered number;
-    /// for assisted work the load is bodyweight MINUS assistance, so the
-    /// assistance must go UP (bw − 0.75·(bw − assist)). Without a known
-    /// bodyweight the assisted case copies the value unchanged rather than
-    /// suggesting something directionally wrong.
-    private func dropPrefillWeight(from set: SetModel) -> Double? {
-        guard let current = set.modeWeight else { return nil }
-        switch set.weightMode {
-        case .external, .bodyweightAdded:
-            return droppedWeight(current)
-        case .bodyweightAssisted:
-            guard let bodyweight = set.bodyweightKg ?? HealthMetricsStore.shared.latestBodyweight,
-                  bodyweight > current else { return current }
-            let target = bodyweight - 0.75 * (bodyweight - current)
-            let displayed = displayUnit.displayValue(fromKilograms: target)
-            let step = displayUnit == .lb ? 5.0 : 2.5
-            return displayUnit.kilograms(fromDisplayValue: max(0, (displayed / step).rounded() * step))
-        case .bodyweight:
-            return nil
-        }
+    /// Use the value actually visible on the parent row. Routine-backed rows
+    /// often hold an untouched target while showing a different history ghost;
+    /// reading only `modeWeight` is what left the reported assisted drop blank.
+    private func dropPrefillWeight(
+        from set: SetModel,
+        index: Int,
+        bodyweightKg: Double?
+    ) -> Double? {
+        DropSetLoadPolicy.suggestedModeWeight(
+            sourceWeightKg: visibleModeWeight(for: set, index: index),
+            mode: set.weightMode,
+            bodyweightKg: bodyweightKg,
+            displayUnit: displayUnit
+        )
     }
 
-    /// 25% drop, rounded to the nearest 5 — a sensible pre-fill the user can edit.
-    private func droppedWeight(_ weight: Double) -> Double {
-        let displayed = displayUnit.displayValue(fromKilograms: weight)
-        let step = displayUnit == .lb ? 5.0 : 2.5
-        let minimum = displayUnit == .lb ? 5.0 : 2.5
-        let dropped = max(minimum, (displayed * 0.75 / step).rounded() * step)
-        return displayUnit.kilograms(fromDisplayValue: dropped)
+    private func visibleModeWeight(for set: SetModel, index: Int) -> Double? {
+        let showsSuggestion = usesSuggestedValues(for: set)
+            && !(editedSuggestionFields[set.id] ?? []).contains(.weight)
+        return DropSetLoadPolicy.visibleSourceWeight(
+            enteredWeightKg: set.modeWeight,
+            suggestedWeightKg: suggestedWeight(for: set, index: index),
+            isShowingSuggestion: showsSuggestion
+        )
     }
 
     private func changeType(of set: SetModel, to type: SetType, index: Int) {
@@ -3161,11 +3169,25 @@ private struct ExerciseLogCard: View {
             ? blockTemplate(for: type, index: index, in: sortedSets)
             : nil
 
-        // Converting a row into a drop pre-fills the cascading weight cut from
-        // the row above it.
-        if type == .drop, index > 0, let above = sortedSets[index - 1].weight {
-            if set.weight == nil || set.weight == above {
-                set.weight = droppedWeight(above)
+        // Converting a row into a drop uses the row above's visible load and
+        // the same mode-aware direction as "Add Drop Set Below". Preserve a
+        // genuinely hand-entered load; hidden routine backing values are not
+        // explicit edits and must not beat the ghost the user can see.
+        if type == .drop, index > 0 {
+            let above = sortedSets[index - 1]
+            let aboveVisible = visibleModeWeight(for: above, index: index - 1)
+            let currentMatchesAbove = set.modeWeight.flatMap { current in
+                aboveVisible.map { abs(current - $0) < 0.0001 }
+            } ?? false
+            if !preservesEnteredWeight || currentMatchesAbove {
+                let bodyweight = above.bodyweightKg ?? HealthMetricsStore.shared.latestBodyweight
+                set.bodyweightKg = set.bodyweightKg ?? bodyweight
+                set.setModeWeight(DropSetLoadPolicy.suggestedModeWeight(
+                    sourceWeightKg: aboveVisible,
+                    mode: above.weightMode,
+                    bodyweightKg: bodyweight,
+                    displayUnit: displayUnit
+                ))
             }
         }
         set.setType = type
@@ -3215,8 +3237,9 @@ private struct ExerciseLogCard: View {
 
     private func deleteSet(_ set: SetModel) {
         if openSwipeSetID == set.id { openSwipeSetID = nil }
+        workoutExercise.sets.removeAll { $0.id == set.id }
         modelContext.delete(set)
-        for (i, s) in sortedSets.filter({ $0.id != set.id }).enumerated() { s.position = i }
+        for (i, s) in sortedSets.enumerated() { s.position = i }
         recompute()
     }
 

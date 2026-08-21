@@ -660,8 +660,8 @@ struct CardioExerciseCard: View {
         let hadManualIntervalPlan = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hasSteps == true
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         CardioSessionTerminalPersistence.perform(
-            container: modelContext.container,
-            sessionID: session.id,
+            session: session,
+            context: modelContext,
             endedAt: end,
             completesYoga: false,
             useClockDuration: true,
@@ -828,10 +828,10 @@ struct CardioExerciseCard: View {
             Image(systemName: met ? "checkmark.seal.fill" : "target")
                 .font(.system(size: 12)).foregroundStyle(met ? theme.success : theme.textTertiary)
             Text(met
-                 ? "Goal met — \(GoalFormatting.pair(goal: goal, current: achieved, kind: kind))"
+                 ? "Goal met — \(CardioGoalFormatting.pair(goal: goal, current: achieved, kind: kind))"
                  : (achieved == nil
-                    ? "Goal: \(GoalFormatting.value(goal.value, goalKind: goal.kind, cardioKind: kind)) — no measurement"
-                    : "Goal: \(GoalFormatting.pair(goal: goal, current: achieved, kind: kind))"))
+                    ? "Goal: \(CardioGoalFormatting.value(goal.value, goalKind: goal.kind, cardioKind: kind)) — no measurement"
+                    : "Goal: \(CardioGoalFormatting.pair(goal: goal, current: achieved, kind: kind))"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(met ? theme.success : theme.textSecondary)
             Spacer()
@@ -1079,29 +1079,30 @@ private struct GoalProgressView: View {
     let current: Double?
     let kind: CardioKind
 
-    private var fraction: Double? { current.map { goal.fraction(current: $0) } }
-    private var reached: Bool { (fraction ?? 0) >= 1 }
+    private var progress: CardioGoalProgressState {
+        CardioGoalProgressState(goal: goal, current: current)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: reached ? "checkmark.seal.fill" : "target")
+                Image(systemName: progress.reached ? "checkmark.seal.fill" : "target")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(reached ? theme.success : theme.secondaryAccent)
-                Text(GoalFormatting.pair(goal: goal, current: current, kind: kind))
+                    .foregroundStyle(progress.reached ? theme.success : theme.secondaryAccent)
+                Text(CardioGoalFormatting.pair(goal: goal, current: current, kind: kind))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                     .monospacedDigit()
                 Spacer()
-                if let fraction {
-                    Text("\(Int((fraction * 100).rounded()))%")
+                if let percent = progress.roundedPercent {
+                    Text("\(percent)%")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(reached ? theme.success : theme.secondaryAccent)
+                        .foregroundStyle(progress.reached ? theme.success : theme.secondaryAccent)
                 }
             }
-            if current != nil {
-                ProgressView(value: min(1, fraction ?? 0))
-                    .tint(reached ? theme.success : theme.secondaryAccent)
+            if let fraction = progress.fraction {
+                ProgressView(value: min(1, fraction))
+                    .tint(progress.reached ? theme.success : theme.secondaryAccent)
             } else {
                 Text(goal.kind == .elevation
                      ? "Climb fills in when the session provides elevation data."
@@ -1110,7 +1111,7 @@ private struct GoalProgressView: View {
             }
         }
         .padding(Space.sm)
-        .background((reached ? theme.success : theme.secondaryAccent).opacity(0.08))
+        .background((progress.reached ? theme.success : theme.secondaryAccent).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .onAppear {
             CardioGoalAnnouncer.shared.activate(
@@ -1128,17 +1129,40 @@ private struct GoalProgressView: View {
     }
 }
 
+/// Pure live-goal progress shared by the label, percentage, bar, and reached
+/// styling so every element crosses the same exact threshold.
+struct CardioGoalProgressState: Equatable {
+    let goal: IntervalPlan.SessionGoal
+    let current: Double?
+
+    var fraction: Double? {
+        guard let current, current.isFinite else { return nil }
+        return goal.fraction(current: current)
+    }
+
+    var reached: Bool {
+        guard goal.isMeaningful, let current, current.isFinite else { return false }
+        return current >= goal.value
+    }
+
+    var roundedPercent: Int? {
+        guard let fraction, fraction.isFinite,
+              fraction <= Double(Int.max) / 100 else { return nil }
+        return Int((fraction * 100).rounded())
+    }
+}
+
 /// Shared "current / target" wording for goal banners and outcomes.
-private enum GoalFormatting {
+enum CardioGoalFormatting {
     static func pair(goal: IntervalPlan.SessionGoal, current: Double?, kind: CardioKind) -> String {
         "\(value(current, goalKind: goal.kind, cardioKind: kind, dashWhenNil: true)) of \(value(goal.value, goalKind: goal.kind, cardioKind: kind))"
     }
 
     static func value(_ raw: Double?, goalKind: IntervalPlan.SessionGoal.Kind, cardioKind: CardioKind, dashWhenNil: Bool = false) -> String {
-        guard let raw else { return dashWhenNil ? "—" : "" }
+        guard let raw, raw.isFinite else { return dashWhenNil ? "—" : "" }
         switch goalKind {
         case .distance: return Fmt.cardioDistance(raw, kind: cardioKind)
-        case .duration: return Fmt.durationShort(Int(raw))
+        case .duration: return Fmt.elapsed(max(0, Int(raw.rounded())))
         case .calories: return "\(Int(raw)) kcal"
         case .elevation: return "\(Int(raw)) m"
         }

@@ -183,6 +183,29 @@ enum WorkoutFinisher {
         }
     }
 
+    /// User choices made on the post-workout summary. These values must enter
+    /// the same isolated transaction as the terminal workout save; mutating
+    /// the long-lived SwiftUI context first makes the routine/RPE changes
+    /// autosave-dependent and lets a terminal rollback produce a half-commit.
+    struct SummaryCommit: Equatable {
+        let wholeSessionRPE: Double?
+        let wholeSessionRPERatedAt: Date?
+        let wholeSessionRPEProtocolVersion: String?
+        let updateRoutine: Bool
+
+        init(
+            wholeSessionRPE: Double?,
+            wholeSessionRPERatedAt: Date?,
+            wholeSessionRPEProtocolVersion: String?,
+            updateRoutine: Bool
+        ) {
+            self.wholeSessionRPE = wholeSessionRPE
+            self.wholeSessionRPERatedAt = wholeSessionRPERatedAt
+            self.wholeSessionRPEProtocolVersion = wholeSessionRPEProtocolVersion
+            self.updateRoutine = updateRoutine
+        }
+    }
+
     /// Returns an error message when the terminal save fails (the workout
     /// stays live and nothing downstream runs). `nil` is both a fresh success
     /// and a no-op success for an already-finished workout (FF-006). Callers
@@ -195,6 +218,7 @@ enum WorkoutFinisher {
         liveMetrics: WatchLiveMetrics? = nil,
         watchSavedToHealth: Bool = false,
         endedAt requestedEnd: Date? = nil,
+        summaryCommit: SummaryCommit? = nil,
         effects: FinishEffects? = nil,
         terminalSave: ((ModelContext) -> String?)? = nil
     ) -> String? {
@@ -204,6 +228,44 @@ enum WorkoutFinisher {
             predicate: #Predicate { $0.id == workoutID }
         )).first else {
             return "The active workout could not be found."
+        }
+
+        // An already-terminal workout is an exactly-once no-op. Do not apply a
+        // summary or routine mutation on a repeated Save invocation.
+        guard workout.endedAt == nil, workout.deletedAt == nil else {
+            mirrorTerminalIdentity(of: workout, workoutID: workoutID, into: callerContext)
+            return nil
+        }
+
+        let commitTimestamp = Date.now
+        var routineMirror: (id: UUID, plan: RoutineChangeSync.Plan, timestamp: Date)?
+        if let summaryCommit {
+            ProgressionPlanner.resolveStatuses(for: workout, in: transaction)
+            workout.wholeSessionRPE = summaryCommit.wholeSessionRPE
+            workout.wholeSessionRPERatedAt = summaryCommit.wholeSessionRPERatedAt
+            workout.wholeSessionRPEProtocolVersion = summaryCommit.wholeSessionRPEProtocolVersion
+
+            if summaryCommit.updateRoutine {
+                guard let routineID = workout.routineID else {
+                    return "This workout is no longer linked to a routine. The workout is still active."
+                }
+                guard let routine = try? transaction.fetch(FetchDescriptor<RoutineModel>(
+                    predicate: #Predicate { $0.id == routineID && $0.deletedAt == nil }
+                )).first else {
+                    return "The routine could not be found, so it was not updated. The workout is still active."
+                }
+                let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
+                if plan.hasChanges {
+                    RoutineChangeSync.apply(
+                        plan,
+                        to: routine,
+                        from: workout,
+                        in: transaction,
+                        now: commitTimestamp
+                    )
+                    routineMirror = (routineID, plan, commitTimestamp)
+                }
+            }
         }
         let failure = finish(
             workout,
@@ -217,6 +279,36 @@ enum WorkoutFinisher {
         )
         guard failure == nil else { return failure }
         mirrorTerminalIdentity(of: workout, workoutID: workoutID, into: callerContext)
+        if let summaryCommit {
+            mirrorSummaryCommit(
+                summaryCommit,
+                transactionWorkout: workout,
+                workoutID: workoutID,
+                transactionContext: transaction,
+                into: callerContext
+            )
+        }
+        if let routineMirror {
+            let routineID = routineMirror.id
+            if let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { $0.id == workoutID }
+            )).first,
+               let callerRoutine = try? callerContext.fetch(FetchDescriptor<RoutineModel>(
+                   predicate: #Predicate { $0.id == routineID && $0.deletedAt == nil }
+               )).first {
+                // The isolated context is durable truth. Mirror the same accepted
+                // deterministic plan into the long-lived context only after that
+                // save succeeds, so current UI state cannot remain stale and a
+                // later autosave cannot resurrect removed relationship members.
+                RoutineChangeSync.apply(
+                    routineMirror.plan,
+                    to: callerRoutine,
+                    from: callerWorkout,
+                    in: callerContext,
+                    now: routineMirror.timestamp
+                )
+            }
+        }
         return nil
     }
 
@@ -244,6 +336,38 @@ enum WorkoutFinisher {
         callerWorkout.endedAt = workout.endedAt
         callerWorkout.deletedAt = workout.deletedAt
         callerWorkout.updatedAt = workout.updatedAt
+    }
+
+    /// Mirrors summary fields and resolved progression state after the
+    /// isolated commit. No caller mutation happens on failure, keeping retry
+    /// behavior exact and preventing a failed finish from looking completed.
+    @MainActor
+    private static func mirrorSummaryCommit(
+        _ summary: SummaryCommit,
+        transactionWorkout: WorkoutModel,
+        workoutID: UUID,
+        transactionContext: ModelContext,
+        into callerContext: ModelContext
+    ) {
+        if let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first, callerWorkout !== transactionWorkout {
+            callerWorkout.wholeSessionRPE = summary.wholeSessionRPE
+            callerWorkout.wholeSessionRPERatedAt = summary.wholeSessionRPERatedAt
+            callerWorkout.wholeSessionRPEProtocolVersion = summary.wholeSessionRPEProtocolVersion
+        }
+
+        let committedSuggestions = (try? transactionContext.fetch(FetchDescriptor<ProgressionSuggestionModel>(
+            predicate: #Predicate { $0.workoutID == workoutID && $0.deletedAt == nil }
+        ))) ?? []
+        for committed in committedSuggestions {
+            let suggestionID = committed.id
+            guard let caller = try? callerContext.fetch(FetchDescriptor<ProgressionSuggestionModel>(
+                predicate: #Predicate { $0.id == suggestionID }
+            )).first else { continue }
+            caller.statusRaw = committed.statusRaw
+            caller.updatedAt = committed.updatedAt
+        }
     }
 
     @MainActor

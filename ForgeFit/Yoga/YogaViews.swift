@@ -484,8 +484,8 @@ struct YogaExerciseCard: View {
         let end = Date.now
         let start = session.liveStartedAt ?? session.startedAt
         CardioSessionTerminalPersistence.perform(
-            container: modelContext.container,
-            sessionID: session.id,
+            session: session,
+            context: modelContext,
             endedAt: end,
             completesYoga: true,
             useClockDuration: true,
