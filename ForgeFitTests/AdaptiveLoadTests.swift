@@ -9,6 +9,11 @@ import Testing
 struct AdaptiveLoadTests {
     private let userID = ForgeFitDemo.userID
 
+    @Test func loadBasisLabelsDescribeThePrescriptionInsteadOfTheUnit() {
+        #expect(LoadPrescriptionPresentation.basisSelectorLabel(for: .fixed) == "Fixed")
+        #expect(LoadPrescriptionPresentation.basisSelectorLabel(for: .percentEstimatedOneRepMax) == "% e1RM")
+    }
+
     @Test func bestEstimateUsesCompletedWorkingHistoryOnly() {
         let exerciseID = UUID()
         let valid = historyWorkout(exerciseID: exerciseID, estimate: 100)

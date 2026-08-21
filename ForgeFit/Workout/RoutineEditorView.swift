@@ -1549,7 +1549,7 @@ private struct SetTargetEditRow: View {
 
     private var weightField: some View {
         loadField
-            .frame(width: supportsPercentagePrescription || set.loadPrescriptionMode == .percentEstimatedOneRepMax ? 132 : 64)
+            .frame(width: supportsPercentagePrescription || set.loadPrescriptionMode == .percentEstimatedOneRepMax ? 148 : 72)
     }
 
     private var loadField: some View {

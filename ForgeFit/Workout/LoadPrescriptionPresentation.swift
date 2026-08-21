@@ -7,6 +7,13 @@ import SwiftUI
 /// like a literal gym load on one surface and an adaptive rule on another.
 @MainActor
 enum LoadPrescriptionPresentation {
+    static func basisSelectorLabel(for mode: LoadPrescriptionMode) -> String {
+        switch mode {
+        case .fixed: "Fixed"
+        case .percentEstimatedOneRepMax: "% e1RM"
+        }
+    }
+
     static func percentInput(_ prescription: EstimatedOneRepMaxPrescription?) -> String {
         guard let prescription else { return "" }
         let low = number(prescription.lowPercent)
@@ -124,15 +131,31 @@ struct RoutineLoadPrescriptionField: View {
                 )
             }
 
-            TextField(fieldPlaceholder, text: textBinding)
-                .focused($focused)
-                .keyboardType(isPercentage ? .numbersAndPunctuation : .decimalPad)
-                .font(.bodyStrong)
-                .multilineTextAlignment(supportsResistanceBands && !isPercentage ? .trailing : .center)
-                .padding(.horizontal, 4)
-                .foregroundStyle(theme.textPrimary)
-                .accessibilityLabel(isPercentage ? "Percentage of estimated one rep max" : "Fixed load")
-                .accessibilityIdentifier("routine-set-load-value-\(set.id.uuidString)")
+            HStack(spacing: 3) {
+                TextField(fieldPlaceholder, text: textBinding)
+                    .focused($focused)
+                    .keyboardType(isPercentage ? .numbersAndPunctuation : .decimalPad)
+                    .font(.bodyStrong)
+                    .multilineTextAlignment(isPercentage ? .center : .trailing)
+                    .foregroundStyle(theme.textPrimary)
+                    .layoutPriority(1)
+                    .accessibilityLabel(
+                        isPercentage
+                            ? "Percentage of estimated one rep max"
+                            : "Fixed load in \(unit.suffix)"
+                    )
+                    .accessibilityIdentifier("routine-set-load-value-\(set.id.uuidString)")
+
+                if !isPercentage {
+                    Text(unit.shortSuffix)
+                        .font(.caption)
+                        .bold()
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize()
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 4)
 
             if showsBasisSelector {
                 Rectangle()
@@ -152,12 +175,18 @@ struct RoutineLoadPrescriptionField: View {
                     }
                 ]]) {
                     HStack(spacing: 3) {
-                        Text(isPercentage ? "%" : unit.shortSuffix)
-                            .font(.system(size: 11, weight: .bold))
+                        Text(LoadPrescriptionPresentation.basisSelectorLabel(for: set.loadPrescriptionMode))
+                            .font(.caption)
+                            .bold()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.caption)
+                            .bold()
+                            .imageScale(.small)
                     }
                     .foregroundStyle(theme.accentForeground)
+                    .padding(.horizontal, 4)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
                 }
@@ -190,7 +219,7 @@ struct RoutineLoadPrescriptionField: View {
     }
 
     private var fieldPlaceholder: String {
-        isPercentage ? "82.5 or 67–72" : unit.suffix
+        isPercentage ? "82.5 or 67–72" : "—"
     }
 
     private var textBinding: Binding<String> {
