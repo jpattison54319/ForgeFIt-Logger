@@ -1094,6 +1094,11 @@ struct ContentView: View {
             reconcileLiveRuntimeOwnership()
             BackupScheduler.shared.resumeAfterForeground()
             updateWidgetSnapshot()
+            // The wrist is refreshed by no user action on its own: the watch
+            // asks on ITS foreground, and the phone answers only while its
+            // app is running. Foregrounding here is the moment the phone can
+            // answer, so push rather than wait to be asked.
+            WatchLink.shared.publishState()
 
             if LiveWorkoutLifecyclePolicy.shouldRunForegroundMaintenance(
                 hasActiveWorkout: activeWorkout != nil
@@ -1718,9 +1723,10 @@ struct ContentView: View {
             )
         } else {
             // Never carry yesterday's readiness into a new day, and never
-            // block launch to replace it. Home publishes today's completed
-            // background result when it becomes available.
-            ReadinessSurfacePublisher.publish(ForgeFitWidgetSnapshot(mode: .idle))
+            // block launch to replace it. `publishIdle` keeps a score that is
+            // still today's — the pre-dawn background refresh publishes one
+            // before Home has ever rendered — and clears only a stale one.
+            ReadinessSurfacePublisher.publishIdle()
         }
     }
 

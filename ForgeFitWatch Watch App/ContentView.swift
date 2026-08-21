@@ -28,24 +28,33 @@ struct WatchHomeView: View {
     private var context: WatchAppContext? { store.context }
 
     var body: some View {
+        let readinessBasis = context?.currentReadinessBasis()
         NavigationStack {
             List {
                 // Day-gated: the retained context can be yesterday's, and a
                 // stale score here is worse than no score.
                 if let readiness = context?.currentReadiness() {
                     HStack(spacing: 10) {
-                        Gauge(value: Double(readiness), in: 0...100) {
-                            EmptyView()
-                        } currentValueLabel: {
+                        if readinessBasis == .daily {
+                            Gauge(value: Double(readiness), in: 0...100) {
+                                EmptyView()
+                            } currentValueLabel: {
+                                Text("\(readiness)")
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                            }
+                            .gaugeStyle(.accessoryCircularCapacity)
+                            .tint(WTheme.readinessColor(readiness))
+                            .scaleEffect(0.82)
+                        } else {
                             Text("\(readiness)")
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .font(.system(size: 21, weight: .bold, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 50)
                         }
-                        .gaugeStyle(.accessoryCircularCapacity)
-                        .tint(WTheme.readinessColor(readiness))
-                        .scaleEffect(0.82)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Readiness").font(.system(size: 14, weight: .semibold))
-                            Text(context?.currentReadinessAction() ?? (readiness >= 70 ? "Ready to train" : readiness >= 40 ? "Take it steady" : "Go easy today"))
+                            Text(readinessBasis == .trend ? "7-day trend" : "Readiness score")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(context?.currentReadinessAction() ?? (readinessBasis == .trend ? "Today's index is building" : "Open ForgeFit for today's guidance"))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }

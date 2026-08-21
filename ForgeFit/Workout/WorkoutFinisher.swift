@@ -3,9 +3,6 @@ import ForgeData
 import Foundation
 import Observation
 import SwiftData
-#if canImport(WidgetKit)
-import WidgetKit
-#endif
 
 /// Shared end-of-workout pipeline, used by both the on-phone logger and
 /// watch-initiated finishes so the two paths can't drift:
@@ -807,10 +804,11 @@ enum WorkoutFinisher {
         NotificationScheduler.shared.cancelWorkoutCues()
         LiveMetricsHub.shared.endSession()
         BLEHeartRateService.shared.stopWorkoutConnection()
-        ForgeFitWidgetSnapshotStore.save(ForgeFitWidgetSnapshot(mode: .idle))
-        #if canImport(WidgetKit)
-        WidgetCenter.shared.reloadTimelines(ofKind: "ForgeFitLauncher")
-        #endif
+        // Back to idle, but the workout ending says nothing about today's
+        // readiness: saving a bare idle snapshot here erased the score every
+        // shipped surface reads, the Watch complication included, and only
+        // Home could put it back.
+        ReadinessSurfacePublisher.publishIdle()
     }
 
     /// Cancel runtime work owned by one deleted/replaced cardio session while

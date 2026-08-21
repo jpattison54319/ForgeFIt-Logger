@@ -29,7 +29,8 @@ struct ForgeFitApp: App {
             diskCapacity: 512 * 1024 * 1024
         )
         // BGTaskScheduler requires registration before the app finishes
-        // launching; the rest of ReadinessDelivery is wired in launchTasks.
+        // launching. The rest of ReadinessDelivery is wired below, once the
+        // container exists.
         ReadinessDelivery.shared.register()
         // UserNotifications can deliver a response while iOS is restoring the
         // scene after a cold-launch tap, so its main-actor delegate must exist
@@ -43,17 +44,31 @@ struct ForgeFitApp: App {
             UserDefaults.standard.removeObject(forKey: AppQuickActionStore.key)
         }
 
+        let launchState: PersistenceLaunchState
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--simulate-persistence-failure") {
             // UI-test-only launch seam. It proves the app can reach the
             // recovery surface without first touching a persistent store.
-            _persistenceState = State(initialValue: .blocked(.workoutLogUnavailable))
+            launchState = .blocked(.workoutLogUnavailable)
         } else {
-            _persistenceState = State(initialValue: PersistenceBootstrap.makeContainer())
+            launchState = PersistenceBootstrap.makeContainer()
         }
         #else
-        _persistenceState = State(initialValue: PersistenceBootstrap.makeContainer())
+        launchState = PersistenceBootstrap.makeContainer()
         #endif
+        _persistenceState = State(initialValue: launchState)
+
+        // Readiness wake-ups must not depend on a scene. iOS launches this
+        // process into the background for the pre-dawn BGAppRefresh and for
+        // HealthKit's overnight sleep/HRV delivery, and in that launch no
+        // window is ever created — so `launchTasks()` never runs and, wired
+        // only from there, this stayed unconfigured: the observer queries
+        // were never executed to receive the wake, and the refresh found a
+        // nil container and scored nothing. `configure` is documented safe to
+        // call again, and the scene still calls it on every foreground.
+        if let container = launchState.container {
+            ReadinessDelivery.shared.configure(container: container)
+        }
     }
 
     var body: some Scene {

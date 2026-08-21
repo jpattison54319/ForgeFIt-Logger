@@ -252,6 +252,9 @@ struct HomeView: View {
         let health = result.healthAssessment
         return HomeDashboardCache(
             recoveryDisplayScore: report.displayScore,
+            readinessIsDaily: report.displayScore.map { _ in
+                report.recovery.daily.state.value != nil
+            },
             baselineReady: report.baselineReady,
             actionRaw: report.action.rawValue,
             recommendation: report.recommendation,
