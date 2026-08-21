@@ -20,10 +20,10 @@ struct OnboardingWelcomeStep: View {
                         Text("ForgeFit")
                             .font(.bodyStrong)
                             .foregroundStyle(theme.accentForeground)
-                        Text("Train everything.\nLog it fast.")
+                        Text("All your training.\nOne clear log.")
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Strength, cardio, yoga, Apple Watch, and recovery in one place.")
+                        Text("Plan, log, and understand your strength, cardio, conditioning, and yoga in one place.")
                             .font(.body)
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -34,19 +34,19 @@ struct OnboardingWelcomeStep: View {
                             systemImage: "bolt.fill",
                             tint: theme.accent,
                             title: "Fast workout logging",
-                            detail: "Log drop sets, intervals, and rest without leaving your workout."
+                            detail: "Track sets, intervals, and rest from one focused workout screen."
                         )
                         OnboardingFeatureRow(
                             systemImage: "applewatch",
                             tint: theme.secondaryAccent,
                             title: "Built for Apple Watch",
-                            detail: "Start on iPhone or Watch and keep your workout in sync."
+                            detail: "Start on iPhone or Apple Watch and follow the same live workout."
                         )
                         OnboardingFeatureRow(
                             systemImage: "waveform.path.ecg",
                             tint: theme.success,
-                            title: "Readiness in context",
-                            detail: "See HRV, sleep, and recent training load together."
+                            title: "Recovery with context",
+                            detail: "See sleep and HRV alongside the training that shaped them."
                         )
                     }
                 }
@@ -64,6 +64,11 @@ struct OnboardingWelcomeStep: View {
                     action: onImportOrRestore
                 )
                 .accessibilityIdentifier("onboarding-import-or-restore")
+                Text("You can import a workout CSV anytime from Settings.")
+                    .font(.label)
+                    .foregroundStyle(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, Space.xl)
             .padding(.top, Space.md)

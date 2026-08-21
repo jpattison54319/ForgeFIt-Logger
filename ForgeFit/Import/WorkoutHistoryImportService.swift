@@ -53,7 +53,9 @@ enum WorkoutHistoryImportService {
         workouts existingWorkouts: [WorkoutModel],
         exercises: [ExerciseLibraryModel]
     ) async throws -> WorkoutHistoryImportPreview {
-        let existingFingerprints = Set(existingWorkouts.compactMap(\.importFingerprint))
+        let existingFingerprints = Set(
+            existingWorkouts.filter { $0.deletedAt == nil }.compactMap(\.importFingerprint)
+        )
         let userExercises = exercises.map(\.domainInfo)
         let seedCorpus = seedCorpus()
         return try await Task.detached(priority: .userInitiated) {
@@ -104,8 +106,9 @@ enum WorkoutHistoryImportService {
         importContext.autosaveEnabled = false
         let save = performSave ?? { try $0.save() }
         let userID = ForgeFitDemo.userID
-        let existingFingerprints = Set(existingWorkouts.compactMap(\.importFingerprint))
-        let existingExternalKeys = Set(existingWorkouts.compactMap { workout -> String? in
+        let liveExistingWorkouts = existingWorkouts.filter { $0.deletedAt == nil }
+        let existingFingerprints = Set(liveExistingWorkouts.compactMap(\.importFingerprint))
+        let existingExternalKeys = Set(liveExistingWorkouts.compactMap { workout -> String? in
             guard let source = workout.externalSource, let externalID = workout.externalWorkoutID else { return nil }
             return "\(source)|\(externalID)"
         })

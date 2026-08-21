@@ -21,17 +21,17 @@ struct OnboardingSetupStep: View {
                         Text("Set up ForgeFit")
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Choose what you train and how weights appear.")
+                        Text("Choose your training mix and preferred weight unit.")
                             .font(.body)
                             .foregroundStyle(theme.textSecondary)
                     }
 
                     VStack(alignment: .leading, spacing: Space.md) {
                         VStack(alignment: .leading, spacing: Space.xs) {
-                            Text("What do you train?")
+                            Text("Your training mix")
                                 .font(.bodyStrong)
                                 .foregroundStyle(theme.textPrimary)
-                            Text("This shapes your Home quick starts. You can change them later.")
+                            Text("This sets up your first Home shortcuts. You can edit them anytime.")
                                 .font(.label)
                                 .foregroundStyle(theme.textSecondary)
                         }

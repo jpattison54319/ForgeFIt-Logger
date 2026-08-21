@@ -66,6 +66,12 @@ nonisolated struct WorkoutHistoryImportParseResult: Sendable {
     var checkedRowCount: Int
     var workouts: [ImportedWorkoutDraft]
     var warnings: [WorkoutImportWarning]
+
+    /// CSV exports use one data row per logged set, while ForgeFit stores one
+    /// workout with those sets nested beneath it. Keep both totals available so
+    /// the confirmation UI never makes preserved set rows look like lost
+    /// workouts.
+    var setCount: Int { workouts.reduce(0) { $0 + $1.setCount } }
 }
 
 nonisolated enum WorkoutHistoryImportParser {
@@ -646,12 +652,19 @@ nonisolated private extension ImportedWorkoutDraft {
 
 nonisolated private struct CSVTable {
     static func parse(_ text: String) -> [[String]] {
-        let delimiter = detectDelimiter(text)
+        // Swift's `Character` iteration treats CRLF as one grapheme cluster,
+        // so comparing it with either "\r" or "\n" misses the row boundary.
+        // Hevy exports can also mix CRLF and LF in one file. Normalize both
+        // forms before the quote-aware parser walks the table.
+        let normalizedText = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let delimiter = detectDelimiter(normalizedText)
         var rows: [[String]] = []
         var row: [String] = []
         var field = ""
         var inQuotes = false
-        var iterator = text.makeIterator()
+        var iterator = normalizedText.makeIterator()
 
         while let scalar = iterator.next() {
             if scalar == "\"" {

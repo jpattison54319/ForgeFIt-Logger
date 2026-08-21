@@ -16,7 +16,8 @@ final class OnboardingUITests: XCTestCase {
         assertPrimaryAction(importOrRestore, named: "Import or restore data")
         XCTAssertTrue(app.staticTexts["Fast workout logging"].exists)
         XCTAssertTrue(app.staticTexts["Built for Apple Watch"].exists)
-        XCTAssertTrue(app.staticTexts["Readiness in context"].exists)
+        XCTAssertTrue(app.staticTexts["Recovery with context"].exists)
+        XCTAssertTrue(app.staticTexts["You can import a workout CSV anytime from Settings."].exists)
         getStarted.tap()
 
         XCTAssertTrue(app.staticTexts["Set up ForgeFit"].waitForExistence(timeout: 3))
@@ -37,8 +38,8 @@ final class OnboardingUITests: XCTestCase {
         assertPrimaryAction(setupContinue, named: "Continue")
         setupContinue.tap()
 
-        XCTAssertTrue(app.staticTexts["Make readiness and Watch metrics work"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Health data is processed on this device"].exists)
+        XCTAssertTrue(app.staticTexts["Connect Apple Health"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Your Health data stays on this device"].exists)
         XCTAssertTrue(app.navigationBars["Apple Health"].buttons.firstMatch.isHittable,
                       "The Health explanation should retain a visible native back path.")
 
@@ -46,7 +47,7 @@ final class OnboardingUITests: XCTestCase {
         // sheet, so Continue is the only control and there is no way to skip
         // past the request.
         let healthContinue = app.buttons["onboarding-continue-health"]
-        assertPrimaryAction(healthContinue, named: "Continue")
+        assertPrimaryAction(healthContinue, named: "Continue to Apple Health")
         XCTAssertFalse(app.buttons["onboarding-continue-without-health"].exists,
                        "The Health step must not offer a way around the permission request.")
         XCTAssertFalse(app.buttons["onboarding-open-health-settings"].exists,
@@ -70,11 +71,35 @@ final class OnboardingUITests: XCTestCase {
     }
 
     @MainActor
+    func testCapturePolishedOnboarding() throws {
+        let app = launchNewUserApp()
+        capture(app, name: "01-welcome")
+
+        app.buttons["onboarding-import-or-restore"].tap()
+        XCTAssertTrue(app.navigationBars["Import History"].waitForExistence(timeout: 3))
+        capture(app, name: "02-import-or-restore")
+        app.navigationBars["Import History"].buttons["Close"].tap()
+
+        app.buttons["onboarding-get-started"].tap()
+        XCTAssertTrue(app.staticTexts["Set up ForgeFit"].waitForExistence(timeout: 3))
+        capture(app, name: "03-setup")
+
+        app.buttons["onboarding-setup-continue"].tap()
+        XCTAssertTrue(app.staticTexts["Connect Apple Health"].waitForExistence(timeout: 3))
+        capture(app, name: "04-apple-health")
+    }
+
+    @MainActor
     private func launchNewUserApp() -> XCUIApplication {
         let app = XCUIApplication()
         // Onboarding's Continue always requests HealthKit authorization now, and
         // the real system sheet cannot be driven from a test, so stub it out.
-        app.launchArguments = ["--stub-health-authorization", "-didOnboard", "NO"]
+        app.launchArguments = [
+            "--stub-health-authorization",
+            "-didOnboard", "NO",
+            "-weightUnitRaw", "lb",
+            "-trainingFocusRaw", "mixed"
+        ]
         app.launch()
         XCTAssertTrue(app.buttons["onboarding-get-started"].waitForExistence(timeout: 10))
         return app
@@ -89,6 +114,13 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(element.exists, "Expected \(name).", file: file, line: line)
         XCTAssertTrue(element.isHittable, "\(name) should be visible without scrolling.", file: file, line: line)
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "\(name) should meet the minimum touch target.", file: file, line: line)
+    }
+
+    private func capture(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
 }

@@ -27,10 +27,10 @@ struct OnboardingHealthStep: View {
                             .background(theme.success.opacity(0.14))
                             .clipShape(RoundedRectangle(cornerRadius: Radius.card))
                             .accessibilityHidden(true)
-                        Text("Make readiness and Watch metrics work")
+                        Text("Connect Apple Health")
                             .font(.screenTitle)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Apple Health lets ForgeFit use heart rate, sleep, HRV, and workouts for readiness and live metrics.")
+                        Text("Add readiness and live workout metrics using heart rate, sleep, HRV, and workout data.")
                             .font(.body)
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -41,13 +41,13 @@ struct OnboardingHealthStep: View {
                             systemImage: "gauge.with.dots.needle.50percent",
                             tint: theme.accent,
                             title: "Readiness in context",
-                            detail: "See recovery signals beside your recent training load."
+                            detail: "Compare recovery signals with your recent training load."
                         )
                         OnboardingFeatureRow(
                             systemImage: "applewatch.radiowaves.left.and.right",
                             tint: theme.secondaryAccent,
-                            title: "Live workout metrics",
-                            detail: "Keep heart rate and workout state in sync with Apple Watch."
+                            title: "Apple Watch connection",
+                            detail: "Share live heart rate and workout progress between your devices."
                         )
                     }
 
@@ -58,10 +58,10 @@ struct OnboardingHealthStep: View {
                                 .foregroundStyle(theme.accentForeground)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: Space.xs) {
-                                Text("Health data is processed on this device")
+                                Text("Your Health data stays on this device")
                                     .font(.bodyStrong)
                                     .foregroundStyle(theme.textPrimary)
-                                Text("It is excluded from ForgeFit’s iCloud sync and backups. You choose access in Apple’s permission screen.")
+                                Text("ForgeFit excludes it from iCloud sync and backups. Apple’s next screen lets you choose what to share.")
                                     .font(.label)
                                     .foregroundStyle(theme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -97,7 +97,7 @@ struct OnboardingHealthStep: View {
                 // onboarding step and the only way into the app, so a
                 // permanently disabled button would strand the athlete here.
                 PrimaryButton(
-                    title: connecting ? "Opening Apple Health…" : "Continue",
+                    title: connecting ? "Opening Apple Health…" : "Continue to Apple Health",
                     systemImage: "heart.fill",
                     action: onContinue
                 )

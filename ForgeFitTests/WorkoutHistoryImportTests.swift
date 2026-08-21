@@ -127,12 +127,38 @@ struct WorkoutHistoryImportTests {
         let rows = (0..<2_000).map { index in
             "Workout \(index / 10),\"25 Aug 2025, 09:38\",\"25 Aug 2025, 10:54\",,Bench Press (Barbell),,,\(index % 10),normal,190,5,,0,8"
         }
-        let csv = ([header] + rows).joined(separator: "\n")
+        let csv = ([header] + rows).enumerated().map { index, row in
+            row + (index.isMultiple(of: 11) ? "\n" : "\r\n")
+        }.joined()
 
         let parsed = try WorkoutHistoryImportParser.parse(data: Data(csv.utf8), fileName: "workouts.csv")
 
         #expect(parsed.workouts.count == 200)
         #expect(parsed.workouts.reduce(0) { $0 + $1.setCount } == 2_000)
+    }
+
+    @Test func hevyCSVPreserves439WorkoutsAcrossManySetRows() throws {
+        let header = "title,start_time,end_time,exercise_title,set_index,set_type,weight_lbs,reps"
+        let calendar = Calendar(identifier: .gregorian)
+        let start = try #require(calendar.date(from: DateComponents(year: 2025, month: 1, day: 1, hour: 19)))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d, yyyy, h:mm a"
+        let rows = (0..<439).flatMap { workout -> [String] in
+            let date = start.addingTimeInterval(Double(workout) * 86_400)
+            let startText = formatter.string(from: date)
+            let endText = formatter.string(from: date.addingTimeInterval(3_600))
+            return (0..<3).map { set in
+                "Workout \(workout),\"\(startText)\",\"\(endText)\",Bench Press,\(set),normal,185,5"
+            }
+        }
+        let csv = ([header] + rows).joined(separator: "\n")
+
+        let parsed = try WorkoutHistoryImportParser.parse(data: Data(csv.utf8), fileName: "workouts.csv")
+
+        #expect(parsed.checkedRowCount == 1_317)
+        #expect(parsed.workouts.count == 439)
+        #expect(parsed.setCount == 1_317)
     }
 
     @Test func hevyCSVAllowsOptionalColumnsToBeAbsent() throws {
@@ -292,6 +318,56 @@ struct WorkoutHistoryImportTests {
         #expect(second.skippedDuplicates == 1)
         #expect(try context.fetch(FetchDescriptor<WorkoutModel>()).count == 1)
         #expect(try context.fetch(FetchDescriptor<WorkoutImportBatchModel>()).count == 2)
+    }
+
+    @Test func deletedImportedWorkoutDoesNotHideAWorkoutFromReimport() async throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let bench = ExerciseLibraryModel(name: "Bench Press", primaryMuscles: ["chest"], equipment: "barbell")
+        context.insert(bench)
+        try context.save()
+
+        let csv = """
+        title,start_time,end_time,exercise_title,set_index,set_type,weight_lbs,reps
+        Push,"May 15, 2026, 7:26 PM","May 15, 2026, 8:00 PM",Bench Press,0,normal,225,5
+        """
+        let data = Data(csv.utf8)
+        let initial = try await WorkoutHistoryImportService.preview(
+            data: data,
+            fileName: "workouts.csv",
+            workouts: [],
+            exercises: [bench]
+        )
+        let deleted = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Push",
+            startedAt: initial.parseResult.workouts[0].startedAt,
+            endedAt: initial.parseResult.workouts[0].endedAt,
+            externalSource: WorkoutImportSource.hevy.rawValue,
+            importFingerprint: initial.parseResult.workouts[0].fingerprint,
+            deletedAt: Date()
+        )
+        context.insert(deleted)
+        try context.save()
+
+        let preview = try await WorkoutHistoryImportService.preview(
+            data: data,
+            fileName: "workouts.csv",
+            workouts: [deleted],
+            exercises: [bench]
+        )
+        #expect(preview.duplicateCount == 0)
+        #expect(preview.importableCount == 1)
+
+        let result = try WorkoutHistoryImportService.commit(
+            preview: preview,
+            workouts: [deleted],
+            exercises: [bench],
+            in: context
+        )
+        #expect(result.importedWorkouts == 1)
+        #expect(result.skippedDuplicates == 0)
+        #expect(try context.fetch(FetchDescriptor<WorkoutModel>()).filter { $0.deletedAt == nil }.count == 1)
     }
 
     @Test func failedCommitRollsBackTheWholeBatchBeforeAnUnrelatedSave() async throws {

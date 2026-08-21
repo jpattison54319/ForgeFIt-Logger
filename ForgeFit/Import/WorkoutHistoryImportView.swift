@@ -200,14 +200,14 @@ struct WorkoutHistoryImportView: View {
     private var emptyPickerCard: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
-                Text("Supported in v1")
+                Text("Supported files")
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    supportRow("checkmark.circle.fill", "Hevy workouts.csv gets first-class parsing.")
-                    supportRow("checkmark.circle.fill", "Strong, Fitbod, HeavySet, and simple custom CSVs use common header detection.")
-                    supportRow("checkmark.circle.fill", "GPX files (Strava, Garmin, any GPS app) import as cardio workouts with route, splits, and heart rate.")
-                    supportRow("info.circle.fill", "Excel and Google Sheets should be exported as CSV before importing.")
+                    supportRow("checkmark.circle.fill", "Hevy workout-history CSV")
+                    supportRow("checkmark.circle.fill", "Workout CSVs from Strong, Fitbod, HeavySet, and other apps")
+                    supportRow("checkmark.circle.fill", "GPX routes from Strava, Garmin, and other GPS apps")
+                    supportRow("info.circle.fill", "For Excel or Google Sheets, export a CSV first.")
                 }
                 if loading {
                     ProgressView("Checking file…")
@@ -312,7 +312,7 @@ struct WorkoutHistoryImportView: View {
                             Text("File checked")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(theme.textPrimary)
-                            Text("\(preview.parseResult.source.displayName) export recognized · \(preview.parseResult.checkedRowCount) rows")
+                            Text(previewSummary(preview))
                                 .font(.system(size: 12))
                                 .foregroundStyle(theme.textSecondary)
                         }
@@ -321,7 +321,11 @@ struct WorkoutHistoryImportView: View {
                     Divider().overlay(theme.separator)
                     summaryRow("File", preview.parseResult.fileName)
                     Divider().overlay(theme.separator)
-                    summaryRow("Workouts", "\(preview.parseResult.workouts.count)")
+                    summaryRow("Workouts found", "\(preview.parseResult.workouts.count)")
+                    if preview.parseResult.source != .forgeFitJSON {
+                        Divider().overlay(theme.separator)
+                        summaryRow("Sets found", "\(preview.parseResult.setCount)")
+                    }
                     Divider().overlay(theme.separator)
                     summaryRow("Will import", "\(preview.importableCount)")
                     Divider().overlay(theme.separator)
@@ -333,6 +337,16 @@ struct WorkoutHistoryImportView: View {
                 }
             }
         }
+    }
+
+    private func previewSummary(_ preview: WorkoutHistoryImportPreview) -> String {
+        let parsed = preview.parseResult
+        if parsed.source == .forgeFitJSON {
+            return "Found \(parsed.workouts.count) workouts in ForgeFit JSON"
+        }
+        let workoutNoun = parsed.workouts.count == 1 ? "workout" : "workouts"
+        let setNoun = parsed.setCount == 1 ? "set" : "sets"
+        return "Found \(parsed.workouts.count) \(workoutNoun) with \(parsed.setCount) \(setNoun)"
     }
 
     private func exerciseMatchCard(_ preview: WorkoutHistoryImportPreview) -> some View {
