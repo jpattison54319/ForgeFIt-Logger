@@ -267,10 +267,11 @@ final class WorkoutActivityController {
         guard plan.sections.indices.contains(progress.sectionIndex) else { return nil }
         let section = plan.sections[progress.sectionIndex]
         let rounds = section.prescribedRounds
-        let roundText = rounds.map { "Round \(min(progress.round, $0)) of \($0)" }
-            ?? "Round \(progress.round)"
+        let displayRound = ConditioningProgressEngine.displayRound(for: progress, section: section)
+        let roundText = rounds.map { "Round \(displayRound) of \($0)" }
+            ?? "Round \(displayRound)"
         let metric = progress.status == .paused ? "Paused · \(roundText)" : roundText
-        let targets = section.movements.map { section.target(for: $0, round: progress.round) }
+        let targets = section.movements.map { section.target(for: $0, round: displayRound) }
         let repTargetText: String? = if !targets.isEmpty,
                                        section.movements.allSatisfy({ $0.targetUnit == .reps }) {
             targets

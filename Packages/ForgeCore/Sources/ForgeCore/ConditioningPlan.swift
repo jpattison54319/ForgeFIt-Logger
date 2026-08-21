@@ -137,7 +137,10 @@ public struct ConditioningSection: Codable, Equatable, Identifiable, Sendable {
 
     public func target(for movement: ConditioningMovement, round: Int) -> Double {
         guard movement.targetUnit == .reps else { return movement.targetValue }
-        if repScheme.indices.contains(round - 1) { return Double(repScheme[round - 1]) }
+        if !repScheme.isEmpty {
+            let index = min(max(0, round - 1), repScheme.count - 1)
+            return Double(repScheme[index])
+        }
         if let ladderStep, format == .ladder {
             return max(0, movement.targetValue + Double((round - 1) * ladderStep))
         }
@@ -336,6 +339,19 @@ public struct ConditioningProgressEvent: Codable, Equatable, Identifiable, Senda
 }
 
 public enum ConditioningProgressEngine {
+    /// Progress stores a completed fixed-work section as the next round so
+    /// `fullRounds` remains an inexpensive derived value. Presentation must
+    /// still stop at the prescription rather than showing a phantom round.
+    public static func displayRound(
+        for progress: ConditioningProgress,
+        section: ConditioningSection
+    ) -> Int {
+        guard let prescribedRounds = section.prescribedRounds, prescribedRounds > 0 else {
+            return max(1, progress.round)
+        }
+        return min(max(1, progress.round), prescribedRounds)
+    }
+
     /// Fixed-work conditioning without a time cap is "for time": the clock
     /// keeps running until every prescribed round is complete. Returning the
     /// remaining rounds here gives phone, Watch, and the shared finish path

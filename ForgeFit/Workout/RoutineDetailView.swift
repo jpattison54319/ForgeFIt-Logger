@@ -17,6 +17,8 @@ struct RoutineDetailView: View {
 
     @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
     @Query(sort: \RoutineModel.position) private var allRoutines: [RoutineModel]
+    @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse)
+    private var storedSetupNotes: [UserExerciseNoteModel]
     @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
     private var alternations: [RoutineAlternationModel]
     @State private var metric: TrainingAnalytics.Metric = .volume
@@ -29,6 +31,22 @@ struct RoutineDetailView: View {
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
+    private var resolvedSetupNotes: [UserExerciseNoteModel] {
+        Array(Dictionary(
+            (storedSetupNotes + setupNotes)
+                .filter { ExerciseNotePolicy.authoredText($0.note) != nil }
+                .map { ($0.id, $0) },
+            uniquingKeysWith: { first, second in
+                first.updatedAt >= second.updatedAt ? first : second
+            }
+        ).values)
+    }
+
+    private func setupNote(for exerciseID: UUID) -> UserExerciseNoteModel? {
+        resolvedSetupNotes
+            .filter { $0.exerciseID == exerciseID && $0.userID == ForgeFitDemo.userID }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -65,7 +83,7 @@ struct RoutineDetailView: View {
                             RoutineExerciseSummary(
                                 routineExercise: routineExercise,
                                 exercise: exercises.first { $0.id == routineExercise.exerciseID },
-                                setupNote: setupNotes.first { $0.exerciseID == routineExercise.exerciseID && $0.userID == ForgeFitDemo.userID }
+                                setupNote: setupNote(for: routineExercise.exerciseID)
                             )
                         case .block(let block):
                             RoutineBlockSummary(block: block, exercises: exercises)
@@ -92,7 +110,7 @@ struct RoutineDetailView: View {
             Text(shareErrorMessage ?? "")
         }
         .navigationDestination(isPresented: $editing) {
-            RoutineEditorView(routine: routine, exercises: exercises, setupNotes: setupNotes)
+            RoutineEditorView(routine: routine, exercises: exercises, setupNotes: resolvedSetupNotes)
         }
         .navigationDestination(for: UUID.self) { exerciseID in
             ExerciseDetailView(exerciseID: exerciseID, workouts: workouts, exercises: exercises)
@@ -173,7 +191,7 @@ struct RoutineDetailView: View {
             _ = WorkoutFactory.start(
                 routine: routine,
                 exercises: exercises,
-                setupNotes: setupNotes,
+                setupNotes: resolvedSetupNotes,
                 in: modelContext,
                 onCommit: { _ in appState.showingLogger = true }
             )

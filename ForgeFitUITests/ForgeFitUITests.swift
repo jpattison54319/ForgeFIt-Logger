@@ -1410,11 +1410,11 @@ final class ForgeFitUITests: XCTestCase {
         attachScreenshot(app, name: "routine-cardio-concise-detail")
     }
 
-    /// New and existing routines use the same editor row as the live logger:
-    /// creating Superset A promises purple in the menu, then renders the same
-    /// compact lettered marker after assignment.
+    /// The routine editor exposes the durable live-workout actions while
+    /// hiding parked progression. Notes created here are visibly pinned, and
+    /// the shared superset identity remains consistent with the live logger.
     @MainActor
-    func testRoutineEditorUsesSharedSupersetIdentity() throws {
+    func testRoutineEditorMenuParityAndSharedSupersetIdentity() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         app.launch()
@@ -1449,6 +1449,34 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         tapWhenReady(menu)
 
+        let setWeights = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'routine-set-weight-'")
+        )
+        let initialSetCount = setWeights.count
+        let addRamp = app.buttons["Add Warm-up Ramp"].firstMatch
+        XCTAssertTrue(addRamp.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Progression"].exists, "Parked progression must not remain in the routine UI.")
+        tapWhenReady(addRamp)
+        let rampDeadline = Date().addingTimeInterval(3)
+        while setWeights.count != initialSetCount + 3, Date() < rampDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertEqual(setWeights.count, initialSetCount + 3, "The default ramp should insert three warm-up rows.")
+
+        tapWhenReady(menu)
+        let addNote = app.buttons["Add Note"].firstMatch
+        XCTAssertTrue(addNote.waitForExistence(timeout: 3))
+        tapWhenReady(addNote)
+        let note = app.textFields["routine-exercise-note"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Pinned to exercise"].exists)
+        note.typeText("Brace before every rep")
+        let done = app.buttons["Done"].firstMatch
+        if done.waitForExistence(timeout: 2) { tapWhenReady(done) }
+
+        tapWhenReady(menu)
+        XCTAssertFalse(app.buttons["Add Note"].exists, "An existing pinned note must replace the add action.")
+
         let createSuperset = app.buttons["Create Superset A · Purple"].firstMatch
         XCTAssertTrue(createSuperset.waitForExistence(timeout: 3))
         tapWhenReady(createSuperset)
@@ -1458,6 +1486,12 @@ final class ForgeFitUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: 5))
         XCTAssertEqual(marker.value as? String, "Purple")
+
+        tapWhenReady(app.buttons["Save"].firstMatch)
+        let savedRoutine = app.descendants(matching: .any)["routine-card-New Routine"].firstMatch
+        XCTAssertTrue(savedRoutine.waitForExistence(timeout: 5))
+        tapWhenReady(savedRoutine)
+        XCTAssertTrue(app.staticTexts["Saved setup note"].waitForExistence(timeout: 5))
     }
 
     /// Regression for a rename that looked correct in the live model but

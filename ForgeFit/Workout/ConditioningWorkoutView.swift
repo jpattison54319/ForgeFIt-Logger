@@ -111,7 +111,10 @@ struct ConditioningWorkoutView: View {
                         section: section,
                         round: progress.round,
                         isPaused: progress.status == .paused,
+                        isTerminal: progress.status == .completed || progress.status == .expired,
+                        finishTitle: completionContext.liveActionTitle,
                         onComplete: completePrimaryAction,
+                        onFinish: { showScore = true },
                         onPause: togglePause
                     )
                     .padding(.horizontal, Space.lg)
@@ -355,7 +358,7 @@ private struct ConditioningClockCard: View {
                         .font(.bodyStrong)
                         .foregroundStyle(theme.textSecondary)
                     HStack {
-                        StatColumn(label: "Round", value: "\(progress.round)", animatesValue: true)
+                        StatColumn(label: "Round", value: "\(displayRound)", animatesValue: true)
                         StatColumn(label: "Completed", value: "\(progress.fullRounds)", animatesValue: true)
                         StatColumn(
                             label: "Reps",
@@ -370,6 +373,10 @@ private struct ConditioningClockCard: View {
     }
 
     private var countsDown: Bool { section.format != .forTime || section.timeCapSeconds != nil }
+
+    private var displayRound: Int {
+        ConditioningProgressEngine.displayRound(for: progress, section: section)
+    }
 
     private func elapsed(at date: Date) -> Int {
         guard let start = progress.sectionStartedAt ?? progress.startedAt else { return 0 }
@@ -426,7 +433,8 @@ private struct ConditioningMovementList: View {
             Card(padding: 0) {
                 VStack(spacing: 0) {
                     ForEach(section.movements) { movement in
-                        let completed = progress.completedMovementIDs.contains(movement.id)
+                        let completed = progress.status == .completed
+                            || progress.completedMovementIDs.contains(movement.id)
                         Button { onToggle(movement) } label: {
                             HStack(spacing: Space.md) {
                                 Image(systemName: completed ? "checkmark.circle.fill" : "circle")
@@ -466,18 +474,22 @@ private struct ConditioningMovementList: View {
     }
 
     private func targetLabel(_ movement: ConditioningMovement) -> String {
-        let target = section.target(for: movement, round: progress.round)
+        let target = section.target(for: movement, round: displayRound)
         return "\(target.formatted(.number.precision(.fractionLength(target.rounded() == target ? 0 : 1)))) \(movement.targetUnit.shortLabel)"
     }
 
     private var roundLabel: String {
-        guard let rounds = section.prescribedRounds else { return "Round \(progress.round)" }
-        if let target = section.repScheme.indices.contains(progress.round - 1)
-            ? section.repScheme[progress.round - 1]
+        guard let rounds = section.prescribedRounds else { return "Round \(displayRound)" }
+        if let target = section.repScheme.indices.contains(displayRound - 1)
+            ? section.repScheme[displayRound - 1]
             : nil {
-            return "Round \(progress.round) of \(rounds) · \(target) reps"
+            return "Round \(displayRound) of \(rounds) · \(target) reps"
         }
-        return "Round \(progress.round) of \(rounds)"
+        return "Round \(displayRound) of \(rounds)"
+    }
+
+    private var displayRound: Int {
+        ConditioningProgressEngine.displayRound(for: progress, section: section)
     }
 
     private func loadLabel(_ movement: ConditioningMovement) -> String {
@@ -512,15 +524,24 @@ private struct ConditioningLiveActions: View {
     let section: ConditioningSection
     let round: Int
     let isPaused: Bool
+    let isTerminal: Bool
+    let finishTitle: String
     let onComplete: () -> Void
+    let onFinish: () -> Void
     let onPause: () -> Void
 
     var body: some View {
         VStack(spacing: Space.sm) {
-            PrimaryButton(title: primaryTitle, systemImage: "checkmark", action: onComplete)
-                .accessibilityIdentifier("complete-conditioning-round")
-            SecondaryButton(title: isPaused ? "Resume" : "Pause", systemImage: isPaused ? "play.fill" : "pause.fill", action: onPause)
-                .accessibilityIdentifier("pause-conditioning-workout")
+            PrimaryButton(
+                title: isTerminal ? finishTitle : primaryTitle,
+                systemImage: "checkmark",
+                action: isTerminal ? onFinish : onComplete
+            )
+            .accessibilityIdentifier(isTerminal ? "finish-conditioning" : "complete-conditioning-round")
+            if !isTerminal {
+                SecondaryButton(title: isPaused ? "Resume" : "Pause", systemImage: isPaused ? "play.fill" : "pause.fill", action: onPause)
+                    .accessibilityIdentifier("pause-conditioning-workout")
+            }
         }
     }
 

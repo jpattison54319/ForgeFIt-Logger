@@ -127,6 +127,8 @@ struct ConditioningProgressEngineTests {
         }
         #expect(progress.status == .completed)
         #expect(progress.movementTotals[movement.id] == 45)
+        #expect(ConditioningProgressEngine.displayRound(for: progress, section: plan.sections[0]) == 3)
+        #expect(plan.sections[0].target(for: movement, round: progress.round) == 9)
     }
 
     @Test func untimedFixedWorkMustReachItsTargetBeforeFinishing() {

@@ -48,6 +48,16 @@ struct RoutineEditorView: View {
         routine.exercises.compactMap { re in exercises.first { $0.id == re.exerciseID } }
     }
 
+    private func setupNote(for exerciseID: UUID) -> UserExerciseNoteModel? {
+        setupNotes
+            .filter {
+                $0.userID == ForgeFitDemo.userID
+                    && $0.exerciseID == exerciseID
+                    && ExerciseNotePolicy.authoredText($0.note) != nil
+            }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             // Always mounted, even while the reorder overlay covers it: the
@@ -217,6 +227,7 @@ struct RoutineEditorView: View {
                         ExerciseEditRow(
                             routineExercise: re,
                             exercise: exercises.first { $0.id == re.exerciseID },
+                            setupNote: setupNote(for: re.exerciseID),
                             availableSupersetGroups: supersetGroups,
                             onShowDetail: { detailExerciseID = $0 },
                             onAssignSuperset: { assignSuperset($0, to: re) },
@@ -666,6 +677,7 @@ private struct ExerciseEditRow: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
+    let setupNote: UserExerciseNoteModel?
     let availableSupersetGroups: [Int]
     let onShowDetail: (UUID) -> Void
     let onAssignSuperset: (Int?) -> Void
@@ -686,6 +698,10 @@ private struct ExerciseEditRow: View {
     /// The set whose swipe-to-delete tray is open — one at a time, matching
     /// the live logger.
     @State private var openSwipeSetID: UUID?
+    @State private var createdPinnedNote: UserExerciseNoteModel?
+    @State private var removedPinnedNoteIDs = Set<UUID>()
+    @State private var noteEditorRequested = false
+    @FocusState private var noteFocused: Bool
     /// Debounced-save plumbing for "Add Set", mirroring the live logger's
     /// `ExerciseLogCard` (recompute()/scheduleSave()/saveNow()). A synchronous
     /// `modelContext.save()` on every tap was the lag: a blocking SwiftData
@@ -698,9 +714,24 @@ private struct ExerciseEditRow: View {
     private var isCardio: Bool { exercise?.isCardio == true }
     private var isYoga: Bool { exercise?.isYoga == true }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
+    private var pinnedNote: UserExerciseNoteModel? {
+        if let createdPinnedNote, !removedPinnedNoteIDs.contains(createdPinnedNote.id) {
+            return createdPinnedNote
+        }
+        guard let setupNote, !removedPinnedNoteIDs.contains(setupNote.id) else { return nil }
+        return setupNote
+    }
+    private var noteText: String {
+        ExerciseNotePolicy.authoredText(routineExercise.notes)
+            ?? ExerciseNotePolicy.authoredText(pinnedNote?.note)
+            ?? ""
+    }
+    private var showsNoteEditor: Bool {
+        noteEditorRequested || ExerciseNotePolicy.authoredText(noteText) != nil
+    }
 
-    /// The ⋯ overflow menu, section-for-section identical to the old SwiftUI
-    /// Menu (supersets | add sets | progression submenu | replace | remove).
+    /// The ⋯ overflow menu for routine-time exercise actions. Progression
+    /// stays hidden while its engine is parked, matching the live logger.
     private var overflowMenuSections: [[ScrollSafeMenuItem]] {
         let supersets = SupersetUI.scrollSafeMenuItems(
             currentGroup: routineExercise.supersetGroup,
@@ -711,21 +742,33 @@ private struct ExerciseEditRow: View {
         )
 
         var sections = [supersets]
+        if !showsNoteEditor {
+            sections.append([ScrollSafeMenuItem(title: "Add Note", systemImage: "note.text") {
+                noteEditorRequested = true
+                Task { @MainActor in
+                    await Task.yield()
+                    noteFocused = true
+                }
+            }])
+        }
         if !isCardio && !isYoga {
             sections.append([
                 ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) },
+                ScrollSafeMenuItem(title: "Add Warm-up Ramp", systemImage: "flame.fill") { addWarmupRamp() },
                 ScrollSafeMenuItem(title: "Add Working Set", systemImage: "plus") { addSet(type: .working) }
             ])
-            sections.append([ScrollSafeMenuItem(
-                title: "Progression",
-                systemImage: "chart.line.uptrend.xyaxis",
-                children: [
-                    progressionRuleItem("Double progression (default)", rule: nil),
-                    progressionRuleItem("Fixed +\(displayUnit == .lb ? "5 lb" : "2.5 kg") on target", rule: .fixedIncrement(step: displayUnit == .lb ? 5 : 2.5)),
-                    progressionRuleItem("Percent +2.5% on target", rule: .percent(step: 2.5)),
-                    progressionRuleItem("Off", rule: ProgressionRule.off)
-                ]
-            )])
+            if !ProgressionPlanner.isParked {
+                sections.append([ScrollSafeMenuItem(
+                    title: "Progression",
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    children: [
+                        progressionRuleItem("Double progression (default)", rule: nil),
+                        progressionRuleItem("Fixed +\(displayUnit == .lb ? "5 lb" : "2.5 kg") on target", rule: .fixedIncrement(step: displayUnit == .lb ? 5 : 2.5)),
+                        progressionRuleItem("Percent +2.5% on target", rule: .percent(step: 2.5)),
+                        progressionRuleItem("Off", rule: ProgressionRule.off)
+                    ]
+                )])
+            }
         }
         sections.append([ScrollSafeMenuItem(title: "Replace Exercise", systemImage: "arrow.triangle.2.circlepath", action: onReplace)])
         sections.append([ScrollSafeMenuItem(title: "Remove Exercise", systemImage: "trash", isDestructive: true, action: onRemove)])
@@ -771,7 +814,9 @@ private struct ExerciseEditRow: View {
                         if let group = routineExercise.supersetGroup {
                             SupersetChip(group: group)
                         }
-                        if let rule = currentProgressionRule, rule != .doubleProgression {
+                        if !ProgressionPlanner.isParked,
+                           let rule = currentProgressionRule,
+                           rule != .doubleProgression {
                             Text(progressionTagText(rule))
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(theme.textTertiary)
@@ -794,6 +839,10 @@ private struct ExerciseEditRow: View {
                             .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("routine-exercise-menu-\(exercise?.name ?? "")")
+                }
+
+                if showsNoteEditor {
+                    pinnedNoteEditor
                 }
 
                 if isYoga {
@@ -860,6 +909,89 @@ private struct ExerciseEditRow: View {
             }
             .buttonStyle(PressableButtonStyle())
         }
+    }
+
+    private var pinnedNoteEditor: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack {
+                Label("Pinned to exercise", systemImage: "pin.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.stickyInk.opacity(0.6))
+                Spacer()
+                Button(action: removePinnedNote) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(theme.stickyInk.opacity(0.6))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove exercise note")
+            }
+
+            TextField("Write a note…", text: Binding(
+                get: { noteText },
+                set: updatePinnedNote
+            ), axis: .vertical)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(theme.stickyInk)
+            .tint(theme.stickyInk)
+            .focused($noteFocused)
+            .lineLimit(1...6)
+            .accessibilityLabel("Exercise note")
+            .accessibilityIdentifier("routine-exercise-note")
+        }
+        .padding(Space.md)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.stickyFill.opacity(0.88))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(theme.stickyInk.opacity(0.28), lineWidth: 1)
+                )
+        )
+        .onChange(of: noteFocused) { wasFocused, isFocused in
+            if wasFocused, !isFocused, ExerciseNotePolicy.authoredText(noteText) == nil {
+                removePinnedNote()
+            }
+        }
+    }
+
+    private func updatePinnedNote(_ text: String) {
+        // A routine-authored note is exercise-level planning intent. Move any
+        // legacy routine-only value into the durable pinned-note store on the
+        // first edit so unpinning it during a workout truly removes it later.
+        routineExercise.notes = nil
+        guard let authored = ExerciseNotePolicy.authoredText(text) else {
+            pinnedNote?.note = text
+            save()
+            return
+        }
+
+        if let pinnedNote {
+            pinnedNote.note = text
+            pinnedNote.updatedAt = .now
+        } else {
+            let note = UserExerciseNoteModel(
+                userID: ForgeFitDemo.userID,
+                exerciseID: routineExercise.exerciseID,
+                note: authored
+            )
+            modelContext.insert(note)
+            createdPinnedNote = note
+        }
+        save()
+    }
+
+    private func removePinnedNote() {
+        noteFocused = false
+        noteEditorRequested = false
+        routineExercise.notes = nil
+        if let pinnedNote {
+            removedPinnedNoteIDs.insert(pinnedNote.id)
+            modelContext.delete(pinnedNote)
+        }
+        createdPinnedNote = nil
+        save()
     }
 
     /// Yoga block target: the attached flow (or the pose's default hold) and
@@ -969,6 +1101,47 @@ private struct ExerciseEditRow: View {
         // Debounced, not the synchronous save() every other mutation here
         // uses — see `deferredSaveTask` above.
         scheduleSave()
+    }
+
+    /// Inserts the user's configured warm-up ramp before the first working
+    /// set. Routine targets are stored in kilograms, so weight calculations
+    /// round in the exercise's display unit and convert back for persistence.
+    /// Assisted and unweighted bodyweight movements keep weights blank because
+    /// a percentage of assistance does not represent an easier warm-up.
+    private func addWarmupRamp() {
+        guard !isCardio, !isYoga else { return }
+        let config = WarmupRampConfigStore.load()
+        let topKilograms = sortedSets.first { $0.setType != .warmup }?.targetWeight
+        let topDisplay = topKilograms.map(displayUnit.displayValue(fromKilograms:)) ?? 0
+        let step: Double = displayUnit == .lb ? 5 : 2.5
+        let supportsAutoWeight = exercise?.defaultWeightMode == .external
+            || exercise?.defaultWeightMode == .bodyweightAdded
+
+        let newSets = config.stages.enumerated().map { ordinal, stage in
+            let displayWeight = config.weight(
+                forStageAt: ordinal,
+                topWeightInDisplayUnit: topDisplay,
+                step: step
+            )
+            let set = RoutineSetModel(
+                userID: ForgeFitDemo.userID,
+                setType: .warmup,
+                targetRepsLow: stage.reps,
+                targetRepsHigh: stage.reps,
+                targetWeight: supportsAutoWeight
+                    ? displayWeight.map(displayUnit.kilograms(fromDisplayValue:))
+                    : nil
+            )
+            modelContext.insert(set)
+            return set
+        }
+
+        var allSets = sortedSets
+        let insertAt = allSets.firstIndex { $0.setType != .warmup } ?? allSets.count
+        allSets.insert(contentsOf: newSets, at: insertAt)
+        routineExercise.sets = allSets
+        renumber(allSets)
+        save()
     }
 
     private func scheduleSave() {
