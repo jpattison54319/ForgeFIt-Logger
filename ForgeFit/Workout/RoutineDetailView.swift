@@ -507,12 +507,11 @@ private struct RoutineExerciseSummary: View {
 
     private var cardioSummary: some View {
         let kind = CardioKind.infer(name: exercise?.name ?? "Cardio", equipment: exercise?.equipment)
-        let target = sortedSets.first
         return VStack(alignment: .leading, spacing: Space.md) {
             HStack {
                 StatColumn(
                     label: "Goal",
-                    value: cardioGoalValue(kind: kind, legacyTarget: target),
+                    value: cardioGoalValue(kind: kind),
                     valueColor: theme.secondaryAccent
                 )
                 StatColumn(label: "Metrics", value: kind.usesPace ? "Pace" : "Speed")
@@ -533,13 +532,9 @@ private struct RoutineExerciseSummary: View {
         }
     }
 
-    /// The routine card needs the chosen goal, not a list of everything this
-    /// cardio modality can record. Legacy set targets remain readable while
-    /// newer goal plans get one compact, truthful value.
-    private func cardioGoalValue(
-        kind: CardioKind,
-        legacyTarget: RoutineSetModel?
-    ) -> String {
+    /// The routine card shows only authored session intent. Legacy set targets
+    /// are not proof that the athlete chose a cardio goal.
+    private func cardioGoalValue(kind: CardioKind) -> String {
         if let plan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON),
            plan.isMeaningful {
             if plan.hasSteps { return "Intervals" }
@@ -565,12 +560,6 @@ private struct RoutineExerciseSummary: View {
             }
         }
 
-        if let seconds = legacyTarget?.targetDurationSeconds, seconds > 0 {
-            return Fmt.durationShort(seconds)
-        }
-        if let meters = legacyTarget?.targetDistanceMeters, meters > 0 {
-            return Fmt.cardioDistance(meters, kind: kind)
-        }
         return "Open"
     }
 

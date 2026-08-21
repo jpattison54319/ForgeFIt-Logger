@@ -17,6 +17,10 @@ struct RoutineEditorView: View {
     /// keeps the picker's eager saves working). Backing out of a new routine
     /// deletes the placeholder instead of leaving "New Routine" in the library.
     var isNew: Bool = false
+    /// Creation surfaces may have attached local presentation state (for
+    /// example Home's Quick Start tile). Clean it up only after the new
+    /// routine's tombstone commits successfully.
+    var onNewRoutineDiscarded: () -> Void = {}
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var showPicker = false
@@ -61,6 +65,14 @@ struct RoutineEditorView: View {
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            header
+                // The scroll used to own the header, so it disappeared from
+                // interaction and accessibility with the reorder overlay.
+                // Preserve that contract now that the header is persistent.
+                .allowsHitTesting(reorderSession == nil)
+                .accessibilityHidden(reorderSession != nil)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if keyboardVisible {
                 KeyboardAccessoryBar {
@@ -183,8 +195,6 @@ struct RoutineEditorView: View {
             // so any edit anywhere in the routine (add set, type a target,
             // toggle a superset) re-diffed the entire off-screen list too.
             LazyVStack(alignment: .leading, spacing: Space.lg) {
-                header
-
                 Card {
                     VStack(alignment: .leading, spacing: Space.md) {
                         FieldLabel("Routine name")
@@ -296,32 +306,55 @@ struct RoutineEditorView: View {
     }
 
     private var header: some View {
-        HStack {
-            // Back offers to save or discard when the routine changed — it no
-            // longer silently saves, so Save actually means something.
-            CircleIconButton(systemImage: "chevron.left", label: "Back") {
-                if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
-                    showDiscardConfirm = true
-                } else if isNew {
-                    // Untouched placeholder — silently clean it up.
-                    discardNewRoutine()
-                } else {
-                    dismiss()
+        GlassEffectContainer(spacing: Space.sm) {
+            ZStack {
+                HStack(spacing: Space.sm) {
+                    CircleIconButton(
+                        systemImage: "chevron.left",
+                        label: "Back",
+                        action: requestDismiss
+                    )
+                    .accessibilityIdentifier("routine-editor-back-button")
+
+                    Spacer()
+
+                    Button("Save", action: saveAndDismiss)
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.accentForeground)
+                        .buttonStyle(.glass)
+                        .tint(theme.accent)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.large)
+                        .minimumTouchTarget()
+                        .accessibilityIdentifier("routine-editor-save-button")
                 }
-            }
-            Spacer()
-            Text("Edit Routine").font(.rowValue).foregroundStyle(theme.textPrimary)
-            Spacer()
-            Button {
-                saveNow(onCommit: dismiss.callAsFunction)
-            } label: {
-                Text("Save")
-                    .font(.bodyStrong)
-                    .foregroundStyle(theme.accentForeground)
-                    .minimumTouchTarget()
+
+                Text("Edit Routine")
+                    .font(.rowValue)
+                    .foregroundStyle(theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
             }
         }
-        .padding(.top, Space.sm)
+        .padding(.horizontal, Space.lg)
+        .padding(.top, 6)
+        .padding(.bottom, Space.sm)
+    }
+
+    /// Back offers to save or discard when the routine changed — it no
+    /// longer silently saves, so Save actually means something.
+    private func requestDismiss() {
+        if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
+            showDiscardConfirm = true
+        } else if isNew {
+            // Untouched placeholder — silently clean it up.
+            discardNewRoutine()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func saveAndDismiss() {
+        saveNow(onCommit: dismiss.callAsFunction)
     }
 
     /// The collapse overlay (see `ReorderCollapseOverlay`): every exercise as
@@ -432,17 +465,13 @@ struct RoutineEditorView: View {
         RoutineBlockPlanPersistence.apply(planJSON, to: block, in: modelContext)
     }
 
-    /// The starter target rows an exercise gets when added: one rep set for
-    /// lifts, one 30-min duration target for cardio, none for yoga (the
-    /// session's duration comes from its flow).
+    /// The starter target rows an exercise gets when added. Session-based
+    /// exercises are open until the athlete explicitly adds a goal/flow;
+    /// only strength exercises start with a set row.
     private func defaultTargetSets(for exercise: ExerciseLibraryModel) -> [RoutineSetModel] {
         switch exercise.modality {
-        case .yoga:
+        case .yoga, .cardio:
             return []
-        case .cardio:
-            let target = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0, targetDurationSeconds: 1_800)
-            modelContext.insert(target)
-            return [target]
         case .strength:
             let target = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
             modelContext.insert(target)
@@ -452,8 +481,9 @@ struct RoutineEditorView: View {
 
     private func remove(_ re: RoutineExerciseModel) {
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+            routine.exercises.removeAll { $0.id == re.id }
             modelContext.delete(re)
-            for (index, item) in orderedItems.filter({ $0.id != re.id }).enumerated() {
+            for (index, item) in orderedItems.enumerated() {
                 item.position = index
             }
             save()
@@ -462,8 +492,9 @@ struct RoutineEditorView: View {
 
     private func remove(_ block: RoutineBlockModel) {
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+            routine.blocks.removeAll { $0.id == block.id }
             modelContext.delete(block)
-            for (index, item) in orderedItems.filter({ $0.id != block.id }).enumerated() {
+            for (index, item) in orderedItems.enumerated() {
                 item.position = index
             }
             save()
@@ -541,8 +572,8 @@ struct RoutineEditorView: View {
         deferredSaveTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            saveNow()
             deferredSaveTask = nil
+            saveNow()
         }
     }
 
@@ -558,6 +589,9 @@ struct RoutineEditorView: View {
     private func saveNow(
         onCommit: @escaping @MainActor () -> Void = {}
     ) -> Bool {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
+        RoutineStructure.normalize(routine)
         routine.updatedAt = Date()
         return modelContext.saveUserChanges(onSuccess: onCommit)
     }
@@ -566,10 +600,15 @@ struct RoutineEditorView: View {
     /// (matching every other routine delete, so tombstones sync cleanly) and
     /// leave the library exactly as it was before "New Routine" was tapped.
     private func discardNewRoutine() {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
-        modelContext.saveUserChanges(onSuccess: dismiss.callAsFunction)
+        modelContext.saveUserChanges {
+            onNewRoutineDiscarded()
+            dismiss()
+        }
     }
 
     private func nextSupersetGroup() -> Int {
@@ -943,8 +982,8 @@ private struct ExerciseEditRow: View {
             // and the Save/dismiss paths all flush immediately.
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            saveNow()
             deferredSaveTask = nil
+            saveNow()
         }
     }
 
@@ -958,16 +997,24 @@ private struct ExerciseEditRow: View {
     }
 
     private func saveNow() {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
         modelContext.saveUserChanges()
     }
 
     private func addDropSet(below set: RoutineSetModel, index: Int) {
+        let mode = exercise?.defaultWeightMode ?? .external
         let drop = RoutineSetModel(
             userID: ForgeFitDemo.userID,
             setType: .drop,
             targetRepsLow: nil,
             targetRepsHigh: nil,
-            targetWeight: set.targetWeight.map(droppedWeight),
+            targetWeight: DropSetLoadPolicy.suggestedModeWeight(
+                sourceWeightKg: set.targetWeight,
+                mode: mode,
+                bodyweightKg: HealthMetricsStore.shared.latestBodyweight,
+                displayUnit: displayUnit
+            ),
             targetRPE: set.targetRPE
         )
         modelContext.insert(drop)
@@ -981,7 +1028,12 @@ private struct ExerciseEditRow: View {
     private func changeType(of set: RoutineSetModel, to type: SetType, index: Int) {
         if type == .drop, index > 0, let above = sortedSets[index - 1].targetWeight {
             if set.targetWeight == nil || set.targetWeight == above {
-                set.targetWeight = droppedWeight(above)
+                set.targetWeight = DropSetLoadPolicy.suggestedModeWeight(
+                    sourceWeightKg: above,
+                    mode: exercise?.defaultWeightMode ?? .external,
+                    bodyweightKg: HealthMetricsStore.shared.latestBodyweight,
+                    displayUnit: displayUnit
+                )
             }
         }
         set.setType = type
@@ -1001,8 +1053,9 @@ private struct ExerciseEditRow: View {
     }
 
     private func deleteSet(_ set: RoutineSetModel) {
+        routineExercise.sets.removeAll { $0.id == set.id }
         modelContext.delete(set)
-        renumber(sortedSets.filter { $0.id != set.id })
+        renumber(sortedSets)
         save()
     }
 
@@ -1012,14 +1065,6 @@ private struct ExerciseEditRow: View {
 
     private func renumber(_ rows: [RoutineSetModel]) {
         for (index, row) in rows.enumerated() { row.position = index }
-    }
-
-    private func droppedWeight(_ weight: Double) -> Double {
-        let displayed = displayUnit.displayValue(fromKilograms: weight)
-        let step = displayUnit == .lb ? 5.0 : 2.5
-        let minimum = displayUnit == .lb ? 5.0 : 2.5
-        let dropped = max(minimum, (displayed * 0.75 / step).rounded() * step)
-        return displayUnit.kilograms(fromDisplayValue: dropped)
     }
 
     /// Every row mutation routes through the debounce: the model updates in

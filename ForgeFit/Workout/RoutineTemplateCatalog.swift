@@ -146,33 +146,66 @@ enum RoutineTemplateCatalog {
         in context: ModelContext,
         saveChanges: Bool
     ) throws -> RoutineModel {
+        try importTemplate(
+            template,
+            folderID: folderID,
+            existingRoutines: existingRoutines,
+            exerciseByID: exerciseLookup(in: context),
+            in: context,
+            saveChanges: saveChanges
+        )
+    }
+
+    private static func importTemplate(
+        _ template: RoutineTemplate,
+        folderID: UUID?,
+        existingRoutines: [RoutineModel],
+        exerciseByID: [UUID: ExerciseLibraryModel],
+        in context: ModelContext,
+        saveChanges: Bool
+    ) throws -> RoutineModel {
         let name = uniqueName(template.name, existingRoutines: existingRoutines)
         let routine = RoutineModel(
             userID: ForgeFitDemo.userID,
             name: name,
             notes: template.description,
             folderID: folderID,
-            position: existingRoutines.filter { $0.deletedAt == nil }.count
+            position: RoutineStructure.nextRoutinePosition(
+                in: existingRoutines,
+                folderID: folderID
+            )
         )
         routine.exercises = template.exercises.enumerated().map { index, item in
+            let exerciseID = ExerciseCatalog.deterministicID(for: item.slug)
+            let isCardio = exerciseByID[exerciseID]?.isCardio == true
             let exercise = RoutineExerciseModel(
                 userID: ForgeFitDemo.userID,
-                exerciseID: ExerciseCatalog.deterministicID(for: item.slug),
+                exerciseID: exerciseID,
                 position: index,
-                supersetGroup: item.supersetGroup
+                supersetGroup: item.supersetGroup,
+                intervalPlanJSON: isCardio
+                    ? item.durationSeconds.flatMap { seconds in
+                        guard seconds > 0 else { return nil }
+                        return IntervalPlan(
+                            steps: [],
+                            goal: .init(kind: .duration, value: Double(seconds))
+                        ).encodedJSON()
+                    }
+                    : nil
             )
-            exercise.sets = (0..<max(1, item.sets)).map { setIndex in
-                RoutineSetModel(
-                    userID: ForgeFitDemo.userID,
-                    position: setIndex,
-                    targetRepsLow: item.repsLow,
-                    targetRepsHigh: item.repsHigh,
-                    targetRPE: item.rpe,
-                    targetDurationSeconds: item.durationSeconds
-                )
-            }
+            exercise.sets = isCardio ? [] : (0..<max(1, item.sets)).map { setIndex in
+                    RoutineSetModel(
+                        userID: ForgeFitDemo.userID,
+                        position: setIndex,
+                        targetRepsLow: item.repsLow,
+                        targetRepsHigh: item.repsHigh,
+                        targetRPE: item.rpe,
+                        targetDurationSeconds: item.durationSeconds
+                    )
+                }
             return exercise
         }
+        RoutineStructure.normalize(routine)
         context.insert(routine)
         if saveChanges {
             do {
@@ -199,6 +232,7 @@ enum RoutineTemplateCatalog {
         guard !days.isEmpty else { return nil }
 
         let allFolders = try context.fetch(FetchDescriptor<RoutineFolderModel>())
+        let exerciseByID = try exerciseLookup(in: context)
         let activeFolders = allFolders.filter { $0.deletedAt == nil }
         let topLevel = activeFolders.filter { $0.parentID == nil }
         let folder = RoutineFolderModel(
@@ -215,6 +249,7 @@ enum RoutineTemplateCatalog {
                 day,
                 folderID: folder.id,
                 existingRoutines: existingRoutines,
+                exerciseByID: exerciseByID,
                 in: context,
                 saveChanges: false
             )
@@ -231,6 +266,15 @@ enum RoutineTemplateCatalog {
             }
         }
         return folder
+    }
+
+    private static func exerciseLookup(
+        in context: ModelContext
+    ) throws -> [UUID: ExerciseLibraryModel] {
+        Dictionary(
+            try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private static func uniqueFolderName(_ base: String, existingFolders: [RoutineFolderModel]) -> String {

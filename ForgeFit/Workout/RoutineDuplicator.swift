@@ -61,6 +61,7 @@ enum RoutineDuplicator {
                     planJSON: block.planJSON
                 )
             }
+        RoutineStructure.normalize(copy)
         context.insert(copy)
         return copy
     }

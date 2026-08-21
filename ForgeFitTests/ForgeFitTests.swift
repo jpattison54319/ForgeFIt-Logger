@@ -26,7 +26,7 @@ struct ForgeFitTests {
     }
 
     @MainActor
-    @Test func cardioRoutineStartsAsCardioSessionWithoutStrengthSets() async throws {
+    @Test func legacyCardioDurationDoesNotBecomeAnUnauthoredWorkoutGoal() async throws {
         let (container, context) = try TestStore.make()
 
         let userID = ForgeFitDemo.userID
@@ -71,8 +71,53 @@ struct ForgeFitTests {
         #expect(workout.cardioSessions.first?.modality == CardioKind.run.rawValue)
         #expect(workout.cardioSessions.first?.durationSeconds == nil)
         let plan = IntervalPlan.decode(from: workout.exercises.first?.intervalPlanJSON)
+        #expect(plan?.goal == nil)
+        _ = container   // keep models alive to the end (see TestStore.make)
+    }
+
+    @MainActor
+    @Test func explicitlyAuthoredCardioGoalStartsAtItsExactValue() async throws {
+        let (container, context) = try TestStore.make()
+        let treadmill = ExerciseLibraryModel(
+            name: "Treadmill Run",
+            movementPattern: "cardio",
+            primaryMuscles: ["cardiovascular", "quadriceps", "glutes"],
+            equipment: "treadmill",
+            defaultWeightMode: .bodyweight,
+            isCardio: true,
+            category: "cardio"
+        )
+        let authoredPlan = IntervalPlan(
+            steps: [],
+            goal: .init(kind: .duration, value: 535)
+        )
+        let routineExercise = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: treadmill.id,
+            position: 0,
+            intervalPlanJSON: authoredPlan.encodedJSON(),
+            sets: []
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Exact Run",
+            exercises: [routineExercise]
+        )
+        context.insert(treadmill)
+        context.insert(routine)
+        try context.save()
+
+        let committedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [treadmill],
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
+        let plan = IntervalPlan.decode(from: workout.exercises.first?.intervalPlanJSON)
         #expect(plan?.goal?.kind == .duration)
-        #expect(plan?.goal?.value == 1_800)
+        #expect(plan?.goal?.value == 535)
+        #expect(workout.exercises.first?.sets.isEmpty == true)
         _ = container   // keep models alive to the end (see TestStore.make)
     }
 

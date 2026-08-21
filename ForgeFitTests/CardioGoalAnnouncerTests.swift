@@ -101,4 +101,34 @@ struct CardioGoalAnnouncerTests {
         #expect(delivered == ["You hit your time goal of 30 minutes."])
         announcer.cancelAll()
     }
+
+    @Test func oddSecondDurationUsesOneExactDisplayAndAnnouncementThreshold() {
+        let goal = IntervalPlan.SessionGoal(kind: .duration, value: 535)
+        let before = CardioGoalProgressState(goal: goal, current: 489)
+
+        #expect(CardioGoalFormatting.pair(goal: goal, current: 489, kind: .run) == "8:09 of 8:55")
+        #expect(before.roundedPercent == 91)
+        #expect(!before.reached)
+
+        var delivered: [String] = []
+        let announcer = CardioGoalAnnouncer { delivered.append($0) }
+        let sessionID = UUID()
+        announcer.activate(
+            sessionID: sessionID,
+            goal: goal,
+            startedAt: .now,
+            cardioKind: .run,
+            distanceUnit: .km
+        )
+        announcer.evaluate(sessionID: sessionID, elapsedSeconds: 534)
+        #expect(delivered.isEmpty)
+        announcer.evaluate(sessionID: sessionID, elapsedSeconds: 535)
+
+        let reached = CardioGoalProgressState(goal: goal, current: 535)
+        #expect(CardioGoalFormatting.pair(goal: goal, current: 535, kind: .run) == "8:55 of 8:55")
+        #expect(reached.roundedPercent == 100)
+        #expect(reached.reached)
+        #expect(delivered == ["You hit your time goal of 8 minutes 55 seconds."])
+        announcer.cancelAll()
+    }
 }

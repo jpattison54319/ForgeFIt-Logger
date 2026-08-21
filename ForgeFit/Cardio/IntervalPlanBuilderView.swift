@@ -164,19 +164,8 @@ struct IntervalPlanBuilderView: View {
 
     /// Edit a routine exercise's stored template in place.
     init(routineExercise: RoutineExerciseModel) {
-        let legacyTarget = routineExercise.sets.sorted { $0.position < $1.position }.first
-        var existingPlan = IntervalPlan.decode(from: routineExercise.intervalPlanJSON)
-            ?? IntervalPlan(steps: [])
-        if !existingPlan.hasSteps, existingPlan.goal == nil {
-            if let meters = legacyTarget?.targetDistanceMeters, meters > 0 {
-                existingPlan.goal = .init(kind: .distance, value: meters)
-            } else if let seconds = legacyTarget?.targetDurationSeconds, seconds > 0 {
-                existingPlan.goal = .init(kind: .duration, value: Double(seconds))
-            }
-        }
-
         self.init(
-            planJSON: existingPlan.isMeaningful ? existingPlan.encodedJSON() : nil,
+            planJSON: routineExercise.intervalPlanJSON,
             routineExercise: routineExercise,
             commitAction: nil,
             onSave: { _ in }

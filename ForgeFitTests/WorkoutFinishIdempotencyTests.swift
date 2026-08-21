@@ -346,6 +346,136 @@ struct WorkoutFinishIdempotencyTests {
         #expect(persistedRoutine.name == "Still pending")
     }
 
+    /// The reported end-of-workout path: accepting a swap/reorder must be part
+    /// of the isolated terminal transaction. Failure leaves both models live
+    /// and unchanged; retry commits the exact routine graph once and mirrors it
+    /// into the long-lived UI context.
+    @Test func acceptedRoutineUpdateIsAtomicWithFinishAndRetry() throws {
+        let (container, context) = try TestStore.make()
+        let recorder = FinishRecorder()
+        let originalA = UUID()
+        let replacementA = UUID()
+        let exerciseB = UUID()
+        let targetA = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetWeight: 60)
+        let targetB = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 5, targetWeight: 90)
+        let routineA = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: originalA,
+            position: 0,
+            sets: [targetA]
+        )
+        let routineB = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: exerciseB,
+            position: 1,
+            sets: [targetB]
+        )
+        let routine = RoutineModel(userID: userID, name: "Atomic", exercises: [routineA, routineB])
+
+        let completedAt = Date.now.addingTimeInterval(-30)
+        let workoutA = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: replacementA,
+            position: 1,
+            sourceRoutineExerciseID: routineA.id,
+            sets: [SetModel(
+                userID: userID,
+                position: 0,
+                reps: 8,
+                weight: 55,
+                sourceRoutineSetID: targetA.id,
+                completedAt: completedAt
+            )]
+        )
+        let workoutB = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: exerciseB,
+            position: 0,
+            sourceRoutineExerciseID: routineB.id,
+            sets: [SetModel(
+                userID: userID,
+                position: 0,
+                reps: 5,
+                weight: 90,
+                sourceRoutineSetID: targetB.id,
+                completedAt: completedAt
+            )]
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            routineID: routine.id,
+            startedAt: Date.now.addingTimeInterval(-600),
+            sourceDevice: "iphone",
+            exercises: [workoutA, workoutB]
+        )
+        workout.avgHR = 140
+        workout.maxHR = 165
+        workout.activeEnergyKcal = 200
+        context.insert(routine)
+        context.insert(workout)
+        try context.save()
+        let routineID = routine.id
+        let workoutID = workout.id
+        let summary = WorkoutFinisher.SummaryCommit(
+            wholeSessionRPE: 8,
+            wholeSessionRPERatedAt: completedAt,
+            wholeSessionRPEProtocolVersion: "whole-session-cr10-immediate-v1",
+            updateRoutine: true
+        )
+
+        let first = WorkoutFinisher.finish(
+            workoutID: workoutID,
+            in: context,
+            summaryCommit: summary,
+            effects: recorder.effects(),
+            terminalSave: { transaction in
+                transaction.rollback()
+                return "simulated persistent store failure"
+            }
+        )
+
+        #expect(first == "simulated persistent store failure")
+        #expect(workout.endedAt == nil)
+        #expect(workout.wholeSessionRPE == nil)
+        #expect(routine.exercises.sorted { $0.position < $1.position }.map(\.exerciseID) == [originalA, exerciseB])
+        var verification = ModelContext(container)
+        var persistedRoutine = try #require(verification.fetch(FetchDescriptor<RoutineModel>(
+            predicate: #Predicate { $0.id == routineID }
+        )).first)
+        #expect(persistedRoutine.exercises.sorted { $0.position < $1.position }.map(\.exerciseID) == [originalA, exerciseB])
+        #expect(recorder.healthKitSaveCount == 0)
+
+        let retry = WorkoutFinisher.finish(
+            workoutID: workoutID,
+            in: context,
+            summaryCommit: summary,
+            effects: recorder.effects()
+        )
+
+        #expect(retry == nil)
+        #expect(workout.endedAt != nil)
+        #expect(workout.wholeSessionRPE == 8)
+        #expect(routine.exercises.sorted { $0.position < $1.position }.map(\.exerciseID) == [exerciseB, replacementA])
+        #expect(routine.exercises.sorted { $0.position < $1.position }.map(\.position) == [0, 1])
+        #expect(routine.exercises.count == 2)
+        #expect(recorder.healthKitSaveCount == 1)
+        #expect(recorder.watchSendCount == 1)
+        #expect(recorder.backupNoteCount == 1)
+
+        verification = ModelContext(container)
+        persistedRoutine = try #require(verification.fetch(FetchDescriptor<RoutineModel>(
+            predicate: #Predicate { $0.id == routineID }
+        )).first)
+        let persistedWorkout = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(persistedRoutine.exercises.sorted { $0.position < $1.position }.map(\.exerciseID) == [exerciseB, replacementA])
+        #expect(persistedRoutine.exercises.count == 2)
+        #expect(persistedWorkout.endedAt != nil)
+        #expect(persistedWorkout.wholeSessionRPE == 8)
+        #expect(persistedWorkout.wholeSessionRPEProtocolVersion == "whole-session-cr10-immediate-v1")
+    }
+
     // MARK: - Helpers
 
     /// A live strength workout with completed working sets (XP-eligible) and

@@ -305,7 +305,12 @@ struct WorkoutHomeView: View {
                     routine: routine,
                     exercises: exercises,
                     setupNotes: setupNotes,
-                    isNew: routine.id == newlyCreatedRoutineID
+                    isNew: routine.id == newlyCreatedRoutineID,
+                    onNewRoutineDiscarded: {
+                        if newlyCreatedRoutineID == routine.id {
+                            newlyCreatedRoutineID = nil
+                        }
+                    }
                 )
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -766,9 +771,14 @@ struct WorkoutHomeView: View {
             let sharedRoutines = hasChildren
                 ? microcycles.flatMap { routines(in: $0) }
                 : routines(in: folder)
-            let sections = hasChildren
-                ? microcycles.map { FolderShareCard.Section(title: $0.name, routines: routines(in: $0)) }
-                : [FolderShareCard.Section(title: nil, routines: sharedRoutines)]
+            let groups = hasChildren
+                ? microcycles.map { FolderShareSlotBuilder.Group(title: $0.name, routines: routines(in: $0)) }
+                : [FolderShareSlotBuilder.Group(title: nil, routines: sharedRoutines)]
+            let sections = FolderShareSlotBuilder.sections(
+                groups,
+                alternations: alternations,
+                availableRoutines: activeRoutines
+            )
             guard let image = FolderShareRenderer.image(
                 name: folder.name,
                 isMesocycle: hasChildren,
@@ -915,7 +925,7 @@ struct WorkoutHomeView: View {
         let attempt = RoutineCreationAttempt(
             name: activeRoutines.isEmpty ? "Full Body A" : "New Routine",
             folderID: folderID,
-            position: activeRoutines.count,
+            position: RoutineStructure.nextRoutinePosition(in: activeRoutines, folderID: folderID),
             in: modelContext
         )
         attempt.commit(into: modelContext) { routine in
@@ -942,7 +952,7 @@ struct WorkoutHomeView: View {
     private func duplicate(_ source: RoutineModel) {
         let attempt = RoutineCreationAttempt(
             duplicating: source,
-            position: activeRoutines.count,
+            position: RoutineStructure.nextRoutinePosition(in: activeRoutines, folderID: source.folderID),
             in: modelContext
         )
         attempt.commit(into: modelContext) { _ in }

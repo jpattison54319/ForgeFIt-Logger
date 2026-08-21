@@ -704,8 +704,8 @@ final class WatchLink: NSObject {
                 .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
             let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
             CardioSessionTerminalPersistence.perform(
-                container: context.container,
-                sessionID: session.id,
+                session: session,
+                context: context,
                 endedAt: now,
                 completesYoga: completingYoga,
                 useClockDuration: true,
@@ -1071,9 +1071,9 @@ final class WatchLink: NSObject {
         let start = session.liveStartedAt ?? session.startedAt
         let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: end)
         CardioSessionTerminalPersistence.perform(
-            container: context.container,
-            sessionID: session.id,
-            blockID: block.id,
+            session: session,
+            block: block,
+            context: context,
             endedAt: end,
             completesYoga: true,
             useClockDuration: true,

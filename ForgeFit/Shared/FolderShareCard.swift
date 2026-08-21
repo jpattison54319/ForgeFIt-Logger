@@ -12,11 +12,36 @@ import UIKit
 ///    each microcycle heading.
 /// Renders to a single tall image for sharing.
 struct FolderShareCard: View {
-    /// One block of the cycle: an optional microcycle heading and its routines.
+    /// One position in the cycle. Usually a single routine; an alternating
+    /// pair fills one slot with both of its members, the way the tracked
+    /// microcycle treats a pair as one day rather than two.
+    struct Slot: Identifiable {
+        let id: UUID
+        let routines: [RoutineModel]
+
+        init(routines: [RoutineModel]) {
+            self.id = routines.first?.id ?? UUID()
+            self.routines = routines
+        }
+
+        var isAlternating: Bool { routines.count > 1 }
+    }
+
+    /// One block of the cycle: an optional microcycle heading and its slots.
     struct Section: Identifiable {
         let id = UUID()
         let title: String?
-        let routines: [RoutineModel]
+        let slots: [Slot]
+
+        init(title: String?, slots: [Slot]) {
+            self.title = title
+            self.slots = slots
+        }
+
+        /// Convenience for cycles without alternating pairs — one slot per routine.
+        init(title: String?, routines: [RoutineModel]) {
+            self.init(title: title, slots: routines.map { Slot(routines: [$0]) })
+        }
     }
 
     let name: String
@@ -25,7 +50,7 @@ struct FolderShareCard: View {
     let exercises: [ExerciseLibraryModel]
     let theme: AppTheme
 
-    private var allRoutines: [RoutineModel] { sections.flatMap(\.routines) }
+    private var allRoutines: [RoutineModel] { sections.flatMap { $0.slots.flatMap(\.routines) } }
     private var totalItems: Int { allRoutines.reduce(0) { $0 + $1.exercises.count + $1.blocks.count } }
 
     var body: some View {
@@ -50,16 +75,16 @@ struct FolderShareCard: View {
                                 Image(systemName: "calendar").font(.system(size: 13, weight: .bold)).foregroundStyle(theme.secondaryAccentForeground)
                                 Text(title).font(.system(size: 18, weight: .bold)).foregroundStyle(theme.textPrimary)
                                 Spacer(minLength: 0)
-                                Text("\(section.routines.count) routine\(section.routines.count == 1 ? "" : "s")")
+                                Text(routineCountLabel(section))
                                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
                             }
-                            ForEach(section.routines) { routine in
-                                routineBlock(routine)
+                            ForEach(section.slots) { slot in
+                                slotBlock(slot)
                             }
                         }
                     } else {
-                        ForEach(section.routines) { routine in
-                            routineBlock(routine)
+                        ForEach(section.slots) { slot in
+                            slotBlock(slot)
                         }
                     }
                 }
@@ -71,6 +96,11 @@ struct FolderShareCard: View {
         .background(theme.background)
     }
 
+    private func routineCountLabel(_ section: Section) -> String {
+        let count = section.slots.reduce(0) { $0 + $1.routines.count }
+        return "\(count) routine\(count == 1 ? "" : "s")"
+    }
+
     private var statBlock: some View {
         HStack(spacing: 12) {
             if isMesocycle {
@@ -78,6 +108,35 @@ struct FolderShareCard: View {
             }
             RoutineShareStat(value: "\(allRoutines.count)", label: "Routines", color: theme.secondaryAccent, theme: theme)
             RoutineShareStat(value: "\(totalItems)", label: "Items", color: theme.textPrimary, theme: theme)
+        }
+    }
+
+    /// A single routine renders on its own; an alternating pair renders as one
+    /// tinted group so the image shows that the two routines swap in and out of
+    /// the same slot instead of reading as two separate training days.
+    @ViewBuilder
+    private func slotBlock(_ slot: Slot) -> some View {
+        if slot.isAlternating {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accentForeground)
+                    // The two routine names sit directly below — repeating
+                    // them in the header would just be noise.
+                    Text("Alternating")
+                        .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.textPrimary)
+                    Spacer(minLength: 0)
+                }
+                ForEach(slot.routines) { routine in
+                    routineBlock(routine)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        } else if let routine = slot.routines.first {
+            routineBlock(routine)
         }
     }
 
@@ -184,5 +243,52 @@ enum FolderShareRenderer {
             ),
             theme: exportTheme
         )
+    }
+}
+
+/// Groups a cycle's routines into share-card slots, pairing routines that
+/// alternate with each other. A partner that lives outside the shared cycle
+/// still rides along in its owner's slot — the plan file already carries it,
+/// so the image would otherwise hide half of the pair.
+@MainActor
+enum FolderShareSlotBuilder {
+    struct Group {
+        let title: String?
+        let routines: [RoutineModel]
+    }
+
+    static func sections(
+        _ groups: [Group],
+        alternations: [RoutineAlternationModel],
+        availableRoutines: [RoutineModel]
+    ) -> [FolderShareCard.Section] {
+        // The due member is history-derived and irrelevant to a static image —
+        // only the pairing itself is being drawn.
+        let states = RoutineAlternationService.states(
+            alternations: alternations,
+            routines: availableRoutines,
+            workouts: []
+        )
+        var partnerByRoutineID: [UUID: RoutineModel] = [:]
+        for state in states {
+            partnerByRoutineID[state.owner.id] = state.partner
+            partnerByRoutineID[state.partner.id] = state.owner
+        }
+        // A pair renders once, in the section where its first member appears,
+        // so a partner in a sibling microcycle can't be drawn twice.
+        var placedRoutineIDs: Set<UUID> = []
+        return groups.map { group in
+            var slots: [FolderShareCard.Slot] = []
+            for routine in group.routines {
+                guard placedRoutineIDs.insert(routine.id).inserted else { continue }
+                if let partner = partnerByRoutineID[routine.id],
+                   placedRoutineIDs.insert(partner.id).inserted {
+                    slots.append(FolderShareCard.Slot(routines: [routine, partner]))
+                } else {
+                    slots.append(FolderShareCard.Slot(routines: [routine]))
+                }
+            }
+            return FolderShareCard.Section(title: group.title, slots: slots)
+        }
     }
 }
