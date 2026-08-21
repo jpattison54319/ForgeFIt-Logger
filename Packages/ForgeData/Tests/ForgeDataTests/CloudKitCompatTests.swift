@@ -54,6 +54,8 @@ import Testing
         #expect(set.side2MiniRepsJSON == nil)
         #expect(set.side2MiniReps.isEmpty)
         #expect(!set.hasSide2Data)
+        #expect(set.prescribedRepsLow == nil)
+        #expect(set.prescribedRepsHigh == nil)
     }
 
     @Test func wrappedReportModelHasCloudKitSafeDefaults() {

@@ -2389,6 +2389,13 @@ private struct ExerciseLogCard: View {
             presentedMyoSet = MyoRepSetPresentation(set: myoSet, mode: .active)
             return
         } else {
+            if let set = sets.first(where: {
+                $0.completedAt == nil && $0.requiresConcreteRepsBeforeCompletion
+            }) {
+                collapsed = false
+                focusedInput = SetInputFocus(setID: set.id, field: .primary)
+                return
+            }
             let completedAt = completionDate ?? Date()
             var lastCompletedSet: SetModel?
             for (index, set) in sets.enumerated() where set.completedAt == nil {
@@ -2573,7 +2580,7 @@ private struct ExerciseLogCard: View {
 	                            completionDate: completionDate,
                                 usesSuggestedValues: usesSuggestedValues(for: set),
                                 suggestedWeight: suggestedWeight(for: set, index: index),
-                                suggestedReps: suggestedReps(for: set, index: index),
+                                repSuggestion: repSuggestion(for: set, index: index),
                                 suggestedDurationSeconds: suggestedDurationSeconds(for: set, index: index),
                                 suggestedRPE: suggestedRPE(for: set, index: index),
                                 editedFields: editedSuggestionFields[set.id] ?? [],
@@ -2844,14 +2851,18 @@ private struct ExerciseLogCard: View {
     }
 
     private func suggestedReps(for set: SetModel, index: Int) -> Int? {
-        if set.setType == .myoRep,
-           let activationSuggestion = myoActivationSuggestionOverrides[set.id] {
-            return activationSuggestion
-        }
-        if progressionLeads(for: set) {
-            return set.reps ?? previousSet(for: set, at: index)?.reps
-        }
-        return previousSet(for: set, at: index)?.reps ?? set.reps
+        repSuggestion(for: set, index: index).materializedValue
+    }
+
+    private func repSuggestion(for set: SetModel, index: Int) -> RepFieldSuggestion {
+        RepSuggestionPolicy.resolve(
+            set: set,
+            previousReps: previousSet(for: set, at: index)?.reps,
+            progressionLeads: progressionLeads(for: set),
+            structuredOverride: set.setType == .myoRep
+                ? myoActivationSuggestionOverrides[set.id]
+                : nil
+        )
     }
 
     private func suggestedDurationSeconds(for set: SetModel, index: Int) -> Int? {
@@ -3362,7 +3373,11 @@ private struct SetRow: View {
     var completionDate: Date? = nil
     var usesSuggestedValues: Bool = false
     var suggestedWeight: Double?
-    var suggestedReps: Int?
+    var repSuggestion = RepFieldSuggestion(
+        materializedValue: nil,
+        placeholder: "—",
+        quickAdjustmentBase: nil
+    )
     var suggestedDurationSeconds: Int?
     var suggestedRPE: Double?
     /// Fields the user explicitly typed into (suggestion-backed rows only) —
@@ -3400,7 +3415,11 @@ private struct SetRow: View {
         completionDate: Date? = nil,
         usesSuggestedValues: Bool = false,
         suggestedWeight: Double? = nil,
-        suggestedReps: Int? = nil,
+        repSuggestion: RepFieldSuggestion = RepFieldSuggestion(
+            materializedValue: nil,
+            placeholder: "—",
+            quickAdjustmentBase: nil
+        ),
         suggestedDurationSeconds: Int? = nil,
         suggestedRPE: Double? = nil,
         editedFields: Set<SetInputField>,
@@ -3433,7 +3452,7 @@ private struct SetRow: View {
         self.completionDate = completionDate
         self.usesSuggestedValues = usesSuggestedValues
         self.suggestedWeight = suggestedWeight
-        self.suggestedReps = suggestedReps
+        self.repSuggestion = repSuggestion
         self.suggestedDurationSeconds = suggestedDurationSeconds
         self.suggestedRPE = suggestedRPE
         self.editedFields = editedFields
@@ -3454,7 +3473,7 @@ private struct SetRow: View {
         suggestedWeight.map { Fmt.load($0, unit: displayUnit) } ?? "—"
     }
     private var suggestedRepsText: String {
-        suggestedReps.map(String.init) ?? "—"
+        repSuggestion.placeholder
     }
     private var suggestedDurationText: String {
         suggestedDurationSeconds.map { String($0 / 60) } ?? "—"
@@ -3684,6 +3703,8 @@ private struct SetRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PressableButtonStyle())
+            .accessibilityLabel(isDone ? "Mark set incomplete" : "Mark set complete")
+            .accessibilityHint(set.requiresConcreteRepsBeforeCompletion ? "Enter completed reps first" : "")
             .accessibilityIdentifier("complete-set-\(workingNumber)")
 
             // Drop sets cascade: indent under the parent set like a ladder.
@@ -3821,7 +3842,7 @@ private struct SetRow: View {
 
     private func completeFromKeyboard() {
         if !isDone {
-            completeSet()
+            guard completeSet() else { return }
         } else {
             commitFocusedDraft()
         }
@@ -3838,15 +3859,20 @@ private struct SetRow: View {
             // materialization lets every committed ghost refresh its draft,
             // including the field that had the keyboard open.
             clearFocus()
-            completeSet()
+            _ = completeSet()
         }
     }
 
-    private func completeSet() {
+    @discardableResult
+    private func completeSet() -> Bool {
         // A completion tap can clear focus before SwiftUI delivers the focus
         // change callback. Commit every locally edited draft, not just the
         // field that still appears focused in this exact frame.
         commitAllEditedDrafts()
+        guard !set.requiresConcreteRepsBeforeCompletion else {
+            focus(.primary)
+            return false
+        }
         onMaterializeSuggestion(effectiveEditedSuggestionFields)
         LiveSetCompletion.prepare(
             set,
@@ -3856,6 +3882,7 @@ private struct SetRow: View {
         completionHapticTrigger += 1
         onCompletionChange(true)
         onCompleted()
+        return true
     }
 
     private func setRPE(_ value: Double) {
@@ -4002,7 +4029,7 @@ private struct SetRow: View {
             draftValue: Int(primaryDraft).map(Double.init),
             isDraftEdited: editedDraftFields.contains(.primary),
             enteredValue: set.reps.map(Double.init),
-            suggestedValue: (suggestedReps ?? previousSet?.reps).map(Double.init),
+            suggestedValue: (repSuggestion.quickAdjustmentBase ?? previousSet?.reps).map(Double.init),
             isShowingSuggestion: isShowingSuggestion(for: .primary)
         )
         return resolved ?? (editedDraftFields.contains(.primary) ? nil : 0)
@@ -4162,6 +4189,11 @@ private struct SetRow: View {
                 .textFieldStyle(.plain)
                 .padding(.leading, field == .weight && supportsResistanceBands ? 22 : 0)
                 .accessibilityLabel(label)
+                .accessibilityValue(accessibilityValue(
+                    for: field,
+                    text: text.wrappedValue,
+                    placeholder: placeholder
+                ))
                 .onSubmit {
                     if let next = nextInputField(after: field) {
                         focus(next)
@@ -4256,6 +4288,23 @@ private struct SetRow: View {
         case .rpe:
             effortScale.columnTitle
         }
+    }
+
+    private func accessibilityValue(
+        for field: SetInputField,
+        text: String,
+        placeholder: String
+    ) -> String {
+        guard text.isEmpty else { return text }
+        if field == .primary,
+           !isCardio,
+           set.loadPrescriptionMode == .percentEstimatedOneRepMax,
+           !set.setType.isBlockType,
+           set.setType != .amrap,
+           let target = set.prescribedRepTarget {
+            return "Planned \(target.displayText), not entered"
+        }
+        return placeholder == "—" ? "Empty" : "Suggested \(placeholder), not entered"
     }
 
 }

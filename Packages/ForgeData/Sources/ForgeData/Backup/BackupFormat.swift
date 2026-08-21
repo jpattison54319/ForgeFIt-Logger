@@ -227,6 +227,8 @@ public struct BackupSet: Codable, Sendable {
     public var prescribed1RMBaselineKg: Double? = nil
     public var prescribedLoadLowKg: Double? = nil
     public var prescribedLoadHighKg: Double? = nil
+    public var prescribedRepsLow: Int? = nil
+    public var prescribedRepsHigh: Int? = nil
     public var completedAt: Date?
     public var createdAt: Date
     public var updatedAt: Date

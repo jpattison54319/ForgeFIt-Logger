@@ -235,6 +235,12 @@ enum WorkoutFactory {
                         let plannedWeight = usesAdaptiveLoad
                             ? adaptiveResolution?.loadLowKg
                             : target.targetWeight
+                        let prescribedRepTarget = usesAdaptiveLoad
+                            ? PlannedRepTarget(low: target.targetRepsLow, high: target.targetRepsHigh)
+                            : nil
+                        let initialReps = target.setType.isBlockType
+                            ? nil
+                            : (usesAdaptiveLoad ? prescribedRepTarget?.exactValue : target.targetRepsLow)
                         let effort = WorkoutEffortPolicy.initialEffort(
                             setType: target.setType,
                             targetRPE: target.targetRPE,
@@ -250,7 +256,7 @@ enum WorkoutFactory {
                             // what the lifter achieves live, and cluster reps
                             // mirror the logged segments. Plans ride the
                             // planned* fields as ghost targets instead.
-                            reps: target.setType.isBlockType ? nil : target.targetRepsLow,
+                            reps: initialReps,
                             weight: weightMode == .external ? plannedWeight : nil,
                             rpe: effort.rpe,
                             rir: effort.rir,
@@ -265,7 +271,9 @@ enum WorkoutFactory {
                             prescribed1RMPercentHigh: prescription?.highPercent,
                             prescribed1RMBaselineKg: adaptiveResolution?.baselineKg,
                             prescribedLoadLowKg: adaptiveResolution?.loadLowKg,
-                            prescribedLoadHighKg: adaptiveResolution?.loadHighKg
+                            prescribedLoadHighKg: adaptiveResolution?.loadHighKg,
+                            prescribedRepsLow: usesAdaptiveLoad ? target.targetRepsLow : nil,
+                            prescribedRepsHigh: usesAdaptiveLoad ? target.targetRepsHigh : nil
                         )
                     }
                 let workoutExercise = WorkoutExerciseModel(

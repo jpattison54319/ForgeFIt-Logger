@@ -91,6 +91,9 @@ struct AdaptiveLoadTests {
         #expect(firstSet.prescribed1RMBaselineKg == 100)
         #expect(firstSet.prescribedLoadLowKg == 67.5)
         #expect(firstSet.prescribedLoadHighKg == 72.5)
+        #expect(firstSet.prescribedRepsLow == 5)
+        #expect(firstSet.prescribedRepsHigh == nil)
+        #expect(firstSet.reps == 5)
         #expect(target.targetWeight == 42, "Resolving a workout must not rewrite the authored fixed fallback.")
 
         let improvedHistory = historyWorkout(exerciseID: exercise.id, estimate: 120)
@@ -122,6 +125,61 @@ struct AdaptiveLoadTests {
         #expect(persistedSet.prescribed1RMBaselineKg == 120)
         #expect(persistedSet.prescribedLoadLowKg == 80)
         #expect(persistedSet.prescribedLoadHighKg == 86.25)
+        #expect(persistedSet.prescribedRepsLow == 5)
+        #expect(persistedSet.prescribedRepsHigh == nil)
+        #expect(persistedSet.reps == 5)
+    }
+
+    @Test func percentageRepRangeIsSnapshottedWithoutInventingPerformedReps() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let exercise = machineExercise()
+        let history = historyWorkout(exerciseID: exercise.id, estimate: 100)
+        let target = RoutineSetModel(
+            userID: userID,
+            targetRepsLow: 5,
+            targetRepsHigh: 8,
+            loadPrescriptionMode: .percentEstimatedOneRepMax,
+            target1RMPercentLow: 82.5
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Adaptive Range",
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: exercise.id,
+                sets: [target]
+            )]
+        )
+        context.insert(exercise)
+        context.insert(history)
+        context.insert(routine)
+        try context.save()
+
+        let workout = try #require(WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            in: context,
+            onCommit: { _ in }
+        ))
+        let set = try #require(workout.exercises.first?.sets.first)
+
+        #expect(set.prescribedRepsLow == 5)
+        #expect(set.prescribedRepsHigh == 8)
+        #expect(set.prescribedRepTarget?.displayText == "5–8")
+        #expect(set.reps == nil)
+        #expect(set.requiresConcreteRepsBeforeCompletion)
+
+        let verification = ModelContext(container)
+        let workoutID = workout.id
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        let persistedSet = try #require(persisted.exercises.first?.sets.first)
+        #expect(persistedSet.prescribedRepsLow == 5)
+        #expect(persistedSet.prescribedRepsHigh == 8)
+        #expect(persistedSet.reps == nil)
+        #expect(persistedSet.requiresConcreteRepsBeforeCompletion)
     }
 
     @Test func missingEstimateKeepsLoadBlankButPreservesPrescription() throws {

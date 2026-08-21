@@ -468,7 +468,10 @@ final class WatchLink: NSObject {
                 plannedMiniSetCount: set.plannedMiniSetCount,
                 plannedMiniReps: set.plannedMiniReps,
                 microRestSeconds: we.microRestSeconds,
-                loadPrescriptionText: loadPrescriptionText(for: set)
+                loadPrescriptionText: loadPrescriptionText(for: set),
+                loadPrescriptionModeRaw: set.prescribedLoadModeRaw,
+                prescribedRepsLow: set.prescribedRepsLow,
+                prescribedRepsHigh: set.prescribedRepsHigh
             )
         }
     }
@@ -551,6 +554,10 @@ final class WatchLink: NSObject {
 
         case .toggleSet(let setID, let completed):
             guard let set = fetchSet(setID, in: context) else { return }
+            guard !completed || !set.requiresConcreteRepsBeforeCompletion else {
+                publishState(policy: .immediate)
+                return
+            }
             set.completedAt = completed ? Date() : nil
             if completed { HealthMetricsStore.shared.fillBodyweight(set) }
             set.recomputeDerivedMetrics()

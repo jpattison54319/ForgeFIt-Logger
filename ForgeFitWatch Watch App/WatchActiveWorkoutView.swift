@@ -613,7 +613,11 @@ struct WatchSetListView: View {
                     } else {
                         HStack(spacing: 6) {
                             Button {
-                                store.toggleSet(set, in: exercise)
+                                if set.requiresConcreteRepsBeforeCompletion {
+                                    editingSet = set
+                                } else {
+                                    store.toggleSet(set, in: exercise)
+                                }
                             } label: {
                                 HStack(spacing: 8) {
                                     setBadge(set)
@@ -699,6 +703,7 @@ struct WatchSetListView: View {
         let unit = set.unitSuffix ?? store.context?.unitSuffix ?? "lb"
         let weight = set.weight.map { "\(WFmt.weight($0))\(unit)" }
         let reps = set.reps.map { "× \($0)" }
+            ?? set.prescribedRepTarget.map { "× \($0.displayText)" }
         let parts = [weight, reps].compactMap { $0 }
         return parts.isEmpty ? "—" : parts.joined(separator: " ")
     }

@@ -993,6 +993,10 @@ public final class SetModel {
     public var prescribed1RMBaselineKg: Double?
     public var prescribedLoadLowKg: Double?
     public var prescribedLoadHighKg: Double?
+    /// Authored rep intent captured with an adaptive load. These bounds stay
+    /// separate from `reps`, which is the athlete's concrete performed value.
+    public var prescribedRepsLow: Int?
+    public var prescribedRepsHigh: Int?
     public var effectiveLoad: Double?
     public var totalVolume: Double?
     public var estimated1RM: Double?
@@ -1032,6 +1036,8 @@ public final class SetModel {
         prescribed1RMBaselineKg: Double? = nil,
         prescribedLoadLowKg: Double? = nil,
         prescribedLoadHighKg: Double? = nil,
+        prescribedRepsLow: Int? = nil,
+        prescribedRepsHigh: Int? = nil,
         completedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -1066,6 +1072,8 @@ public final class SetModel {
         self.prescribed1RMBaselineKg = prescribed1RMBaselineKg
         self.prescribedLoadLowKg = prescribedLoadLowKg
         self.prescribedLoadHighKg = prescribedLoadHighKg
+        self.prescribedRepsLow = prescribedRepsLow
+        self.prescribedRepsHigh = prescribedRepsHigh
         self.completedAt = completedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -1135,6 +1143,20 @@ public final class SetModel {
     public var loadPrescriptionMode: LoadPrescriptionMode {
         get { LoadPrescriptionMode(rawValue: prescribedLoadModeRaw) ?? .fixed }
         set { prescribedLoadModeRaw = newValue.rawValue }
+    }
+
+    public var prescribedRepTarget: PlannedRepTarget? {
+        PlannedRepTarget(low: prescribedRepsLow, high: prescribedRepsHigh)
+    }
+
+    /// Only ordinary percentage-based strength rows require one concrete rep
+    /// result. Structured blocks and AMRAP own distinct execution semantics.
+    public var requiresConcreteRepsBeforeCompletion: Bool {
+        loadPrescriptionMode == .percentEstimatedOneRepMax
+            && !setType.isBlockType
+            && setType != .amrap
+            && prescribedRepTarget?.exactValue == nil
+            && reps == nil
     }
 
     public var domainEntry: SetEntry {

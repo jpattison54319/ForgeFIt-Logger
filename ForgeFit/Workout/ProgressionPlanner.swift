@@ -228,7 +228,9 @@ enum ProgressionPlanner {
             if let weightKg, set.loadPrescriptionMode != .percentEstimatedOneRepMax {
                 set.weight = weightKg
             }
-            if let repsLow { set.reps = repsLow }
+            if let repsLow, set.loadPrescriptionMode != .percentEstimatedOneRepMax {
+                set.reps = repsLow
+            }
             set.recomputeDerivedMetrics()
         }
     }

@@ -351,6 +351,11 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     /// Compact authored context such as "82.5% e1RM". Additive optional so
     /// mixed app/Watch versions continue to decode and log concrete loads.
     public var loadPrescriptionText: String?
+    /// Machine-readable prescription mode and immutable authored rep target.
+    /// All are additive optional for compatibility with older peers.
+    public var loadPrescriptionModeRaw: String?
+    public var prescribedRepsLow: Int?
+    public var prescribedRepsHigh: Int?
 
     public init(
         id: UUID,
@@ -370,7 +375,10 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         plannedMiniSetCount: Int? = nil,
         plannedMiniReps: [Int]? = nil,
         microRestSeconds: Int? = nil,
-        loadPrescriptionText: String? = nil
+        loadPrescriptionText: String? = nil,
+        loadPrescriptionModeRaw: String? = nil,
+        prescribedRepsLow: Int? = nil,
+        prescribedRepsHigh: Int? = nil
     ) {
         self.id = id
         self.label = label
@@ -390,6 +398,9 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.plannedMiniReps = plannedMiniReps
         self.microRestSeconds = microRestSeconds
         self.loadPrescriptionText = loadPrescriptionText
+        self.loadPrescriptionModeRaw = loadPrescriptionModeRaw
+        self.prescribedRepsLow = prescribedRepsLow
+        self.prescribedRepsHigh = prescribedRepsHigh
     }
 
     public var setType: SetType {
@@ -404,6 +415,19 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     public var usesSides: Bool { isUnilateral == true }
     public var isStructured: Bool { setType.isBlockType }
     public var isAMRAP: Bool { setType == .amrap }
+    public var loadPrescriptionMode: LoadPrescriptionMode {
+        loadPrescriptionModeRaw.flatMap(LoadPrescriptionMode.init(rawValue:)) ?? .fixed
+    }
+    public var prescribedRepTarget: PlannedRepTarget? {
+        PlannedRepTarget(low: prescribedRepsLow, high: prescribedRepsHigh)
+    }
+    public var requiresConcreteRepsBeforeCompletion: Bool {
+        loadPrescriptionMode == .percentEstimatedOneRepMax
+            && !isStructured
+            && !isAMRAP
+            && prescribedRepTarget?.exactValue == nil
+            && reps == nil
+    }
     public var effectiveMicroRestSeconds: Int {
         microRestSeconds ?? setType.defaultMicroRestSeconds ?? 15
     }

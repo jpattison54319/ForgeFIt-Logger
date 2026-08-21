@@ -45,7 +45,10 @@ struct WatchSyncTests {
                                 plannedMiniSetCount: 4,
                                 plannedMiniReps: [3, 3, 3, 3],
                                 microRestSeconds: 15,
-                                loadPrescriptionText: "82.5–87.5% e1RM"
+                                loadPrescriptionText: "82.5–87.5% e1RM",
+                                loadPrescriptionModeRaw: LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue,
+                                prescribedRepsLow: 5,
+                                prescribedRepsHigh: 8
                             )
                         ]
                     )
@@ -92,6 +95,8 @@ struct WatchSyncTests {
         #expect(decodedSet.isStructured)
         #expect(decodedSet.structuredProgress.miniReps == [3, 3, 2])
         #expect(decodedSet.loadPrescriptionText == "82.5–87.5% e1RM")
+        #expect(decodedSet.loadPrescriptionMode == .percentEstimatedOneRepMax)
+        #expect(decodedSet.prescribedRepTarget?.displayText == "5–8")
         #expect(decoded.workout?.restOwnerID == setID)
     }
 
@@ -105,6 +110,34 @@ struct WatchSyncTests {
 
         #expect(decoded.id == setID)
         #expect(decoded.loadPrescriptionText == nil)
+        #expect(decoded.loadPrescriptionMode == .fixed)
+        #expect(decoded.prescribedRepTarget == nil)
+        #expect(!decoded.requiresConcreteRepsBeforeCompletion)
+    }
+
+    @Test func percentageRangeRequiresAConcreteResultButExactTargetDoesNot() {
+        let range = WatchSetSnapshot(
+            id: UUID(),
+            label: "1",
+            loadPrescriptionModeRaw: LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue,
+            prescribedRepsLow: 5,
+            prescribedRepsHigh: 8
+        )
+        #expect(range.requiresConcreteRepsBeforeCompletion)
+
+        var entered = range
+        entered.reps = 7
+        #expect(!entered.requiresConcreteRepsBeforeCompletion)
+
+        let exact = WatchSetSnapshot(
+            id: UUID(),
+            label: "2",
+            reps: 5,
+            loadPrescriptionModeRaw: LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue,
+            prescribedRepsLow: 5,
+            prescribedRepsHigh: 5
+        )
+        #expect(!exact.requiresConcreteRepsBeforeCompletion)
     }
 
     @Test func legacyRoutineSummaryWithoutAlternationFieldsStillDecodes() throws {

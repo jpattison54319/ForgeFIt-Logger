@@ -36,7 +36,7 @@ struct WatchSetEditView: View {
         self.unitSuffix = set.unitSuffix ?? store.context?.unitSuffix ?? "lb"
         _field = State(initialValue: set.supportsLoadEntry ? .weight : .reps)
         _weightKg = State(initialValue: set.weightKg ?? 0)
-        _reps = State(initialValue: set.reps ?? 0)
+        _reps = State(initialValue: set.reps ?? set.prescribedRepTarget?.lowerBound ?? 0)
     }
 
     var body: some View {
@@ -81,6 +81,7 @@ struct WatchSetEditView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(WTheme.accent)
+            .disabled(set.requiresConcreteRepsBeforeCompletion && reps <= 0)
         }
         .padding(.horizontal, 4)
         // The crown drives the focused value: one detent unit = one step.

@@ -81,6 +81,8 @@ import Testing
         set.prescribed1RMBaselineKg = 120
         set.prescribedLoadLowKg = 100
         set.prescribedLoadHighKg = 105
+        set.prescribedRepsLow = 5
+        set.prescribedRepsHigh = 8
         set.completedAt = Date(timeIntervalSince1970: 1_700_000_500)
         // HEALTH SENTINEL
         set.bodyweightKg = 82.5432
@@ -211,7 +213,7 @@ import Testing
                 "side2MiniRepsJSON", "plannedMiniSetCount", "plannedMiniRepsJSON",
                 "prescribedLoadModeRaw",
                 "prescribed1RMPercentLow", "prescribed1RMPercentHigh", "prescribed1RMBaselineKg",
-                "prescribedLoadLowKg", "prescribedLoadHighKg",
+                "prescribedLoadLowKg", "prescribedLoadHighKg", "prescribedRepsLow", "prescribedRepsHigh",
                 "completedAt", "createdAt", "updatedAt"],
         "session": ["id", "workoutExerciseID", "workoutBlockID", "modality", "startedAt", "liveStartedAt", "endedAt",
                     "sourceDevice", "durationSeconds", "distanceMeters", "effort",
@@ -636,6 +638,8 @@ import Testing
         #expect(set.prescribed1RMBaselineKg == originalSet.prescribed1RMBaselineKg)
         #expect(set.prescribedLoadLowKg == originalSet.prescribedLoadLowKg)
         #expect(set.prescribedLoadHighKg == originalSet.prescribedLoadHighKg)
+        #expect(set.prescribedRepsLow == originalSet.prescribedRepsLow)
+        #expect(set.prescribedRepsHigh == originalSet.prescribedRepsHigh)
         #expect(set.bodyweightKg == nil)
 
         let session = try #require(restored.sessions.first)

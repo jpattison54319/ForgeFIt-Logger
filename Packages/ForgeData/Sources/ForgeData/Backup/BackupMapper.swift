@@ -146,6 +146,8 @@ public enum BackupMapper {
             prescribed1RMBaselineKg: set.prescribed1RMBaselineKg,
             prescribedLoadLowKg: set.prescribedLoadLowKg,
             prescribedLoadHighKg: set.prescribedLoadHighKg,
+            prescribedRepsLow: set.prescribedRepsLow,
+            prescribedRepsHigh: set.prescribedRepsHigh,
             completedAt: set.completedAt,
             createdAt: set.createdAt,
             updatedAt: set.updatedAt
@@ -454,6 +456,8 @@ public enum BackupMapper {
                 set.prescribed1RMBaselineKg = backupSet.prescribed1RMBaselineKg
                 set.prescribedLoadLowKg = backupSet.prescribedLoadLowKg
                 set.prescribedLoadHighKg = backupSet.prescribedLoadHighKg
+                set.prescribedRepsLow = backupSet.prescribedRepsLow
+                set.prescribedRepsHigh = backupSet.prescribedRepsHigh
                 set.completedAt = backupSet.completedAt
                 set.createdAt = backupSet.createdAt
                 set.updatedAt = backupSet.updatedAt

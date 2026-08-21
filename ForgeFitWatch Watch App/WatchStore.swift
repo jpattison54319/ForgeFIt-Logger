@@ -287,6 +287,7 @@ final class WatchStore: NSObject {
     /// Optimistically flips the set locally so the row responds instantly;
     /// the phone's next snapshot confirms it.
     func toggleSet(_ set: WatchSetSnapshot, in exercise: WatchExerciseSnapshot) {
+        guard set.completed || !set.requiresConcreteRepsBeforeCompletion else { return }
         let newValue = !set.completed
         mutateWorkout { workout in
             guard let ei = workout.exercises.firstIndex(where: { $0.id == exercise.id }),

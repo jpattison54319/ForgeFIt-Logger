@@ -163,7 +163,10 @@ struct ProgressionPlannerTests {
             set.prescribed1RMPercentLow = 75
             set.prescribed1RMBaselineKg = 100
             set.prescribedLoadLowKg = adaptiveWeightKg
+            set.prescribedRepsLow = 5
+            set.prescribedRepsHigh = 5
             set.weight = adaptiveWeightKg
+            set.reps = 5
         }
 
         let previewed = ProgressionPlanner.preview(
@@ -188,6 +191,9 @@ struct ProgressionPlannerTests {
             #expect(set.prescribed1RMPercentLow == 75)
             #expect(set.prescribed1RMBaselineKg == 100)
             #expect(set.prescribedLoadLowKg == adaptiveWeightKg)
+            #expect(set.prescribedRepsLow == 5)
+            #expect(set.prescribedRepsHigh == 5)
+            #expect(set.reps == 5)
         }
         _ = container
     }
