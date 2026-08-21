@@ -32,4 +32,16 @@ nonisolated enum VitalMetricKind: String, Codable, CaseIterable, Equatable, Send
     var favorsHigherValue: Bool {
         self == .bloodOxygen || self == .hrv
     }
+
+    /// Range status must use the same precision the person sees. Comparing
+    /// hidden fractional values can otherwise label a displayed 97% reading
+    /// below a displayed 97% lower bound.
+    func valueAtDisplayPrecision(_ value: Double) -> Double {
+        switch self {
+        case .respiratoryRate:
+            (value * 10).rounded() / 10
+        case .heartRate, .bloodOxygen, .hrv:
+            value.rounded()
+        }
+    }
 }

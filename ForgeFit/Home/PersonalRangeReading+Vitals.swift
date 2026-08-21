@@ -67,11 +67,11 @@ nonisolated extension PersonalRangeReading {
         case .belowRange:
             return interpretation == .favorable
                 ? "below usual, favorable"
-                : "below usual, needs attention"
+                : "below usual"
         case .aboveRange:
             return interpretation == .favorable
                 ? "above usual, favorable"
-                : "above usual, needs attention"
+                : "above usual"
         }
     }
 }

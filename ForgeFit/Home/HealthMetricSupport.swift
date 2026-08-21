@@ -240,7 +240,7 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         if readings.isEmpty { return "No readings" }
         if evaluatedCount == 0 { return "Building" }
         if adverseCount > 0 {
-            return adverseCount == 1 ? "1 needs attention" : "\(adverseCount) need attention"
+            return "Outside usual bands"
         }
         if favorableCount > 0 {
             return "\(favorableCount) favorable shift\(favorableCount == 1 ? "" : "s")"
@@ -337,9 +337,12 @@ nonisolated struct HealthRangeAssessment: Equatable, Sendable {
         let mean = average(baseline)
         let lower = quantile(baseline, probability: 0.10) ?? mean
         let upper = quantile(baseline, probability: 0.90) ?? mean
-        let status: PersonalRangeReading.Status = value < lower
+        let displayedValue = kind.valueAtDisplayPrecision(value)
+        let displayedLower = kind.valueAtDisplayPrecision(lower)
+        let displayedUpper = kind.valueAtDisplayPrecision(upper)
+        let status: PersonalRangeReading.Status = displayedValue < displayedLower
             ? .belowRange
-            : value > upper ? .aboveRange : .typical
+            : displayedValue > displayedUpper ? .aboveRange : .typical
         return PersonalRangeReading(
             kind: kind,
             name: name,

@@ -45,7 +45,7 @@ struct HealthMetricSupportTests {
         })
     }
 
-    @Test func adverseDirectionsAreTheOnlyReadingsThatNeedAttention() {
+    @Test func adverseDirectionsAreReportedWithoutPrescriptiveLanguage() {
         let assessment = HealthRangeAssessment.make(
             metrics: history(latestHRV: 38, latestHeartRate: 72),
             calendar: calendar
@@ -54,9 +54,11 @@ struct HealthMetricSupportTests {
         #expect(assessment.outsideRangeCount == 2)
         #expect(assessment.adverseCount == 2)
         #expect(assessment.favorableCount == 0)
-        #expect(assessment.headline == "2 need attention")
+        #expect(assessment.headline == "Outside usual bands")
         #expect(assessment.readings.first { $0.kind == .hrv }?.status == .belowRange)
         #expect(assessment.readings.first { $0.kind == .heartRate }?.status == .aboveRange)
+        let accessibilityValue = VitalsTilePresentation.make(assessment: assessment).accessibilityValue
+        #expect(!accessibilityValue.contains("needs attention"))
     }
 
     @Test func reportedFavorableDirectionsMoveIntoTheGreenZone() {
@@ -99,6 +101,32 @@ struct HealthMetricSupportTests {
         #expect(VitalsTilePresentation.make(assessment: assessment).indicators
             .filter { $0.interpretation == .adverse }
             .allSatisfy { $0.position < VitalBandScale.usualLowerBound })
+    }
+
+    @Test func rangeStatusUsesTheSamePrecisionAsDisplayedValues() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var metrics = (0..<43).map { offset in
+            metric(
+                date: calendar.date(byAdding: .day, value: offset, to: start)!,
+                hrv: 60,
+                heartRate: 58,
+                oxygenSaturation: offset.isMultiple(of: 2) ? 97.04 : 98.04
+            )
+        }
+        metrics.append(metric(
+            date: calendar.date(byAdding: .day, value: 43, to: start)!,
+            hrv: 60,
+            heartRate: 58,
+            oxygenSaturation: 96.96
+        ))
+
+        let oxygen = HealthRangeAssessment.make(metrics: metrics, calendar: calendar)
+            .readings.first { $0.kind == .bloodOxygen }
+
+        #expect(oxygen?.formattedVitalValue == "97%")
+        #expect(oxygen?.lowerBound.map { Int($0.rounded()) } == 97)
+        #expect(oxygen?.status == .typical)
+        #expect(oxygen?.vitalRelationText == "within usual band")
     }
 
     @Test func lowerRespiratoryRateAndHigherOxygenAreFavorable() {

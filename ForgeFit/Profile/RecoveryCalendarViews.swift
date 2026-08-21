@@ -174,7 +174,7 @@ struct RecoveryDaySummaryCard: View {
             tint: assessment.evaluatedCount == 0
                 ? theme.textTertiary
                 : assessment.adverseCount > 0
-                    ? theme.recoveryLow
+                    ? theme.warmup
                     : assessment.favorableCount > 0 ? theme.success : theme.zone2,
             isLoading: loading,
             showsDisclosure: false

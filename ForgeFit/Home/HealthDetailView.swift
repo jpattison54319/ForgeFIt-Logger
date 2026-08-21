@@ -164,10 +164,15 @@ struct HealthDetailView: View {
         if hasLowBloodOxygen {
             Card {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Label("Blood oxygen is below usual", systemImage: "exclamationmark.triangle.fill")
-                        .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                    Text("Rest, check watch fit, and repeat the reading. Seek medical care for a persistent concern or urgent symptoms.")
+                    Label {
+                        Text("Blood oxygen is below usual")
+                            .foregroundStyle(theme.textPrimary)
+                    } icon: {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundStyle(theme.warmup)
+                    }
+                    .font(.bodyStrong)
+                    Text("This compares the reading with your personal history; it is not a medical assessment.")
                         .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -259,14 +264,14 @@ struct HealthDetailView: View {
         case .belowRange:
             let favorable = reading.interpretation == .favorable
             return (
-                "\(favorable ? "Favorable" : "Needs attention") · Below usual · \(baseline)",
-                favorable ? theme.success : theme.recoveryLow
+                "\(favorable ? "Favorable · " : "")Below usual · \(baseline)",
+                favorable ? theme.success : theme.warmup
             )
         case .aboveRange:
             let favorable = reading.interpretation == .favorable
             return (
-                "\(favorable ? "Favorable" : "Needs attention") · Above usual · \(baseline)",
-                favorable ? theme.success : theme.recoveryLow
+                "\(favorable ? "Favorable · " : "")Above usual · \(baseline)",
+                favorable ? theme.success : theme.warmup
             )
         case .building:
             return ("Usual range building", theme.textTertiary)

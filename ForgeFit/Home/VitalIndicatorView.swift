@@ -52,7 +52,7 @@ struct VitalIndicatorView: View {
         switch indicator.interpretation {
         case .favorable: "checkmark"
         case .typical: "minus"
-        case .adverse: "exclamationmark"
+        case .adverse: "arrow.down"
         case .building: "ellipsis"
         case .unavailable: nil
         }

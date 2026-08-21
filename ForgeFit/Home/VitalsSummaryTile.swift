@@ -58,7 +58,7 @@ struct VitalsSummaryTile: View {
                         .frame(height: bandHeight * CGFloat(VitalBandScale.outerFraction))
                     zone(theme.zone2)
                         .frame(height: bandHeight * CGFloat(VitalBandScale.usualFraction))
-                    zone(theme.recoveryLow)
+                    zone(theme.warmup)
                         .frame(height: bandHeight * CGFloat(VitalBandScale.outerFraction))
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Radius.tag))
@@ -103,7 +103,7 @@ struct VitalsSummaryTile: View {
         switch interpretation {
         case .favorable: theme.success
         case .typical: theme.zone2
-        case .adverse: theme.recoveryLow
+        case .adverse: theme.warmup
         case .building, .unavailable: theme.textTertiary
         }
     }
