@@ -467,9 +467,21 @@ final class WatchLink: NSObject {
                 side2MiniReps: set.side2MiniReps,
                 plannedMiniSetCount: set.plannedMiniSetCount,
                 plannedMiniReps: set.plannedMiniReps,
-                microRestSeconds: we.microRestSeconds
+                microRestSeconds: we.microRestSeconds,
+                loadPrescriptionText: loadPrescriptionText(for: set)
             )
         }
+    }
+
+    private func loadPrescriptionText(for set: SetModel) -> String? {
+        guard set.loadPrescriptionMode == .percentEstimatedOneRepMax else { return nil }
+        guard let prescription = set.estimatedOneRepMaxPrescription else { return "% e1RM" }
+        let low = prescription.lowPercent.formatted(.number.precision(.fractionLength(0...1)))
+        if let high = prescription.highPercent {
+            let highText = high.formatted(.number.precision(.fractionLength(0...1)))
+            return "\(low)–\(highText)% e1RM"
+        }
+        return "\(low)% e1RM"
     }
 
     // MARK: - Send (phone → watch)

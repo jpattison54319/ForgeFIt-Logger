@@ -23,7 +23,11 @@ struct RoutineDuplicationTests {
         )
         let clusterSet = RoutineSetModel(
             userID: userID, position: 1, setType: .cluster,
-            targetWeight: 120, plannedMiniRepsJSON: "[3,3,3,3]"
+            targetWeight: 120,
+            loadPrescriptionMode: .percentEstimatedOneRepMax,
+            target1RMPercentLow: 87.5,
+            target1RMPercentHigh: 90,
+            plannedMiniRepsJSON: "[3,3,3,3]"
         )
         let workingSet = RoutineSetModel(
             userID: userID, position: 2, setType: .working,
@@ -102,6 +106,9 @@ struct RoutineDuplicationTests {
                 #expect(c.targetRepsLow == s.targetRepsLow)
                 #expect(c.targetRepsHigh == s.targetRepsHigh)
                 #expect(c.targetWeight == s.targetWeight)
+                #expect(c.loadPrescriptionMode == s.loadPrescriptionMode)
+                #expect(c.target1RMPercentLow == s.target1RMPercentLow)
+                #expect(c.target1RMPercentHigh == s.target1RMPercentHigh)
                 #expect(c.targetRPE == s.targetRPE)
                 #expect(c.targetRIR == s.targetRIR)
                 #expect(c.targetDurationSeconds == s.targetDurationSeconds)

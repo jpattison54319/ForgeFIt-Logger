@@ -223,7 +223,11 @@ enum ProgressionPlanner {
             && set.setType != .warmup
             && set.setType != .amrap
             && set.weightMode == .external {
-            if let weightKg { set.weight = weightKg }
+            // A percentage prescription is already an adaptive load rule.
+            // Never stack double progression on its immutable start snapshot.
+            if let weightKg, set.loadPrescriptionMode != .percentEstimatedOneRepMax {
+                set.weight = weightKg
+            }
             if let repsLow { set.reps = repsLow }
             set.recomputeDerivedMetrics()
         }

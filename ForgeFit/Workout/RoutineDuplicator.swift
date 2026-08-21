@@ -33,7 +33,11 @@ enum RoutineDuplicator {
                         RoutineSetModel(
                             userID: source.userID, position: s.position, setType: s.setType,
                             targetRepsLow: s.targetRepsLow, targetRepsHigh: s.targetRepsHigh,
-                            targetWeight: s.targetWeight, targetRPE: s.targetRPE,
+                            targetWeight: s.targetWeight,
+                            loadPrescriptionMode: s.loadPrescriptionMode,
+                            target1RMPercentLow: s.target1RMPercentLow,
+                            target1RMPercentHigh: s.target1RMPercentHigh,
+                            targetRPE: s.targetRPE,
                             targetRIR: s.targetRIR, targetDurationSeconds: s.targetDurationSeconds,
                             targetDistanceMeters: s.targetDistanceMeters,
                             plannedMiniSetCount: s.plannedMiniSetCount,

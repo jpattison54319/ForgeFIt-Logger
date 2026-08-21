@@ -82,6 +82,29 @@ struct RoutineSnapshotTests {
         #expect(r.exercises[0].sets[0].targetRepsLow == 8)
     }
 
+    @Test func adaptiveLoadEditsAreDetectedAndRestored() throws {
+        let context = ModelContext(try TestStore.makeContainer())
+        let r = routine(in: context)
+        let set = r.exercises[0].sets[0]
+        set.loadPrescriptionMode = .percentEstimatedOneRepMax
+        set.target1RMPercentLow = 67
+        set.target1RMPercentHigh = 72
+        try context.save()
+        let snapshot = RoutineSnapshot(of: r)
+
+        set.loadPrescriptionMode = .fixed
+        set.target1RMPercentLow = 85
+        set.target1RMPercentHigh = nil
+        try context.save()
+        #expect(snapshot != RoutineSnapshot(of: r))
+
+        snapshot.restore(onto: r, in: context)
+        #expect(set.loadPrescriptionMode == .percentEstimatedOneRepMax)
+        #expect(set.target1RMPercentLow == 67)
+        #expect(set.target1RMPercentHigh == 72)
+        #expect(RoutineSnapshot(of: r) == snapshot)
+    }
+
     /// The flow builder saves eagerly, so `yogaFlowJSON` MUST live in the
     /// snapshot: leaving it out made flow-only edits skip the discard prompt
     /// entirely AND made "Discard Changes" keep the edited flow.

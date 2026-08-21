@@ -233,6 +233,8 @@ struct DataExportFormatTests {
                             sets: [ExportRoutineSet(
                                 position: 0, setType: "working",
                                 targetRepsLow: 8, targetRepsHigh: 12, targetWeightKg: 100,
+                                loadPrescriptionModeRaw: LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue,
+                                target1RMPercentLow: 75, target1RMPercentHigh: 80,
                                 targetRPE: 8, plannedMiniReps: [12, 10, 8]
                             )]
                         ),
@@ -249,8 +251,14 @@ struct DataExportFormatTests {
         #expect(setRow[0] == "Base")
         #expect(setRow[1] == "Micro A")
         #expect(setRow[2] == "Push Day")
-        #expect(setRow[12] == "8" && setRow[13] == "12" && setRow[14] == "100")
-        #expect(setRow[19] == "12|10|8")
+        let columns = Dictionary(uniqueKeysWithValues: RoutineCSVExport.header.enumerated().map { ($1, $0) })
+        #expect(setRow[try #require(columns["target_reps_low"])] == "8")
+        #expect(setRow[try #require(columns["target_reps_high"])] == "12")
+        #expect(setRow[try #require(columns["target_weight_kg"])] == "100")
+        #expect(setRow[try #require(columns["load_prescription_mode"])] == LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue)
+        #expect(setRow[try #require(columns["target_1rm_percent_low"])] == "75")
+        #expect(setRow[try #require(columns["target_1rm_percent_high"])] == "80")
+        #expect(setRow[try #require(columns["planned_mini_reps"])] == "12|10|8")
 
         let emptyRoutine = parse(String(lines[2]))
         #expect(emptyRoutine[2] == "Sketch")

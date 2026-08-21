@@ -84,6 +84,8 @@ struct MyoRepSetLauncherCard: View {
                 progressSummary
             }
 
+            LiveLoadPrescriptionStrip(set: set, unit: displayUnit)
+
             HStack {
                 Spacer()
                 if actionMode == .editing {

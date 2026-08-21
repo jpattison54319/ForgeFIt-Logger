@@ -165,6 +165,7 @@ struct SetBlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             headerRow
+            LiveLoadPrescriptionStrip(set: set, unit: displayUnit)
             if isUnilateral { sideLabel(1) }
             if !isCluster { activationRow(side: 1) }
             if blockStarted || isCluster {

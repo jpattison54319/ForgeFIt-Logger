@@ -80,6 +80,9 @@ struct PlanSharingTests {
         #expect(document.folders.count == 2)
         #expect(document.routines.first?.blocks.count == 2)
         #expect(document.routines.first?.exercises.first?.sets.first?.targetDistanceMeters == 2_000)
+        #expect(document.routines.first?.exercises.first?.sets.first?.loadPrescriptionModeRaw == LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue)
+        #expect(document.routines.first?.exercises.first?.sets.first?.target1RMPercentLow == 82.5)
+        #expect(document.routines.first?.exercises.first?.sets.first?.target1RMPercentHigh == 87.5)
         #expect(standalone.routines.first?.folderID == nil)
         try PlanImportService.validate(standalone)
 
@@ -118,6 +121,9 @@ struct PlanSharingTests {
         #expect(importedSet.setType == .cluster)
         #expect(importedSet.plannedMiniReps == [3, 3, 3])
         #expect(importedSet.targetDistanceMeters == 2_000)
+        #expect(importedSet.loadPrescriptionMode == .percentEstimatedOneRepMax)
+        #expect(importedSet.target1RMPercentLow == 82.5)
+        #expect(importedSet.target1RMPercentHigh == 87.5)
         #expect(UserDefaults.standard.string(forKey: CyclePreferenceMigration.activeMesocycleKey) == "unchanged")
 
         let importedCustom = try #require(exercises.first { $0.name == "Sandbag Carry" })
@@ -358,6 +364,9 @@ struct PlanSharingTests {
             setType: .cluster,
             targetRepsLow: 9,
             targetWeight: 50,
+            loadPrescriptionMode: .percentEstimatedOneRepMax,
+            target1RMPercentLow: 82.5,
+            target1RMPercentHigh: 87.5,
             targetRPE: 8,
             targetDistanceMeters: 2_000,
             plannedMiniSetCount: 3,

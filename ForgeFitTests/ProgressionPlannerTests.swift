@@ -145,6 +145,53 @@ struct ProgressionPlannerTests {
         _ = container
     }
 
+    @Test func adaptiveLoadSnapshotWinsOverAnUnparkedWeightIncrease() throws {
+        let (container, context) = try TestStore.make()
+        let exerciseID = UUID()
+        let exercise = makeExercise(id: exerciseID)
+        context.insert(exercise)
+        let routine = makeRoutine(exerciseID: exerciseID)
+        context.insert(routine)
+        let lastWeightKg = WeightUnit.lb.kilograms(fromDisplayValue: 100)
+        completedHistoryWorkout(exerciseID: exerciseID, weight: lastWeightKg, reps: 10, in: context)
+        try context.save()
+
+        let workout = startWorkout(routine: routine, in: context)
+        let adaptiveWeightKg = 70.0
+        for set in workout.exercises[0].sets {
+            set.loadPrescriptionMode = .percentEstimatedOneRepMax
+            set.prescribed1RMPercentLow = 75
+            set.prescribed1RMBaselineKg = 100
+            set.prescribedLoadLowKg = adaptiveWeightKg
+            set.weight = adaptiveWeightKg
+        }
+
+        let previewed = ProgressionPlanner.preview(
+            routine: routine,
+            exercises: [exercise],
+            in: context,
+            parked: false
+        )
+        ProgressionPlanner.apply(
+            to: workout,
+            routine: routine,
+            exercises: [exercise],
+            in: context,
+            parked: false
+        )
+
+        let progressionWeight = try #require(previewed.first?.targetWeightKg)
+        #expect(progressionWeight != adaptiveWeightKg)
+        for set in workout.exercises[0].sets {
+            #expect(set.weight == adaptiveWeightKg)
+            #expect(set.loadPrescriptionMode == .percentEstimatedOneRepMax)
+            #expect(set.prescribed1RMPercentLow == 75)
+            #expect(set.prescribed1RMBaselineKg == 100)
+            #expect(set.prescribedLoadLowKg == adaptiveWeightKg)
+        }
+        _ = container
+    }
+
     // MARK: (b) bodyweight exercise → reps-only, sets untouched, preview matches
 
     @Test func bodyweightExerciseIsRepsOnlyAndLeavesSetsUntouched() throws {

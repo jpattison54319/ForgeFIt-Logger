@@ -56,7 +56,16 @@ struct DataExportTests {
         context.insert(macro)
         let meso = RoutineFolderModel(userID: userID, name: "Meso 1", parentID: macro.id)
         context.insert(meso)
-        let routineSet = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetRepsHigh: 12, targetWeight: 100)
+        let routineSet = RoutineSetModel(
+            userID: userID,
+            position: 0,
+            targetRepsLow: 8,
+            targetRepsHigh: 12,
+            targetWeight: 100,
+            loadPrescriptionMode: .percentEstimatedOneRepMax,
+            target1RMPercentLow: 75,
+            target1RMPercentHigh: 80
+        )
         let routineExercise = RoutineExerciseModel(userID: userID, exerciseID: lib.id, position: 0, sets: [routineSet])
         let routine = RoutineModel(userID: userID, name: "Push A", folderID: meso.id, exercises: [routineExercise])
         context.insert(routine)
@@ -115,6 +124,9 @@ struct DataExportTests {
         let exported = try #require(file.routines.routines.first { $0.name == "Push A" })
         #expect(exported.exercises.first?.name == "Bench Press")
         #expect(exported.exercises.first?.sets.first?.targetWeightKg == 100)
+        #expect(exported.exercises.first?.sets.first?.loadPrescriptionModeRaw == LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue)
+        #expect(exported.exercises.first?.sets.first?.target1RMPercentLow == 75)
+        #expect(exported.exercises.first?.sets.first?.target1RMPercentHigh == 80)
     }
 
     @Test func csvExportsWorkoutsAndRoutinesWithTombstonesDropped() async throws {

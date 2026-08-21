@@ -140,6 +140,12 @@ public enum BackupMapper {
             side2MiniRepsJSON: set.side2MiniRepsJSON,
             plannedMiniSetCount: set.plannedMiniSetCount,
             plannedMiniRepsJSON: set.plannedMiniRepsJSON,
+            prescribedLoadModeRaw: set.prescribedLoadModeRaw,
+            prescribed1RMPercentLow: set.prescribed1RMPercentLow,
+            prescribed1RMPercentHigh: set.prescribed1RMPercentHigh,
+            prescribed1RMBaselineKg: set.prescribed1RMBaselineKg,
+            prescribedLoadLowKg: set.prescribedLoadLowKg,
+            prescribedLoadHighKg: set.prescribedLoadHighKg,
             completedAt: set.completedAt,
             createdAt: set.createdAt,
             updatedAt: set.updatedAt
@@ -441,6 +447,13 @@ public enum BackupMapper {
                 set.side2MiniRepsJSON = backupSet.side2MiniRepsJSON
                 set.plannedMiniSetCount = backupSet.plannedMiniSetCount
                 set.plannedMiniRepsJSON = backupSet.plannedMiniRepsJSON
+                set.prescribedLoadModeRaw = backupSet.prescribedLoadModeRaw
+                    ?? LoadPrescriptionMode.fixed.rawValue
+                set.prescribed1RMPercentLow = backupSet.prescribed1RMPercentLow
+                set.prescribed1RMPercentHigh = backupSet.prescribed1RMPercentHigh
+                set.prescribed1RMBaselineKg = backupSet.prescribed1RMBaselineKg
+                set.prescribedLoadLowKg = backupSet.prescribedLoadLowKg
+                set.prescribedLoadHighKg = backupSet.prescribedLoadHighKg
                 set.completedAt = backupSet.completedAt
                 set.createdAt = backupSet.createdAt
                 set.updatedAt = backupSet.updatedAt

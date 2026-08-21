@@ -217,6 +217,9 @@ public enum PlanStoreSplitMigration {
                     setCopy.targetRepsLow = set.targetRepsLow
                     setCopy.targetRepsHigh = set.targetRepsHigh
                     setCopy.targetWeight = set.targetWeight
+                    setCopy.loadPrescriptionModeRaw = set.loadPrescriptionModeRaw
+                    setCopy.target1RMPercentLow = set.target1RMPercentLow
+                    setCopy.target1RMPercentHigh = set.target1RMPercentHigh
                     setCopy.targetRPE = set.targetRPE
                     setCopy.targetRIR = set.targetRIR
                     setCopy.targetDurationSeconds = set.targetDurationSeconds

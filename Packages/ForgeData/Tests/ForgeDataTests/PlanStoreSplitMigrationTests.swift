@@ -71,6 +71,9 @@ extension PersistenceSplitTests {
         routineSet.targetRepsLow = 6
         routineSet.targetRepsHigh = 8
         routineSet.targetWeight = 40
+        routineSet.loadPrescriptionMode = .percentEstimatedOneRepMax
+        routineSet.target1RMPercentLow = 80
+        routineSet.target1RMPercentHigh = 85
         routineSet.targetRPE = 8
         routineSet.targetRIR = 2
         routineSet.plannedMiniSetCount = 3
@@ -133,6 +136,9 @@ extension PersistenceSplitTests {
         #expect(set.targetRepsLow == 6)
         #expect(set.targetRIR == 2)
         #expect(set.plannedMiniRepsJSON == "[5,3,2]")
+        #expect(set.loadPrescriptionMode == .percentEstimatedOneRepMax)
+        #expect(set.target1RMPercentLow == 80)
+        #expect(set.target1RMPercentHigh == 85)
 
         let exercise = try #require(try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).first)
         #expect(exercise.id == ids.exerciseID)

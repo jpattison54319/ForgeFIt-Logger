@@ -246,6 +246,9 @@ public struct ExportRoutineSet: Codable, Sendable {
     public var targetRepsHigh: Int?
     /// Kilograms — the canonical storage unit.
     public var targetWeightKg: Double?
+    public var loadPrescriptionModeRaw: String?
+    public var target1RMPercentLow: Double?
+    public var target1RMPercentHigh: Double?
     public var targetRPE: Double?
     public var targetRIR: Int?
     public var targetDurationSeconds: Int?
@@ -258,6 +261,9 @@ public struct ExportRoutineSet: Codable, Sendable {
         targetRepsLow: Int? = nil,
         targetRepsHigh: Int? = nil,
         targetWeightKg: Double? = nil,
+        loadPrescriptionModeRaw: String? = nil,
+        target1RMPercentLow: Double? = nil,
+        target1RMPercentHigh: Double? = nil,
         targetRPE: Double? = nil,
         targetRIR: Int? = nil,
         targetDurationSeconds: Int? = nil,
@@ -269,6 +275,9 @@ public struct ExportRoutineSet: Codable, Sendable {
         self.targetRepsLow = targetRepsLow
         self.targetRepsHigh = targetRepsHigh
         self.targetWeightKg = targetWeightKg
+        self.loadPrescriptionModeRaw = loadPrescriptionModeRaw
+        self.target1RMPercentLow = target1RMPercentLow
+        self.target1RMPercentHigh = target1RMPercentHigh
         self.targetRPE = targetRPE
         self.targetRIR = targetRIR
         self.targetDurationSeconds = targetDurationSeconds

@@ -455,6 +455,10 @@ final class RoutineChangeSyncTests: XCTestCase {
         let context = container.mainContext
         let userID = UUID()
         let seeded = try seed(userID: userID, exerciseID: UUID(), in: context)
+        let authoredTarget = seeded.routine.exercises[0].sets[0]
+        authoredTarget.loadPrescriptionMode = .percentEstimatedOneRepMax
+        authoredTarget.target1RMPercentLow = 75
+        authoredTarget.target1RMPercentHigh = 80
         seeded.workout.exercises[0].exerciseID = UUID()
         // Performed something different from the standing target today.
         seeded.workout.exercises[0].sets[0].reps = 5
@@ -468,6 +472,9 @@ final class RoutineChangeSyncTests: XCTestCase {
         XCTAssertEqual(target.targetRepsLow, 8)
         XCTAssertEqual(target.targetRepsHigh, 12)
         XCTAssertEqual(target.targetWeight, 60)
+        XCTAssertEqual(target.loadPrescriptionMode, .percentEstimatedOneRepMax)
+        XCTAssertEqual(target.target1RMPercentLow, 75)
+        XCTAssertEqual(target.target1RMPercentHigh, 80)
     }
 
     func testCardioToStrengthSwapClearsIntervalPlanAndRebuildsTargets() throws {

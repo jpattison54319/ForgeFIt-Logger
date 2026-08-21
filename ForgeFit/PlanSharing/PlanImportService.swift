@@ -204,6 +204,10 @@ enum PlanImportService {
                                 targetRepsLow: set.targetRepsLow,
                                 targetRepsHigh: set.targetRepsHigh,
                                 targetWeight: set.targetWeight,
+                                loadPrescriptionMode: set.loadPrescriptionModeRaw
+                                    .flatMap(LoadPrescriptionMode.init(rawValue:)) ?? .fixed,
+                                target1RMPercentLow: set.target1RMPercentLow,
+                                target1RMPercentHigh: set.target1RMPercentHigh,
                                 targetRPE: set.targetRPE,
                                 targetRIR: set.targetRIR,
                                 targetDurationSeconds: set.targetDurationSeconds,
@@ -386,7 +390,17 @@ enum PlanImportService {
                     }
                 }
                 for set in row.sets {
+                    let percentageIsValid: Bool = if let low = set.target1RMPercentLow {
+                        EstimatedOneRepMaxPrescription(
+                            lowPercent: low,
+                            highPercent: set.target1RMPercentHigh
+                        ) != nil
+                    } else {
+                        set.target1RMPercentHigh == nil
+                    }
                     guard SetType(rawValue: set.setTypeRaw) != nil,
+                          set.loadPrescriptionModeRaw.map({ LoadPrescriptionMode(rawValue: $0) != nil }) ?? true,
+                          percentageIsValid,
                           nonnegative(set.targetRepsLow), nonnegative(set.targetRepsHigh),
                           nonnegative(set.targetWeight), nonnegative(set.targetDurationSeconds),
                           nonnegative(set.targetDistanceMeters), nonnegative(set.plannedMiniSetCount),

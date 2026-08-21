@@ -10,6 +10,7 @@ struct RoutineEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AppState.self) private var appState
     @Bindable var routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
@@ -199,7 +200,10 @@ struct RoutineEditorView: View {
     }
 
     private var mainScroll: some View {
-        ScrollView(showsIndicators: false) {
+        let bestEstimatedOneRepMaxByExercise = AdaptiveLoadResolver.bestEstimatedOneRepMaxByExercise(
+            workouts: allWorkouts
+        )
+        return ScrollView(showsIndicators: false) {
             // Lazy, matching the live logger: a plain VStack used to build
             // every ExerciseEditRow up front regardless of scroll position,
             // so any edit anywhere in the routine (add set, type a target,
@@ -228,6 +232,7 @@ struct RoutineEditorView: View {
                             routineExercise: re,
                             exercise: exercises.first { $0.id == re.exerciseID },
                             setupNote: setupNote(for: re.exerciseID),
+                            bestEstimatedOneRepMaxKg: bestEstimatedOneRepMaxByExercise[re.exerciseID],
                             availableSupersetGroups: supersetGroups,
                             onShowDetail: { detailExerciseID = $0 },
                             onAssignSuperset: { assignSuperset($0, to: re) },
@@ -235,6 +240,9 @@ struct RoutineEditorView: View {
                             onUngroupSuperset: { ungroupSuperset($0) },
                             onReplace: { replaceTarget = re },
                             onRemove: { remove(re) },
+                            onCreateEstimatedOneRepMax: {
+                                startEstimatedOneRepMaxAssessment(for: re.exerciseID)
+                            },
                             onReorderDragChanged: { fingerY in
                                 reorderDragChanged(id: re.id, fingerY: fingerY)
                             },
@@ -269,6 +277,24 @@ struct RoutineEditorView: View {
         // The target fields use number pads (no return key) — without
         // these there was no way to dismiss the keyboard at all.
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    private func startEstimatedOneRepMaxAssessment(for exerciseID: UUID) {
+        guard let exercise = exercises.first(where: { $0.id == exerciseID }),
+              AdaptiveLoadResolver.supportsPercentagePrescription(exercise) else { return }
+        // The assessment does not depend on the routine, but save the visible
+        // authoring state before leaving this editor so returning can never
+        // reveal older targets.
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
+        modelContext.saveUserChanges()
+        appState.requestStart {
+            _ = WorkoutFactory.startEstimatedOneRepMaxAssessment(
+                exercise: exercise,
+                in: modelContext,
+                onCommit: { _ in appState.showingLogger = true }
+            )
+        }
     }
 
     /// One continuous gesture from a row's reorder handle. UIKit calls this
@@ -678,6 +704,7 @@ private struct ExerciseEditRow: View {
     @Bindable var routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
     let setupNote: UserExerciseNoteModel?
+    let bestEstimatedOneRepMaxKg: Double?
     let availableSupersetGroups: [Int]
     let onShowDetail: (UUID) -> Void
     let onAssignSuperset: (Int?) -> Void
@@ -685,6 +712,7 @@ private struct ExerciseEditRow: View {
     let onUngroupSuperset: (Int) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
+    let onCreateEstimatedOneRepMax: () -> Void
     /// Streams the finger's global Y while the reorder handle is held and
     /// dragged — the parent collapses every row around the finger with this
     /// exercise scaled under it (see `ReorderCollapseOverlay`).
@@ -714,6 +742,18 @@ private struct ExerciseEditRow: View {
     private var isCardio: Bool { exercise?.isCardio == true }
     private var isYoga: Bool { exercise?.isYoga == true }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
+    private var supportsPercentagePrescription: Bool {
+        AdaptiveLoadResolver.supportsPercentagePrescription(exercise)
+    }
+    private var hasPercentagePrescription: Bool {
+        sortedSets.contains { $0.loadPrescriptionMode == .percentEstimatedOneRepMax }
+    }
+    private var hasIncompletePercentagePrescription: Bool {
+        sortedSets.contains {
+            $0.loadPrescriptionMode == .percentEstimatedOneRepMax
+                && $0.estimatedOneRepMaxPrescription == nil
+        }
+    }
     private var pinnedNote: UserExerciseNoteModel? {
         if let createdPinnedNote, !removedPinnedNoteIDs.contains(createdPinnedNote.id) {
             return createdPinnedNote
@@ -853,6 +893,12 @@ private struct ExerciseEditRow: View {
                         MuscleChips(muscles: CardioKind.infer(name: exercise.name, equipment: exercise.equipment).musclesWorked)
                     }
                 } else {
+                    if hasPercentagePrescription,
+                       hasIncompletePercentagePrescription
+                        || bestEstimatedOneRepMaxKg == nil
+                        || !supportsPercentagePrescription {
+                        adaptiveLoadNotice
+                    }
                     strengthSetEditor
                 }
             }
@@ -869,7 +915,7 @@ private struct ExerciseEditRow: View {
             HStack {
                 Text("SET").frame(width: 40, alignment: .leading)
                 Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
-                Text(displayUnit.suffix.uppercased()).frame(maxWidth: .infinity, alignment: .leading)
+                Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
                 Text("RPE").frame(width: 48, alignment: .leading)
             }
             .font(.tag).foregroundStyle(theme.textTertiary)
@@ -886,7 +932,10 @@ private struct ExerciseEditRow: View {
                     SetTargetEditRow(
                         set: set,
                         workingNumber: workingNumber(upTo: index),
+                        exercise: exercise,
                         displayUnit: displayUnit,
+                        bestEstimatedOneRepMaxKg: bestEstimatedOneRepMaxKg,
+                        supportsPercentagePrescription: supportsPercentagePrescription,
                         supportsResistanceBands: ResistanceBandSupport.isBandExercise(
                             name: exercise?.name,
                             equipment: exercise?.equipment
@@ -909,6 +958,59 @@ private struct ExerciseEditRow: View {
             }
             .buttonStyle(PressableButtonStyle())
         }
+    }
+
+    private var adaptiveLoadNotice: some View {
+        HStack(alignment: .top, spacing: Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(theme.warmup)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(adaptiveLoadNoticeTitle)
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                Text(adaptiveLoadNoticeMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if supportsPercentagePrescription && !hasIncompletePercentagePrescription {
+                    Button(action: onCreateEstimatedOneRepMax) {
+                        HStack(spacing: 5) {
+                            Text("Create Estimate")
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accentForeground)
+                        .minimumTouchTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Starts a guided three to eight rep estimate workout")
+                    .accessibilityIdentifier("create-1rm-estimate")
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Space.sm)
+        .background(theme.warmup.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var adaptiveLoadNoticeTitle: String {
+        if hasIncompletePercentagePrescription { return "Percentage needed" }
+        return supportsPercentagePrescription
+            ? "Estimated 1RM needed"
+            : "Percentage load unavailable"
+    }
+
+    private var adaptiveLoadNoticeMessage: String {
+        if hasIncompletePercentagePrescription {
+            return "Enter 1–100% or a range for each percentage set. Until then, its workout load stays blank."
+        }
+        return supportsPercentagePrescription
+            ? "You can still start. Percentage loads stay blank until this exercise has a completed estimate."
+            : "Percentage planning is available for external strength loads. Choose Fixed load for this exercise."
     }
 
     private var pinnedNoteEditor: some View {
@@ -1086,6 +1188,9 @@ private struct ExerciseEditRow: View {
             targetRepsLow: last?.targetRepsLow,
             targetRepsHigh: last?.targetRepsHigh,
             targetWeight: last?.targetWeight,
+            loadPrescriptionMode: last?.loadPrescriptionMode ?? .fixed,
+            target1RMPercentLow: last?.target1RMPercentLow,
+            target1RMPercentHigh: last?.target1RMPercentHigh,
             targetRPE: last?.targetRPE,
             targetDurationSeconds: carriedType == .amrap ? last?.targetDurationSeconds : nil,
             plannedMiniSetCount: carriedType == .myoRep ? (last?.plannedMiniSetCount ?? 1) : nil,
@@ -1111,7 +1216,16 @@ private struct ExerciseEditRow: View {
     private func addWarmupRamp() {
         guard !isCardio, !isYoga else { return }
         let config = WarmupRampConfigStore.load()
-        let topKilograms = sortedSets.first { $0.setType != .warmup }?.targetWeight
+        let topSet = sortedSets.first { $0.setType != .warmup }
+        let topKilograms: Double?
+        if let prescription = topSet?.estimatedOneRepMaxPrescription,
+           let exercise,
+           let baseline = bestEstimatedOneRepMaxKg,
+           let raw = prescription.resolving(estimatedOneRepMaxKg: baseline) {
+            topKilograms = AdaptiveLoadResolver.snap(raw.lowKg, for: exercise)
+        } else {
+            topKilograms = topSet?.targetWeight
+        }
         let topDisplay = topKilograms.map(displayUnit.displayValue(fromKilograms:)) ?? 0
         let step: Double = displayUnit == .lb ? 5 : 2.5
         let supportsAutoWeight = exercise?.defaultWeightMode == .external
@@ -1177,6 +1291,7 @@ private struct ExerciseEditRow: View {
 
     private func addDropSet(below set: RoutineSetModel, index: Int) {
         let mode = exercise?.defaultWeightMode ?? .external
+        let sourcePrescription = set.estimatedOneRepMaxPrescription
         let drop = RoutineSetModel(
             userID: ForgeFitDemo.userID,
             setType: .drop,
@@ -1188,6 +1303,9 @@ private struct ExerciseEditRow: View {
                 bodyweightKg: HealthMetricsStore.shared.latestBodyweight,
                 displayUnit: displayUnit
             ),
+            loadPrescriptionMode: sourcePrescription == nil ? .fixed : .percentEstimatedOneRepMax,
+            target1RMPercentLow: sourcePrescription.map { max(1, $0.lowPercent * 0.75) },
+            target1RMPercentHigh: sourcePrescription?.highPercent.map { max(1, $0 * 0.75) },
             targetRPE: set.targetRPE
         )
         modelContext.insert(drop)
@@ -1256,7 +1374,10 @@ private struct SetTargetEditRow: View {
     @Environment(\.theme) private var theme
     @Bindable var set: RoutineSetModel
     let workingNumber: Int
+    let exercise: ExerciseLibraryModel?
     let displayUnit: WeightUnit
+    let bestEstimatedOneRepMaxKg: Double?
+    let supportsPercentagePrescription: Bool
     let supportsResistanceBands: Bool
     let onChange: () -> Void
     let onSetType: (SetType) -> Void
@@ -1275,40 +1396,36 @@ private struct SetTargetEditRow: View {
     }
 
     private var standardRow: some View {
-        HStack(spacing: 8) {
-            if isDrop {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(style.color.opacity(0.7))
-                    .frame(width: 16)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if isDrop {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(style.color.opacity(0.7))
+                        .frame(width: 16)
+                }
+
+                typeMenu
+
+                if set.setType == .amrap {
+                    amrapTimeField
+                    loadField
+                } else {
+                    OptionalRepsTargetField(
+                        low: $set.targetRepsLow,
+                        high: $set.targetRepsHigh,
+                        onChange: onChange
+                    )
+                    loadField
+                    OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
+                }
             }
-
-            typeMenu
-
-            if set.setType == .amrap {
-                amrapTimeField
-                OptionalLoadField(
-                    placeholder: displayUnit.suffix,
-                    value: $set.targetWeight,
-                    unit: displayUnit,
-                    supportsResistanceBands: supportsResistanceBands,
-                    onChange: onChange
-                )
-            } else {
-                OptionalRepsTargetField(
-                    low: $set.targetRepsLow,
-                    high: $set.targetRepsHigh,
-                    onChange: onChange
-                )
-                OptionalLoadField(
-                    placeholder: displayUnit.suffix,
-                    value: $set.targetWeight,
-                    unit: displayUnit,
-                    supportsResistanceBands: supportsResistanceBands,
-                    onChange: onChange
-                )
-                    .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
-                OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
+            if let resolutionCaption {
+                Text(resolutionCaption)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(bestEstimatedOneRepMaxKg == nil ? theme.warmup : theme.textTertiary)
+                    .padding(.leading, isDrop ? 64 : 48)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 6)
@@ -1377,6 +1494,13 @@ private struct SetTargetEditRow: View {
                 }
             }
 
+            if let resolutionCaption {
+                Text(resolutionCaption)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(bestEstimatedOneRepMaxKg == nil ? theme.warmup : theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             WrapLayout(spacing: 7) {
                 if set.setType == .myoRep {
                     ForEach(0..<(set.plannedMiniSetCount ?? 0), id: \.self) { index in
@@ -1424,14 +1548,28 @@ private struct SetTargetEditRow: View {
     }
 
     private var weightField: some View {
-        OptionalLoadField(
-            placeholder: displayUnit.suffix,
-            value: $set.targetWeight,
+        loadField
+            .frame(width: supportsPercentagePrescription || set.loadPrescriptionMode == .percentEstimatedOneRepMax ? 132 : 64)
+    }
+
+    private var loadField: some View {
+        RoutineLoadPrescriptionField(
+            set: set,
             unit: displayUnit,
+            supportsPercentage: supportsPercentagePrescription,
             supportsResistanceBands: supportsResistanceBands,
             onChange: onChange
         )
-            .frame(width: 64)
+        .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
+    }
+
+    private var resolutionCaption: String? {
+        LoadPrescriptionPresentation.currentLoadLabel(
+            for: set,
+            exercise: exercise,
+            bestEstimatedOneRepMaxKg: bestEstimatedOneRepMaxKg,
+            unit: displayUnit
+        )
     }
 
     /// The live logger's mini-set pill, in placeholder form: same sage

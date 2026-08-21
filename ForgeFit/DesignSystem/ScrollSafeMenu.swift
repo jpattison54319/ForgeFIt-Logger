@@ -10,6 +10,7 @@ struct ScrollSafeMenuItem {
     /// that maps a superset name to the same color used in exercise headers.
     var iconColor: Color? = nil
     var isChecked = false
+    var isDisabled = false
     var isDestructive = false
     /// Non-empty turns this item into a submenu; `action` is ignored then.
     var children: [ScrollSafeMenuItem] = []
@@ -29,10 +30,13 @@ struct ScrollSafeMenuItem {
                 children: children.map(\.uiElement)
             )
         }
+        var attributes: UIMenuElement.Attributes = []
+        if isDisabled { attributes.insert(.disabled) }
+        if isDestructive { attributes.insert(.destructive) }
         return UIAction(
             title: title,
             image: uiImage,
-            attributes: isDestructive ? .destructive : [],
+            attributes: attributes,
             state: isChecked ? .on : .off,
             handler: { _ in action() }
         )

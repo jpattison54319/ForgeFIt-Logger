@@ -164,6 +164,8 @@ struct MyoRepActiveSetView: View {
                             }
                         }
 
+                        LiveLoadPrescriptionStrip(set: set, unit: displayUnit)
+
                         if showsWeight, supportsResistanceBands {
                             Card {
                                 HStack {

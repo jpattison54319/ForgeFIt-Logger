@@ -221,6 +221,12 @@ public struct BackupSet: Codable, Sendable {
     public var side2MiniRepsJSON: String?
     public var plannedMiniSetCount: Int?
     public var plannedMiniRepsJSON: String?
+    public var prescribedLoadModeRaw: String? = nil
+    public var prescribed1RMPercentLow: Double? = nil
+    public var prescribed1RMPercentHigh: Double? = nil
+    public var prescribed1RMBaselineKg: Double? = nil
+    public var prescribedLoadLowKg: Double? = nil
+    public var prescribedLoadHighKg: Double? = nil
     public var completedAt: Date?
     public var createdAt: Date
     public var updatedAt: Date

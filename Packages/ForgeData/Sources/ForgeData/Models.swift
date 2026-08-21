@@ -507,6 +507,12 @@ public final class RoutineSetModel {
     public var targetRepsLow: Int?
     public var targetRepsHigh: Int?
     public var targetWeight: Double?
+    /// Fixed-load routines keep their existing behavior. Percentage-based
+    /// routines resolve from completed exercise history only when a workout
+    /// starts, so the authored plan can adapt without mutating itself.
+    public var loadPrescriptionModeRaw: String = LoadPrescriptionMode.fixed.rawValue
+    public var target1RMPercentLow: Double?
+    public var target1RMPercentHigh: Double?
     public var targetRPE: Double?
     public var targetRIR: Int?
     public var targetDurationSeconds: Int?
@@ -532,6 +538,9 @@ public final class RoutineSetModel {
         targetRepsLow: Int? = nil,
         targetRepsHigh: Int? = nil,
         targetWeight: Double? = nil,
+        loadPrescriptionMode: LoadPrescriptionMode = .fixed,
+        target1RMPercentLow: Double? = nil,
+        target1RMPercentHigh: Double? = nil,
         targetRPE: Double? = nil,
         targetRIR: Int? = nil,
         targetDurationSeconds: Int? = nil,
@@ -547,6 +556,9 @@ public final class RoutineSetModel {
         self.targetRepsLow = targetRepsLow
         self.targetRepsHigh = targetRepsHigh
         self.targetWeight = targetWeight
+        self.loadPrescriptionModeRaw = loadPrescriptionMode.rawValue
+        self.target1RMPercentLow = target1RMPercentLow
+        self.target1RMPercentHigh = target1RMPercentHigh
         self.targetRPE = targetRPE
         self.targetRIR = targetRIR
         self.targetDurationSeconds = targetDurationSeconds
@@ -559,6 +571,20 @@ public final class RoutineSetModel {
     public var setType: SetType {
         get { SetType(rawValue: setTypeRaw) ?? .working }
         set { setTypeRaw = newValue.rawValue }
+    }
+
+    public var loadPrescriptionMode: LoadPrescriptionMode {
+        get { LoadPrescriptionMode(rawValue: loadPrescriptionModeRaw) ?? .fixed }
+        set { loadPrescriptionModeRaw = newValue.rawValue }
+    }
+
+    public var estimatedOneRepMaxPrescription: EstimatedOneRepMaxPrescription? {
+        guard loadPrescriptionMode == .percentEstimatedOneRepMax,
+              let target1RMPercentLow else { return nil }
+        return EstimatedOneRepMaxPrescription(
+            lowPercent: target1RMPercentLow,
+            highPercent: target1RMPercentHigh
+        )
     }
 
     /// Decoded view of `plannedMiniRepsJSON` (cluster segment rep goals).
@@ -958,6 +984,15 @@ public final class SetModel {
     /// Cluster plan carried from the routine: goal reps per segment,
     /// JSON-encoded `[Int]`. Ghost pills show the goals; tapping one logs it.
     public var plannedMiniRepsJSON: String?
+    /// Immutable prescription context captured when this workout started.
+    /// These are local training-log fields; the routine remains the synced
+    /// source of authored intent and later PRs never rewrite this snapshot.
+    public var prescribedLoadModeRaw: String = LoadPrescriptionMode.fixed.rawValue
+    public var prescribed1RMPercentLow: Double?
+    public var prescribed1RMPercentHigh: Double?
+    public var prescribed1RMBaselineKg: Double?
+    public var prescribedLoadLowKg: Double?
+    public var prescribedLoadHighKg: Double?
     public var effectiveLoad: Double?
     public var totalVolume: Double?
     public var estimated1RM: Double?
@@ -991,6 +1026,12 @@ public final class SetModel {
         sourceRoutineSetID: UUID? = nil,
         plannedMiniSetCount: Int? = nil,
         plannedMiniRepsJSON: String? = nil,
+        prescribedLoadMode: LoadPrescriptionMode = .fixed,
+        prescribed1RMPercentLow: Double? = nil,
+        prescribed1RMPercentHigh: Double? = nil,
+        prescribed1RMBaselineKg: Double? = nil,
+        prescribedLoadLowKg: Double? = nil,
+        prescribedLoadHighKg: Double? = nil,
         completedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -1019,6 +1060,12 @@ public final class SetModel {
         self.sourceRoutineSetID = sourceRoutineSetID
         self.plannedMiniSetCount = plannedMiniSetCount
         self.plannedMiniRepsJSON = plannedMiniRepsJSON
+        self.prescribedLoadModeRaw = prescribedLoadMode.rawValue
+        self.prescribed1RMPercentLow = prescribed1RMPercentLow
+        self.prescribed1RMPercentHigh = prescribed1RMPercentHigh
+        self.prescribed1RMBaselineKg = prescribed1RMBaselineKg
+        self.prescribedLoadLowKg = prescribedLoadLowKg
+        self.prescribedLoadHighKg = prescribedLoadHighKg
         self.completedAt = completedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -1074,6 +1121,20 @@ public final class SetModel {
             weightModeRaw = newValue.rawValue
             recomputeDerivedMetrics()
         }
+    }
+
+    public var estimatedOneRepMaxPrescription: EstimatedOneRepMaxPrescription? {
+        guard loadPrescriptionMode == .percentEstimatedOneRepMax,
+              let prescribed1RMPercentLow else { return nil }
+        return EstimatedOneRepMaxPrescription(
+            lowPercent: prescribed1RMPercentLow,
+            highPercent: prescribed1RMPercentHigh
+        )
+    }
+
+    public var loadPrescriptionMode: LoadPrescriptionMode {
+        get { LoadPrescriptionMode(rawValue: prescribedLoadModeRaw) ?? .fixed }
+        set { prescribedLoadModeRaw = newValue.rawValue }
     }
 
     public var domainEntry: SetEntry {

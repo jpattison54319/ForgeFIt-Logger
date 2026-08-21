@@ -1,3 +1,4 @@
+import ForgeCore
 import Foundation
 
 /// The routines CSV: one row per routine target set with the training-cycle
@@ -11,7 +12,8 @@ public enum RoutineCSVExport {
         "mesocycle", "microcycle", "routine", "routine_position", "routine_notes",
         "exercise", "exercise_position", "superset_group", "progression_rule", "exercise_notes",
         "set_position", "set_type", "target_reps_low", "target_reps_high",
-        "target_weight_kg", "target_rpe", "target_rir", "target_duration_seconds",
+        "target_weight_kg", "load_prescription_mode", "target_1rm_percent_low",
+        "target_1rm_percent_high", "target_rpe", "target_rir", "target_duration_seconds",
         "planned_mini_sets", "planned_mini_reps",
     ]
 
@@ -43,6 +45,9 @@ public enum RoutineCSVExport {
                         CSVWriter.number(set.targetRepsLow),
                         CSVWriter.number(set.targetRepsHigh),
                         CSVWriter.number(set.targetWeightKg),
+                        set.loadPrescriptionModeRaw ?? LoadPrescriptionMode.fixed.rawValue,
+                        CSVWriter.number(set.target1RMPercentLow),
+                        CSVWriter.number(set.target1RMPercentHigh),
                         CSVWriter.number(set.targetRPE),
                         CSVWriter.number(set.targetRIR),
                         CSVWriter.number(set.targetDurationSeconds),

@@ -348,6 +348,9 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     public var plannedMiniSetCount: Int?
     public var plannedMiniReps: [Int]?
     public var microRestSeconds: Int?
+    /// Compact authored context such as "82.5% e1RM". Additive optional so
+    /// mixed app/Watch versions continue to decode and log concrete loads.
+    public var loadPrescriptionText: String?
 
     public init(
         id: UUID,
@@ -366,7 +369,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         side2MiniReps: [Int]? = nil,
         plannedMiniSetCount: Int? = nil,
         plannedMiniReps: [Int]? = nil,
-        microRestSeconds: Int? = nil
+        microRestSeconds: Int? = nil,
+        loadPrescriptionText: String? = nil
     ) {
         self.id = id
         self.label = label
@@ -385,6 +389,7 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.plannedMiniSetCount = plannedMiniSetCount
         self.plannedMiniReps = plannedMiniReps
         self.microRestSeconds = microRestSeconds
+        self.loadPrescriptionText = loadPrescriptionText
     }
 
     public var setType: SetType {

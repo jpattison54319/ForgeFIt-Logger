@@ -617,11 +617,19 @@ struct WatchSetListView: View {
                             } label: {
                                 HStack(spacing: 8) {
                                     setBadge(set)
-                                    Text(setDescription(set))
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .monospacedDigit()
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.8)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(setDescription(set))
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .monospacedDigit()
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                        if let prescription = set.loadPrescriptionText {
+                                            Text(prescription)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
                                     Spacer()
                                     Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
                                         .font(.system(size: 18))

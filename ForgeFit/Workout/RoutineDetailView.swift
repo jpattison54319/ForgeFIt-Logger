@@ -31,6 +31,26 @@ struct RoutineDetailView: View {
     private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
+    private func unresolvedAdaptiveExerciseNames(
+        baselines: [UUID: Double]
+    ) -> [String] {
+        routine.exercises.compactMap { routineExercise in
+            guard routineExercise.sets.contains(where: {
+                $0.loadPrescriptionMode == .percentEstimatedOneRepMax
+            }) else { return nil }
+            let exercise = exercises.first { $0.id == routineExercise.exerciseID }
+            let hasIncompletePercentage = routineExercise.sets.contains {
+                $0.loadPrescriptionMode == .percentEstimatedOneRepMax
+                    && $0.estimatedOneRepMaxPrescription == nil
+            }
+            guard hasIncompletePercentage
+                    || !AdaptiveLoadResolver.supportsPercentagePrescription(exercise)
+                    || baselines[routineExercise.exerciseID] == nil else {
+                return nil
+            }
+            return exercise?.name ?? "Exercise"
+        }
+    }
     private var resolvedSetupNotes: [UserExerciseNoteModel] {
         Array(Dictionary(
             (storedSetupNotes + setupNotes)
@@ -49,6 +69,8 @@ struct RoutineDetailView: View {
     }
 
     var body: some View {
+        let baselines = AdaptiveLoadResolver.bestEstimatedOneRepMaxByExercise(workouts: workouts)
+        let unresolvedNames = unresolvedAdaptiveExerciseNames(baselines: baselines)
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 header
@@ -56,6 +78,10 @@ struct RoutineDetailView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(routine.name).font(.screenTitle).foregroundStyle(theme.textPrimary)
                     Text("Created by you").font(.system(size: 15)).foregroundStyle(theme.textSecondary)
+                }
+
+                if !unresolvedNames.isEmpty {
+                    adaptiveStartNotice(names: unresolvedNames)
                 }
 
                 PrimaryButton(title: "Start Routine") { start() }
@@ -83,7 +109,8 @@ struct RoutineDetailView: View {
                             RoutineExerciseSummary(
                                 routineExercise: routineExercise,
                                 exercise: exercises.first { $0.id == routineExercise.exerciseID },
-                                setupNote: setupNote(for: routineExercise.exerciseID)
+                                setupNote: setupNote(for: routineExercise.exerciseID),
+                                bestEstimatedOneRepMaxKg: baselines[routineExercise.exerciseID]
                             )
                         case .block(let block):
                             RoutineBlockSummary(block: block, exercises: exercises)
@@ -140,6 +167,35 @@ struct RoutineDetailView: View {
             }
         }
         .padding(.top, Space.sm)
+    }
+
+    private func adaptiveStartNotice(names: [String]) -> some View {
+        HStack(alignment: .top, spacing: Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(theme.warmup)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Adaptive loads need attention")
+                    .font(.bodyStrong)
+                    .foregroundStyle(theme.textPrimary)
+                Text("\(names.joined(separator: ", ")) will start with a blank load. You can still begin and enter it during the workout.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Review Load Plans") { editing = true }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.accentForeground)
+                    .minimumTouchTarget()
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("review-adaptive-loads")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Space.md)
+        .background(theme.warmup.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("adaptive-load-start-warning")
     }
 
     private var chartSection: some View {
@@ -383,6 +439,7 @@ private struct RoutineExerciseSummary: View {
     let routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
     let setupNote: UserExerciseNoteModel?
+    let bestEstimatedOneRepMaxKg: Double?
 
     private var sortedSets: [RoutineSetModel] { routineExercise.sets.sorted { $0.position < $1.position } }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
@@ -466,7 +523,7 @@ private struct RoutineExerciseSummary: View {
 
             HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
-                Text(displayUnit.suffix.uppercased()).frame(maxWidth: .infinity, alignment: .leading)
+                Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
                 Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
                 Text("EFFORT").frame(width: 64, alignment: .trailing)
             }
@@ -481,9 +538,15 @@ private struct RoutineExerciseSummary: View {
                         .foregroundStyle(set.setType == .working ? theme.textPrimary : style.color)
                         .frame(width: 44, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Fmt.load(set.targetWeight, unit: displayUnit))
+                        Text(loadPrimaryText(for: set))
                             .font(.rowValue)
                             .foregroundStyle(theme.textPrimary)
+                        if let adaptiveDetail = adaptiveDetailText(for: set) {
+                            Text(adaptiveDetail)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(bestEstimatedOneRepMaxKg == nil ? theme.warmup : theme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if set.setType != .working {
                             Text(style.label)
                                 .font(.system(size: 11, weight: .semibold))
@@ -504,12 +567,35 @@ private struct RoutineExerciseSummary: View {
                 .padding(.vertical, 2)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(
-                    "\(style.label), \(Fmt.load(set.targetWeight, unit: displayUnit)), "
+                    "\(style.label), \(accessibleLoadText(for: set)), "
                         + "\(RoutineSetPresentation.repsText(for: set)), "
                         + RoutineSetPresentation.effortText(for: set)
                 )
             }
         }
+    }
+
+    private func loadPrimaryText(for set: RoutineSetModel) -> String {
+        guard set.loadPrescriptionMode == .percentEstimatedOneRepMax else {
+            return Fmt.load(set.targetWeight, unit: displayUnit)
+        }
+        guard let prescription = set.estimatedOneRepMaxPrescription else { return "% e1RM" }
+        return LoadPrescriptionPresentation.percentLabel(prescription)
+    }
+
+    private func adaptiveDetailText(for set: RoutineSetModel) -> String? {
+        LoadPrescriptionPresentation.currentLoadLabel(
+            for: set,
+            exercise: exercise,
+            bestEstimatedOneRepMaxKg: bestEstimatedOneRepMaxKg,
+            unit: displayUnit
+        )
+    }
+
+    private func accessibleLoadText(for set: RoutineSetModel) -> String {
+        [loadPrimaryText(for: set), adaptiveDetailText(for: set)]
+            .compactMap { $0 }
+            .joined(separator: ", ")
     }
 
     private var restText: String {

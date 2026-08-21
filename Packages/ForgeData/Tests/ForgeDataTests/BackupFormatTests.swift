@@ -1,4 +1,5 @@
 import Foundation
+import ForgeCore
 import Testing
 @testable import ForgeData
 
@@ -74,6 +75,12 @@ import Testing
         set.side2MiniRepsJSON = "[4,2]"
         set.plannedMiniSetCount = 3
         set.plannedMiniRepsJSON = "[5,3,2]"
+        set.prescribedLoadModeRaw = LoadPrescriptionMode.percentEstimatedOneRepMax.rawValue
+        set.prescribed1RMPercentLow = 82.5
+        set.prescribed1RMPercentHigh = 87.5
+        set.prescribed1RMBaselineKg = 120
+        set.prescribedLoadLowKg = 100
+        set.prescribedLoadHighKg = 105
         set.completedAt = Date(timeIntervalSince1970: 1_700_000_500)
         // HEALTH SENTINEL
         set.bodyweightKg = 82.5432
@@ -202,6 +209,9 @@ import Testing
                 "isUnilateral", "implementWeight", "limbCount", "isEccentric", "isPaused",
                 "machineSettingsJSON", "sourceRoutineSetID", "miniRepsJSON", "side2Reps",
                 "side2MiniRepsJSON", "plannedMiniSetCount", "plannedMiniRepsJSON",
+                "prescribedLoadModeRaw",
+                "prescribed1RMPercentLow", "prescribed1RMPercentHigh", "prescribed1RMBaselineKg",
+                "prescribedLoadLowKg", "prescribedLoadHighKg",
                 "completedAt", "createdAt", "updatedAt"],
         "session": ["id", "workoutExerciseID", "workoutBlockID", "modality", "startedAt", "liveStartedAt", "endedAt",
                     "sourceDevice", "durationSeconds", "distanceMeters", "effort",
@@ -620,6 +630,12 @@ import Testing
         #expect(set.side2MiniRepsJSON == originalSet.side2MiniRepsJSON)
         #expect(set.plannedMiniSetCount == originalSet.plannedMiniSetCount)
         #expect(set.plannedMiniRepsJSON == originalSet.plannedMiniRepsJSON)
+        #expect(set.prescribedLoadModeRaw == originalSet.prescribedLoadModeRaw)
+        #expect(set.prescribed1RMPercentLow == originalSet.prescribed1RMPercentLow)
+        #expect(set.prescribed1RMPercentHigh == originalSet.prescribed1RMPercentHigh)
+        #expect(set.prescribed1RMBaselineKg == originalSet.prescribed1RMBaselineKg)
+        #expect(set.prescribedLoadLowKg == originalSet.prescribedLoadLowKg)
+        #expect(set.prescribedLoadHighKg == originalSet.prescribedLoadHighKg)
         #expect(set.bodyweightKg == nil)
 
         let session = try #require(restored.sessions.first)

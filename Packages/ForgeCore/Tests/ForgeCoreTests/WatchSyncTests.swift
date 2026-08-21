@@ -44,7 +44,8 @@ struct WatchSyncTests {
                                 side2MiniReps: [3, 2],
                                 plannedMiniSetCount: 4,
                                 plannedMiniReps: [3, 3, 3, 3],
-                                microRestSeconds: 15
+                                microRestSeconds: 15,
+                                loadPrescriptionText: "82.5–87.5% e1RM"
                             )
                         ]
                     )
@@ -90,7 +91,20 @@ struct WatchSyncTests {
         #expect(decodedSet.weightMode == .bodyweightAdded)
         #expect(decodedSet.isStructured)
         #expect(decodedSet.structuredProgress.miniReps == [3, 3, 2])
+        #expect(decodedSet.loadPrescriptionText == "82.5–87.5% e1RM")
         #expect(decoded.workout?.restOwnerID == setID)
+    }
+
+    @Test func legacySetWithoutLoadPrescriptionTextStillDecodes() throws {
+        let setID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let data = Data(
+            "{\"id\":\"\(setID.uuidString)\",\"label\":\"1\",\"completed\":false}".utf8
+        )
+
+        let decoded = try #require(WatchWire.decode(WatchSetSnapshot.self, from: data))
+
+        #expect(decoded.id == setID)
+        #expect(decoded.loadPrescriptionText == nil)
     }
 
     @Test func legacyRoutineSummaryWithoutAlternationFieldsStillDecodes() throws {

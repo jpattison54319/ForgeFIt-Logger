@@ -125,6 +125,10 @@ enum WorkoutFactory {
             sourceDevice: "iphone"
         )
         let exerciseByID = Dictionary(exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let completedHistory = ProgressionPlanner.completedHistory(in: persistenceContext)
+        let bestEstimatedOneRepMaxByExercise = AdaptiveLoadResolver.bestEstimatedOneRepMaxByExercise(
+            workouts: completedHistory
+        )
         let resolvedSetupNotes = setupNotes + ((try? persistenceContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? [])
         let effortPreferences = WorkoutEffortPolicy.current()
         var cardioSessions: [CardioSessionModel] = []
@@ -217,6 +221,20 @@ enum WorkoutFactory {
                 let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
+                        let prescription = target.estimatedOneRepMaxPrescription
+                        let adaptiveResolution: AdaptiveLoadResolution? = prescription.flatMap { prescription in
+                            guard let exercise,
+                                  let baseline = bestEstimatedOneRepMaxByExercise[exercise.id] else { return nil }
+                            return AdaptiveLoadResolver.resolve(
+                                prescription,
+                                exercise: exercise,
+                                baselineKg: baseline
+                            )
+                        }
+                        let usesAdaptiveLoad = target.loadPrescriptionMode == .percentEstimatedOneRepMax
+                        let plannedWeight = usesAdaptiveLoad
+                            ? adaptiveResolution?.loadLowKg
+                            : target.targetWeight
                         let effort = WorkoutEffortPolicy.initialEffort(
                             setType: target.setType,
                             targetRPE: target.targetRPE,
@@ -233,15 +251,21 @@ enum WorkoutFactory {
                             // mirror the logged segments. Plans ride the
                             // planned* fields as ghost targets instead.
                             reps: target.setType.isBlockType ? nil : target.targetRepsLow,
-                            weight: weightMode == .external ? target.targetWeight : nil,
+                            weight: weightMode == .external ? plannedWeight : nil,
                             rpe: effort.rpe,
                             rir: effort.rir,
                             durationSeconds: target.targetDurationSeconds,
-                            addedWeight: weightMode == .bodyweightAdded ? target.targetWeight : nil,
-                            assistanceWeight: weightMode == .bodyweightAssisted ? target.targetWeight : nil,
+                            addedWeight: weightMode == .bodyweightAdded ? plannedWeight : nil,
+                            assistanceWeight: weightMode == .bodyweightAssisted ? plannedWeight : nil,
                             sourceRoutineSetID: target.id,
                             plannedMiniSetCount: target.setType == .myoRep ? target.plannedMiniSetCount : nil,
-                            plannedMiniRepsJSON: target.setType == .cluster ? target.plannedMiniRepsJSON : nil
+                            plannedMiniRepsJSON: target.setType == .cluster ? target.plannedMiniRepsJSON : nil,
+                            prescribedLoadMode: target.loadPrescriptionMode,
+                            prescribed1RMPercentLow: prescription?.lowPercent,
+                            prescribed1RMPercentHigh: prescription?.highPercent,
+                            prescribed1RMBaselineKg: adaptiveResolution?.baselineKg,
+                            prescribedLoadLowKg: adaptiveResolution?.loadLowKg,
+                            prescribedLoadHighKg: adaptiveResolution?.loadHighKg
                         )
                     }
                 let workoutExercise = WorkoutExerciseModel(
@@ -290,6 +314,50 @@ enum WorkoutFactory {
             heldExerciseIDs: holds.ids, holdReasons: holds.reasons
         )
         prepare(workout, persistenceContext)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
+    }
+
+    /// Starts a conservative, single-exercise calibration session. It uses
+    /// the normal logger and finish pipeline so the completed working set
+    /// becomes an ordinary, auditable e1RM record rather than a second source
+    /// of strength truth.
+    @discardableResult
+    static func startEstimatedOneRepMaxAssessment(
+        exercise: ExerciseLibraryModel,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        guard AdaptiveLoadResolver.supportsPercentagePrescription(exercise) else { return nil }
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
+        let sets = [
+            SetModel(userID: ForgeFitDemo.userID, position: 0, setType: .warmup),
+            SetModel(userID: ForgeFitDemo.userID, position: 1, setType: .warmup),
+            SetModel(userID: ForgeFitDemo.userID, position: 2, setType: .working, rpe: 9, rir: 1),
+        ]
+        let workoutExercise = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: exercise.id,
+            notes: "Estimate set: use a controlled load for 3–8 clean reps, stop when form breaks, and keep about 1 rep in reserve. Use a spotter or safeties when appropriate.",
+            restSeconds: 180,
+            sets: sets
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Estimate 1RM · \(exercise.name)",
+            sourceDevice: "iphone-1rm-estimate",
+            exercises: [workoutExercise]
+        )
+        persistenceContext.insert(workout)
         return commit(
             workout,
             from: persistenceContext,

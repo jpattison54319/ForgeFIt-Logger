@@ -2829,6 +2829,14 @@ private struct ExerciseLogCard: View {
     }
 
     private func suggestedWeight(for set: SetModel, index: Int) -> Double? {
+        // Percentage prescriptions are resolved once when this workout is
+        // created. Their conservative lower bound must beat last-session
+        // fallback, otherwise a stronger new e1RM would leave the row showing
+        // yesterday's lighter load. A missing baseline intentionally stays
+        // blank and is explained by the visible prescription strip.
+        if set.loadPrescriptionMode == .percentEstimatedOneRepMax {
+            return set.prescribedLoadLowKg
+        }
         if progressionLeads(for: set) {
             return set.modeWeight ?? set.weight ?? previousSet(for: set, at: index).flatMap { $0.modeWeight ?? $0.weight }
         }
@@ -3465,6 +3473,8 @@ private struct SetRow: View {
         ) {
             VStack(alignment: .leading, spacing: 0) {
                 row
+                LiveLoadPrescriptionStrip(set: set, unit: displayUnit)
+                    .padding(.top, set.loadPrescriptionMode == .fixed ? 0 : 4)
                 if set.setType == .amrap && !isDone {
                     amrapStrip
                 }

@@ -45,6 +45,8 @@ struct MyoRepSetEditorView: View {
                 ScreenBackground()
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: Space.lg) {
+                        LiveLoadPrescriptionStrip(set: set, unit: displayUnit)
+
                         if showsWeight {
                             Card(padding: Space.lg) {
                                 VStack(alignment: .leading, spacing: Space.md) {

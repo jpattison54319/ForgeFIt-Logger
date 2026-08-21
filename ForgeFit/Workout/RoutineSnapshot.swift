@@ -16,6 +16,9 @@ struct RoutineSnapshot: Equatable {
         let targetRepsLow: Int?
         let targetRepsHigh: Int?
         let targetWeight: Double?
+        let loadPrescriptionModeRaw: String
+        let target1RMPercentLow: Double?
+        let target1RMPercentHigh: Double?
         let targetRPE: Double?
         let targetRIR: Int?
         let targetDurationSeconds: Int?
@@ -32,6 +35,9 @@ struct RoutineSnapshot: Equatable {
             targetRepsLow = set.targetRepsLow
             targetRepsHigh = set.targetRepsHigh
             targetWeight = set.targetWeight
+            loadPrescriptionModeRaw = set.loadPrescriptionModeRaw
+            target1RMPercentLow = set.target1RMPercentLow
+            target1RMPercentHigh = set.target1RMPercentHigh
             targetRPE = set.targetRPE
             targetRIR = set.targetRIR
             targetDurationSeconds = set.targetDurationSeconds
@@ -212,6 +218,9 @@ struct RoutineSnapshot: Equatable {
             model.targetRepsLow = snapshot.targetRepsLow
             model.targetRepsHigh = snapshot.targetRepsHigh
             model.targetWeight = snapshot.targetWeight
+            model.loadPrescriptionModeRaw = snapshot.loadPrescriptionModeRaw
+            model.target1RMPercentLow = snapshot.target1RMPercentLow
+            model.target1RMPercentHigh = snapshot.target1RMPercentHigh
             model.targetRPE = snapshot.targetRPE
             model.targetRIR = snapshot.targetRIR
             model.targetDurationSeconds = snapshot.targetDurationSeconds

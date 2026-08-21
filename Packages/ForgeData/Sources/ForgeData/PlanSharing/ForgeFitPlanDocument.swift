@@ -211,6 +211,9 @@ public struct SharedPlanRoutineSet: Codable, Equatable, Sendable {
     public var targetRepsLow: Int?
     public var targetRepsHigh: Int?
     public var targetWeight: Double?
+    public var loadPrescriptionModeRaw: String?
+    public var target1RMPercentLow: Double?
+    public var target1RMPercentHigh: Double?
     public var targetRPE: Double?
     public var targetRIR: Int?
     public var targetDurationSeconds: Int?
@@ -225,6 +228,9 @@ public struct SharedPlanRoutineSet: Codable, Equatable, Sendable {
         targetRepsLow: Int? = nil,
         targetRepsHigh: Int? = nil,
         targetWeight: Double? = nil,
+        loadPrescriptionModeRaw: String? = nil,
+        target1RMPercentLow: Double? = nil,
+        target1RMPercentHigh: Double? = nil,
         targetRPE: Double? = nil,
         targetRIR: Int? = nil,
         targetDurationSeconds: Int? = nil,
@@ -238,6 +244,9 @@ public struct SharedPlanRoutineSet: Codable, Equatable, Sendable {
         self.targetRepsLow = targetRepsLow
         self.targetRepsHigh = targetRepsHigh
         self.targetWeight = targetWeight
+        self.loadPrescriptionModeRaw = loadPrescriptionModeRaw
+        self.target1RMPercentLow = target1RMPercentLow
+        self.target1RMPercentHigh = target1RMPercentHigh
         self.targetRPE = targetRPE
         self.targetRIR = targetRIR
         self.targetDurationSeconds = targetDurationSeconds
