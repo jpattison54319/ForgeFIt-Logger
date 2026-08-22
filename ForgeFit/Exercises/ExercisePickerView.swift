@@ -75,6 +75,10 @@ struct ExercisePickerView: View {
     @State private var filteredBaseMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var searchSnapshotMemo = Memo<String, ExerciseLibrarySnapshot>()
     @State private var appliedInitialFilters = false
+    /// Drives the keyboard accessory. The search field lives in the navigation
+    /// bar drawer, so its dismiss control has to be app-owned — the same
+    /// affordance the live logger gives every set field.
+    @State private var keyboardVisible = false
 
     private var exerciseFingerprint: String {
         var liveCount = 0
@@ -256,6 +260,24 @@ struct ExercisePickerView: View {
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
+            .onKeyboardVisibilityChange($keyboardVisible)
+            // The search field sits in the navigation bar drawer, where the
+            // system supplies no return key that closes the keyboard. This is
+            // the live logger's accessory, in the same place, for the same
+            // reason.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if keyboardVisible {
+                    KeyboardAccessoryBar {
+                        CircleIconButton(
+                            systemImage: "keyboard.chevron.compact.down",
+                            label: "Dismiss keyboard",
+                            action: hideKeyboard
+                        )
+                        .accessibilityIdentifier("exercise-search-dismiss-keyboard")
+                        Spacer()
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
@@ -489,6 +511,9 @@ struct ExercisePickerView: View {
                 }
                 scrollTarget = nil
             }
+            // Reading the results is the point of typing; the keyboard covers
+            // most of them. Any drag on the list puts it away.
+            .scrollDismissesKeyboard(.immediately)
         }
     }
 
