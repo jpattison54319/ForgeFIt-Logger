@@ -70,6 +70,7 @@ struct WatchHomeView: View {
                             .font(.system(size: 15, weight: .semibold))
                     }
                     .listItemTint(WTheme.accent)
+                    .accessibilityIdentifier("watch-empty-workout")
                 } header: {
                     Text("Start")
                 }
@@ -100,6 +101,7 @@ struct WatchHomeView: View {
                                     }
                                 }
                             }
+                            .accessibilityIdentifier("watch-routine-\(routine.name)")
                         }
                     } header: {
                         Text("Routines")
@@ -114,6 +116,7 @@ struct WatchHomeView: View {
                 }
             }
             .navigationTitle("ForgeFit")
+            .accessibilityIdentifier("watch-home")
         }
     }
 }

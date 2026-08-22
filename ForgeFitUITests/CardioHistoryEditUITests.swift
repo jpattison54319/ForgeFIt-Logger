@@ -18,11 +18,28 @@ final class CardioHistoryEditUITests: XCTestCase {
     @MainActor
     func testAddDistanceToPastTreadmillRun() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store", "--seed-history", "-didOnboard", "YES",
             "-weightUnitRaw", "kg", "-initialTab", "profile", "-quickActionBubble.v1", "",
         ]
-        app.launch()
+        app.acceptanceLaunch()
+
+        let profileReceipt = element(app, "profile-exercises")
+        if !profileReceipt.waitForExistence(timeout: 45) {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "cardio-history-launch-failure"
+            screenshot.lifetime = .keepAlways
+            XCTContext.runActivity(named: "Capture launch failure") { activity in
+                activity.add(screenshot)
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "cardio-history-launch-accessibility"
+                tree.lifetime = .keepAlways
+                activity.add(tree)
+            }
+            XCTFail("Expected the seeded Profile dashboard after deterministic launch data completed.")
+            return
+        }
 
         // Profile → History. "See all" sits in the Workouts section header,
         // which remains off-screen until the lazy profile content is scrolled.
@@ -39,49 +56,62 @@ final class CardioHistoryEditUITests: XCTestCase {
         let seeAll = element(app, "profile-see-all-workouts")
         var swipes = 0
         while !(seeAll.exists && seeAll.isHittable), swipes < 14 {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
             swipes += 1
         }
         XCTAssertTrue(seeAll.isHittable, "Expected the profile workout list.")
-        seeAll.tap()
+        seeAll.acceptanceTap()
 
         let search = element(app, "history-search-field")
         XCTAssertTrue(search.waitForExistence(timeout: 8), "Expected the history search field.")
-        search.tap()
-        search.typeText("morning run #117")
+        search.acceptanceTap()
+        search.acceptanceTypeText("morning run #117")
 
         let row = element(app, "history-workout-Morning Run #117")
-        XCTAssertTrue(row.waitForExistence(timeout: 8), "Expected the seeded run in history results.")
-        row.tap()
+        if !row.waitForExistence(timeout: 8) {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "cardio-history-missing-seeded-row"
+            screenshot.lifetime = .keepAlways
+            XCTContext.runActivity(named: "Capture missing seeded history row") { activity in
+                activity.add(screenshot)
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "cardio-history-missing-seeded-row-accessibility"
+                tree.lifetime = .keepAlways
+                activity.add(tree)
+            }
+            XCTFail("Expected the seeded run in history results.")
+            return
+        }
+        row.acceptanceTap()
 
         // Detail → Edit workout opens the historical editor.
         let edit = app.buttons["Edit workout"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 8), "Expected the workout detail edit button.")
-        edit.tap()
+        edit.acceptanceTap()
 
         // The cardio card offers Edit in history mode now.
         let cardioEdit = element(app, "cardio-history-edit")
         XCTAssertTrue(cardioEdit.waitForExistence(timeout: 8), "Expected the editable cardio card.")
-        if !cardioEdit.isHittable { app.swipeUp() }
-        cardioEdit.tap()
+        if !cardioEdit.isHittable { app.acceptanceSwipeUp() }
+        cardioEdit.acceptanceTap()
 
         let distance = element(app, "cardio-field-distance")
         XCTAssertTrue(distance.waitForExistence(timeout: 5), "Expected the distance field.")
-        distance.tap()
-        distance.typeText("5.2")
+        distance.acceptanceTap()
+        distance.acceptanceTypeText("5.2")
         XCTAssertEqual(distance.value as? String, "5.2", "Decimal entry must survive typing.")
 
         // Done → the readout shows the added distance.
-        cardioEdit.tap()
+        cardioEdit.acceptanceTap()
         XCTAssertTrue(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS '5.2'")).firstMatch.waitForExistence(timeout: 5),
             "Expected the distance readout after editing."
         )
 
         // Close and reopen the editor — the edit persisted.
-        app.buttons["Close editor"].firstMatch.tap()
+        app.buttons["Close editor"].firstMatch.acceptanceTap()
         XCTAssertTrue(edit.waitForExistence(timeout: 8))
-        edit.tap()
+        edit.acceptanceTap()
         XCTAssertTrue(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS '5.2'")).firstMatch.waitForExistence(timeout: 8),
             "Expected the added distance to persist across editor sessions."

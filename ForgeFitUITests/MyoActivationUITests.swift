@@ -19,7 +19,7 @@ final class MyoActivationUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(element.isHittable, "Expected \(element) to become hittable.")
-        element.tap()
+        element.acceptanceTap()
     }
 
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
@@ -46,7 +46,7 @@ final class MyoActivationUITests: XCTestCase {
         let emptyAction = element(app, "start-empty-workout")
         XCTAssertTrue(emptyAction.waitForExistence(timeout: 10))
         if !emptyAction.isHittable, !emptyAction.frame.intersects(app.frame) {
-            for _ in 0..<3 where !emptyAction.isHittable { app.swipeUp() }
+            for _ in 0..<3 where !emptyAction.isHittable { app.acceptanceSwipeUp() }
         }
         tapWhenHittable(emptyAction, timeout: 15)
 
@@ -67,32 +67,32 @@ final class MyoActivationUITests: XCTestCase {
             ? app.searchFields.firstMatch
             : app.textFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 3))
-        search.tap()
-        search.typeText("Tricep push")
+        search.acceptanceTap()
+        search.acceptanceTypeText("Tricep push")
         XCTAssertTrue(
             element(app, "exercise-row-Triceps Pushdown").waitForExistence(timeout: 3),
             "Live-workout search should tolerate a missing trailing s in triceps."
         )
         let searchLength = (search.value as? String)?.count ?? 12
-        search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: searchLength))
-        search.typeText("Machine Chest")
+        search.acceptanceTypeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: searchLength))
+        search.acceptanceTypeText("Machine Chest")
 
         let exerciseRow = element(app, "exercise-row-Machine Chest Press")
         XCTAssertTrue(exerciseRow.waitForExistence(timeout: 3))
-        exerciseRow.tap()
+        exerciseRow.acceptanceTap()
 
         let confirm = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH 'Add 1 exercise'")
         ).firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 3))
-        confirm.tap()
+        confirm.acceptanceTap()
 
         let typeMenu = element(app, "set-type-menu")
         XCTAssertTrue(typeMenu.waitForExistence(timeout: 5))
-        typeMenu.tap()
+        typeMenu.acceptanceTap()
         let myo = app.buttons["Myo-reps"].firstMatch
         XCTAssertTrue(myo.waitForExistence(timeout: 3))
-        myo.tap()
+        myo.acceptanceTap()
 
         let startMyoSet = element(app, "start-myo-rep-set")
         XCTAssertTrue(
@@ -117,12 +117,13 @@ final class MyoActivationUITests: XCTestCase {
     @MainActor
     func testFocusedMyoFlowLogsFinishesAndEdits() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store", "--skip-onboarding",
             "-didOnboard", "YES", "-initialTab", "home",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         makeReadyMyoSet(in: app)
         tapWhenHittable(element(app, "start-myo-rep-set"))
@@ -149,7 +150,7 @@ final class MyoActivationUITests: XCTestCase {
         let fanStart = activationRepsField.coordinate(
             withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)
         )
-        fanStart.press(
+        fanStart.acceptancePress(
             forDuration: 0.55,
             thenDragTo: fanStart.withOffset(CGVector(dx: 0, dy: 64)),
             withVelocity: .fast,
@@ -166,7 +167,7 @@ final class MyoActivationUITests: XCTestCase {
         XCTAssertEqual(activationRepsField.value as? String, "1")
 
         activationRepsField.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.7)
+            .acceptancePress(forDuration: 0.7)
         XCTAssertFalse(
             app.keyboards.firstMatch.exists,
             "A Myo-rep field hold should keep the quick-increment gesture instead of opening the keyboard."
@@ -242,12 +243,13 @@ final class MyoActivationUITests: XCTestCase {
     @MainActor
     func testDismissedMyoProgressResumesWithoutCompleting() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store", "--skip-onboarding",
             "-didOnboard", "YES", "-initialTab", "home",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         makeReadyMyoSet(in: app)
         tapWhenHittable(element(app, "start-myo-rep-set"))

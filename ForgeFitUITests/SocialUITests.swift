@@ -15,7 +15,7 @@ final class SocialUITests: XCTestCase {
         while !(element.exists && element.isHittable), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        element.tap()
+        element.acceptanceTap()
     }
 
     /// Scrolls the element into view (friends sit below the profile card /
@@ -23,15 +23,16 @@ final class SocialUITests: XCTestCase {
     private func scrollToTap(_ element: XCUIElement, in app: XCUIApplication, maxSwipes: Int = 6) {
         XCTAssertTrue(element.waitForExistence(timeout: 8), "expected element to exist before scrolling")
         var swipes = 0
-        while !element.isHittable, swipes < maxSwipes { app.swipeUp(velocity: .fast); swipes += 1 }
+        while !element.isHittable, swipes < maxSwipes { app.acceptanceSwipeUp(velocity: .fast); swipes += 1 }
         tapWhenReady(element)
     }
 
     @MainActor
     func testOptInThenVisitFriendProfile() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = ["--reset-store", "--mock-social", "-social", "YES", "-didOnboard", "YES", "-weightUnitRaw", "lb"]
-        app.launch()
+        app.acceptanceLaunch()
 
         // Profile tab → Community tile.
         let profileTab = app.buttons["Profile"].firstMatch
@@ -40,7 +41,7 @@ final class SocialUITests: XCTestCase {
 
         let community = app.descendants(matching: .any)["dashboard-community"].firstMatch
         var scrolls = 0
-        while !community.isHittable, scrolls < 6 { app.swipeUp(velocity: .fast); scrolls += 1 }
+        while !community.isHittable, scrolls < 6 { app.acceptanceSwipeUp(velocity: .fast); scrolls += 1 }
         XCTAssertTrue(community.waitForExistence(timeout: 5), "Expected the Community dashboard tile.")
         tapWhenReady(community)
 
@@ -53,7 +54,7 @@ final class SocialUITests: XCTestCase {
         let handleField = app.textFields["social-handle-field"].firstMatch
         XCTAssertTrue(handleField.waitForExistence(timeout: 8), "Expected the opt-in handle field.")
         tapWhenReady(handleField)
-        handleField.typeText("demoathlete")
+        handleField.acceptanceTypeText("demoathlete")
 
         let confirm = app.descendants(matching: .any)["social-optin-confirm"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))

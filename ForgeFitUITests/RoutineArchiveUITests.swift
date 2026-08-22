@@ -17,8 +17,9 @@ final class RoutineArchiveUITests: XCTestCase {
     @MainActor
     func testArchiveAndRestoreRoutineRoundTrip() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg", "-initialTab", "workout"]
-        app.launch()
+        app.acceptanceLaunch()
 
         // The seeded starter routine is the archive subject.
         let routineMenu = app.buttons.matching(identifier: "routine-menu-Full Body A").firstMatch
@@ -26,30 +27,30 @@ final class RoutineArchiveUITests: XCTestCase {
         // The 26.5 runtime can report a validly-framed glass control as
         // non-hittable (proxy-node quirk); a coordinate tap sidesteps it.
         if routineMenu.isHittable {
-            routineMenu.tap()
+            routineMenu.acceptanceTap()
         } else {
-            routineMenu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            routineMenu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).acceptanceTap()
         }
 
         let archiveAction = app.buttons["Archive"]
         XCTAssertTrue(archiveAction.waitForExistence(timeout: 3), "Expected the Archive option in the routine menu.")
-        archiveAction.tap()
+        archiveAction.acceptanceTap()
 
         // The routine leaves the live list and the pinned entry row appears.
         let archiveRow = element(app, "workout-archive-row")
         XCTAssertTrue(archiveRow.waitForExistence(timeout: 3), "Expected the Archive row once something is archived.")
         XCTAssertFalse(element(app, "start-routine-Full Body A").exists, "Expected the archived routine hidden from the live list.")
 
-        if !archiveRow.isHittable { app.swipeUp() }
-        archiveRow.tap()
+        if !archiveRow.isHittable { app.acceptanceSwipeUp() }
+        archiveRow.acceptanceTap()
 
         let archivedItem = element(app, "archive-item-Full Body A")
         XCTAssertTrue(archivedItem.waitForExistence(timeout: 3), "Expected the routine in the Archive screen.")
 
-        element(app, "archive-restore-Full Body A").tap()
+        element(app, "archive-restore-Full Body A").acceptanceTap()
         XCTAssertFalse(element(app, "archive-item-Full Body A").waitForExistence(timeout: 2), "Expected the item gone after restore.")
 
-        app.buttons["Back"].firstMatch.tap()
+        app.buttons["Back"].firstMatch.acceptanceTap()
 
         XCTAssertTrue(element(app, "start-routine-Full Body A").waitForExistence(timeout: 3), "Expected the restored routine back on the Workout tab.")
         XCTAssertFalse(element(app, "workout-archive-row").exists, "Expected the Archive row gone once the archive is empty.")

@@ -12,7 +12,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
 
         let history = app.buttons["profile-microcycle-history"].firstMatch
         XCTAssertTrue(history.waitForExistence(timeout: 10))
-        history.tap()
+        history.acceptanceTap()
 
         XCTAssertTrue(app.navigationBars["Microcycle History"].waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(app.staticTexts.matching(
@@ -25,7 +25,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH 'microcycle-history-window-'")
         ).firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 5))
-        window.tap()
+        window.acceptanceTap()
 
         XCTAssertTrue(app.staticTexts["Workouts"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["microcycle-log-rest-day"].exists)
@@ -37,11 +37,11 @@ final class MicrocycleTrackingUITests: XCTestCase {
         let app = launch(initialTab: "workout")
         let options = app.buttons["Folder options for Conditioning Cycle"].firstMatch
         XCTAssertTrue(options.waitForExistence(timeout: 10))
-        options.tap()
+        options.acceptanceTap()
 
         let activate = app.buttons["Set as Active Microcycle"].firstMatch
         XCTAssertTrue(activate.waitForExistence(timeout: 3))
-        activate.tap()
+        activate.acceptanceTap()
 
         XCTAssertTrue(app.staticTexts["Track \"Conditioning Cycle\"?"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts.matching(
@@ -49,7 +49,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
         ).firstMatch.exists)
         let target = app.buttons["Set Day Target"].firstMatch
         XCTAssertTrue(target.exists)
-        target.tap()
+        target.acceptanceTap()
 
         XCTAssertTrue(app.navigationBars["Conditioning Cycle"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Each cycle lasts this many calendar days before the next one begins."].exists)
@@ -63,11 +63,11 @@ final class MicrocycleTrackingUITests: XCTestCase {
         let app = launch(initialTab: "workout")
         let progress = app.descendants(matching: .any)["microcycle-folder-progress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
-        progress.tap()
+        progress.acceptanceTap()
 
         let previous = app.buttons["microcycle-previous-window-1"].firstMatch
         scrollToHittable(previous, in: app)
-        previous.tap()
+        previous.acceptanceTap()
 
         XCTAssertTrue(app.staticTexts["Workouts"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["microcycle-log-rest-day"].exists)
@@ -82,19 +82,19 @@ final class MicrocycleTrackingUITests: XCTestCase {
         )
         let progress = app.descendants(matching: .any)["microcycle-folder-progress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
-        progress.tap()
+        progress.acceptanceTap()
 
         let stop = app.buttons["stop-microcycle-tracking"].firstMatch
         scrollToHittable(stop, in: app)
-        stop.tap()
+        stop.acceptanceTap()
         let confirm = app.buttons["Stop Tracking"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 3))
-        confirm.tap()
+        confirm.acceptanceTap()
 
         XCTAssertTrue(app.staticTexts["Microcycle history saved"].waitForExistence(timeout: 5))
         let viewHistory = app.buttons["View History"].firstMatch
         XCTAssertTrue(viewHistory.waitForExistence(timeout: 3))
-        viewHistory.tap()
+        viewHistory.acceptanceTap()
 
         XCTAssertTrue(app.navigationBars["Microcycle History"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.navigationBars["Microcycle History"].exists)
@@ -106,6 +106,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
         additionalArguments: [String] = []
     ) -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "--seed-microcycle-tracking",
@@ -113,7 +114,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
             "-initialTab", initialTab,
             "-weightUnitRaw", "kg",
         ] + additionalArguments
-        app.launch()
+        app.acceptanceLaunch()
         return app
     }
 
@@ -124,7 +125,7 @@ final class MicrocycleTrackingUITests: XCTestCase {
     ) {
         let deadline = Date().addingTimeInterval(timeout)
         while !(element.exists && element.isHittable), Date() < deadline {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
         }
         XCTAssertTrue(element.exists && element.isHittable)
     }

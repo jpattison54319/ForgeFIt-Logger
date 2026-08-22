@@ -18,13 +18,14 @@ final class QuickActionsBubbleUITests: XCTestCase {
     /// clear the stored pref via `--reset-quick-actions` instead.
     private func launchApp(initialTab: String? = nil, seedDefaultActions: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         var args = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
         args += seedDefaultActions ? ["-quickActionBubble.v1", ""] : ["--reset-quick-actions"]
         if let initialTab {
             args += ["-initialTab", initialTab]
         }
         app.launchArguments = args
-        app.launch()
+        app.acceptanceLaunch()
         return app
     }
 
@@ -46,7 +47,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
         while !el.isHittable && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        el.tap()
+        el.acceptanceTap()
     }
 
     /// The bubble is root-level chrome: it must work from any tab, not just
@@ -57,7 +58,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5), "Expected the quick-actions trigger on Insights.")
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let emptyAction = button(app, "quick-action-empty")
         XCTAssertTrue(emptyAction.waitForExistence(timeout: 3), "Expected the fan to expose the empty-workout bubble.")
@@ -74,7 +75,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let emptyAction = button(app, "quick-action-empty")
         XCTAssertTrue(emptyAction.waitForExistence(timeout: 3))
@@ -95,11 +96,11 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let scrim = button(app, "quick-actions-scrim")
         XCTAssertTrue(scrim.waitForExistence(timeout: 3), "Expected the dimmed scrim behind the open fan.")
-        scrim.tap()
+        scrim.acceptanceTap()
 
         // Collapse morphs the dismiss control back into the trigger — its
         // reappearance IS the collapsed state.
@@ -128,7 +129,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
             } else {
                 let scrim = button(app, "quick-actions-scrim")
                 XCTAssertTrue(scrim.waitForExistence(timeout: 3))
-                scrim.tap()
+                scrim.acceptanceTap()
             }
 
             XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected collapsed trigger in cycle \(cycle).")
@@ -155,17 +156,17 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.press(forDuration: 0.8)
+        trigger.acceptancePress(forDuration: 0.8)
 
         let done = button(app, "quick-actions-editor-done")
         XCTAssertTrue(done.waitForExistence(timeout: 3), "Expected the editor sheet from a trigger long-press.")
-        done.tap()
+        done.acceptanceTap()
 
         // If the hold's release had also fired the Button, the fan would be
         // open now and the trigger replaced by the dismiss control.
         XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected the menu still collapsed after the editor closes.")
 
-        trigger.tap()
+        trigger.acceptanceTap()
         XCTAssertTrue(element(app, "quick-action-empty").waitForExistence(timeout: 3),
                       "Expected a plain tap to still expand the fan after a long-press cycle.")
         tapWhenHittable(button(app, "quick-actions-dismiss"))
@@ -180,15 +181,15 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let dismiss = button(app, "quick-actions-dismiss")
         XCTAssertTrue(dismiss.waitForExistence(timeout: 3))
-        dismiss.press(forDuration: 0.8)
+        dismiss.acceptancePress(forDuration: 0.8)
 
         let done = button(app, "quick-actions-editor-done")
         XCTAssertTrue(done.waitForExistence(timeout: 3), "Expected the editor from holding the expanded dismiss control.")
-        done.tap()
+        done.acceptanceTap()
 
         // The fan collapsed behind the editor, so dismissal lands on the
         // collapsed trigger — never a stale fan.
@@ -213,7 +214,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
             accuracy: 1.5,
             "The persistent fan must preserve the trigger's original trailing inset."
         )
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let edit = button(app, "quick-actions-edit")
         XCTAssertTrue(edit.waitForExistence(timeout: 3), "Expected a visible Edit action in the open fan.")
@@ -263,17 +264,17 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.press(forDuration: 0.8)
+        trigger.acceptancePress(forDuration: 0.8)
 
         let poolRow = button(app, "quick-actions-pool-cardio-cycle")
         XCTAssertTrue(poolRow.waitForExistence(timeout: 3), "Expected the cardio pool row in the editor.")
-        if !poolRow.isHittable { app.swipeUp() }
-        poolRow.tap()
+        if !poolRow.isHittable { app.acceptanceSwipeUp() }
+        poolRow.acceptanceTap()
 
         XCTAssertTrue(element(app, "quick-actions-editor-row-cardio:cycle").waitForExistence(timeout: 3),
                       "Expected the added action to appear in the current list (pool taps must work in the editing List).")
 
-        button(app, "quick-actions-editor-done").tap()
+        button(app, "quick-actions-editor-done").acceptanceTap()
         XCTAssertTrue(trigger.waitForExistence(timeout: 3))
         tapWhenHittable(trigger)
         XCTAssertTrue(element(app, "quick-action-empty").waitForExistence(timeout: 3),
@@ -297,7 +298,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         let trigger = button(app, "quick-actions-trigger")
         XCTAssertTrue(trigger.waitForExistence(timeout: 5))
-        trigger.tap()
+        trigger.acceptanceTap()
 
         let weight = button(app, "quick-action-bodyweight")
         XCTAssertTrue(weight.waitForExistence(timeout: 3))
@@ -305,7 +306,7 @@ final class QuickActionsBubbleUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "log-weight-field").waitForExistence(timeout: 3),
                       "Expected the root log-weight sheet from the bubble.")
-        button(app, "log-weight-cancel").tap()
+        button(app, "log-weight-cancel").acceptanceTap()
         XCTAssertTrue(trigger.waitForExistence(timeout: 3), "Expected the collapsed bubble after cancelling the sheet.")
     }
 }

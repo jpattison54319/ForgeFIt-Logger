@@ -2,10 +2,10 @@
 # The CommandLineTools toolchain does not expose XCTest to SwiftPM, so package
 # tests use the full Xcode toolchain.
 
-DEVELOPER_DIR := /Applications/Xcode.app/Contents/Developer
+DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 export DEVELOPER_DIR
 
-.PHONY: test-core build-core test-data build-data build-stubs test test-app build-ios build-watch
+.PHONY: test-core build-core test-data build-data build-stubs test test-app test-acceptance test-acceptance-watch test-acceptance-contracts test-acceptance-all acceptance-inventory acceptance-surfaces acceptance-boundaries acceptance-judge build-ios build-watch acceptance-report
 
 test-core:
 	cd Packages/ForgeCore && swift test
@@ -35,6 +35,38 @@ test: test-core test-data build-stubs
 # outright with "runner never established connection" (the 2026-07-14 hang).
 test-app:
 	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -only-testing:ForgeFitTests
+
+test-acceptance:
+	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -only-testing:ForgeFitUITests/AcceptanceSmokeUITests/testRepresentativeAppTour -parallel-testing-enabled NO
+
+test-acceptance-watch:
+	./scripts/run_acceptance_watch.sh
+
+test-acceptance-contracts:
+	cd Packages/ForgeCore && swift test --filter WatchSyncTests
+
+test-acceptance-all:
+	@contract_exit=0; (cd Packages/ForgeCore && swift test --filter WatchSyncTests) || contract_exit=$$?; \
+	ios_exit=0; ./scripts/run_acceptance_all.sh || ios_exit=$$?; \
+	watch_exit=0; ./scripts/run_acceptance_watch.sh || watch_exit=$$?; \
+	if [ $$contract_exit -ne 0 ] || [ $$ios_exit -ne 0 ] || [ $$watch_exit -ne 0 ]; then exit 1; fi
+
+acceptance-inventory:
+	python3 scripts/acceptance_inventory.py --json-out /tmp/forgefit-acceptance/inventory.json --markdown-out /tmp/forgefit-acceptance/inventory.md
+
+acceptance-surfaces:
+	python3 scripts/acceptance_surface_inventory.py --json-out /tmp/forgefit-acceptance/surface-inventory.json --markdown-out /tmp/forgefit-acceptance/surface-inventory.md
+
+acceptance-boundaries:
+	python3 scripts/acceptance_boundary_audit.py --json-out /tmp/forgefit-acceptance/boundary-audit.json --markdown-out /tmp/forgefit-acceptance/boundary-audit.md
+
+acceptance-judge:
+	@test -n "$(RUN)" || (echo "Usage: make acceptance-judge RUN=/path/to/run" && exit 2)
+	python3 scripts/acceptance_judge.py "$(RUN)"
+
+acceptance-report:
+	@test -n "$(RUN)" || (echo "Usage: make acceptance-report RUN=/path/to/run" && exit 2)
+	python3 scripts/acceptance_report.py "$(RUN)" $(if $(RESPONSE),--judge-response "$(RESPONSE)",)
 
 build-ios:
 	xcodebuild -project ForgeFit.xcodeproj -scheme ForgeFit -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

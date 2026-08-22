@@ -10,3 +10,7 @@ xcuserdata/
 *.xcodeproj/xcuserdata/
 .env
 .env.*
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc

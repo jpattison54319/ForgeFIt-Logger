@@ -4,8 +4,9 @@ final class PersistenceRecoveryUITests: XCTestCase {
     @MainActor
     func testUnreadableStoreShowsPreservingRecoveryPathInsteadOfCrashing() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = ["--simulate-persistence-failure"]
-        app.launch()
+        app.acceptanceLaunch()
 
         let title = app.staticTexts["ForgeFit couldn't open your data"]
         XCTAssertTrue(title.waitForExistence(timeout: 8))

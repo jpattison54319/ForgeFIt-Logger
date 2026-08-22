@@ -41,7 +41,7 @@ final class RoutineHierarchyUITests: XCTestCase {
         let app = launch(with: "--seed-routine-hierarchy-nested")
         let organize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(organize.waitForExistence(timeout: 8))
-        organize.tap()
+        organize.acceptanceTap()
         XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Macro 1"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Hybrid Athlete"].firstMatch.exists)
@@ -53,22 +53,22 @@ final class RoutineHierarchyUITests: XCTestCase {
         let app = launch(with: "--seed-routine-hierarchy-nested")
         let organize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(organize.waitForExistence(timeout: 8))
-        organize.tap()
+        organize.acceptanceTap()
 
         let moveChild = app.buttons["Placement options for folder Hybrid Athlete"].firstMatch
         XCTAssertTrue(moveChild.waitForExistence(timeout: 3))
         XCTAssertGreaterThanOrEqual(moveChild.frame.width, 44)
         XCTAssertGreaterThanOrEqual(moveChild.frame.height, 44)
-        moveChild.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+        moveChild.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).acceptanceTap()
         let topLevel = app.buttons["Top Level"].firstMatch
         XCTAssertTrue(topLevel.waitForExistence(timeout: 2))
-        topLevel.tap()
-        app.buttons["save-routine-organization"].firstMatch.tap()
+        topLevel.acceptanceTap()
+        app.buttons["save-routine-organization"].firstMatch.acceptanceTap()
 
         XCTAssertTrue(organize.waitForExistence(timeout: 3))
-        organize.tap()
+        organize.acceptanceTap()
         XCTAssertTrue(moveChild.waitForExistence(timeout: 3))
-        moveChild.tap()
+        moveChild.acceptanceTap()
         XCTAssertFalse(app.buttons["Top Level"].firstMatch.waitForExistence(timeout: 1))
     }
 
@@ -77,13 +77,13 @@ final class RoutineHierarchyUITests: XCTestCase {
         let app = launch(with: "--seed-routine-hierarchy-nested")
         let organize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(organize.waitForExistence(timeout: 8))
-        organize.tap()
+        organize.acceptanceTap()
 
         let childHandle = app.buttons["Reorder Hybrid Athlete"].firstMatch
         let parentHandle = app.buttons["Reorder Macro 1"].firstMatch
         XCTAssertTrue(childHandle.waitForExistence(timeout: 3))
         XCTAssertTrue(parentHandle.exists)
-        childHandle.press(forDuration: 0.5, thenDragTo: parentHandle)
+        childHandle.acceptancePress(forDuration: 0.5, thenDragTo: parentHandle)
 
         let cells = app.cells.allElementsBoundByIndex
         let childIndex = cells.firstIndex { $0.staticTexts["Hybrid Athlete"].exists }
@@ -131,7 +131,7 @@ final class RoutineHierarchyUITests: XCTestCase {
         tapWhenReady(cindyMenu)
         let startAx400Instead = app.buttons["Start Ax400 Instead"].firstMatch
         XCTAssertTrue(startAx400Instead.waitForExistence(timeout: 3))
-        startAx400Instead.tap()
+        startAx400Instead.acceptanceTap()
 
         let finish = app.buttons["finish-workout-button"].firstMatch
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
@@ -209,7 +209,7 @@ final class RoutineHierarchyUITests: XCTestCase {
     ) {
         tapWhenReady(app.buttons["routine-menu-\(routine)"].firstMatch)
         XCTAssertTrue(app.buttons["Start \(other) Instead"].firstMatch.waitForExistence(timeout: 3))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).acceptanceTap()
     }
 
     private func completeAndSave(
@@ -241,12 +241,13 @@ final class RoutineHierarchyUITests: XCTestCase {
             XCTFail("Element never became hittable: \(element)")
             return
         }
-        element.tap()
+        element.acceptanceTap()
     }
 
     @MainActor
     private func launch(with fixture: String) -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
@@ -254,7 +255,7 @@ final class RoutineHierarchyUITests: XCTestCase {
             "--reset-store",
             fixture,
         ]
-        app.launch()
+        app.acceptanceLaunch()
         return app
     }
 

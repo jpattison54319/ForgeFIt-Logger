@@ -16,6 +16,7 @@ final class InsightBuilderUITests: XCTestCase {
     @MainActor
     private func launchApp(seedHistory: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "-didOnboard", "YES",
@@ -26,7 +27,7 @@ final class InsightBuilderUITests: XCTestCase {
         if seedHistory {
             app.launchArguments.insert("--seed-history", at: 1)
         }
-        app.launch()
+        app.acceptanceLaunch()
         return app
     }
 
@@ -34,7 +35,7 @@ final class InsightBuilderUITests: XCTestCase {
     private func openMyInsights(_ app: XCUIApplication) {
         let entry = element(app, "insight-my-insights-entry")
         XCTAssertTrue(entry.waitForExistence(timeout: 10), "Expected the My Insights entry on the Insights tab.")
-        entry.tap()
+        entry.acceptanceTap()
     }
 
     @MainActor
@@ -42,7 +43,7 @@ final class InsightBuilderUITests: XCTestCase {
         openMyInsights(app)
         let build = element(app, "insight-build-button")
         XCTAssertTrue(build.waitForExistence(timeout: 5), "Expected the visible Build an insight action.")
-        build.tap()
+        build.acceptanceTap()
         XCTAssertTrue(
             element(app, "insight-metric-row-primary").waitForExistence(timeout: 5),
             "Expected the builder canvas."
@@ -60,8 +61,8 @@ final class InsightBuilderUITests: XCTestCase {
         var attempts = 0
         while (!target.exists || !target.isHittable), attempts < maxSwipes {
             switch direction {
-            case .up: app.swipeUp()
-            case .down: app.swipeDown()
+            case .up: app.acceptanceSwipeUp()
+            case .down: app.acceptanceSwipeDown()
             }
             attempts += 1
         }
@@ -77,14 +78,14 @@ final class InsightBuilderUITests: XCTestCase {
     private func chooseMetric(_ id: String, in app: XCUIApplication) {
         let metric = element(app, "insight-metric-\(id)")
         XCTAssertTrue(scrollTo(metric, in: app), "Expected \(id) in the compatible metric picker.")
-        metric.tap()
+        metric.acceptanceTap()
     }
 
     @MainActor
     private func chooseTemplate(_ id: String, in app: XCUIApplication) {
         let template = element(app, "insight-template-\(id)")
         XCTAssertTrue(scrollTo(template, in: app), "Expected template \(id) in the gallery.")
-        template.tap()
+        template.acceptanceTap()
     }
 
     @MainActor
@@ -94,40 +95,40 @@ final class InsightBuilderUITests: XCTestCase {
         // The Insights tab carries one compact entry; the page holds the rest.
         let entry = element(app, "insight-my-insights-entry")
         XCTAssertTrue(entry.waitForExistence(timeout: 8), "Expected the My Insights entry on the Insights tab.")
-        entry.tap()
+        entry.acceptanceTap()
 
         // Fresh store → the pushed page opens on the template gallery.
         let template = element(app, "insight-template-template.checkinVsOutput")
         XCTAssertTrue(template.waitForExistence(timeout: 5), "Expected the template gallery on the My Insights page.")
-        if !template.isHittable { app.swipeUp() }
-        template.tap()
+        if !template.isHittable { app.acceptanceSwipeUp() }
+        template.acceptanceTap()
 
         // The canvas opens seeded and valid; the live preview may show an
         // honest empty state on a fresh store — save must still be enabled.
         let save = app.buttons.matching(identifier: "insight-builder-save").firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 5), "Expected the builder canvas.")
         XCTAssertTrue(save.isEnabled, "A template recipe must validate as-is.")
-        save.tap()
+        save.acceptanceTap()
 
         // The saved card lands in My Insights.
         let card = element(app, "insight-card-Check-ins vs volume")
         XCTAssertTrue(card.waitForExistence(timeout: 5), "Expected the saved insight card.")
 
         // Opening it presents the full result sheet.
-        card.tap()
+        card.acceptanceTap()
         let done = app.buttons["Done"].firstMatch
         XCTAssertTrue(done.waitForExistence(timeout: 5), "Expected the insight detail sheet.")
-        done.tap()
+        done.acceptanceTap()
 
         // Its ⋯ menu offers the management actions (a sibling of the open
         // button now, so query it at app level).
         app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH 'Options for'")
-        ).firstMatch.tap()
+        ).firstMatch.acceptanceTap()
         XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 3), "Expected card management menu.")
-        app.buttons["Delete"].tap()
+        app.buttons["Delete"].acceptanceTap()
         XCTAssertTrue(app.buttons["Delete Insight"].waitForExistence(timeout: 3), "Expected the consequence dialog.")
-        app.buttons["Delete Insight"].tap()
+        app.buttons["Delete Insight"].acceptanceTap()
         XCTAssertFalse(
             element(app, "insight-card-Check-ins vs volume").waitForExistence(timeout: 3),
             "Expected the card gone after delete."
@@ -143,11 +144,11 @@ final class InsightBuilderUITests: XCTestCase {
 
         let entry = element(app, "insight-my-insights-entry")
         XCTAssertTrue(entry.waitForExistence(timeout: 8), "Expected the My Insights entry on the Insights tab.")
-        entry.tap()
+        entry.acceptanceTap()
 
         let build = element(app, "insight-build-button")
         XCTAssertTrue(build.waitForExistence(timeout: 5), "Expected the build button on the My Insights page.")
-        build.tap()
+        build.acceptanceTap()
 
         // Primary stays the canvas default (Working volume, mass). Alongside:
         // Workout duration — a different axis family, so the builder must
@@ -157,7 +158,7 @@ final class InsightBuilderUITests: XCTestCase {
         XCTAssertTrue(primaryRow.waitForExistence(timeout: 5), "Expected the builder canvas.")
         XCTAssertEqual(primaryRow.label, "Working volume", "Expected the blank canvas to default to Working volume.")
 
-        element(app, "insight-add-comparison").tap()
+        element(app, "insight-add-comparison").acceptanceTap()
         let durationChoice = element(app, "insight-metric-strength.duration")
         XCTAssertTrue(
             app.descendants(matching: .any).matching(
@@ -167,14 +168,14 @@ final class InsightBuilderUITests: XCTestCase {
         )
         var scrolls = 0
         while !durationChoice.exists, scrolls < 8 {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
             scrolls += 1
         }
         XCTAssertTrue(durationChoice.exists, "Expected Workout duration in the metric picker.")
-        durationChoice.tap()
+        durationChoice.acceptanceTap()
 
-        app.buttons["12W"].firstMatch.tap()
-        app.buttons["Day"].firstMatch.tap()
+        app.buttons["12W"].firstMatch.acceptanceTap()
+        app.buttons["Day"].firstMatch.acceptanceTap()
 
         // Daily: training ~2 of 7 days means both index anchors are mostly
         // zeros — the preview must say why one shared scale was refused.
@@ -185,7 +186,7 @@ final class InsightBuilderUITests: XCTestCase {
 
         // Weekly: every week has training, so the same recipe indexes onto
         // one shared chart, disclosed by the indexing caption.
-        app.buttons["Week"].firstMatch.tap()
+        app.buttons["Week"].firstMatch.acceptanceTap()
         let indexedCaption = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "100 = each line's average")
         ).firstMatch
@@ -205,7 +206,7 @@ final class InsightBuilderUITests: XCTestCase {
         XCTAssertTrue(primaryScope.waitForExistence(timeout: 3), "Working volume must expose its visible scope control.")
         XCTAssertTrue(primaryScope.label.localizedCaseInsensitiveContains("All data"))
 
-        element(app, "insight-add-comparison").tap()
+        element(app, "insight-add-comparison").acceptanceTap()
         XCTAssertTrue(
             app.descendants(matching: .any).matching(
                 NSPredicate(format: "identifier BEGINSWITH 'insight-metric-'")
@@ -224,7 +225,7 @@ final class InsightBuilderUITests: XCTestCase {
         let durationScope = element(app, "insight-scope-comparison-0")
         XCTAssertTrue(durationScope.exists, "Each independently scoped operand needs its own state-stable control.")
 
-        element(app, "insight-add-comparison").tap()
+        element(app, "insight-add-comparison").acceptanceTap()
         chooseMetric("strength.workingSets", in: app)
 
         let setRow = element(app, "insight-metric-row-comparison-1")
@@ -236,23 +237,23 @@ final class InsightBuilderUITests: XCTestCase {
         // Changing alignment must not replace or hide the operand controls.
         let week = app.buttons["Week"].firstMatch
         XCTAssertTrue(scrollTo(week, in: app))
-        week.tap()
+        week.acceptanceTap()
         XCTAssertTrue(primaryScope.exists)
         XCTAssertTrue(durationScope.exists)
 
         let name = "UI multi-metric trend"
         let nameField = element(app, "insight-name-field")
         XCTAssertTrue(scrollTo(nameField, in: app, direction: .down))
-        nameField.tap()
-        nameField.typeText(name)
+        nameField.acceptanceTap()
+        nameField.acceptanceTypeText(name)
 
         let save = app.buttons.matching(identifier: "insight-builder-save").firstMatch
         XCTAssertTrue(save.isEnabled, "Three compatible series should remain saveable.")
-        save.tap()
+        save.acceptanceTap()
 
         let card = element(app, "insight-card-\(name)")
         XCTAssertTrue(card.waitForExistence(timeout: 6), "Expected the saved multi-metric card.")
-        card.tap()
+        card.acceptanceTap()
 
         let chart = app.descendants(matching: .any).matching(
             NSPredicate(format: "label BEGINSWITH %@", "Insight chart.")
@@ -262,7 +263,7 @@ final class InsightBuilderUITests: XCTestCase {
         let viewData = app.buttons["View data"].firstMatch
         XCTAssertTrue(scrollTo(viewData, in: app), "A visible View data alternative must accompany the chart.")
         XCTAssertTrue(viewData.isEnabled)
-        viewData.tap()
+        viewData.acceptanceTap()
         XCTAssertEqual(viewData.value as? String, "Expanded")
         XCTAssertTrue(
             app.staticTexts.matching(
@@ -280,12 +281,12 @@ final class InsightBuilderUITests: XCTestCase {
         let app = launchApp(seedHistory: true)
         openBlankBuilder(app)
 
-        app.buttons["Relationship"].firstMatch.tap()
+        app.buttons["Relationship"].firstMatch.acceptanceTap()
         let save = app.buttons.matching(identifier: "insight-builder-save").firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 3))
         XCTAssertFalse(save.isEnabled, "A relationship without its second operand is incomplete.")
 
-        element(app, "insight-add-comparison").tap()
+        element(app, "insight-add-comparison").acceptanceTap()
         XCTAssertTrue(
             element(app, "insight-metric-cardio.pace").waitForExistence(timeout: 5),
             "Expected compatible relationship metrics."
@@ -302,7 +303,7 @@ final class InsightBuilderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Exercise…"].exists)
         let runForPace = element(app, "insight-required-modality-run")
         XCTAssertTrue(runForPace.waitForExistence(timeout: 3))
-        runForPace.tap()
+        runForPace.acceptanceTap()
 
         let paceScope = element(app, "insight-scope-comparison-0")
         XCTAssertTrue(paceScope.waitForExistence(timeout: 4))
@@ -311,12 +312,12 @@ final class InsightBuilderUITests: XCTestCase {
 
         // Replace the primary with power. The picker must collect its unit
         // domain before returning to the canvas as well.
-        element(app, "insight-metric-row-primary").tap()
+        element(app, "insight-metric-row-primary").acceptanceTap()
         chooseMetric("cardio.power", in: app)
         XCTAssertTrue(app.navigationBars["Average power"].waitForExistence(timeout: 3))
         let runForPower = element(app, "insight-required-modality-run")
         XCTAssertTrue(runForPower.waitForExistence(timeout: 3))
-        runForPower.tap()
+        runForPower.acceptanceTap()
 
         let powerScope = element(app, "insight-scope-primary")
         XCTAssertTrue(powerScope.waitForExistence(timeout: 4))
@@ -327,13 +328,13 @@ final class InsightBuilderUITests: XCTestCase {
         // The same Power · Run operand is not a legal duplicate. Power stays
         // discoverable because another modality could be valid, but Run is
         // removed and the picker explains that no unused history remains.
-        element(app, "insight-metric-row-comparison-0").tap()
+        element(app, "insight-metric-row-comparison-0").acceptanceTap()
         chooseMetric("cardio.power", in: app)
         XCTAssertTrue(app.navigationBars["Average power"].waitForExistence(timeout: 3))
         XCTAssertFalse(element(app, "insight-required-modality-run").exists)
         XCTAssertTrue(app.staticTexts["No matching history"].waitForExistence(timeout: 3))
-        app.buttons["Metrics"].tap()
-        app.navigationBars["Choose metric"].buttons["Cancel"].tap()
+        app.buttons["Metrics"].acceptanceTap()
+        app.navigationBars["Choose metric"].buttons["Cancel"].acceptanceTap()
 
         XCTAssertTrue(powerScope.waitForExistence(timeout: 3))
         XCTAssertTrue(paceScope.exists)
@@ -396,7 +397,7 @@ final class InsightBuilderUITests: XCTestCase {
             "insight-template-exercise-00000000-0000-7000-8000-000000000206"
         )
         XCTAssertTrue(scrollTo(chestPress, in: app), "Expected a history-backed exercise choice.")
-        chestPress.tap()
+        chestPress.acceptanceTap()
 
         let save = app.buttons.matching(identifier: "insight-builder-save").firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 5))
@@ -407,11 +408,11 @@ final class InsightBuilderUITests: XCTestCase {
         XCTAssertTrue(
             element(app, "insight-scope-primary").label.contains("Machine Chest Press")
         )
-        app.buttons["Cancel"].tap()
+        app.buttons["Cancel"].acceptanceTap()
 
         chooseTemplate("template.paceVsHeartRate", in: app)
         XCTAssertTrue(app.navigationBars["Choose cardio type"].waitForExistence(timeout: 4))
-        element(app, "insight-template-modality-run").tap()
+        element(app, "insight-template-modality-run").acceptanceTap()
 
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertTrue(save.isEnabled)
@@ -431,8 +432,8 @@ final class InsightBuilderUITests: XCTestCase {
         let app = launchApp(seedHistory: true)
         openBlankBuilder(app)
 
-        app.buttons["Relationship"].firstMatch.tap()
-        element(app, "insight-add-comparison").tap()
+        app.buttons["Relationship"].firstMatch.acceptanceTap()
+        element(app, "insight-add-comparison").acceptanceTap()
         chooseMetric("health.sleepTotal", in: app)
 
         let trainingDays = element(app, "insight-population-activeBucketsOnly")
@@ -453,7 +454,7 @@ final class InsightBuilderUITests: XCTestCase {
             "The insufficient-overlap preview must not repeat its explanation as a warning."
         )
 
-        allMeasuredDays.tap()
+        allMeasuredDays.acceptanceTap()
         XCTAssertTrue(allMeasuredDays.isSelected)
         XCTAssertTrue(
             app.staticTexts.matching(
@@ -464,7 +465,7 @@ final class InsightBuilderUITests: XCTestCase {
 
         let primary = element(app, "insight-metric-row-primary")
         XCTAssertTrue(scrollTo(primary, in: app, direction: .down))
-        primary.tap()
+        primary.acceptanceTap()
         chooseMetric("health.hrv", in: app)
 
         XCTAssertFalse(

@@ -9,13 +9,14 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
     @MainActor
     func testLongRoutineDefaultsClosedExpandsAndResetsAfterRelaunch() {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
             "--reset-store",
             "--seed-routine-hierarchy-many-exercises",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let disclosure = app.buttons["routine-exercise-disclosure-Long Routine"].firstMatch
         XCTAssertTrue(disclosure.waitForExistence(timeout: 8))
@@ -40,8 +41,8 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
         RunLoop.current.run(until: Date.now.addingTimeInterval(0.3))
         keepScreenshot(named: "Routine exercises expanded", from: app)
 
-        app.terminate()
-        app.launch()
+        app.acceptanceTerminate()
+        app.acceptanceLaunch()
 
         let relaunchedDisclosure = app.buttons["routine-exercise-disclosure-Long Routine"].firstMatch
         XCTAssertTrue(relaunchedDisclosure.waitForExistence(timeout: 8))
@@ -52,13 +53,14 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
     @MainActor
     func testRoutineEditorActionsRemainAvailableAfterScrolling() {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
             "--reset-store",
             "--seed-routine-hierarchy-many-exercises",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let menu = app.buttons["routine-menu-Long Routine"].firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
@@ -66,7 +68,7 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
 
         let edit = app.buttons["Edit Long Routine"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 3))
-        edit.tap()
+        edit.acceptanceTap()
 
         let back = app.buttons["routine-editor-back-button"].firstMatch
         let save = app.buttons["routine-editor-save-button"].firstMatch
@@ -83,8 +85,8 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
         let originalBackY = back.frame.midY
         let originalSaveY = save.frame.midY
 
-        scroll.swipeUp()
-        scroll.swipeUp()
+        scroll.acceptanceSwipeUp()
+        scroll.acceptanceSwipeUp()
         XCTAssertTrue(app.buttons["add-to-routine"].firstMatch.waitForExistence(timeout: 3))
 
         XCTAssertTrue(back.isHittable, "Back must remain available throughout the routine.")
@@ -104,12 +106,12 @@ final class RoutineExerciseDisclosureUITests: XCTestCase {
 
     private func tap(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<4 where !element.isHittable {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
         }
         if element.isHittable {
-            element.tap()
+            element.acceptanceTap()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).acceptanceTap()
         }
     }
 

@@ -33,6 +33,7 @@ final class AppStoreCaptureUITests: XCTestCase {
         resetStore: Bool = true
     ) -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--mock-social",
             resetStore ? "--reset-store" : "--discard-active-workouts",
@@ -43,8 +44,9 @@ final class AppStoreCaptureUITests: XCTestCase {
             "-weightUnitRaw", "lb",
             "-distanceUnitRaw", "mi",
             "-profileDisplayName", "Jordan",
+            "-initialTab", "home",
         ] + extraArguments
-        app.launch()
+        app.acceptanceLaunch()
         XCTAssertTrue(
             app.buttons["tab-home"].firstMatch.waitForExistence(timeout: 60),
             "The app never reached its tab shell."
@@ -62,8 +64,8 @@ final class AppStoreCaptureUITests: XCTestCase {
         // tapping through it would not, because dismissing onboarding also
         // clears the starter slate this fixture depends on.
         for _ in 0..<2 where app.buttons["onboarding-get-started"].firstMatch.exists {
-            app.terminate()
-            app.launch()
+            app.acceptanceTerminate()
+            app.acceptanceLaunch()
             _ = app.buttons["tab-home"].firstMatch.waitForExistence(timeout: 60)
             settle(20)
         }
@@ -115,7 +117,7 @@ final class AppStoreCaptureUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
             if let target = element(app, identifier, allowDeepSearch: allowDeepSearch), target.isHittable {
-                target.tap()
+                target.acceptanceTap()
                 return true
             }
             settle(0.4)
@@ -127,12 +129,12 @@ final class AppStoreCaptureUITests: XCTestCase {
     private func tapText(_ app: XCUIApplication, _ label: String, timeout: TimeInterval = 8) -> Bool {
         let button = app.buttons[label].firstMatch
         if button.waitForExistence(timeout: timeout), button.isHittable {
-            button.tap()
+            button.acceptanceTap()
             return true
         }
         let text = app.staticTexts[label].firstMatch
         guard text.waitForExistence(timeout: 1), text.isHittable else { return false }
-        text.tap()
+        text.acceptanceTap()
         return true
     }
 
@@ -159,7 +161,7 @@ final class AppStoreCaptureUITests: XCTestCase {
     /// scales the swipe velocity, since XCTest fixes the swipe's travel.
     private func slowScroll(_ app: XCUIApplication, distance: CGFloat = 0.45) {
         let velocity = XCUIGestureVelocity(rawValue: Double(max(0.2, distance)) * 700)
-        app.swipeUp(velocity: velocity)
+        app.acceptanceSwipeUp(velocity: velocity)
     }
 
     /// Scrolls until the target is both on screen and clear of the floating
@@ -171,7 +173,7 @@ final class AppStoreCaptureUITests: XCTestCase {
             if let target = element(app, identifier, allowDeepSearch: true),
                target.isHittable,
                target.frame.midY < safeBottom {
-                target.tap()
+                target.acceptanceTap()
                 return true
             }
             slowScroll(app, distance: 0.4)
@@ -196,7 +198,7 @@ final class AppStoreCaptureUITests: XCTestCase {
             for query in queries {
                 let candidate = query.matching(predicate).firstMatch
                 guard candidate.exists, candidate.isHittable, candidate.frame.midY < safeBottom else { continue }
-                candidate.tap()
+                candidate.acceptanceTap()
                 return true
             }
             slowScroll(app, distance: 0.4)
@@ -226,16 +228,16 @@ final class AppStoreCaptureUITests: XCTestCase {
 
         let navBack = app.navigationBars.buttons.element(boundBy: 0)
         if navBack.exists, navBack.isHittable {
-            navBack.tap()
+            navBack.acceptanceTap()
             return
         }
         let labelled = app.buttons["Back"].firstMatch
         if labelled.exists, labelled.isHittable {
-            labelled.tap()
+            labelled.acceptanceTap()
             return
         }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-            .press(
+            .acceptancePress(
                 forDuration: 0.05,
                 thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)),
                 withVelocity: .default,
@@ -329,8 +331,8 @@ final class AppStoreCaptureUITests: XCTestCase {
             ? app.searchFields.firstMatch
             : app.textFields.firstMatch
         if search.waitForExistence(timeout: 5) {
-            search.tap()
-            search.typeText("Barbell Squat")
+            search.acceptanceTap()
+            search.acceptanceTypeText("Barbell Squat")
             settle(2.5)
         }
         // The exercise rows expose no identifier of their own — SwiftUI merges
@@ -423,7 +425,7 @@ final class AppStoreCaptureUITests: XCTestCase {
         settle(3)
         _ = tap(app, "start-routine-Push Day")
         if app.buttons["Discard Current & Start New"].firstMatch.waitForExistence(timeout: 2) {
-            app.buttons["Discard Current & Start New"].firstMatch.tap()
+            app.buttons["Discard Current & Start New"].firstMatch.acceptanceTap()
         }
         settle(3)
 

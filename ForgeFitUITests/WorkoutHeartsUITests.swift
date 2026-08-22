@@ -22,19 +22,20 @@ final class WorkoutHeartsUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertTrue(element.exists, "Never became available: \(element)")
-        element.tap()
+        element.acceptanceTap()
     }
 
     @MainActor
     func testHeartsRowAppearsOnOwnWorkoutAfterFriendsHeartIt() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store", "-didOnboard", "YES",
             "--auto-start-routine",
             "--mock-social", "--seed-social-hearts", "-social", "YES",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         // Finish the auto-started routine so there's a real, share-eligible
         // workout in history. `--seed-social-hearts` plants friends' hearts
@@ -47,7 +48,7 @@ final class WorkoutHeartsUITests: XCTestCase {
         // The auto-started routine is finished without ticking every set, so
         // the unfinished-sets warning stands between Finish and the summary.
         let finishAnyway = app.buttons["Finish Anyway"].firstMatch
-        if finishAnyway.waitForExistence(timeout: 3) { finishAnyway.tap() }
+        if finishAnyway.waitForExistence(timeout: 3) { finishAnyway.acceptanceTap() }
         tapWhenReady(element(app, "save-workout-button"))
 
         XCTAssertTrue(
@@ -59,13 +60,13 @@ final class WorkoutHeartsUITests: XCTestCase {
 
         // Relaunch WITHOUT --reset-store: the workout persists, and launch
         // seeding hearts it.
-        app.terminate()
+        app.acceptanceTerminate()
         app.launchArguments = [
             "-didOnboard", "YES",
             "--mock-social", "--seed-social-hearts", "-social", "YES",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let recentRow = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "home-workout-"))

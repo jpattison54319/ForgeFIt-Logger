@@ -27,7 +27,23 @@ final class AppState {
     var pendingWorkoutStart: (() -> Void)?
 
     init(defaults: UserDefaults = .standard) {
-        selectedTab = DefaultLaunchTab.load(from: defaults).appTab
+        // UI automation can request any app tab, including destinations that
+        // are not user-selectable as the persisted default launch tab. Apply
+        // that request before the first render so the automation barrier and
+        // the eventual seeded screen agree on the same route.
+        if let raw = ForgeFitLaunchArguments.value(for: "initialTab")
+            ?? defaults.string(forKey: "initialTab"),
+           let requestedTab = AppTab(rawValue: raw) {
+            selectedTab = requestedTab
+        } else if ProcessInfo.processInfo.arguments.contains("--reset-store") {
+            // A reset is an explicit automation/debug fixture boundary. Do
+            // not carry a tab selected by the previous scenario into the
+            // newly seeded account; a caller can still override this with
+            // -initialTab when a journey starts deeper in the shell.
+            selectedTab = .home
+        } else {
+            selectedTab = DefaultLaunchTab.load(from: defaults).appTab
+        }
     }
 
     func requestStart(_ action: @escaping () -> Void) {
@@ -61,6 +77,43 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .workout: "dumbbell.fill"
         case .insights: "chart.bar.fill"
         case .profile: "person.fill"
+        }
+    }
+}
+
+/// XCTest supplies fixture preferences through the UserDefaults argument
+/// domain (for example, `-initialTab profile`). That domain is intentionally
+/// higher-priority during normal reads, but `UserDefaults.removeObject` can
+/// remove those values on the simulator in practice. Keep the launch contract
+/// sourced from ProcessInfo so a deterministic reset cannot erase the very
+/// fixture parameters that describe the scenario.
+enum ForgeFitLaunchArguments {
+    static func value(
+        for key: String,
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> String? {
+        let flag = key.hasPrefix("-") ? key : "-\(key)"
+        for (index, argument) in arguments.enumerated() {
+            if argument == flag {
+                guard arguments.indices.contains(index + 1) else { return nil }
+                return arguments[index + 1]
+            }
+            if argument.hasPrefix("\(flag)=") {
+                return String(argument.dropFirst(flag.count + 1))
+            }
+        }
+        return nil
+    }
+
+    static func boolValue(
+        for key: String,
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> Bool? {
+        guard let raw = value(for: key, arguments: arguments) else { return nil }
+        switch raw.lowercased() {
+        case "yes", "true", "1": return true
+        case "no", "false", "0": return false
+        default: return nil
         }
     }
 }
@@ -549,7 +602,47 @@ struct ContentView: View {
             .background(LiveHeartRateObserver(onChange: handleLiveHeartRateChange))
     }
 
+    /// UI-test fixtures are written during `launchTasks()`, which intentionally
+    /// runs after the first frame for normal users. An automation launch must
+    /// not expose a partially seeded tab tree: XCUITest can otherwise find a
+    /// real-looking shell while its @Query values still describe the pre-reset
+    /// store. Keep this barrier DEBUG/automation-only so production retains its
+    /// fast first frame, while every deterministic fixture gets one explicit
+    /// readiness boundary before it can be driven.
     private var appShell: some View {
+        Group {
+            if isAutomationLaunch && !didFinishLaunchTasks {
+                launchPreparationView
+            } else {
+                readyAppShell
+            }
+        }
+        .onKeyboardVisibilityChange($keyboardVisible)
+        .onPreferenceChange(BottomChromeHiddenPreferenceKey.self) {
+            screenHidesBottomChrome = $0
+        }
+    }
+
+    private var launchPreparationView: some View {
+        ZStack {
+            ScreenBackground()
+            VStack(spacing: Space.lg) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Preparing your workspace")
+                    .font(.title3.weight(.semibold))
+                Text("Your data is being loaded.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            .padding(Space.xl)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Preparing your workspace")
+    }
+
+    private var readyAppShell: some View {
         ZStack(alignment: .bottom) {
             ScreenBackground()
 
@@ -602,10 +695,6 @@ struct ContentView: View {
             .opacity(bottomChromeHidden ? 0 : 1)
             .allowsHitTesting(!bottomChromeHidden)
             .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: bottomChromeHidden)
-        }
-        .onKeyboardVisibilityChange($keyboardVisible)
-        .onPreferenceChange(BottomChromeHiddenPreferenceKey.self) {
-            screenHidesBottomChrome = $0
         }
     }
 
@@ -684,15 +773,17 @@ struct ContentView: View {
 
     @ViewBuilder
     private func tabContent(for tab: AppTab) -> some View {
-        switch tab {
-        case .home:
-            HomeView(workouts: workouts, routines: routines, exercises: exercises, setupNotes: setupNotes)
-        case .workout:
-            WorkoutHomeView(routines: routines, workouts: workouts, exercises: exercises, setupNotes: setupNotes)
-        case .insights:
-            InsightsView(workouts: workouts, exercises: exercises)
-        case .profile:
-            ProfileView(workouts: workouts, exercises: exercises)
+        ZStack {
+            switch tab {
+            case .home:
+                HomeView(workouts: workouts, routines: routines, exercises: exercises, setupNotes: setupNotes)
+            case .workout:
+                WorkoutHomeView(routines: routines, workouts: workouts, exercises: exercises, setupNotes: setupNotes)
+            case .insights:
+                InsightsView(workouts: workouts, exercises: exercises)
+            case .profile:
+                ProfileView(workouts: workouts, exercises: exercises)
+            }
         }
     }
 
@@ -1069,9 +1160,10 @@ struct ContentView: View {
     }
 
     private func consumePendingExperimentNotificationRoute() {
-        guard let rawURL = UserDefaults.standard.string(
+        let rawURL = UserDefaults.standard.string(
             forKey: ExperimentNotificationRoute.pendingURLDefaultsKey
-        ), let url = URL(string: rawURL) else {
+        )
+        guard let rawURL, let url = URL(string: rawURL) else {
             return
         }
         UserDefaults.standard.removeObject(
@@ -1351,6 +1443,13 @@ struct ContentView: View {
         didStartLaunchTasks = true
 
         await launchTasks()
+        // SwiftData has committed the fixture by this point, but its @Query
+        // change notifications and SwiftUI's dependent view invalidation are
+        // delivered on subsequent main-actor turns. Let those turns run before
+        // removing the automation barrier, so readiness means "seeded and
+        // observable", not merely "the save call returned".
+        await Task.yield()
+        await Task.yield()
         didFinishLaunchTasks = true
         reconcileConditioningPresetHistory()
         scheduleLaunchPlanMaintenanceIfNeeded()
@@ -1368,6 +1467,7 @@ struct ContentView: View {
     }
 
     private func launchTasks() async {
+        let forcedReset = ProcessInfo.processInfo.arguments.contains("--reset-store")
         #if DEBUG
         let preserveSleepDemoOverride = ProcessInfo.processInfo.arguments.contains("--preserve-sleep-override-demo")
         // UI automation needs the flagged night before any launch migration or
@@ -1426,7 +1526,15 @@ struct ContentView: View {
         if let raw = UserDefaults.standard.string(forKey: "distanceUnitRaw"), let du = DistanceUnit(rawValue: raw) {
             Fmt.distanceUnit = du
         }
-        setLiveWorkoutPerformancePriority(activeWorkout != nil)
+        // A forced reset is an account boundary. The keep-resident @Query can
+        // still expose a pre-reset active row for one run-loop turn, but that
+        // row must not put launch seeding behind the live-workout performance
+        // gate or make the new scenario inherit the old logger state.
+        if forcedReset {
+            setLiveWorkoutPerformancePriority(false)
+        } else {
+            setLiveWorkoutPerformancePriority(activeWorkout != nil)
+        }
         WatchLink.shared.configure(context: modelContext)
         WatchLink.shared.activate()
         WatchLink.shared.onWorkoutStartedFromWatch = { appState.showingLogger = true }
@@ -1441,7 +1549,7 @@ struct ContentView: View {
                 BLEHeartRateService.shared.reconnectIfRemembered()
             }
         }
-        if performanceGate.allowsNonWorkoutWork {
+        if forcedReset || performanceGate.allowsNonWorkoutWork {
             await seedLaunchData()
         } else {
             pendingDeferredLaunchMaintenance = true
@@ -1494,8 +1602,7 @@ struct ContentView: View {
             await social.seedDemoHearts(workoutIDs: eligible.prefix(12).map(\.id))
         }
         #endif
-        if let raw = UserDefaults.standard.string(forKey: "initialTab"),
-           let tab = AppTab(rawValue: raw) {
+        if let tab = requestedInitialTab {
             appState.selectedTab = tab
         }
         if shouldAutoStartRoutine,
@@ -1688,8 +1795,26 @@ struct ContentView: View {
     }
 
     private var shouldAutoStartRoutine: Bool {
-        UserDefaults.standard.bool(forKey: "autoStartRoutine")
-            || ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
+        let arguments = ProcessInfo.processInfo.arguments
+        // `--reset-store` deliberately clears SwiftData but does not clear the
+        // defaults domain, so an old manual/automation autorun preference must
+        // not leak an active workout into an unrelated deterministic fixture.
+        // The explicit launch argument remains authoritative for logger tests.
+        if arguments.contains("--auto-start-routine") { return true }
+        if arguments.contains("--reset-store") { return false }
+        return UserDefaults.standard.bool(forKey: "autoStartRoutine")
+    }
+
+    private var requestedInitialTab: AppTab? {
+        if let raw = ForgeFitLaunchArguments.value(for: "initialTab"),
+           let tab = AppTab(rawValue: raw) {
+            return tab
+        }
+        if let raw = UserDefaults.standard.string(forKey: "initialTab"),
+           let tab = AppTab(rawValue: raw) {
+            return tab
+        }
+        return nil
     }
 
     private func activeWorkoutForPresentation() -> WorkoutModel? {
@@ -1791,6 +1916,7 @@ struct ContentView: View {
         do {
             let forcedReset = ProcessInfo.processInfo.arguments.contains("--reset-store")
             if forcedReset {
+                resetAutomationDefaults()
                 try AccountResetService.deleteAllLocalModels(in: modelContext)
             }
             // Version-gated: re-materializing the whole library (+ muscle
@@ -1868,6 +1994,69 @@ struct ContentView: View {
         }
     }
 
+    /// `--reset-store` is the deterministic UI-test account boundary. SwiftData
+    /// is only half of the app's state: pending notification routes, quick
+    /// actions, autorun flags, migrations, and display preferences all live in
+    /// UserDefaults. Clear the canonical app-owned keys before seeding so one
+    /// scenario cannot influence the next. XCTest launch arguments are stored
+    /// in UserDefaults' higher-priority argument domain and therefore remain
+    /// available to this launch after the persistent values are removed.
+    private func resetAutomationDefaults() {
+        let defaults = UserDefaults.standard
+        let keys = Set(AppPreferenceKeys.allResettable)
+        let argumentDomain = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        let commandLineOverrides = keys.reduce(into: [String: Any]()) { result, key in
+            if let raw = ForgeFitLaunchArguments.value(for: key) {
+                result[key] = automationDefaultValue(raw, for: key)
+                return
+            }
+            // XCTest can materialize `-key value` in the argument domain
+            // without leaving it in ProcessInfo.arguments. Preserve only
+            // that explicit domain. Looking at `defaults.object(forKey:)`
+            // here is unsafe: it also sees stale volatile app state such as
+            // a pending notification route and would carry it into the new
+            // scenario.
+            if let argumentValue = argumentDomain[key] {
+                if let raw = argumentValue as? String {
+                    result[key] = automationDefaultValue(raw, for: key)
+                } else {
+                    result[key] = argumentValue
+                }
+            }
+        }
+        for key in keys {
+            defaults.removeObject(forKey: key)
+        }
+        // `removeObject` can erase XCTest's argument-domain value on the
+        // simulator, so restore only the values explicitly requested by this
+        // launch. Unspecified preferences stay at their clean defaults.
+        for (key, value) in commandLineOverrides {
+            defaults.set(value, forKey: key)
+        }
+    }
+
+    private func automationDefaultValue(_ raw: String, for key: String) -> Any {
+        let booleanKeys: Set<String> = [
+            "didOnboard",
+            "liveSyncEnabled",
+            "healthWriteEnabled",
+            WorkoutEffortPolicy.loggingEnabledKey,
+            WorkoutEffortPolicy.failureTrainingKey,
+            "morningReadinessEnabled",
+            "timerSoundEnabled",
+            "loudRestAlarmEnabled",
+            "paceAnnouncementsEnabled",
+            "intervalSoundCues",
+            "zoneVoiceCues",
+            "paceVoiceCues",
+            "yogaVoiceCues",
+        ]
+        if booleanKeys.contains(key), let value = ForgeFitLaunchArguments.boolValue(for: key) {
+            return value
+        }
+        return raw
+    }
+
     /// `--seed-history`: a deterministic 14-month training history — 120
     /// sessions of push/pull/legs rotation with progressing loads (so PRs
     /// exist), runs with heart rate, yoga, sparse RPE, notes, and a few
@@ -1924,7 +2113,12 @@ struct ContentView: View {
                     startedAt: start,
                     endedAt: start.addingTimeInterval(2_100),
                     durationSeconds: 1_800 + (i % 4) * 300,
-                    distanceMeters: isYoga ? nil : 4_800 + Double((120 - i) / 8) * 40,
+                    // Morning Run #117 is the explicit after-the-fact
+                    // treadmill-edit fixture: time and HR exist, but the
+                    // machine distance is intentionally still blank.
+                    distanceMeters: isYoga || sessionNumber == 117
+                        ? nil
+                        : 4_800 + Double((120 - i) / 8) * 40,
                     avgHR: isYoga ? nil : 148 + (i % 20),
                     yogaStyleRaw: isYoga ? "vinyasa" : nil
                 )
@@ -1942,8 +2136,8 @@ struct ContentView: View {
                 // is a fresh PR and the PR filter has hits in every era.
                 let progression = Double((120 - i) / 8) * 2.5
                 let workoutExercises = split.lifts.enumerated().map { position, lift in
-                    let sets = (0..<3).map { setIndex in
-                        SetModel(
+                    let sets = (0..<3).map { setIndex -> SetModel in
+                        var set = SetModel(
                             userID: userID,
                             position: setIndex,
                             setType: .working,
@@ -1952,6 +2146,12 @@ struct ContentView: View {
                             rpe: i % 5 == 0 ? nil : 8,
                             completedAt: start.addingTimeInterval(Double(600 + position * 900 + setIndex * 180))
                         )
+                        // The detail chart reads persisted derived metrics, not
+                        // just the raw weight/reps fields. Keep the deterministic
+                        // acceptance history equivalent to a real completed set
+                        // so visual chart checks exercise the rendered chart path.
+                        set.recomputeDerivedMetrics()
+                        return set
                     }
                     return WorkoutExerciseModel(userID: userID, exerciseID: lift.exerciseID, position: position, sets: sets)
                 }
@@ -1973,7 +2173,7 @@ struct ContentView: View {
 
     private var isAutomationLaunch: Bool {
         ProcessInfo.processInfo.arguments.contains("--reset-store")
-            || UserDefaults.standard.string(forKey: "initialTab") != nil
+            || requestedInitialTab != nil
             || UserDefaults.standard.bool(forKey: "autoStartRoutine")
             || ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
     }

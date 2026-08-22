@@ -19,6 +19,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
     @MainActor
     func testTodaysCachedScoresPaintWhileRefreshIsInFlight() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "--seed-history",
@@ -28,7 +29,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
             "-weightUnitRaw", "kg",
             "-home_daily_recommendation", "YES",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let grid = app.descendants(matching: .any)["home-metric-grid"].firstMatch
         XCTAssertTrue(grid.waitForExistence(timeout: 15), "Expected the Home metric grid.")
@@ -59,6 +60,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
     @MainActor
     func testFirstOpenOfANewDaySuppressesRecoveryDashboardAndNeverShowsYesterday() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "--suppress-health-refresh",
@@ -66,7 +68,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let connectHealth = app.descendants(matching: .any)["home-connect-health-prompt"].firstMatch
         XCTAssertTrue(connectHealth.waitForExistence(timeout: 10),
@@ -92,6 +94,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
     @MainActor
     func testColdLaunchAndForegroundStayInteractiveWithoutRecoveryDashboard() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "--seed-history",
@@ -100,7 +103,7 @@ final class HomeDashboardCacheUITests: XCTestCase {
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let connectHealth = app.descendants(matching: .any)["home-connect-health-prompt"].firstMatch
         XCTAssertTrue(connectHealth.waitForExistence(timeout: 15), "Expected Home's Health connection row.")
@@ -112,18 +115,18 @@ final class HomeDashboardCacheUITests: XCTestCase {
         XCTAssertTrue(quickStart.isHittable,
                       "Home must scroll before readiness cards finish loading.")
 
-        XCUIDevice.shared.press(.home)
-        app.activate()
+        XCUIDevice.shared.acceptancePress(.home)
+        app.acceptanceActivate()
         XCTAssertTrue(connectHealth.waitForExistence(timeout: 5), "Home should resume immediately.")
         XCTAssertTrue(app.buttons["tab-workout"].firstMatch.waitForExistence(timeout: 2))
-        app.buttons["tab-workout"].firstMatch.tap()
+        app.buttons["tab-workout"].firstMatch.acceptanceTap()
         XCTAssertTrue(app.buttons["new-routine-button"].firstMatch.waitForExistence(timeout: 3),
                       "Foreground maintenance must not block the first navigation tap.")
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<8 where !element.isHittable {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
         }
     }
 }

@@ -11,6 +11,7 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
     @MainActor
     func testOneUngroupedRoutineStaysCollapsedAcrossRelaunch() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store",
             "-didOnboard", "YES",
@@ -19,7 +20,7 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
             "-workoutUngroupedCollapsed", "NO",
             "--seed-routine-hierarchy-ungrouped-disclosure",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let disclosure = app.buttons["ungrouped-routines-disclosure"].firstMatch
         let starter = app.buttons["start-routine-Full Body A"].firstMatch
@@ -34,14 +35,14 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
         XCTAssertFalse(starter.waitForExistence(timeout: 1))
         keepScreenshot(named: "Ungrouped collapsed", from: app)
 
-        app.terminate()
+        app.acceptanceTerminate()
         app.launchArguments = [
             "-didOnboard", "YES",
             "-weightUnitRaw", "kg",
             "-initialTab", "workout",
             "--seed-routine-hierarchy-ungrouped-disclosure",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let relaunchedDisclosure = app.buttons["ungrouped-routines-disclosure"].firstMatch
         XCTAssertTrue(relaunchedDisclosure.waitForExistence(timeout: 8))
@@ -54,12 +55,12 @@ final class UngroupedRoutineSectionUITests: XCTestCase {
 
     private func tap(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<4 where !element.isHittable {
-            app.swipeUp()
+            app.acceptanceSwipeUp()
         }
         if element.isHittable {
-            element.tap()
+            element.acceptanceTap()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).acceptanceTap()
         }
     }
 

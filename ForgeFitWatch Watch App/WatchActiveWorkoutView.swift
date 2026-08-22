@@ -28,6 +28,7 @@ struct WatchActiveWorkoutView: View {
             WatchControlsPage(store: store).tag(2)
         }
         .tabViewStyle(.verticalPage)
+        .accessibilityIdentifier("watch-active-workout")
         .overlay(alignment: .top) {
             // The rest countdown follows the athlete onto every page. The
             // metrics page (0) has its own big headline, so the compact banner
@@ -344,6 +345,7 @@ struct WatchMetricsPage: View {
             .padding(.horizontal, 4)
         }
         .navigationTitle("")
+        .accessibilityIdentifier("watch-metrics-page")
     }
 
     private func intervalHeadline(
@@ -451,10 +453,12 @@ struct WatchExercisesPage: View {
                         } label: {
                             exerciseRow(exercise)
                         }
+                        .accessibilityIdentifier("watch-exercise-\(exercise.name)")
                     }
                 }
             }
             .navigationTitle("Exercises")
+            .accessibilityIdentifier("watch-exercises-page")
         }
     }
 
@@ -643,6 +647,7 @@ struct WatchSetListView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("watch-toggle-set-\(set.label)")
                             // Long-press stays as a shortcut — the pencil is
                             // the discoverable path.
                             .simultaneousGesture(
@@ -670,6 +675,7 @@ struct WatchSetListView: View {
             }
         }
         .navigationTitle(exercise?.name ?? "Sets")
+        .accessibilityIdentifier("watch-set-list")
         .sheet(item: $editingSet) { set in
             if let exercise {
                 WatchSetEditView(store: store, exercise: exercise, set: set)
@@ -786,8 +792,10 @@ struct WatchControlsPage: View {
             }
             .tint(WTheme.danger)
             .disabled(store.isAwaitingWorkoutIdentity)
+            .accessibilityIdentifier("watch-discard-workout")
         }
         .padding(.horizontal, 4)
+        .accessibilityIdentifier("watch-controls-page")
         .confirmationDialog("Finish workout?", isPresented: $confirmFinish) {
             Button("Finish Workout") { store.finishWorkout() }
             Button("Cancel", role: .cancel) {}
@@ -830,6 +838,7 @@ struct WatchSummaryView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityIdentifier("watch-summary")
     }
 
     private func summaryRow(_ label: String, _ value: String, _ color: Color) -> some View {

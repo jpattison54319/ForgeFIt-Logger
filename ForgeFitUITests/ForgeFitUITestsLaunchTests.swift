@@ -20,7 +20,8 @@ final class ForgeFitUITestsLaunchTests: XCTestCase {
     @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
-        app.launch()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.acceptanceLaunch()
 
         // Insert steps here to perform after app launch but before taking a screenshot,
         // such as logging into a test account or navigating somewhere in the app

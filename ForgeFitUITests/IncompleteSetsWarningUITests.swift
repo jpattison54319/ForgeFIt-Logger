@@ -15,18 +15,19 @@ final class IncompleteSetsWarningUITests: XCTestCase {
 
     private func tapWhenReady(_ el: XCUIElement, timeout: TimeInterval = 8) {
         XCTAssertTrue(el.waitForExistence(timeout: timeout), "Missing \(el)")
-        if !el.isHittable { XCUIApplication().swipeUp() }
-        el.tap()
+        if !el.isHittable { XCUIApplication().acceptanceSwipeUp() }
+        el.acceptanceTap()
     }
 
     private func launchIntoWorkout() -> XCUIApplication {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "--reset-store", "-didOnboard", "YES",
             "--auto-start-routine",
             "-weightUnitRaw", "lb",
         ]
-        app.launch()
+        app.acceptanceLaunch()
         XCTAssertTrue(element(app, "finish-workout-button").waitForExistence(timeout: 20),
                       "Expected the live logger.")
         return app
@@ -54,7 +55,7 @@ final class IncompleteSetsWarningUITests: XCTestCase {
         let app = launchIntoWorkout()
         tapWhenReady(element(app, "finish-workout-button"))
         XCTAssertTrue(app.buttons["Keep Logging"].waitForExistence(timeout: 5))
-        app.buttons["Keep Logging"].tap()
+        app.buttons["Keep Logging"].acceptanceTap()
 
         XCTAssertTrue(element(app, "finish-workout-button").waitForExistence(timeout: 5),
                       "Expected to be back in the live logger.")
@@ -68,7 +69,7 @@ final class IncompleteSetsWarningUITests: XCTestCase {
         let app = launchIntoWorkout()
         tapWhenReady(element(app, "finish-workout-button"))
         XCTAssertTrue(app.buttons["Finish Anyway"].waitForExistence(timeout: 5))
-        app.buttons["Finish Anyway"].tap()
+        app.buttons["Finish Anyway"].acceptanceTap()
 
         XCTAssertTrue(element(app, "save-workout-button").waitForExistence(timeout: 8),
                       "Expected the post-workout summary after Finish Anyway.")

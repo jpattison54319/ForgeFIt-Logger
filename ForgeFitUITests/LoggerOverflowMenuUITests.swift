@@ -16,14 +16,15 @@ final class LoggerOverflowMenuUITests: XCTestCase {
         while !(element.exists && element.isHittable), Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        element.tap()
+        element.acceptanceTap()
     }
 
     @MainActor
     func testOverflowMenuAddsWarmupSet() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = ["--reset-store", "--auto-start-routine", "-didOnboard", "YES", "-weightUnitRaw", "lb"]
-        app.launch()
+        app.acceptanceLaunch()
 
         // The starter routine's logger, recovered via the mini bar if the
         // auto-presentation race loses (same recovery as ForgeFitUITests).

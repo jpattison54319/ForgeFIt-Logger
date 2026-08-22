@@ -9,6 +9,7 @@ final class RoutineReorderingUITests: XCTestCase {
     @MainActor
     func testRoutineLibraryUsesOneOrganizerForFoldersAndRoutines() throws {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
@@ -16,14 +17,14 @@ final class RoutineReorderingUITests: XCTestCase {
             "--reset-store",
             "--seed-routine-reorder",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let organize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(organize.waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["reorder-routine-Ungrouped One"].exists)
         XCTAssertFalse(app.buttons["reorder-folder-Folder One"].exists)
 
-        organize.tap()
+        organize.acceptanceTap()
         XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
         XCTAssertTrue(app.otherElements["routine-organizer"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Ungrouped One"].firstMatch.exists)
@@ -33,30 +34,31 @@ final class RoutineReorderingUITests: XCTestCase {
         XCTAssertTrue(moveRoutine.exists)
         XCTAssertGreaterThanOrEqual(moveRoutine.frame.width, 44)
         XCTAssertGreaterThanOrEqual(moveRoutine.frame.height, 44)
-        moveRoutine.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+        moveRoutine.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).acceptanceTap()
         let folderOneDestination = app.buttons["Move to Folder One"].firstMatch
         XCTAssertTrue(folderOneDestination.waitForExistence(timeout: 2))
-        folderOneDestination.tap()
+        folderOneDestination.acceptanceTap()
 
         let save = app.buttons["save-routine-organization"].firstMatch
         XCTAssertTrue(save.exists)
-        save.tap()
+        save.acceptanceTap()
         XCTAssertTrue(app.buttons["organize-routines-button"].firstMatch.waitForExistence(timeout: 3))
 
-        app.buttons["organize-routines-button"].firstMatch.tap()
+        app.buttons["organize-routines-button"].firstMatch.acceptanceTap()
         XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
         let anotherMove = app.buttons["Placement options for routine Ungrouped Two"].firstMatch
-        anotherMove.tap()
+        anotherMove.acceptanceTap()
         let folderTwoDestination = app.buttons["Move to Folder Two"].firstMatch
         XCTAssertTrue(folderTwoDestination.waitForExistence(timeout: 2))
-        folderTwoDestination.tap()
-        app.buttons["Cancel"].firstMatch.tap()
+        folderTwoDestination.acceptanceTap()
+        app.buttons["Cancel"].firstMatch.acceptanceTap()
         XCTAssertTrue(app.sheets["Discard organization changes?"].firstMatch.waitForExistence(timeout: 2))
     }
 
     @MainActor
     func testRoutineDragKeepsNewOrderInsideFolder() {
         let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
@@ -64,39 +66,39 @@ final class RoutineReorderingUITests: XCTestCase {
             "--reset-store",
             "--seed-routine-reorder",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let organize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(organize.waitForExistence(timeout: 8))
-        organize.tap()
+        organize.acceptanceTap()
 
         let firstHandle = app.buttons["Reorder One A"].firstMatch
         let lastHandle = app.buttons["Reorder One C"].firstMatch
         XCTAssertTrue(firstHandle.waitForExistence(timeout: 3))
         XCTAssertTrue(lastHandle.exists)
-        firstHandle.press(forDuration: 0.5, thenDragTo: lastHandle)
+        firstHandle.acceptancePress(forDuration: 0.5, thenDragTo: lastHandle)
 
         assertRoutine("One A", appearsAfter: "One B", in: app)
-        app.buttons["save-routine-organization"].firstMatch.tap()
+        app.buttons["save-routine-organization"].firstMatch.acceptanceTap()
         XCTAssertTrue(organize.waitForExistence(timeout: 3))
-        organize.tap()
+        organize.acceptanceTap()
         assertRoutine("One A", appearsAfter: "One C", in: app)
 
         // Reopening the sheet exercises only the live ModelContext. Relaunch
         // without reseeding to prove the order crossed the durable store
         // boundary that failed for users after process termination.
-        app.buttons["Cancel"].firstMatch.tap()
-        app.terminate()
+        app.buttons["Cancel"].firstMatch.acceptanceTap()
+        app.acceptanceTerminate()
         app.launchArguments = [
             "-didOnboard", "YES",
             "-initialTab", "workout",
             "-workoutUngroupedCollapsed", "NO",
         ]
-        app.launch()
+        app.acceptanceLaunch()
 
         let relaunchedOrganize = app.buttons["organize-routines-button"].firstMatch
         XCTAssertTrue(relaunchedOrganize.waitForExistence(timeout: 8))
-        relaunchedOrganize.tap()
+        relaunchedOrganize.acceptanceTap()
         XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
         assertRoutine("One A", appearsAfter: "One C", in: app)
     }
