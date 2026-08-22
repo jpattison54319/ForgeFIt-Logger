@@ -22,6 +22,20 @@ final class MyoActivationUITests: XCTestCase {
         element.acceptanceTap()
     }
 
+    /// One delete burst sized from a single `value` read races the keyboard:
+    /// the field keeps the head of the old query ("Tric") and the new text is
+    /// appended to it. Re-read and repeat until the field is actually empty.
+    private func clearSearchField(_ field: XCUIElement, attempts: Int = 6) {
+        for _ in 0..<attempts {
+            guard let current = field.value as? String,
+                  !current.isEmpty,
+                  current != field.placeholderValue else { return }
+            field.acceptanceTypeText(
+                String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count)
+            )
+        }
+    }
+
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
@@ -73,8 +87,7 @@ final class MyoActivationUITests: XCTestCase {
             element(app, "exercise-row-Triceps Pushdown").waitForExistence(timeout: 3),
             "Live-workout search should tolerate a missing trailing s in triceps."
         )
-        let searchLength = (search.value as? String)?.count ?? 12
-        search.acceptanceTypeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: searchLength))
+        clearSearchField(search)
         search.acceptanceTypeText("Machine Chest")
 
         let exerciseRow = element(app, "exercise-row-Machine Chest Press")
