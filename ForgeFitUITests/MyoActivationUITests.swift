@@ -272,4 +272,157 @@ final class MyoActivationUITests: XCTestCase {
         XCTAssertTrue(element(app, "finish-myo-rep-set").isEnabled)
         attachScreenshot(app, name: "Resumed dedicated Myo-rep set")
     }
+
+    // MARK: - Tap targets
+
+    /// The reported numeric contents of a stepper's field, unit suffix and
+    /// grouping stripped.
+    private func numericValue(of element: XCUIElement) -> Double? {
+        guard let raw = element.value as? String else { return nil }
+        return Double(raw.filter { "0123456789.".contains($0) })
+    }
+
+    /// Taps a point inside the control but well away from its centre glyph —
+    /// the region that was previously dead because the 56×56 tile was only a
+    /// background behind an icon-sized hit region.
+    private func tapNearEdge(
+        _ element: XCUIElement,
+        dx: CGFloat,
+        dy: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(element.isHittable, "Expected \(element) to be hittable.", file: file, line: line)
+        element.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy)).acceptanceTap()
+    }
+
+    private func assertMeetsTapTarget(
+        _ element: XCUIElement,
+        _ description: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(element.waitForExistence(timeout: 3), "Missing \(description).", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(
+            element.frame.width, 44,
+            "\(description) is \(element.frame.width)pt wide; the minimum tap target is 44pt.",
+            file: file, line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            element.frame.height, 44,
+            "\(description) is \(element.frame.height)pt tall; the minimum tap target is 44pt.",
+            file: file, line: line
+        )
+    }
+
+    /// Regression for dropped Myo increments: the visible 56×56 tiles were a
+    /// background drawn behind an icon-sized button, so every tap that landed
+    /// on the tile but off the glyph did nothing. Exercises both steppers at
+    /// their edges and checks each tap is applied exactly once.
+    @MainActor
+    func testMyoStepperTilesAreFullyTappable() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding",
+            "-didOnboard", "YES", "-initialTab", "home",
+            "-weightUnitRaw", "kg",
+        ]
+        app.acceptanceLaunch()
+
+        makeReadyMyoSet(in: app)
+        tapWhenHittable(element(app, "start-myo-rep-set"))
+
+        let weightField = element(app, "myo-activation-weight")
+        XCTAssertTrue(weightField.waitForExistence(timeout: 5))
+        let increaseWeight = app.buttons["Increase activation weight"].firstMatch
+        let decreaseWeight = app.buttons["Decrease activation weight"].firstMatch
+        let increaseReps = app.buttons["Increase Activation reps"].firstMatch
+        let decreaseReps = app.buttons["Decrease Activation reps"].firstMatch
+
+        assertMeetsTapTarget(increaseWeight, "the weight increment control")
+        assertMeetsTapTarget(decreaseWeight, "the weight decrement control")
+        assertMeetsTapTarget(increaseReps, "the rep increment control")
+        assertMeetsTapTarget(decreaseReps, "the rep decrement control")
+        attachScreenshot(app, name: "Myo stepper tap targets")
+
+        // Kilograms step by 2.5. Three taps at three different off-centre
+        // points must land three increments, not one.
+        guard let startWeight = numericValue(of: weightField) else {
+            return XCTFail("The activation weight field should report a number.")
+        }
+        tapNearEdge(increaseWeight, dx: 0.1, dy: 0.1)
+        tapNearEdge(increaseWeight, dx: 0.9, dy: 0.9)
+        tapNearEdge(increaseWeight, dx: 0.1, dy: 0.9)
+        XCTAssertEqual(
+            numericValue(of: weightField) ?? .nan,
+            startWeight + 7.5,
+            accuracy: 0.001,
+            "Three off-centre taps should apply three 2.5 kg increments."
+        )
+
+        tapNearEdge(decreaseWeight, dx: 0.9, dy: 0.1)
+        XCTAssertEqual(
+            numericValue(of: weightField) ?? .nan,
+            startWeight + 5,
+            accuracy: 0.001,
+            "An off-centre tap on the decrement tile should remove one step."
+        )
+
+        let repsField = element(app, "myo-activation-reps-1")
+        XCTAssertTrue(repsField.waitForExistence(timeout: 3))
+        guard let startReps = numericValue(of: repsField) else {
+            return XCTFail("The activation reps field should report a number.")
+        }
+        tapNearEdge(increaseReps, dx: 0.9, dy: 0.1)
+        tapNearEdge(increaseReps, dx: 0.1, dy: 0.9)
+        XCTAssertEqual(
+            numericValue(of: repsField) ?? .nan,
+            startReps + 2,
+            accuracy: 0.001,
+            "Off-centre taps on the rep tile should each add a rep."
+        )
+        tapNearEdge(decreaseReps, dx: 0.1, dy: 0.1)
+        XCTAssertEqual(
+            numericValue(of: repsField) ?? .nan,
+            startReps + 1,
+            accuracy: 0.001,
+            "An off-centre tap on the rep decrement tile should remove a rep."
+        )
+    }
+
+    /// The pound ladder steps by 5. Same controls, same edges — a unit switch
+    /// must not shrink the target or drop the increment.
+    @MainActor
+    func testMyoWeightStepperTapsApplyInPounds() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding",
+            "-didOnboard", "YES", "-initialTab", "home",
+            "-weightUnitRaw", "lb",
+        ]
+        app.acceptanceLaunch()
+
+        makeReadyMyoSet(in: app)
+        tapWhenHittable(element(app, "start-myo-rep-set"))
+
+        let weightField = element(app, "myo-activation-weight")
+        XCTAssertTrue(weightField.waitForExistence(timeout: 5))
+        let increaseWeight = app.buttons["Increase activation weight"].firstMatch
+        assertMeetsTapTarget(increaseWeight, "the weight increment control in pounds")
+
+        guard let startWeight = numericValue(of: weightField) else {
+            return XCTFail("The activation weight field should report a number.")
+        }
+        tapNearEdge(increaseWeight, dx: 0.12, dy: 0.85)
+        tapNearEdge(increaseWeight, dx: 0.88, dy: 0.15)
+        XCTAssertEqual(
+            numericValue(of: weightField) ?? .nan,
+            startWeight + 10,
+            accuracy: 0.001,
+            "Two off-centre taps should apply two 5 lb increments."
+        )
+        attachScreenshot(app, name: "Myo stepper pounds")
+    }
 }

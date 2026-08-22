@@ -6,6 +6,11 @@ import UIKit
 /// of the floating tab bar.
 struct ScreenScaffold<Trailing: View, Content: View>: View {
     @Environment(\.theme) private var theme
+    @Environment(\.tabScrollTopRequestID) private var tabScrollTopRequestID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Driven only by the tab-reselect request; the user's own scrolling is
+    /// never written back, so this stays a one-way command channel.
+    @State private var scrollPosition = ScrollPosition()
     let title: String
     var subtitle: String? = nil
     var titleFont: Font
@@ -34,6 +39,9 @@ struct ScreenScaffold<Trailing: View, Content: View>: View {
                         Text(title)
                             .font(titleFont)
                             .foregroundStyle(theme.textPrimary)
+                            // Stable handle on "the top of this screen" for
+                            // the tab-reselect scroll contract.
+                            .accessibilityIdentifier("screen-title")
                         if let subtitle {
                             Text(subtitle)
                                 .font(.system(size: 15))
@@ -55,6 +63,15 @@ struct ScreenScaffold<Trailing: View, Content: View>: View {
         }
         .background(theme.background)
         .scrollDismissesKeyboard(.interactively)
+        .scrollPosition($scrollPosition)
+        // `scrollTo(edge:)` rather than a `ScrollViewReader` anchor: the
+        // content is a `LazyVStack`, whose first row is no longer realized
+        // once the user has scrolled far enough for this gesture to matter.
+        .onChange(of: tabScrollTopRequestID) { _, _ in
+            withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
+                scrollPosition.scrollTo(edge: .top)
+            }
+        }
     }
 }
 

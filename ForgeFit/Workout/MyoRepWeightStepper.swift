@@ -19,14 +19,12 @@ struct MyoRepWeightStepper: View {
                 .foregroundStyle(theme.textSecondary)
 
             HStack(spacing: Space.md) {
-                Button("Decrease activation weight", systemImage: "minus") {
+                MyoStepperButton(
+                    systemImage: "minus",
+                    accessibilityLabel: "Decrease activation weight"
+                ) {
                     value = max(0, value - step)
                 }
-                .labelStyle(.iconOnly)
-                .font(.title3.bold())
-                .frame(width: 56, height: 56)
-                .background(theme.surfaceElevated)
-                .clipShape(.rect(cornerRadius: Radius.control))
                 .disabled(value <= 0)
 
                 HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
@@ -59,14 +57,12 @@ struct MyoRepWeightStepper: View {
                     apply: { value = max(0, $0) }
                 )
 
-                Button("Increase activation weight", systemImage: "plus") {
+                MyoStepperButton(
+                    systemImage: "plus",
+                    accessibilityLabel: "Increase activation weight"
+                ) {
                     value += step
                 }
-                .labelStyle(.iconOnly)
-                .font(.title3.bold())
-                .frame(width: 56, height: 56)
-                .background(theme.surfaceElevated)
-                .clipShape(.rect(cornerRadius: Radius.control))
             }
         }
     }

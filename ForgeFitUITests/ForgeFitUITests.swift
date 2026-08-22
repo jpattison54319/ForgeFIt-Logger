@@ -1293,6 +1293,14 @@ final class ForgeFitUITests: XCTestCase {
         )
 
         let chart = app.descendants(matching: .any)["exercise-progress-chart"].firstMatch
+        // Launch seeding runs asynchronously relative to the first visible
+        // shell. Wait for the expected rendered chart before scrolling or
+        // scrubbing so an intermediate empty state is not mistaken for a
+        // product failure.
+        XCTAssertTrue(
+            chart.waitForExistence(timeout: 15),
+            "The seeded history must materialize the exercise progress chart before interaction."
+        )
         scrollUntilHittable(chart, in: app)
         XCTAssertTrue(chart.exists && chart.isHittable, "Expected an interactive exercise progress chart.")
 
@@ -1352,10 +1360,13 @@ final class ForgeFitUITests: XCTestCase {
         let routineName = app.textFields["Routine name"].firstMatch
         XCTAssertTrue(routineName.waitForExistence(timeout: 5))
         tapWhenReady(routineName)
-        if let currentName = routineName.value as? String {
-            routineName.acceptanceTypeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentName.count))
-        }
+        clearTextField(routineName)
         routineName.acceptanceTypeText("Cardio Detail")
+        XCTAssertEqual(
+            routineName.value as? String,
+            "Cardio Detail",
+            "The rename should replace the default name, not extend it."
+        )
         tapWhenReady(app.buttons["Done"].firstMatch)
 
         let addExercise = app.buttons["add-to-routine"].firstMatch
@@ -1378,6 +1389,15 @@ final class ForgeFitUITests: XCTestCase {
         let addGoal = app.buttons["routine-cardio-goal"].firstMatch
         XCTAssertTrue(addGoal.waitForExistence(timeout: 5))
         XCTAssertEqual(addGoal.label, "Add goal")
+        XCTAssertEqual(
+            addGoal.value as? String ?? "",
+            "",
+            "An unset goal row has no target to announce."
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["routine-cardio-goal-summary"].exists,
+            "A cardio exercise starts open, so there is no goal to summarize yet."
+        )
         XCTAssertFalse(app.staticTexts["Cardio target"].exists)
         XCTAssertFalse(app.staticTexts["Add goal, zone lock, or intervals"].exists)
         XCTAssertFalse(app.textFields["cardio-target-minutes"].exists)
@@ -1389,19 +1409,34 @@ final class ForgeFitUITests: XCTestCase {
 
         tapWhenReady(addGoal)
         XCTAssertTrue(app.navigationBars["Cardio goal"].waitForExistence(timeout: 5))
-        let existingMinutes = app.textFields["cardio-goal-minutes"].firstMatch
-        XCTAssertTrue(
-            existingMinutes.waitForExistence(timeout: 3),
-            "Existing routine targets should remain editable in the goal sheet."
-        )
-        XCTAssertEqual(existingMinutes.value as? String, "30")
+        setThirtyMinuteCardioGoal(in: app)
         let voiceAlert = app.descendants(matching: .any)["cardio-goal-voice-alert"].firstMatch
         XCTAssertTrue(
             voiceAlert.waitForExistence(timeout: 3),
             "A configured cardio goal should visibly promise its voice alert."
         )
+        tapWhenReady(app.navigationBars["Cardio goal"].buttons["Save"].firstMatch)
 
-        tapWhenReady(app.buttons["Cancel"].firstMatch)
+        // The saved goal has to be readable from the row itself: "Add goal"
+        // over a stored 30-minute target is how the same goal gets entered a
+        // second time.
+        let editGoal = app.buttons["routine-cardio-goal"].firstMatch
+        XCTAssertTrue(editGoal.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForLabel("Edit goal", on: editGoal),
+            "A saved goal should turn the row into an edit action, not another Add goal."
+        )
+        XCTAssertEqual(
+            editGoal.value as? String,
+            "30min goal",
+            "The row should announce the saved target as its accessibility value."
+        )
+        XCTAssertTrue(
+            app.staticTexts["30min goal"].waitForExistence(timeout: 3),
+            "The saved target should be legible without opening the editor."
+        )
+        attachScreenshot(app, name: "routine-cardio-saved-goal-summary")
+
         let saveRoutine = app.buttons["Save"].firstMatch
         XCTAssertTrue(saveRoutine.waitForExistence(timeout: 3))
         tapWhenReady(saveRoutine)
@@ -1426,6 +1461,90 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Goal"].exists)
         XCTAssertTrue(app.staticTexts["30min"].exists)
         attachScreenshot(app, name: "routine-cardio-concise-detail")
+
+        // Round-trip: the goal sheet must reopen on the persisted plan rather
+        // than on an empty builder, or "Edit goal" silently discards the
+        // target it advertises.
+        tapWhenReady(app.buttons["Edit Routine"].firstMatch)
+        let persistedGoal = app.buttons["routine-cardio-goal"].firstMatch
+        XCTAssertTrue(persistedGoal.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForLabel("Edit goal", on: persistedGoal),
+            "The saved goal should survive a relaunch."
+        )
+        XCTAssertEqual(persistedGoal.value as? String, "30min goal")
+        tapWhenReady(persistedGoal)
+        XCTAssertTrue(app.navigationBars["Cardio goal"].waitForExistence(timeout: 5))
+        let hydratedMinutes = app.textFields["cardio-goal-minutes"].firstMatch
+        XCTAssertTrue(
+            hydratedMinutes.waitForExistence(timeout: 3),
+            "A saved duration goal should reopen on the Time target it stored."
+        )
+        XCTAssertEqual(
+            hydratedMinutes.value as? String,
+            "30",
+            "The goal sheet should hydrate the persisted plan, not a blank default."
+        )
+        attachScreenshot(app, name: "routine-cardio-goal-hydrated")
+    }
+
+    /// Sets a 30-minute session goal in an open `Cardio goal` sheet. Leaves the
+    /// sheet up so the caller can assert on it before saving.
+    private func setThirtyMinuteCardioGoal(in app: XCUIApplication) {
+        let modePicker = app.descendants(matching: .any)["cardio-goal-mode"].firstMatch
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5))
+        tapWhenReady(modePicker.buttons["Target"].firstMatch)
+
+        let kindPicker = app.descendants(matching: .any)["cardio-goal-kind"].firstMatch
+        XCTAssertTrue(kindPicker.waitForExistence(timeout: 3))
+        tapWhenReady(kindPicker.buttons["Time"].firstMatch)
+
+        let minutes = app.textFields["cardio-goal-minutes"].firstMatch
+        XCTAssertTrue(
+            minutes.waitForExistence(timeout: 3),
+            "The Time target should offer a minutes field."
+        )
+        minutes.acceptanceTap()
+        if let existing = minutes.value as? String, Int(existing) != nil {
+            minutes.acceptanceTypeText(
+                String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
+            )
+        }
+        minutes.acceptanceTypeText("30")
+    }
+
+    /// Empties a text field. A single delete burst sized from one `value` read
+    /// races the keyboard — the field keeps the head of its old contents and
+    /// the new text is appended to it — so this re-reads and repeats until the
+    /// field is actually empty.
+    private func clearTextField(_ field: XCUIElement, attempts: Int = 6) {
+        for _ in 0..<attempts {
+            guard let current = field.value as? String,
+                  !current.isEmpty,
+                  current != field.placeholderValue else { return }
+            field.acceptanceTypeText(
+                String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count)
+            )
+        }
+        let remaining = field.value as? String ?? ""
+        XCTAssertTrue(
+            remaining.isEmpty || remaining == field.placeholderValue,
+            "Could not clear the field; it still reads \(remaining)."
+        )
+    }
+
+    /// XCUITest caches an element's label between queries; a label that changes
+    /// in place (`Add goal` becoming `Edit goal`) needs to be re-read.
+    private func waitForLabel(
+        _ expected: String,
+        on element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while element.label != expected && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return element.label == expected
     }
 
     /// The routine editor exposes the durable live-workout actions while

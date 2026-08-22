@@ -1156,15 +1156,31 @@ private struct ExerciseEditRow: View {
         return "Build a flow"
     }
 
+    /// A saved goal has to be readable from the card itself. "Add goal" on a
+    /// row that already carries a 30-minute target reads as "nothing saved",
+    /// which is exactly how a saved goal gets set twice or abandoned. The row
+    /// states which of the two things it does and, when there is one, what the
+    /// target actually is.
     private var cardioTargetEditor: some View {
-        Button {
+        let row = CardioGoalRowPresentation(planJSON: routineExercise.intervalPlanJSON)
+        return Button {
             showIntervalBuilder = true
         } label: {
             HStack(spacing: 4) {
-                Text("Add goal")
-                    .font(.bodyStrong)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(row.action)
+                            .font(.bodyStrong)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    if let summary = row.summary {
+                        Text(summary)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .accessibilityIdentifier("routine-cardio-goal-summary")
+                    }
+                }
                 Spacer()
             }
             .foregroundStyle(theme.accentForeground)
@@ -1173,6 +1189,8 @@ private struct ExerciseEditRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("routine-cardio-goal")
+        .accessibilityLabel(row.action)
+        .accessibilityValue(row.summary ?? "")
         .sheet(isPresented: $showIntervalBuilder) {
             IntervalPlanBuilderView(routineExercise: routineExercise)
         }

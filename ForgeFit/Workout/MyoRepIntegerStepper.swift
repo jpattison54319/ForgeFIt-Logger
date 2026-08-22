@@ -18,14 +18,12 @@ struct MyoRepIntegerStepper: View {
                 .foregroundStyle(theme.textSecondary)
 
             HStack(spacing: Space.md) {
-                Button("Decrease \(label)", systemImage: "minus") {
+                MyoStepperButton(
+                    systemImage: "minus",
+                    accessibilityLabel: "Decrease \(label)"
+                ) {
                     value = max(minimum, value - 1)
                 }
-                .labelStyle(.iconOnly)
-                .font(.title3.bold())
-                .frame(width: 56, height: 56)
-                .background(theme.surfaceElevated)
-                .clipShape(.rect(cornerRadius: Radius.control))
                 .disabled(value <= minimum)
 
                 TextField(label, value: $value, format: .number)
@@ -47,14 +45,12 @@ struct MyoRepIntegerStepper: View {
                         apply: { value = max(minimum, Int($0.rounded())) }
                     )
 
-                Button("Increase \(label)", systemImage: "plus") {
+                MyoStepperButton(
+                    systemImage: "plus",
+                    accessibilityLabel: "Increase \(label)"
+                ) {
                     value += 1
                 }
-                .labelStyle(.iconOnly)
-                .font(.title3.bold())
-                .frame(width: 56, height: 56)
-                .background(theme.surfaceElevated)
-                .clipShape(.rect(cornerRadius: Radius.control))
             }
         }
     }

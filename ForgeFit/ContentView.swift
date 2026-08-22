@@ -209,6 +209,7 @@ struct ContentView: View {
     /// the already-selected tab. Kept separate per tab so resetting one stack
     /// does not disturb the other resident tabs or their memoized analytics.
     @State private var tabRootRequestIDs: [AppTab: Int] = [:]
+    @State private var tabScrollTopRequestIDs: [AppTab: Int] = [:]
     /// True while the software keyboard is up — hides the floating tab bar /
     /// quick-action bubble so keyboard avoidance can't lift them into view.
     @State private var keyboardVisible = false
@@ -759,6 +760,7 @@ struct ContentView: View {
                 if appState.selectedTab == tab || mountedTabs.contains(tab) {
                     tabContent(for: tab)
                         .environment(\.tabRootRequestID, tabRootRequestIDs[tab, default: 0])
+                        .environment(\.tabScrollTopRequestID, tabScrollTopRequestIDs[tab, default: 0])
                         .opacity(appState.selectedTab == tab ? 1 : 0)
                         .allowsHitTesting(appState.selectedTab == tab)
                         .accessibilityHidden(appState.selectedTab != tab)
@@ -789,7 +791,14 @@ struct ContentView: View {
 
     private func selectTab(_ tab: AppTab) {
         tabRootRequestIDs[tab, default: 0] &+= 1
-        guard appState.selectedTab != tab else { return }
+        guard appState.selectedTab != tab else {
+            // Reselecting the visible tab is the standard iOS "back to the
+            // top" gesture. The root request above has already popped any
+            // pushed screen, so the scroll request lands on the tab root the
+            // user is about to be looking at.
+            tabScrollTopRequestIDs[tab, default: 0] &+= 1
+            return
+        }
         withAnimation(.bouncy(duration: 0.42, extraBounce: 0.06)) {
             appState.selectedTab = tab
         }
@@ -2136,7 +2145,7 @@ struct ContentView: View {
                 // is a fresh PR and the PR filter has hits in every era.
                 let progression = Double((120 - i) / 8) * 2.5
                 let workoutExercises = split.lifts.enumerated().map { position, lift in
-                    let sets = (0..<3).map { setIndex -> SetModel in
+                    let sets = (0..<3).map { setIndex in
                         var set = SetModel(
                             userID: userID,
                             position: setIndex,

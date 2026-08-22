@@ -275,3 +275,26 @@ extension ExerciseLibraryModel {
             ?? CardioKind.infer(name: name, equipment: equipment)
     }
 }
+
+/// What the routine editor's cardio goal row says.
+///
+/// Split out of the view so the "a saved goal must be readable without opening
+/// the editor" contract is testable: the row that says `Add goal` over a
+/// persisted 30-minute target is indistinguishable from an empty one, which is
+/// how a saved goal gets silently re-entered or abandoned.
+struct CardioGoalRowPresentation: Equatable {
+    /// The action the row performs, and its accessibility label.
+    let action: String
+    /// The persisted target in display units, or nil when nothing is saved.
+    let summary: String?
+
+    init(planJSON: String?) {
+        guard let plan = IntervalPlan.decode(from: planJSON), plan.isMeaningful else {
+            action = "Add goal"
+            summary = nil
+            return
+        }
+        action = "Edit goal"
+        summary = plan.displaySummary
+    }
+}

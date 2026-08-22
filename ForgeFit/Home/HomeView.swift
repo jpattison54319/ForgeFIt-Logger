@@ -1111,9 +1111,14 @@ struct HomeView: View {
             }
             // Widen past the scaffold's gutter so the row clips at the display
             // edge, then put the gutter back as a content margin so the first
-            // chip still lines up with the cards above it.
-            .padding(.horizontal, -Space.lg)
+            // chip still lines up with the cards above it. The modifiers belong
+            // on the scroll view, not its content: a ScrollView clips to its
+            // own bounds, so padding the HStack alone left the row cut a full
+            // gutter short of the edge — a clean stop that reads as "that's
+            // all of them" instead of "there are more".
             .contentMargins(.horizontal, Space.lg, for: .scrollContent)
+            .padding(.horizontal, -Space.lg)
+            .scrollEdgeFade()
         }
     }
 

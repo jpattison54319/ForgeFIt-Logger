@@ -137,7 +137,19 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                 at: screenshotURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let screenshot = (session.app ?? app)?.screenshot() ?? XCUIScreen.main.screenshot()
+            // Asking a terminated application for a screenshot raises its own
+            // test failure, which turned every relaunch flow ("terminate, then
+            // verify from a cold store") into a harness failure at the exact
+            // point the evidence mattered. The screen still has something worth
+            // recording after a terminate, so fall back to it.
+            let target = session.app ?? app
+            let isRunning = target.map {
+                $0.state == .runningForeground || $0.state == .runningBackground
+            } ?? false
+            let screenshot = isRunning
+                ? (target?.screenshot() ?? XCUIScreen.main.screenshot())
+                : XCUIScreen.main.screenshot()
+            if !isRunning { notes.append("appState=notRunning") }
             try screenshot.pngRepresentation.write(to: screenshotURL, options: .atomic)
             screenshotFile = screenshotRelativePath
             session.artifactFiles.insert(screenshotRelativePath)
@@ -152,7 +164,13 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                 at: treeURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let tree = (session.app ?? app)?.debugDescription ?? "No registered application tree"
+            let treeSource = session.app ?? app
+            let treeIsAvailable = treeSource.map {
+                $0.state == .runningForeground || $0.state == .runningBackground
+            } ?? false
+            let tree = treeIsAvailable
+                ? (treeSource?.debugDescription ?? "No registered application tree")
+                : "Application not running"
             try tree.write(to: treeURL, atomically: true, encoding: .utf8)
             accessibilityTreeFile = treeRelativePath
             session.artifactFiles.insert(treeRelativePath)

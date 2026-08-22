@@ -6,11 +6,24 @@ private struct TabRootRequestIDKey: EnvironmentKey {
     static let defaultValue = 0
 }
 
+private struct TabScrollTopRequestIDKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
 extension EnvironmentValues {
     /// Changes whenever the app bar asks the visible tab to return to its root.
     var tabRootRequestID: Int {
         get { self[TabRootRequestIDKey.self] }
         set { self[TabRootRequestIDKey.self] = newValue }
+    }
+
+    /// Changes only when the *already selected* tab is tapped again — the
+    /// platform gesture for "take me back to the top of this screen". Kept
+    /// separate from `tabRootRequestID` so an ordinary tab switch still
+    /// restores that tab where the user left it.
+    var tabScrollTopRequestID: Int {
+        get { self[TabScrollTopRequestIDKey.self] }
+        set { self[TabScrollTopRequestIDKey.self] = newValue }
     }
 }
 
