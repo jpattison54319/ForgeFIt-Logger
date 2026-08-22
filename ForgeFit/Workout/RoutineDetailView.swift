@@ -448,12 +448,19 @@ private struct RoutineExerciseSummary: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: Space.md) {
-                    Image(systemName: exercise?.isYoga == true ? "figure.yoga" : (exercise?.isCardio == true ? "figure.run" : "dumbbell.fill"))
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 40, height: 40)
-                        .background(theme.surfaceElevated)
-                        .clipShape(Circle())
+                    // The same thumbnail the picker and the live logger show,
+                    // so an exercise the user photographed is recognizable in
+                    // the routine too. Falls back to the modality icon.
+                    if let exercise {
+                        ExerciseThumbnail(exercise: exercise, size: 40)
+                    } else {
+                        Image(systemName: "dumbbell.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(width: 40, height: 40)
+                            .background(theme.surfaceElevated)
+                            .clipShape(Circle())
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         if let exercise {
                             NavigationLink(value: exercise.id) {

@@ -1974,6 +1974,9 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-microcycle-tracking") {
                 try MicrocycleTrackingUITestFixture.seed(in: modelContext)
             }
+            if ProcessInfo.processInfo.arguments.contains(CustomExerciseMediaUITestFixture.launchArgument) {
+                try CustomExerciseMediaUITestFixture.seed(in: modelContext)
+            }
             try RoutineHierarchyUITestFixture.seedIfRequested(
                 arguments: ProcessInfo.processInfo.arguments,
                 in: modelContext

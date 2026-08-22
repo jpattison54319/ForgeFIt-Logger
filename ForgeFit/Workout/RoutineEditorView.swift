@@ -839,6 +839,9 @@ private struct ExerciseEditRow: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack {
+                    if let exercise {
+                        ExerciseThumbnail(exercise: exercise, size: 34)
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         if let exercise {
                             Button {

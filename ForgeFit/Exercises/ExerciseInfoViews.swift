@@ -13,15 +13,35 @@ struct ExerciseAnimationView: View {
     @State private var isPaused = false
 
     #if canImport(UIKit)
-    private var startImage: UIImage? { ExerciseCatalog.localThumbnail(path: exercise.mediaSlug) }
-    private var endImage: UIImage? { ExerciseCatalog.localThumbnail(path: ExerciseCatalog.frameOnePath(from: exercise.mediaSlug)) }
+    /// The athlete's own photos replace the illustration entirely when they
+    /// exist — they photographed this machine because the stock drawing wasn't
+    /// the thing in front of them. Their start/end pair drives the same
+    /// crossfade the bundled two-frame illustrations use, so one photo is a
+    /// still and two play the movement.
+    private var userStart: UIImage? { userImage(.start) }
+    private var userEnd: UIImage? { userImage(.end) }
+    private var hasUserPhoto: Bool { userStart != nil || userEnd != nil }
+    private var startImage: UIImage? {
+        userStart ?? userEnd ?? ExerciseCatalog.localThumbnail(path: exercise.mediaSlug)
+    }
+    private var endImage: UIImage? {
+        if hasUserPhoto { return userStart != nil ? userEnd : nil }
+        return ExerciseCatalog.localThumbnail(path: ExerciseCatalog.frameOnePath(from: exercise.mediaSlug))
+    }
+
+    private func userImage(_ slot: ExercisePhotoSlot) -> UIImage? {
+        guard let url = CustomExerciseMedia.shared.photoURL(for: exercise.id, slot: slot) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
     #endif
 
     var body: some View {
         ZStack {
             Color(white: 0.96)
             #if canImport(UIKit)
-            if exercise.isYoga {
+            // A photographed exercise is never rendered as a pose drawing:
+            // the athlete's own frames win over the generic art.
+            if exercise.isYoga, !hasUserPhoto {
                 ViewThatFits {
                     YogaPoseArt(exercise: exercise, size: 320)
                     YogaPoseArt(exercise: exercise, size: 280)
@@ -48,7 +68,7 @@ struct ExerciseAnimationView: View {
             fallback
             #endif
 
-            if isPaused && !exercise.isYoga {
+            if isPaused, animates {
                 Image(systemName: "pause.fill")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(.white)
@@ -57,21 +77,20 @@ struct ExerciseAnimationView: View {
                     .clipShape(Circle())
             }
         }
-        .aspectRatio(exercise.isYoga ? 1 : 4 / 3, contentMode: .fit)
+        .aspectRatio(exercise.isYoga && !hasUserPhotoOnThisPlatform ? 1 : 4 / 3, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(theme.separator, lineWidth: 1)
         }
         .contentShape(Rectangle())
+        // Only a two-frame view can be paused, so only a two-frame view claims
+        // the tap. A single photo is a still and behaves like one.
         .onTapGesture {
-            #if canImport(UIKit)
-            if !exercise.isYoga, endImage != nil { isPaused.toggle() }
-            #endif
+            if animates { isPaused.toggle() }
         }
         .task {
-            #if canImport(UIKit)
-            guard !exercise.isYoga, endImage != nil else { return }
+            guard animates else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(0.9))
                 guard !Task.isCancelled, !isPaused else { continue }
@@ -79,10 +98,47 @@ struct ExerciseAnimationView: View {
                     showEnd.toggle()
                 }
             }
-            #endif
         }
-        .accessibilityLabel(exercise.isYoga ? "\(exercise.name) pose demonstration" : "Exercise demonstration")
-        .accessibilityHint(exercise.isYoga ? "Use the instructor control below to change the model" : "Tap to pause or resume")
+        .accessibilityLabel(mediaAccessibilityLabel)
+        .accessibilityHint(mediaAccessibilityHint)
+        .accessibilityIdentifier(hasUserPhotoOnThisPlatform ? "exercise-user-photos" : "")
+    }
+
+    /// Whether this view is currently crossfading two frames — the athlete's
+    /// start/end pair, or a bundled two-frame illustration.
+    private var animates: Bool {
+        #if canImport(UIKit)
+        return startImage != nil && endImage != nil
+        #else
+        return false
+        #endif
+    }
+
+    private var hasUserPhotoOnThisPlatform: Bool {
+        #if canImport(UIKit)
+        return hasUserPhoto
+        #else
+        return false
+        #endif
+    }
+
+    /// Says whose picture this is. A user's own photos are described as theirs,
+    /// and a still is never announced as a demonstration that can be paused.
+    private var mediaAccessibilityLabel: String {
+        if hasUserPhotoOnThisPlatform {
+            return animates
+                ? "Your start and end photos for \(exercise.name)"
+                : "Your photo of \(exercise.name)"
+        }
+        return exercise.isYoga ? "\(exercise.name) pose demonstration" : "Exercise demonstration"
+    }
+
+    private var mediaAccessibilityHint: String {
+        if animates { return "Tap to pause or resume" }
+        if exercise.isYoga, !hasUserPhotoOnThisPlatform {
+            return "Use the instructor control below to change the model"
+        }
+        return ""
     }
 
     private var fallback: some View {
@@ -136,6 +192,22 @@ struct ExerciseInfoCard: View {
                 MuscleChips(muscles: muscles)
             }
 
+            if let userNotes = CustomExerciseMedia.shared.notes(for: exercise.id) {
+                VStack(alignment: .leading, spacing: Space.md) {
+                    Text("Your description")
+                        .font(.sectionTitle)
+                        .foregroundStyle(theme.textPrimary)
+                    Card(padding: Space.md) {
+                        Text(userNotes)
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("exercise-user-description")
+                }
+            }
+
             if !exercise.instructions.isEmpty {
                 VStack(alignment: .leading, spacing: Space.md) {
                     HStack {
@@ -182,7 +254,9 @@ struct ExerciseInfoCard: View {
                         }
                     }
                 }
-            } else {
+            } else if CustomExerciseMedia.shared.notes(for: exercise.id) == nil {
+                // Only an exercise with nothing written about it at all is
+                // missing its how-to; the user's own description is one.
                 Card(padding: Space.md) {
                     Text("No step-by-step instructions are available for this exercise yet.")
                         .font(.system(size: 14))

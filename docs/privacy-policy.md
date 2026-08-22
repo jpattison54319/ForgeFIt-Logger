@@ -76,6 +76,20 @@ an outcome and are not medical advice. Deleting the app or replacing the
 iPhone without making a separate user-directed export deletes the experiment
 records.
 
+## Exercise photos & descriptions
+
+Photos and written descriptions you add to an exercise are stored as ordinary
+files on that iPhone only. They are not synced through CloudKit, are not
+written to the iCloud Drive workout backup, and are never included in a data
+export, a shared plan, or a shared workout. ForgeFit reads photos through
+Apple's photo picker, which hands the app only the images you pick — ForgeFit
+never gains access to your photo library.
+
+Because they never leave the device, exercise photos and descriptions are not
+restored by ForgeFit's own backup; an encrypted iOS device backup is what
+carries them to a replacement iPhone. Settings → Reset all app data and
+deleting the app both remove them.
+
 ## Apple Health
 
 With your permission, ForgeFit reads health data from Apple Health to power

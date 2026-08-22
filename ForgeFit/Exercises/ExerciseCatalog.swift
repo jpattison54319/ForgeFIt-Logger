@@ -303,8 +303,9 @@ enum ExerciseCatalog {
     }
 }
 
-/// Bundled exercise illustration with a graceful icon fallback. Illustrations
-/// sit on a light plate so they read on the dark theme.
+/// Exercise illustration with a graceful icon fallback: the user's own photo
+/// when they added one, then the bundled illustration, then an icon.
+/// Illustrations sit on a light plate so they read on the dark theme.
 struct ExerciseThumbnail: View {
     @Environment(\.theme) private var theme
     let exercise: ExerciseLibraryModel
@@ -314,33 +315,58 @@ struct ExerciseThumbnail: View {
     /// Primed asynchronously — rows show the icon placeholder for a frame or
     /// two on first scroll instead of decoding JPEGs on the main thread.
     @State private var loadedThumbnail: UIImage?
+    @State private var userPhoto: UIImage?
+    private var media: CustomExerciseMedia { CustomExerciseMedia.shared }
     #endif
 
     var body: some View {
         ZStack {
-            if exercise.isYoga {
-                yogaArt
-            } else {
-                #if canImport(UIKit)
-                if let image = ExerciseCatalog.cachedThumbnail(path: exercise.mediaSlug) ?? loadedThumbnail {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
+            #if canImport(UIKit)
+            // A photo the user took of the machine they actually use beats any
+            // stock illustration of it, so it wins everywhere — including for
+            // a pose, whose art is generic by definition.
+            if let image = media.cachedThumbnail(for: exercise.id) ?? userPhoto {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
                     .background(Color(white: 0.96))
-                } else {
-                    fallback
-                        .task(id: exercise.mediaSlug) {
-                            guard let primed = await ExerciseCatalog.primeThumbnail(path: exercise.mediaSlug) else { return }
-                            withAnimation(.easeIn(duration: 0.15)) { loadedThumbnail = primed }
-                        }
-                }
-                #else
+                    // A row that sets its own identifier (the routine card
+                    // does) overrides a child's, so identity also rides on the
+                    // label — which is worth saying out loud anyway: it tells
+                    // a VoiceOver user this exercise carries their own photo
+                    // rather than stock art. Kept to two words; the row's own
+                    // label already names the exercise.
+                    .accessibilityIdentifier("exercise-photo-thumbnail")
+                    .accessibilityLabel("Your photo")
+            } else if exercise.isYoga {
+                yogaArt
+            } else if let image = ExerciseCatalog.cachedThumbnail(path: exercise.mediaSlug) ?? loadedThumbnail {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .background(Color(white: 0.96))
+            } else {
                 fallback
-                #endif
+                    .task(id: exercise.mediaSlug) {
+                        guard let primed = await ExerciseCatalog.primeThumbnail(path: exercise.mediaSlug) else { return }
+                        withAnimation(.easeIn(duration: 0.15)) { loadedThumbnail = primed }
+                    }
             }
+            #else
+            if exercise.isYoga { yogaArt } else { fallback }
+            #endif
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
+        #if canImport(UIKit)
+        // Keyed on the store's revision as well as the exercise, so adding or
+        // removing a photo repaints every row already on screen.
+        .task(id: "\(exercise.id)-\(media.revision)") {
+            let primed = await media.primeThumbnail(for: exercise.id, maxPixelSize: size * 3)
+            guard primed != nil || userPhoto != nil else { return }
+            withAnimation(.easeIn(duration: 0.15)) { userPhoto = primed }
+        }
+        #endif
     }
 
     /// Pose photo for the selected instructor, with authored line art as the

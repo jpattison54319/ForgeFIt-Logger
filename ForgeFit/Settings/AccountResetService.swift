@@ -57,6 +57,10 @@ enum AccountResetService {
         clearLiveSurfaces()
         cancelAppNotifications()
         ExperimentExportService.cleanupAll()
+        // Exercise photos and descriptions are device-local files, so the
+        // model wipe above cannot reach them. Reset promises the device is
+        // left with nothing.
+        CustomExerciseMedia.shared.deleteEverything()
         clearAppDefaults()
         // `clearLiveSurfaces` published to the Watch while the health stores
         // were still populated. Publish again now they are empty, so the wrist

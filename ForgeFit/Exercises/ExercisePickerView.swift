@@ -812,6 +812,17 @@ struct CreateExerciseView: View {
     /// and the default hold the flow builder starts from.
     @State private var sanskritName = ""
     @State private var defaultHoldSeconds = 30
+    /// The identity photos are filed under. Fixed up front so a photo picked
+    /// before the first save still belongs to the exercise this form creates.
+    @State private var mediaID = UUID()
+    @State private var photoDrafts = ExercisePhotoSet.empty
+    @State private var notesDraft = ""
+    @State private var mediaSaveFailed = false
+    /// Set once the exercise row itself is durably saved. A retry after a
+    /// media failure must re-apply the photos, never insert the exercise a
+    /// second time — CloudKit cannot enforce unique ids, so a duplicate row
+    /// would be permanent.
+    @State private var exerciseIsCommitted = false
 
     private var isCardio: Bool { modality == .cardio }
 
@@ -864,6 +875,9 @@ struct CreateExerciseView: View {
             }
         }
         if let editing {
+            _mediaID = State(initialValue: editing.id)
+            _photoDrafts = State(initialValue: CustomExerciseMedia.shared.photoSet(for: editing.id))
+            _notesDraft = State(initialValue: CustomExerciseMedia.shared.notes(for: editing.id) ?? "")
             _name = State(initialValue: editing.name)
             _primaryMuscle = State(initialValue: editing.primaryMuscles.first ?? "chest")
             _secondaryMuscles = State(initialValue: Set(editing.secondaryMuscles))
@@ -974,6 +988,16 @@ struct CreateExerciseView: View {
                         yogaFieldsCard
                     case .strength:
                         liftFieldsCard
+                    }
+
+                    ExerciseMediaEditorCard(photos: $photoDrafts, notes: $notesDraft)
+
+                    if mediaSaveFailed {
+                        Text("The exercise is saved. Its photos and description could not be written to this device — Save again to retry just those.")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("exercise-media-save-error")
                     }
                 }
                 .padding(Space.lg)
@@ -1333,6 +1357,17 @@ struct CreateExerciseView: View {
     }
 
     private func save() {
+        // A retry after a media failure has a durable exercise already. Redo
+        // only the part that failed.
+        if exerciseIsCommitted {
+            isSaving = true
+            if applyMedia() {
+                dismiss()
+            } else {
+                isSaving = false
+            }
+            return
+        }
         // Freeze and clear suggestions before the insert: the @Query update
         // would otherwise match the just-created exercise against its own name
         // and flash the "already exists" card while the sheet dismisses.
@@ -1386,7 +1421,7 @@ struct CreateExerciseView: View {
 
         let attempt = editing.map {
             ExercisePersistenceAttempt(editing: $0, in: modelContext)
-        } ?? ExercisePersistenceAttempt(creatingName: draftName, in: modelContext)
+        } ?? ExercisePersistenceAttempt(id: mediaID, creatingName: draftName, in: modelContext)
         let succeeded = attempt.commit(
             into: modelContext,
             mutate: { exercise, persistenceContext in
@@ -1425,11 +1460,40 @@ struct CreateExerciseView: View {
                 } else {
                     onCreate(committedExercise)
                 }
+                // Photos and description are device-local files, committed
+                // only once the exercise itself is durable — so a failed save
+                // never leaves photos filed under an exercise that does not
+                // exist. A media failure is reported without undoing the
+                // exercise: the training data is the part that must not be
+                // lost.
+                exerciseIsCommitted = true
+                if !applyMedia() {
+                    mediaSaveFailed = true
+                    isSaving = false
+                    return
+                }
                 dismiss()
             }
         )
 
         if !succeeded { isSaving = false }
+    }
+
+    /// Writes the staged photos and description for this exercise. Returns
+    /// false when either could not be written, so the form can say so instead
+    /// of dismissing over a silent loss.
+    private func applyMedia() -> Bool {
+        let target = editing?.id ?? mediaID
+        do {
+            try CustomExerciseMedia.shared.setNotes(notesDraft, for: target)
+            #if canImport(UIKit)
+            try CustomExerciseMedia.shared.apply(photoDrafts, for: target)
+            #endif
+            mediaSaveFailed = false
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
