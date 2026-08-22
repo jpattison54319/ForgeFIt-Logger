@@ -84,6 +84,14 @@ watch destinations often fail to resolve.
   the acceptance inventory. Run the focused replay and record any functional,
   visual, accessibility, performance, or experience concern before handoff;
   do not treat a unit test or source inspection alone as acceptance coverage.
+- Acceptance reviews must include an independent subagent pass. When Codex is
+  the orchestrator, it must spawn a Luna agent for the independent review;
+  when Claude is the orchestrator, it must spawn a Sonnet agent. The subagent
+  reviews the deterministic action evidence for functional, visual,
+  accessibility, performance, and experience concerns and returns findings to
+  the primary agent. The primary agent retains responsibility for integration,
+  evidence synthesis, fixes, and release decisions; a subagent review never
+  replaces the end-to-end replay.
 - Comment style: doc comments state design intent and invariants, never
   narration of what the next line does.
 

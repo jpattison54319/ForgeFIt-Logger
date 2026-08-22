@@ -9,6 +9,22 @@ keeping subjective visual and experience review explicit.
 Current triage from the latest run is tracked in
 [`ai-acceptance-fix-list-2026-08-22.md`](ai-acceptance-fix-list-2026-08-22.md).
 
+## Independent reviewer delegation
+
+Every acceptance run must include a second, independent agent review of the
+ordered action evidence. The primary agent still performs the deterministic
+rendered-UI replay and owns the final synthesis:
+
+- Codex must spawn a Luna agent for the independent acceptance review.
+- Claude must spawn a Sonnet agent for the independent acceptance review.
+
+Give the reviewer the run's scenario contracts, screenshots, accessibility
+trees, and observed functional results. Ask it to inspect every checkpoint in
+order and report functional, visual, accessibility, performance, and
+experience concerns with evidence paths. Keep the worker bounded to review and
+findings; the primary agent integrates changes, reruns validation, and makes
+the release decision.
+
 ## Coverage model
 
 The source inventory is the coverage contract for the current application. It
