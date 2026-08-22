@@ -5,6 +5,15 @@ import Foundation
 /// The kind of set, mirroring the `set_type` enum in the Postgres schema.
 public enum SetType: String, Codable, CaseIterable, Sendable {
     case warmup, working, drop, restPause, backoff, amrap, myoRep, cluster
+    /// Every rep performed as a partial in the stretched position. A distinct
+    /// type because the load never travels the full range: these reps are
+    /// half-weighted for tonnage and can never produce a 1RM estimate, while
+    /// still counting as a stimulating set (see `effectiveSetCount`).
+    case lengthenedPartial
+    /// Full-range reps taken to failure, then continued with lengthened
+    /// partials. `reps` holds the full-range portion and `partialReps` the
+    /// partials that followed, so both halves stay separable forever.
+    case lengthenedExtended
 
     /// The types offered in set-type pickers. `restPause` is retired — it is
     /// indistinguishable from myo-reps in practice, so new sets can't choose
@@ -30,7 +39,22 @@ public enum SetType: String, Codable, CaseIterable, Sendable {
         case .amrap: 180
         case .drop: nil
         case .myoRep, .restPause, .cluster: 120
+        case .lengthenedPartial, .lengthenedExtended: 120
         }
+    }
+
+    /// Whether the reps entered on this set are partial-range reps. The load
+    /// never travels the full range, so they are half-weighted for tonnage
+    /// and disqualified from 1RM estimation and full-range records.
+    public var repsArePartialRange: Bool {
+        self == .lengthenedPartial
+    }
+
+    /// Whether this type logs partials *alongside* its full-range reps, in
+    /// `partialReps`. Drives the extra input on the set row and the
+    /// "8 + 4 partials" reading everywhere a set is summarized.
+    public var tracksTrailingPartials: Bool {
+        self == .lengthenedExtended
     }
 
     /// Rest between the activation/segments inside one structured set.

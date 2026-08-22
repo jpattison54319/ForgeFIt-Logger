@@ -50,6 +50,32 @@ final class VolumeMathTests: XCTestCase {
         XCTAssertEqual(VolumeMath.tonnage(s), 700, accuracy: tol)
     }
 
+    // A lengthened-partials set is all partial-range reps, so its reps take
+    // the same half weight trailing partials do: 100kg × 10 → 5 eff reps → 500.
+    func testLengthenedPartialsHalveTheirOwnReps() {
+        let s = SetEntry(setType: .lengthenedPartial, reps: 10, weight: 100)
+        XCTAssertEqual(VolumeMath.effectiveReps(s), 5, accuracy: tol)
+        XCTAssertEqual(VolumeMath.tonnage(s), 500, accuracy: tol)
+    }
+
+    // A partial-range set can never estimate a full-range maximum.
+    func testLengthenedPartialsNeverEstimateA1RM() {
+        let s = SetEntry(setType: .lengthenedPartial, reps: 10, weight: 100)
+        XCTAssertNil(VolumeMath.estimated1RM(s))
+    }
+
+    // An extended set keeps its two halves separate: 8 full-range reps at full
+    // weight plus 4 partials at half → 10 eff reps → 1000 at 100kg. Its 1RM
+    // estimate comes from the full-range portion alone, exactly as a plain
+    // 8-rep set would.
+    func testLengthenedExtendedSplitsFullRangeFromPartials() throws {
+        let s = SetEntry(setType: .lengthenedExtended, reps: 8, weight: 100, partialReps: 4)
+        XCTAssertEqual(VolumeMath.effectiveReps(s), 10, accuracy: tol)
+        XCTAssertEqual(VolumeMath.tonnage(s), 1000, accuracy: tol)
+        let e1rm = try XCTUnwrap(VolumeMath.estimated1RM(s))
+        XCTAssertEqual(e1rm, VolumeMath.estimated1RM(SetEntry(reps: 8, weight: 100)) ?? 0, accuracy: tol)
+    }
+
     // Warm-up sets contribute zero tonnage.
     func testWarmupCountsZero() {
         let s = SetEntry(setType: .warmup, reps: 10, weight: 60)
@@ -96,6 +122,34 @@ final class VolumeMathTests: XCTestCase {
         // No minis logged yet: the activation alone is one set.
         let bare = SetEntry(setType: .myoRep, reps: 6)
         XCTAssertEqual(VolumeMath.effectiveSetCount(bare), 1.0, accuracy: tol)
+    }
+
+    // Lengthened partials carry a full set's stimulus even though their
+    // tonnage is halved.
+    func testEffectiveSetCountLengthenedPartials() {
+        let s = SetEntry(setType: .lengthenedPartial, reps: 12)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(s), 1.0, accuracy: tol)
+    }
+
+    // An extended set is one set until partials are actually logged, then the
+    // continuation past failure adds the same half-set a drop row does.
+    func testEffectiveSetCountLengthenedExtended() {
+        let bare = SetEntry(setType: .lengthenedExtended, reps: 8)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(bare), 1.0, accuracy: tol)
+
+        let continued = SetEntry(setType: .lengthenedExtended, reps: 8, partialReps: 5)
+        XCTAssertEqual(VolumeMath.effectiveSetCount(continued), 1.5, accuracy: tol)
+    }
+
+    // Both new types are offerable in the set-type picker — a type nobody can
+    // choose is a type nobody can log.
+    func testLengthenedTypesAreSelectable() {
+        XCTAssertTrue(SetType.selectable.contains(.lengthenedPartial))
+        XCTAssertTrue(SetType.selectable.contains(.lengthenedExtended))
+        XCTAssertFalse(SetType.lengthenedPartial.isBlockType)
+        XCTAssertFalse(SetType.lengthenedExtended.isBlockType)
+        XCTAssertTrue(SetType.lengthenedPartial.countsAsWorkingVolume)
+        XCTAssertTrue(SetType.lengthenedExtended.countsAsWorkingVolume)
     }
 
     // Cluster segments are ONE set by design (Tufano et al. 2017) — the

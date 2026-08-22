@@ -630,12 +630,22 @@ struct WatchSetListView: View {
                                             .font(.system(size: 15, weight: .semibold))
                                             .monospacedDigit()
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.8)
-                                        if let prescription = set.loadPrescriptionText {
-                                            Text(prescription)
+                                            // Scales further before truncating:
+                                            // at 0.8 even "67.5lb × 10" was
+                                            // clipped on a 46mm face, and a set
+                                            // whose reading is cut in half is
+                                            // worse than a slightly smaller one.
+                                            .minimumScaleFactor(0.6)
+                                        // The wrist row can hold "67.5lb × 8"
+                                        // and no more, so the partials that
+                                        // followed take the second line rather
+                                        // than truncating the first.
+                                        if let detail = setDetailLine(set) {
+                                            Text(detail)
                                                 .font(.system(size: 11, weight: .semibold))
                                                 .foregroundStyle(.secondary)
                                                 .lineLimit(1)
+                                                .minimumScaleFactor(0.6)
                                         }
                                     }
                                     Spacer()
@@ -667,7 +677,12 @@ struct WatchSetListView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Edit load and reps")
+                            .accessibilityLabel(
+                                set.tracksTrailingPartials
+                                    ? "Edit load, reps, and partials"
+                                    : "Edit load and reps"
+                            )
+                            .accessibilityIdentifier("watch-edit-set-\(set.label)")
                         }
                         .listRowBackground(specialtyRowBackground(set))
                     }
@@ -708,10 +723,30 @@ struct WatchSetListView: View {
         }
         let unit = set.unitSuffix ?? store.context?.unitSuffix ?? "lb"
         let weight = set.weight.map { "\(WFmt.weight($0))\(unit)" }
-        let reps = set.reps.map { "× \($0)" }
-            ?? set.prescribedRepTarget.map { "× \($0.displayText)" }
+        // Partial-range work reads as partials on the wrist too: "× 10 partials"
+        // for a lengthened-partials set, "× 8 +4p" once an extended set has
+        // logged its continuation.
+        let reps: String?
+        if set.setType.repsArePartialRange {
+            reps = set.reps.map { "× \($0) partials" }
+                ?? set.prescribedRepTarget.map { "× \($0.displayText) partials" }
+        } else {
+            reps = set.reps.map { "× \($0)" }
+                ?? set.prescribedRepTarget.map { "× \($0.displayText)" }
+        }
         let parts = [weight, reps].compactMap { $0 }
         return parts.isEmpty ? "—" : parts.joined(separator: " ")
+    }
+
+    /// The row's secondary line: authored prescription, trailing partials, or
+    /// both — nil when there is nothing to add under the set's reading.
+    private func setDetailLine(_ set: WatchSetSnapshot) -> String? {
+        var parts: [String] = []
+        if let prescription = set.loadPrescriptionText { parts.append(prescription) }
+        if set.tracksTrailingPartials, let partials = set.partialReps, partials > 0 {
+            parts.append("+\(partials) partials")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func specialtySetLabel(_ set: WatchSetSnapshot) -> some View {

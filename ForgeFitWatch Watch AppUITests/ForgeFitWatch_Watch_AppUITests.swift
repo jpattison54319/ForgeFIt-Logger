@@ -372,6 +372,85 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
         cancel.watchAcceptanceTap()
     }
 
+    /// The wrist half of the extended set type: the row states the partials
+    /// that followed the full-range reps, and the editor can change them.
+    @MainActor
+    func testWatchExtendedSetShowsAndEditsItsPartials() throws {
+        let startedAt = Date()
+        let evidence = try WatchAcceptanceEvidenceWriter(scenarioID: "watch-lengthened-extended-set")
+        let scenario = WatchAcceptanceScenario(
+            id: "watch-lengthened-extended-set",
+            title: "Watch extended set partials",
+            purpose: "Verify the Watch renders an extended set's trailing partials and can edit them from the wrist.",
+            fixtureArguments: ["--seed-watch-demo", "--seed-watch-demo-active", "--seed-watch-lengthened"],
+            checkpoints: [
+                WatchAcceptanceCheckpoint(
+                    id: "watch-extended-set-row",
+                    title: "The extended set states its partials",
+                    action: "Open the seeded exercise carrying an extended set.",
+                    expectedVisibleIdentifiers: ["watch-set-list", "watch-toggle-set-3E"],
+                    expectedVisibleLabels: [],
+                    screenshotRequired: true
+                ),
+                WatchAcceptanceCheckpoint(
+                    id: "watch-extended-set-editor",
+                    title: "The editor offers a partials value",
+                    action: "Open the set editor from the row's edit control.",
+                    expectedVisibleIdentifiers: [],
+                    expectedVisibleLabels: ["partials"],
+                    screenshotRequired: true
+                )
+            ]
+        )
+        let app = XCUIApplication()
+        WatchHumanActionRecorder.shared.register(
+            app,
+            scenarioID: "ForgeFitWatch_Watch_AppUITests/testWatchExtendedSetShowsAndEditsItsPartials"
+        )
+        app.launchArguments = scenario.fixtureArguments
+        app.launchEnvironment["FORGEFIT_ACCEPTANCE_RUN_ID"] = evidence.runID
+        app.watchAcceptanceLaunch()
+
+        defer {
+            do {
+                try evidence.finish(scenario: scenario, startedAt: startedAt)
+            } catch {
+                XCTFail("Could not write Watch acceptance evidence: \(error.localizedDescription)")
+            }
+        }
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["watch-active-workout"].firstMatch.waitForExistence(timeout: 15),
+            "The seeded active Watch workout must render"
+        )
+
+        let exercise = app.descendants(matching: .any)["watch-exercise-Incline Dumbbell Press"].firstMatch
+        XCTAssertTrue(exercise.waitForExistence(timeout: 10), "The seeded exercise must be reachable")
+        if !exercise.isHittable { app.watchAcceptanceSwipeUp() }
+        exercise.watchAcceptanceTap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["watch-set-list"].firstMatch.waitForExistence(timeout: 10),
+            "Opening an exercise must show its set list"
+        )
+
+        let extendedRow = app.descendants(matching: .any)["watch-toggle-set-3E"].firstMatch
+        XCTAssertTrue(extendedRow.waitForExistence(timeout: 10), "The extended set must appear in the wrist set list")
+        XCTAssertTrue(
+            extendedRow.label.contains("+4 partials"),
+            "The wrist row must state the partials that followed; saw \(extendedRow.label)."
+        )
+        try evidence.capture(scenario.checkpoints[0], app: app)
+
+        let edit = app.descendants(matching: .any)["watch-edit-set-3E"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 10), "The row must expose a visible edit control")
+        edit.watchAcceptanceTap()
+        XCTAssertTrue(
+            app.staticTexts["partials"].waitForExistence(timeout: 10),
+            "The wrist editor must offer the partials value on an extended set"
+        )
+        try evidence.capture(scenario.checkpoints[1], app: app)
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.

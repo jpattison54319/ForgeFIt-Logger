@@ -218,6 +218,7 @@ enum HomeWeekMetrics {
                     hasher.combine(set.updatedAt)
                     hasher.combine(set.setTypeRaw)
                     hasher.combine(set.reps)
+                    hasher.combine(set.partialReps)
                     hasher.combine(set.durationSeconds)
                     hasher.combine(set.holdSeconds)
                     hasher.combine(set.totalVolume)

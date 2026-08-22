@@ -1,3 +1,4 @@
+import ForgeCore
 import ForgeData
 import SwiftUI
 
@@ -125,10 +126,26 @@ struct SharedWorkoutDetailView: View {
         set.setType == "warmup" ? "W" : "\(index + 1)"
     }
 
+    /// A shared set reads the way it was performed. Partial-range work says so
+    /// — a viewer comparing loads has to know the rep quality behind them.
     private func loadText(_ set: SharedSetDTO) -> String {
-        let reps = set.reps.map(String.init) ?? "—"
-        if let kg = set.weightKg { return "\(Fmt.load(kg)) \(Fmt.unit.shortSuffix) × \(reps)" }
-        return "\(reps) reps"
+        let type = SetType(rawValue: set.setType) ?? .working
+        let plainReps = set.reps.map(String.init) ?? "—"
+        // Partial-range readings already name their own unit, so they must not
+        // pick up a trailing "reps" — "12 partials reps" is not a sentence.
+        let output: String
+        if type.repsArePartialRange {
+            output = "\(plainReps) partials"
+        } else if type.tracksTrailingPartials, let partials = set.partialReps, partials > 0 {
+            output = "\(plainReps) + \(partials) partials"
+        } else {
+            output = "\(plainReps) reps"
+        }
+        guard let kg = set.weightKg else { return output }
+        let withoutSuffix = type.repsArePartialRange || type.tracksTrailingPartials
+            ? output
+            : plainReps
+        return "\(Fmt.load(kg)) \(Fmt.unit.shortSuffix) × \(withoutSuffix)"
     }
 
     private func stat(_ label: String, _ value: String) -> some View {

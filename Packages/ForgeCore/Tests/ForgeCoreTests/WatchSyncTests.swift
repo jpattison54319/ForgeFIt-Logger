@@ -181,9 +181,13 @@ struct WatchSyncTests {
             guard case .toggleSet(let decodedID, let completed) = $0 else { return false }
             return decodedID == setID && completed
         }
-        try expectCommand(.updateSet(setID: setID, weightKg: 100.5, reps: 8)) {
-            guard case .updateSet(let decodedID, let weightKg, let reps) = $0 else { return false }
-            return decodedID == setID && weightKg == 100.5 && reps == 8
+        try expectCommand(.updateSet(setID: setID, weightKg: 100.5, reps: 8, partialReps: nil)) {
+            guard case .updateSet(let decodedID, let weightKg, let reps, let partialReps) = $0 else { return false }
+            return decodedID == setID && weightKg == 100.5 && reps == 8 && partialReps == nil
+        }
+        try expectCommand(.updateSet(setID: setID, weightKg: 60, reps: 8, partialReps: 4)) {
+            guard case .updateSet(let decodedID, let weightKg, let reps, let partialReps) = $0 else { return false }
+            return decodedID == setID && weightKg == 60 && reps == 8 && partialReps == 4
         }
         let progress = WatchStructuredSetProgress(
             activationReps: 12,

@@ -30,6 +30,10 @@ struct SetTypeStyle {
         case .amrap: return SetTypeStyle(badge: "A", color: t.warmup, label: "AMRAP", numbered: true)
         case .myoRep: return SetTypeStyle(badge: "M", color: t.accent, label: "Myo-reps", numbered: false)
         case .cluster: return SetTypeStyle(badge: "C", color: t.secondaryAccent, label: "Cluster", numbered: false)
+        case .lengthenedPartial:
+            return SetTypeStyle(badge: "P", color: t.secondaryAccent, label: "Lengthened partials", numbered: true)
+        case .lengthenedExtended:
+            return SetTypeStyle(badge: "E", color: t.accent, label: "Extended set (lengthened)", numbered: true)
         }
     }
 }
@@ -2055,6 +2059,9 @@ private struct PostWorkoutSummaryView: View {
 enum SetInputField: Hashable {
     case weight
     case primary
+    /// Lengthened partials logged after a full-range set reached failure.
+    /// Only present on set types that track them.
+    case partials
     case rpe
 }
 
@@ -2947,7 +2954,17 @@ private struct ExerciseLogCard: View {
 	    private func previousText(for set: SetModel, at index: Int) -> String {
         guard let prev = previousSet(for: set, at: index) else { return "—" }
         let w = Fmt.load(prev.modeWeight ?? prev.weight, unit: displayUnit)
-        let r = prev.reps.map(String.init) ?? "—"
+        // Partial-range history reads as partials, so a lifter comparing this
+        // week to last week is comparing the same kind of rep. Kept compact —
+        // "8+4p" — because this column shares the row with the inputs.
+        let r: String
+        if prev.setType.repsArePartialRange {
+            r = "\(prev.reps.map(String.init) ?? "—")p"
+        } else if prev.setType.tracksTrailingPartials, let partials = prev.partialReps, partials > 0 {
+            r = "\(prev.reps.map(String.init) ?? "—")+\(partials)p"
+        } else {
+            r = prev.reps.map(String.init) ?? "—"
+        }
         // No unit suffix here: the weight column header already labels the unit,
         // and dropping it keeps the value legible when the RPE column is on.
         return isCardio ? Fmt.durationShort(prev.durationSeconds) : "\(w) × \(r)"
@@ -2971,6 +2988,9 @@ private struct ExerciseLogCard: View {
         set.addedWeight = previous.addedWeight
         set.assistanceWeight = previous.assistanceWeight
         set.reps = previous.reps
+        // Copying a previous extended set brings its partials too; copying
+        // from any other type must not leave stale partials behind.
+        set.partialReps = set.setType.tracksTrailingPartials ? previous.partialReps : nil
         set.durationSeconds = previous.durationSeconds
         if showRPE {
             set.rpe = previous.rpe
@@ -3232,6 +3252,12 @@ private struct ExerciseLogCard: View {
         } else if type != .myoRep {
             myoActivationSuggestionOverrides.removeValue(forKey: set.id)
         }
+        // Trailing partials belong to the extended type alone. Leaving them on
+        // a row converted to anything else keeps counting reps the athlete can
+        // no longer see or edit.
+        if !type.tracksTrailingPartials, set.partialReps != nil {
+            set.partialReps = nil
+        }
         recompute(changedSet: set)
     }
 
@@ -3341,6 +3367,7 @@ private struct SetRow: View {
     @Bindable var set: SetModel
     @State private var weightDraft = ""
     @State private var primaryDraft = ""
+    @State private var partialsDraft = ""
     @State private var rpeDraft = ""
     @State private var editedDraftFields = Set<SetInputField>()
     /// Immediate local truth for suggestion-backed fields. Parent `@State`
@@ -3497,6 +3524,9 @@ private struct SetRow: View {
                 if set.setType == .amrap && !isDone {
                     amrapStrip
                 }
+                if set.setType.tracksTrailingPartials {
+                    partialsStrip
+                }
                 if showsAwards {
                     awardStrip
                         .transition(.opacity.combined(with: .scale(0.85, anchor: .topLeading)))
@@ -3528,6 +3558,16 @@ private struct SetRow: View {
         }
         .onChange(of: primaryText) { _, _ in
             syncDraft(.primary)
+        }
+        .onChange(of: partialsText) { _, _ in
+            syncDraft(.partials)
+        }
+        // Changing a row's type rewrites which fields exist and what they
+        // hold. The row keeps its identity across that change, so its drafts
+        // would otherwise survive their own field being taken away.
+        .onChange(of: set.setTypeRaw) { _, _ in
+            editedDraftFields.removeAll()
+            syncDraftsFromValues()
         }
         .onChange(of: rpeText) { _, _ in
             syncDraft(.rpe)
@@ -3568,6 +3608,45 @@ private struct SetRow: View {
     private var amrapTimerIsMine: Bool {
         let timer = RestTimerController.shared
         return timer.isRunning && !timer.isMicro && timer.ownerID == set.id
+    }
+
+    /// The second half of an extended set: full-range reps live in the row
+    /// above, the partials that followed live here. A field rather than a
+    /// sentence — the label and the number are the whole explanation.
+    private var partialsStrip: some View {
+        HStack(spacing: Space.sm) {
+            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(style.color)
+                .accessibilityHidden(true)
+            Text("Partials")
+                .font(.tag)
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            numberField(
+                text: Binding(
+                    get: { partialsDraft },
+                    set: { editDraft(.partials, value: $0) }
+                ),
+                placeholder: "—",
+                width: grid.reps,
+                field: .partials,
+                keyboardType: .numberPad
+            )
+            .quickIncrementable(
+                options: QuickIncrementController.repsOptions(),
+                onBegin: { clearFocus() },
+                base: { set.partialReps.map(Double.init) ?? Double(parsedInt(partialsDraft) ?? 0) },
+                apply: { value in
+                    editDraft(.partials, value: String(max(0, Int(value.rounded()))))
+                    commitDraft(for: .partials)
+                }
+            )
+            .accessibilityIdentifier("set-partials-field")
+        }
+        .padding(.leading, grid.check)
+        .padding(.trailing, 2)
+        .padding(.top, 4)
     }
 
     private var amrapStrip: some View {
@@ -3807,6 +3886,12 @@ private struct SetRow: View {
         return set.reps.map(String.init) ?? ""
     }
 
+    private var partialsText: String {
+        // `return` is load-bearing: a body that opens with `set` parses as an
+        // accessor declaration, not an expression.
+        return set.partialReps.map(String.init) ?? ""
+    }
+
     private func focus(_ field: SetInputField?) {
         let previousField = currentField
         if let previousField, previousField != field {
@@ -3834,6 +3919,8 @@ private struct SetRow: View {
         case .weight:
             .primary
         case .primary:
+            set.setType.tracksTrailingPartials ? .partials : nil
+        case .partials:
             nil
         case .rpe:
             nil
@@ -3925,6 +4012,7 @@ private struct SetRow: View {
     private func syncDraftsFromValues() {
         syncDraft(.weight, force: true)
         syncDraft(.primary, force: true)
+        syncDraft(.partials, force: true)
         syncDraft(.rpe, force: true)
     }
 
@@ -3935,6 +4023,8 @@ private struct SetRow: View {
             weightDraft = weightText
         case .primary:
             primaryDraft = primaryText
+        case .partials:
+            partialsDraft = partialsText
         case .rpe:
             rpeDraft = rpeText
         }
@@ -3946,6 +4036,8 @@ private struct SetRow: View {
             weightDraft = value
         case .primary:
             primaryDraft = value
+        case .partials:
+            partialsDraft = value
         case .rpe:
             rpeDraft = value
         }
@@ -3959,7 +4051,7 @@ private struct SetRow: View {
     }
 
     private func commitAllEditedDrafts() {
-        for field in [SetInputField.weight, .primary, .rpe]
+        for field in [SetInputField.weight, .primary, .partials, .rpe]
         where editedDraftFields.contains(field) {
             commitDraft(for: field)
         }
@@ -3990,6 +4082,8 @@ private struct SetRow: View {
             commitWeightDraft()
         case .primary:
             commitPrimaryDraft()
+        case .partials:
+            commitPartialsDraft()
         case .rpe:
             commitRPEDraft()
         }
@@ -4047,6 +4141,16 @@ private struct SetRow: View {
         if usesSuggestedValues { recordSuggestionField(.weight, isEdited: next != nil) }
         guard !sameLoad(set.modeWeight, next) else { return }
         set.setModeWeight(next)
+        onChange()
+    }
+
+    /// Partials are what the athlete kept doing after the full-range reps
+    /// ran out, so they are always their own number — never folded into
+    /// `reps`, where the two would become indistinguishable forever.
+    private func commitPartialsDraft() {
+        let next = parsedInt(partialsDraft)
+        guard set.partialReps != next else { return }
+        set.partialReps = next
         onChange()
     }
 
@@ -4285,6 +4389,11 @@ private struct SetRow: View {
             "Weight"
         case .primary:
             isCardio ? "Duration" : "Reps"
+        case .partials:
+            // Matches the visible strip label. "Lengthened partials" is the
+            // NAME OF A DIFFERENT SET TYPE in the same picker, so announcing
+            // it here told a VoiceOver user they were in the wrong row.
+            "Partials"
         case .rpe:
             effortScale.columnTitle
         }

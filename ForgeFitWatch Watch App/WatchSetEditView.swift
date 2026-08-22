@@ -12,11 +12,14 @@ struct WatchSetEditView: View {
     let exercise: WatchExerciseSnapshot
     let set: WatchSetSnapshot
 
-    private enum Field { case weight, reps }
+    private enum Field { case weight, reps, partials }
     @State private var field: Field
     /// Weight edited in kg internally; stepped and shown in the display unit.
     @State private var weightKg: Double
     @State private var reps: Int
+    /// Lengthened partials logged after the full-range reps. Only editable on
+    /// the set type that owns them.
+    @State private var partialReps: Int
     @State private var crown: Double = 0
     @State private var lastCrownStep = 0
 
@@ -37,6 +40,7 @@ struct WatchSetEditView: View {
         _field = State(initialValue: set.supportsLoadEntry ? .weight : .reps)
         _weightKg = State(initialValue: set.weightKg ?? 0)
         _reps = State(initialValue: set.reps ?? set.prescribedRepTarget?.lowerBound ?? 0)
+        _partialReps = State(initialValue: set.partialReps ?? 0)
     }
 
     var body: some View {
@@ -61,6 +65,14 @@ struct WatchSetEditView: View {
                     selected: field == .reps,
                     tint: WTheme.teal
                 ) { field = .reps }
+                if set.tracksTrailingPartials {
+                    valueTile(
+                        label: "partials",
+                        value: "\(partialReps)",
+                        selected: field == .partials,
+                        tint: WTheme.teal
+                    ) { field = .partials }
+                }
             }
 
             HStack(spacing: 10) {
@@ -73,7 +85,8 @@ struct WatchSetEditView: View {
                     set,
                     in: exercise,
                     weightKg: set.supportsLoadEntry && weightKg > 0 ? weightKg : nil,
-                    reps: reps > 0 ? reps : nil
+                    reps: reps > 0 ? reps : nil,
+                    partialReps: set.tracksTrailingPartials ? partialReps : nil
                 )
                 dismiss()
             } label: {
@@ -103,6 +116,8 @@ struct WatchSetEditView: View {
             weightKg = max(0, weightKg + Double(steps) * stepKg)
         case .reps:
             reps = max(0, reps + steps)
+        case .partials:
+            partialReps = max(0, partialReps + steps)
         }
         WKInterfaceDevice.current().play(.click)
     }

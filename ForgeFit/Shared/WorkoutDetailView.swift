@@ -738,7 +738,34 @@ struct WorkoutDetailView: View {
         }
         .padding(.vertical, 2)
         .opacity(isCompleted ? 1 : 0.72)
-        .accessibilityLabel(isCompleted ? "\(label), completed" : "\(label), not done")
+        // Without this the label below propagates to each child text and the
+        // whole sentence is announced once per column.
+        .accessibilityElement(children: .combine)
+        // The row is one element, so its label has to carry the
+        // work itself. Announcing only "1P, completed" told a VoiceOver user
+        // the set existed and nothing about what was lifted.
+        .accessibilityLabel(historicalSetAccessibilityLabel(
+            set,
+            label: label,
+            style: style,
+            isPlainWorking: isPlainWorking,
+            unit: unit
+        ))
+    }
+
+    private func historicalSetAccessibilityLabel(
+        _ set: SetModel,
+        label: String,
+        style: SetTypeStyle,
+        isPlainWorking: Bool,
+        unit: WeightUnit
+    ) -> String {
+        guard HistoricalSetPresentation.isCompleted(set) else { return "\(label), not done" }
+        var parts = [label]
+        if !isPlainWorking { parts.append(style.label) }
+        parts.append(HistoricalSetPresentation.shareValue(set, unit: unit))
+        parts.append("completed")
+        return parts.joined(separator: ", ")
     }
 
     private func historicalSetLabel(for set: SetModel, index: Int, sets: [SetModel]) -> String {

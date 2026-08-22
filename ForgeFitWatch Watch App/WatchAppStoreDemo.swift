@@ -23,6 +23,31 @@ enum WatchAppStoreDemo {
         ProcessInfo.processInfo.arguments.contains("--seed-watch-demo-active")
     }
 
+    /// `--seed-watch-lengthened`: adds one extended set (full-range reps plus
+    /// lengthened partials) to the seeded workout. Kept behind its own flag so
+    /// the App Store capture fixture stays exactly the workout it was composed
+    /// to show.
+    static var wantsLengthenedSet: Bool {
+        ProcessInfo.processInfo.arguments.contains("--seed-watch-lengthened")
+    }
+
+    /// One extended set mid-flight: the full-range reps are logged and the
+    /// lengthened partials that followed are already on it, so the wrist row
+    /// and the set editor both have something real to render.
+    private static var lengthenedExtendedSet: WatchSetSnapshot {
+        WatchSetSnapshot(
+            id: UUID(),
+            label: "3E",
+            weight: 67.5,
+            unitSuffix: "lb",
+            weightKg: 30.6,
+            reps: 8,
+            completed: false,
+            setTypeRaw: SetType.lengthenedExtended.rawValue,
+            partialReps: 4
+        )
+    }
+
     /// Keeps a synthetic heart rate inside the engine's freshness window. The
     /// wrist view re-reads `liveHeartRate(at:)` every second and drops back to
     /// "Starting HR…" the moment the sample goes stale, so the reading has to
@@ -80,7 +105,7 @@ enum WatchAppStoreDemo {
             sets: [
                 WatchSetSnapshot(id: UUID(), label: "1", weight: 67.5, unitSuffix: "lb", reps: 10, completed: false),
                 WatchSetSnapshot(id: UUID(), label: "2", weight: 67.5, unitSuffix: "lb", reps: 9, completed: false),
-            ]
+            ] + (wantsLengthenedSet ? [lengthenedExtendedSet] : [])
         )
         return WatchWorkoutSnapshot(
             workoutID: UUID(),

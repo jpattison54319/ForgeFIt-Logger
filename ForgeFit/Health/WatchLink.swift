@@ -471,7 +471,8 @@ final class WatchLink: NSObject {
                 loadPrescriptionText: loadPrescriptionText(for: set),
                 loadPrescriptionModeRaw: set.prescribedLoadModeRaw,
                 prescribedRepsLow: set.prescribedRepsLow,
-                prescribedRepsHigh: set.prescribedRepsHigh
+                prescribedRepsHigh: set.prescribedRepsHigh,
+                partialReps: set.partialReps
             )
         }
     }
@@ -570,12 +571,18 @@ final class WatchLink: NSObject {
                 self?.publishState(policy: .immediate)
             }
 
-        case .updateSet(let setID, let weightKg, let reps):
+        case .updateSet(let setID, let weightKg, let reps, let partialReps):
             guard let set = fetchSet(setID, in: context) else { return }
             // Same mode routing as the phone's set row — a wrist edit on an
             // assisted/added set must land in that mode's field, not `weight`.
             if let weightKg { set.setModeWeight(weightKg) }
             if let reps { set.reps = reps }
+            // Only the type that owns partials may receive them, so a payload
+            // from a peer that predates them can never write partials onto a
+            // plain set.
+            if let partialReps, set.setType.tracksTrailingPartials {
+                set.partialReps = partialReps
+            }
             set.recomputeDerivedMetrics()
             active?.recomputeTotalVolume()
             context.saveUserChanges { [weak self] in

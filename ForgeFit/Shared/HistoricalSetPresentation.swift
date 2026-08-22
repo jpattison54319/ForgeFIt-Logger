@@ -34,7 +34,25 @@ enum HistoricalSetPresentation {
         if let seconds = set.durationSeconds, seconds > 0 {
             return Fmt.durationShort(seconds)
         }
+        if let partialText = partialRangeReps(set) { return partialText }
         return "\(set.reps.map(String.init) ?? "—") reps"
+    }
+
+    /// Reads a partial-range set the way it was performed, or nil when this
+    /// set has no partial-range component. "10 partials" for a set done
+    /// entirely in the lengthened position; "8 + 4 partials" for a full-range
+    /// set continued past failure. Never collapses the two halves into one
+    /// number — keeping them separable is the whole point of the type.
+    static func partialRangeReps(_ set: SetModel) -> String? {
+        if set.setType.repsArePartialRange {
+            guard let reps = set.reps else { return "— partials" }
+            return "\(reps) partials"
+        }
+        guard set.setType.tracksTrailingPartials, let partials = set.partialReps, partials > 0 else {
+            return nil
+        }
+        guard let reps = set.reps else { return "\(partials) partials" }
+        return "\(reps) + \(partials) partials"
     }
 
     static func shareValue(_ set: SetModel, unit: WeightUnit) -> String {
@@ -48,6 +66,10 @@ enum HistoricalSetPresentation {
         }
         if let seconds = set.durationSeconds, seconds > 0 {
             return Fmt.durationShort(seconds)
+        }
+        if let partialText = partialRangeReps(set) {
+            guard let weight = set.modeWeight, weight > 0 else { return partialText }
+            return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(partialText)"
         }
         let reps = set.reps.map { "\($0)" } ?? "—"
         guard let weight = set.modeWeight, weight > 0 else { return "\(reps) reps" }

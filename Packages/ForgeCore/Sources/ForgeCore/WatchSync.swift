@@ -356,6 +356,10 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     public var loadPrescriptionModeRaw: String?
     public var prescribedRepsLow: Int?
     public var prescribedRepsHigh: Int?
+    /// Lengthened partials performed after the full-range reps on an extended
+    /// set. Additive optional: older peers omit it and keep rendering the
+    /// straight weight/reps row.
+    public var partialReps: Int?
 
     public init(
         id: UUID,
@@ -378,7 +382,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         loadPrescriptionText: String? = nil,
         loadPrescriptionModeRaw: String? = nil,
         prescribedRepsLow: Int? = nil,
-        prescribedRepsHigh: Int? = nil
+        prescribedRepsHigh: Int? = nil,
+        partialReps: Int? = nil
     ) {
         self.id = id
         self.label = label
@@ -401,6 +406,7 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.loadPrescriptionModeRaw = loadPrescriptionModeRaw
         self.prescribedRepsLow = prescribedRepsLow
         self.prescribedRepsHigh = prescribedRepsHigh
+        self.partialReps = partialReps
     }
 
     public var setType: SetType {
@@ -412,6 +418,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     }
 
     public var supportsLoadEntry: Bool { weightMode != .bodyweight }
+    /// Whether this set logs lengthened partials alongside its reps.
+    public var tracksTrailingPartials: Bool { setType.tracksTrailingPartials }
     public var usesSides: Bool { isUnilateral == true }
     public var isStructured: Bool { setType.isBlockType }
     public var isAMRAP: Bool { setType == .amrap }
@@ -688,8 +696,11 @@ public enum WatchCommand: Codable, Sendable {
     case startEmpty
     case toggleSet(setID: UUID, completed: Bool)
     /// Edit a set's load/reps from the wrist. `weightKg` is in kilograms
-    /// (the data-layer unit); nil fields are left unchanged.
-    case updateSet(setID: UUID, weightKg: Double?, reps: Int?)
+    /// (the data-layer unit); nil fields are left unchanged. `partialReps` is
+    /// additive-optional in the same way `finishWorkout`'s binding is: a
+    /// payload from an older peer decodes it as nil and the phone leaves the
+    /// stored partials alone.
+    case updateSet(setID: UUID, weightKg: Double?, reps: Int?, partialReps: Int?)
     /// Perform activation and mini-set progress for Myo/rest-pause/cluster
     /// blocks. The phone remains the persisted source of truth.
     case updateStructuredSet(setID: UUID, update: WatchStructuredSetUpdate)

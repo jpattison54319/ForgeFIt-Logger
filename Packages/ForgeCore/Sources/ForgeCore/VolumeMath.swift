@@ -25,8 +25,13 @@ public enum VolumeMath {
 
     /// Effective rep count for tonnage. Full reps count 1.0; partial reps count
     /// 0.5 each (half-weighted), consistent with the muscle-volume convention.
+    /// On a lengthened-partials set every rep is partial-range, so `reps`
+    /// takes that same half weight.
     public static func effectiveReps(_ s: SetEntry) -> Double {
-        let full = Double(s.reps ?? 0)
+        // On a lengthened-partials set the reps themselves are partial-range,
+        // so they take the same half weight as trailing partials do elsewhere.
+        let repWeight = s.setType.repsArePartialRange ? 0.5 : 1.0
+        let full = Double(s.reps ?? 0) * repWeight
         let partials = Double(s.partialReps ?? 0) * 0.5
         return full + partials
     }
@@ -46,6 +51,10 @@ public enum VolumeMath {
     /// The formula is a documented, versioned choice (Epley); swapping it is a
     /// deliberate decision requiring a golden-vector update.
     public static func estimated1RM(_ s: SetEntry) -> Double? {
+        // A partial-range set says nothing about a full-range maximum, so it
+        // never estimates one — the number would flatter the lifter and
+        // contaminate every record and progression that reads it.
+        guard !s.setType.repsArePartialRange else { return nil }
         guard let reps = s.reps, reps > 0 else { return nil }
         let load = effectiveLoad(s)
         guard load > 0 else { return nil }
@@ -72,6 +81,12 @@ public enum VolumeMath {
     /// - Cluster: 1 regardless of segments — intra-set rest there preserves
     ///   bar speed within ONE set (Tufano et al. 2017); it doesn't add
     ///   near-failure episodes.
+    /// - Lengthened partials: 1. Partial-range training at long muscle
+    ///   lengths matches or beats full-range work for hypertrophy, so the
+    ///   set's stimulus is a full set even though its tonnage is halved.
+    /// - Lengthened extended: 1, plus 0.5 once partials were actually logged
+    ///   — the same half-set the drop convention gives a continuation past
+    ///   failure.
     /// - Unilateral per-side logging doubles the structure (each side is its
     ///   own activation + minis / its own cluster).
     public static func effectiveSetCount(_ s: SetEntry) -> Double {
@@ -90,6 +105,17 @@ public enum VolumeMath {
             return s.side2Logged ? 2 : 1
         case .working, .backoff, .amrap:
             return 1
+        case .lengthenedPartial:
+            // A full set's worth of stimulus at half the tonnage: training the
+            // lengthened portion alone matches or beats full-range work for
+            // hypertrophy (Pedrosa et al. 2022; Wolf et al. 2023 meta), so
+            // discounting the dose would understate what the athlete did.
+            return 1
+        case .lengthenedExtended:
+            // The full-range set plus, when partials were actually logged, the
+            // same half-set the drop convention gives a continuation past
+            // failure.
+            return (s.partialReps ?? 0) > 0 ? 1.5 : 1
         }
     }
 }

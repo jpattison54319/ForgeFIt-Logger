@@ -50,7 +50,11 @@ nonisolated struct ExerciseRecordBaseline {
 
     mutating func absorb(_ set: SetModel) {
         guard set.completedAt != nil, set.setType.countsAsWorkingVolume else { return }
-        if let load = set.effectiveLoad, load > 0 {
+        // A load moved through part of the range is not the same lift as the
+        // same load moved through all of it, so partial-range sets neither
+        // set nor raise the heaviest-weight bar. Their tonnage is already
+        // half-weighted, so set volume stays a fair comparison.
+        if let load = set.effectiveLoad, load > 0, !set.setType.repsArePartialRange {
             maxLoad = max(maxLoad, load)
             hasHistory = true
         }
@@ -99,7 +103,10 @@ nonisolated enum PersonalRecords {
         }
 
         var kinds: [RecordKind] = []
-        if let load = set.effectiveLoad, load > 0, load > bar.maxLoad { kinds.append(.heaviestWeight) }
+        if !set.setType.repsArePartialRange,
+           let load = set.effectiveLoad, load > 0, load > bar.maxLoad {
+            kinds.append(.heaviestWeight)
+        }
         if let volume = set.totalVolume, volume > 0, volume > bar.maxSetVolume { kinds.append(.bestSetVolume) }
         if let oneRM = set.estimated1RM, oneRM > 0, oneRM > bar.max1RM { kinds.append(.best1RM) }
         return kinds
@@ -129,7 +136,8 @@ nonisolated enum PersonalRecords {
         guard !candidates.isEmpty else { return [] }
 
         var result: [AllTimeBest] = []
-        if let best = candidates.max(by: { ($0.set.effectiveLoad ?? 0) < ($1.set.effectiveLoad ?? 0) }),
+        let fullRange = candidates.filter { !$0.set.setType.repsArePartialRange }
+        if let best = fullRange.max(by: { ($0.set.effectiveLoad ?? 0) < ($1.set.effectiveLoad ?? 0) }),
            (best.set.effectiveLoad ?? 0) > 0 {
             result.append(AllTimeBest(kind: .heaviestWeight, set: best.set, date: best.date))
         }
@@ -152,7 +160,8 @@ nonisolated enum PersonalRecords {
         guard !done.isEmpty else { return [] }
 
         var result: [(kind: RecordKind, set: SetModel)] = []
-        if let best = done.max(by: { ($0.effectiveLoad ?? 0) < ($1.effectiveLoad ?? 0) }),
+        if let best = done.filter({ !$0.setType.repsArePartialRange })
+            .max(by: { ($0.effectiveLoad ?? 0) < ($1.effectiveLoad ?? 0) }),
            let load = best.effectiveLoad, load > 0, load > baseline.maxLoad {
             result.append((.heaviestWeight, best))
         }

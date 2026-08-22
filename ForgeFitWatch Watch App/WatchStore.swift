@@ -308,7 +308,13 @@ final class WatchStore: NSObject {
 
     /// Commit a weight/reps edit from the wrist. Optimistic locally; the
     /// phone recomputes and confirms via the next snapshot.
-    func updateSet(_ set: WatchSetSnapshot, in exercise: WatchExerciseSnapshot, weightKg: Double?, reps: Int?) {
+    func updateSet(
+        _ set: WatchSetSnapshot,
+        in exercise: WatchExerciseSnapshot,
+        weightKg: Double?,
+        reps: Int?,
+        partialReps: Int? = nil
+    ) {
         mutateWorkout { workout in
             guard let ei = workout.exercises.firstIndex(where: { $0.id == exercise.id }),
                   let si = workout.exercises[ei].sets.firstIndex(where: { $0.id == set.id }) else { return }
@@ -320,8 +326,9 @@ final class WatchStore: NSObject {
                 workout.exercises[ei].sets[si].weight = weightKg * factor
             }
             if let reps { workout.exercises[ei].sets[si].reps = reps }
+            if let partialReps { workout.exercises[ei].sets[si].partialReps = partialReps }
         }
-        send(.updateSet(setID: set.id, weightKg: weightKg, reps: reps))
+        send(.updateSet(setID: set.id, weightKg: weightKg, reps: reps, partialReps: partialReps))
         WKInterfaceDevice.current().play(.click)
     }
 
