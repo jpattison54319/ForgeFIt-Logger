@@ -6,43 +6,54 @@ acceptance precondition or fixture did not line up. A failed UI assertion is
 not called a product defect until the same behavior is reproduced with a
 known-good fixture or on-device.
 
-Evidence baseline: iPhone run `/tmp/forgefit-acceptance/full-run.Q8N2fT`.
-The run reported 99 passed, 17 failed, and 2 skipped flows from 118 inventoried
-iPhone flows. The original visual judge response also included four findings
-about the floating bottom app bar; those are explicitly reclassified below.
+Historical evidence baseline: an earlier iPhone run reported 99 passed, 17
+failed, and 2 skipped flows from 118 inventoried iPhone flows. Its temporary
+bundle was cleaned after storage pressure; the original visual judge response
+also included four findings about the floating bottom app bar, which are
+explicitly reclassified below.
 
-## Next product fixes
+Current action-level rechecks are in `/tmp/forgefit-acceptance/ios-focused-current`
+(six complete iPhone action sequences, 79 checkpoints) and
+`/tmp/forgefit-acceptance/watch-run.ndLkwv` (all five Watch UI tests passed).
+The later full-matrix attempt was intentionally stopped after a separate
+Claude process modified the UI-test source while Xcode was running; its early
+logger result remains useful as a reliability observation, but its aggregate
+post-edit results are not treated as a final matrix verdict.
 
-### P1 — Make Myo weight and rep controls reliably tappable
+The release/1.2 verification re-ran Claude's product commit with the beta
+toolchain: package tests passed (94 tests), cardio presentation tests passed (8
+tests), AppBar scroll tests passed (3 UI tests), Myo stepper tests passed (2 UI
+tests), and the cardio goal flow passed (1 UI test). The targeted UI runs also
+produced action-level screenshots and accessibility trees under
+`/tmp/forgefit-acceptance/action-evidence`.
+
+## Verified product fixes
+
+### VERIFIED P1 — Make Myo weight and rep controls reliably tappable
 
 User-confirmed issue: taps on the Myo increment controls sometimes do not
-register.
+register. Before release/1.2, the visible tile was larger than the icon-only
+button's effective hit frame.
 
-The acceptance flow found the effective accessibility frame for `Increase
-activation weight` below the expected 44×44 point minimum in
-`ForgeFitUITests/ForgeFitUITests.swift:727-735`. The production stepper uses a
-56×56 visual button in `ForgeFit/Workout/MyoRepWeightStepper.swift`, but the
-icon-only control does not currently establish an explicit content shape or
-minimum hit region. The reps assertion at lines 744-749 was not reached after
-the weight assertion failed.
+Claude's fix moves the 56×56 frame, background, and content shape onto the
+shared `MyoStepperButton` label used by both weight and rep steppers.
 
-Fix and verify:
+Verification:
 
-- Give both weight and reps increment/decrement controls an explicit, hittable
-  accessibility frame of at least 44×44 points, independent of icon bounds.
-- Exercise repeated taps on weight and reps in both kg and lb modes, including
-  taps near the edge of the target, and verify every increment is applied once.
-- Keep the visible control and the accessible label aligned with the value that
-  changed; add a regression assertion for the effective frame and the final
-  value.
+- `testMyoStepperTilesAreFullyTappable` measured all four controls at or above
+  44×44 points and applied repeated edge taps to weight and reps in kg mode.
+- `testMyoWeightStepperTapsApplyInPounds` applied two edge taps in lb mode and
+  verified both 5 lb increments.
+- The captured Myo screen shows the large visible tiles aligned with the
+  labels and values. No physical-device tap test was performed.
 
-### P1 — Make saved cardio goals visible on the routine card
+### VERIFIED P1 — Make saved cardio goals visible on the routine card
 
 User-confirmed issue: after setting a treadmill/cardio goal, the routine card
 still says `Add goal` and gives no quick-glance indication of the saved target.
 
-`RoutineEditorView` currently renders the `routine-cardio-goal` action with the
-`Add goal` label. The requested state is:
+Claude's fix adds a testable `CardioGoalRowPresentation` and renders the
+persisted plan as:
 
 - no persisted goal: `Add goal`;
 - persisted goal: `Edit goal` plus a compact summary such as `30 min`, target
@@ -50,28 +61,27 @@ still says `Add goal` and gives no quick-glance indication of the saved target.
 - the summary must have a clear accessible value and remain visible without
   opening the editor.
 
-The same acceptance flow also opened the goal sheet but could not find the
-expected `cardio-goal-minutes` field at
-`ForgeFitUITests/ForgeFitUITests.swift:1374-1379`. Verify the sheet renders its
-default/current value and, after a goal is saved, hydrates the persisted
-`intervalPlanJSON` rather than only changing the card label.
+The cardio presentation suite covers empty, duration, calorie, zone, combined,
+interval, and undecodable plans. The UI replay created a 30-minute goal, saved
+it, confirmed the card showed `Edit goal` and `30min goal`, confirmed the detail
+view showed `30min`, relaunched, reopened the routine editor, and verified the
+goal field was hydrated. The saved-goal screenshot is the visual acceptance
+evidence for the quick-glance affordance.
 
-Regression path: create a 30-minute goal, save it, confirm the card changes to
-`Edit goal` with a summary, reopen it, edit it, save, and verify the result from
-a fresh launch/context.
-
-### P1 — Add a deliberate horizontal-scroll affordance
+### VERIFIED P1 — Add a deliberate horizontal-scroll affordance
 
 The Home feeling-chip row needs to communicate that more content exists to the
 right. The last word that fits should be intentionally half off-screen (or
 otherwise leave a clear trailing peek), optionally supported by a subtle fade
 or scroll cue. Do not rely on the user guessing that the row scrolls.
 
-Verify normal and larger text sizes, right-to-left layout if supported, VoiceOver
-navigation, and the post-scroll screenshot. Apply the same rule to other rows
-only when they are intentionally horizontally scrollable.
+Claude's fix moves the bleed to the scroll view and adds a direction-aware
+`ScrollEdgeFade`. The AppBar replay found a chip extending past the display
+edge, swiped it into view, and captured both states. This verification used the
+default simulator text size; larger text, RTL, and VoiceOver-specific review
+remain follow-up coverage.
 
-### P1 — Reselecting the current tab should scroll its root to the top
+### VERIFIED P1 — Reselecting the current tab should scroll its root to the top
 
 This is a requested UX enhancement, not a confirmed current navigation bug.
 When the user is already on Home, Workout, Insights, or Profile and has
@@ -79,9 +89,30 @@ scrolled down, tapping that selected tab should scroll that tab's root content
 to the top. Preserve the existing behavior that switching tabs returns to the
 selected tab's root.
 
-Add a per-tab scroll-to-top signal/ownership mechanism and verify each tab after
-scrolling. Also retain a deep-navigation test so the new behavior does not
-break cross-tab root return.
+Claude's fix adds a per-tab `tabScrollTopRequestID`, separate from ordinary
+root restoration. The replay exercised Home, Workout, Insights, and Profile;
+each scrollable root returned to its title after reselecting its tab, while the
+switch-away/back test confirmed that ordinary tab switching preserves the
+previous scroll position.
+
+## Remaining product fixes
+
+### P1 — Investigate the active logger swipe hang
+
+The seeded active-workout logger flow opened correctly and produced a valid
+pre-swipe screenshot, but the app process rose to roughly 99% CPU immediately
+after a slow upward swipe. XCUITest could not obtain an idle/accessibility
+snapshot for more than five minutes and reported `process main thread busy for
+30.0s` before the test was terminated. The action recorder therefore has two
+complete checkpoints for this flow, but no post-swipe checkpoint because the
+user action itself never returned.
+
+Evidence: `/tmp/forgefit-acceptance/full-run.5nocYy/xcodebuild.log` and
+`/tmp/forgefit-acceptance/action-evidence/AppStoreCaptureUITests--testCaptureLoggerScreenshots/504ee507-8b3f-468d-9d9a-058d3c8059ec/action-0002-after.png`.
+Reproduce with the same `--seed-active-workout` fixture and a manual upward
+swipe across the logger, capture a main-thread sample, and fix the underlying
+layout/gesture/render loop. The runner now has a configurable per-test timeout
+so this class of hang is reported and the remaining flows can continue.
 
 ## Acceptance failures to reproduce before changing product behavior
 
@@ -108,22 +139,27 @@ workout persistence.
 
 The chart is the progress/trend line chart on the exercise detail screen, not
 the workout-history list. The user-visible chart is interactable; the focused
-human-like replay now confirms that the earlier empty state came from the
-deterministic fixture, not from a chart product failure. The flow is:
+human-like replay now confirms that the earlier empty state was an
+asynchronous fixture-readiness race, not a chart product failure. The flow is:
 
 `Profile → Exercises → Smith Machine Squat → exercise detail → progress chart`.
 
 The expected accessibility identifier is `exercise-progress-chart`, defined by
 `InteractiveLineTrendChart`. The original failure happened before the later
-long-press/drag selection because `seedHistoryFixtures()` created raw
-weight/reps sets without recomputing the persisted `estimated1RM` values that
-the chart series reads. The action screenshot showed the honest empty-state
-copy: `Log this exercise across multiple sessions to chart this metric.`
+long-press/drag selection: the test reached the detail screen while the
+asynchronous `--seed-history` query was still becoming observable. The action
+screenshot correctly captured the intermediate empty-state copy: `Log this
+exercise across multiple sessions to chart this metric.` The same flow
+rendered the full trend chart after a deterministic `waitForExistence`
+readiness gate, then the action screenshots showed both the selection tooltip
+and the drag-updated point.
 
-The fixture now recomputes derived metrics for each seeded strength set. Verify
-the post-search and post-scroll action screenshots show the actual trend chart,
-then exercise the chart selection gesture. Do not file a chart UI bug from an
-empty chart when the seeded data contract is missing its derived points.
+The fixture already computes the persisted derived metrics through
+`SetModel` initialization. Keep the readiness gate and verify the post-search
+and post-scroll action screenshots show the actual trend chart before
+exercising the chart selection gesture. Do not file a chart UI bug from an
+intermediate empty state when the deterministic seed has not become observable
+yet.
 
 ### Resolved as an acceptance-selector issue — routine editor warm-up ramp
 
@@ -239,7 +275,7 @@ The two skipped flows remain coverage gaps rather than product failures:
   before finding the Home calendar control. The requested reselect-to-top
   behavior is an enhancement.
 
-This follow-up changes the acceptance harness and its DEBUG history fixture;
-it does not change user-facing product behavior. The companion visual review
-was updated to preserve the Liquid Glass reclassification:
+The acceptance harness and docs record the rechecks; the release/1.2 product
+changes are implemented in Claude's preceding commit. The companion visual
+review was updated to preserve the Liquid Glass reclassification:
 `docs/ai-acceptance-visual-review-2026-08-22.md`.

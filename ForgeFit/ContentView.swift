@@ -2146,7 +2146,7 @@ struct ContentView: View {
                 let progression = Double((120 - i) / 8) * 2.5
                 let workoutExercises = split.lifts.enumerated().map { position, lift in
                     let sets = (0..<3).map { setIndex in
-                        var set = SetModel(
+                        let set = SetModel(
                             userID: userID,
                             position: setIndex,
                             setType: .working,

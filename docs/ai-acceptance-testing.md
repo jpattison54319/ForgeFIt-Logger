@@ -157,6 +157,14 @@ keep repeated matrices from exhausting disk space; set
 failure in one platform does not prevent the other platform from running under
 `test-acceptance-all`.
 
+The runners enable Xcode's per-test timeout behavior by default so an app
+main-thread hang becomes a recorded test failure instead of blocking the entire
+matrix. The default allowance is 180 seconds and the hard maximum is 240
+seconds; tune them for a slower environment with
+`FORGEFIT_DEFAULT_TEST_EXECUTION_ALLOWANCE` and
+`FORGEFIT_MAX_TEST_EXECUTION_ALLOWANCE`, or set
+`FORGEFIT_TEST_TIMEOUTS_ENABLED=NO` only when investigating the timeout itself.
+
 The XCTest evidence writer and action recorder use a stable fallback directory because
 `xcodebuild` does not consistently forward arbitrary shell environment
 variables into UI-test runners. The runner snapshots the pre-run manifests and

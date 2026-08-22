@@ -46,6 +46,9 @@ developer_dir="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 if [[ ! -d "$developer_dir" && -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
   developer_dir=/Applications/Xcode-beta.app/Contents/Developer
 fi
+test_timeouts_enabled="${FORGEFIT_TEST_TIMEOUTS_ENABLED:-YES}"
+default_test_allowance="${FORGEFIT_DEFAULT_TEST_EXECUTION_ALLOWANCE:-180}"
+maximum_test_allowance="${FORGEFIT_MAX_TEST_EXECUTION_ALLOWANCE:-240}"
 set +e
 FORGEFIT_ACCEPTANCE_ARTIFACTS="$agent_evidence_path" DEVELOPER_DIR="$developer_dir" xcodebuild test \
   -workspace ForgeFit.xcworkspace \
@@ -54,7 +57,10 @@ FORGEFIT_ACCEPTANCE_ARTIFACTS="$agent_evidence_path" DEVELOPER_DIR="$developer_d
   -derivedDataPath "$derived_data" \
   -resultBundlePath "$result_bundle" \
   -only-testing:ForgeFitUITests \
-  -parallel-testing-enabled NO > "$log_path" 2>&1
+  -parallel-testing-enabled NO \
+  -test-timeouts-enabled "$test_timeouts_enabled" \
+  -default-test-execution-time-allowance "$default_test_allowance" \
+  -maximum-test-execution-time-allowance "$maximum_test_allowance" > "$log_path" 2>&1
 test_exit=$?
 set -e
 

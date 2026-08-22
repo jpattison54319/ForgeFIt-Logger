@@ -196,7 +196,12 @@ def load_visual_evidence(attachments_path: Path | None) -> dict[str, list[dict[s
 
 
 def load_agent_evidence(evidence_root: Path | None) -> dict[str, int]:
-    """Count manifest-backed checkpoint evidence produced by the local writer."""
+    """Count only complete action-sequence manifests.
+
+    The repository also has explicit milestone evidence writers. Those
+    screenshots are useful, but must not inflate the post-action checkpoint
+    count presented as human-like visual evidence.
+    """
 
     if not evidence_root or not evidence_root.exists():
         return {}
@@ -211,9 +216,17 @@ def load_agent_evidence(evidence_root: Path | None) -> dict[str, int]:
             or manifest.get("scenarioID", "")
         )
         if scenario_id:
+            checkpoints = manifest.get("scenario", {}).get("checkpoints", [])
+            action_checkpoints = [
+                checkpoint for checkpoint in checkpoints
+                if isinstance(checkpoint, dict)
+                and str(checkpoint.get("id", "")).startswith("action-")
+            ]
+            if not action_checkpoints or len(action_checkpoints) != len(checkpoints):
+                continue
             checkpoint_count = manifest.get("checkpointCount")
             if checkpoint_count is None:
-                checkpoint_count = len(manifest.get("checkpoints", []))
+                checkpoint_count = len(action_checkpoints)
             counts[scenario_id] = counts.get(scenario_id, 0) + int(checkpoint_count)
     return counts
 

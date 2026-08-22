@@ -76,6 +76,14 @@ watch destinations often fail to resolve.
   containers, `PrimaryButton`/`SecondaryButton`. Fixed point font sizes are the
   project convention. Give interactive controls accessibility identifiers
   (kebab-case with context, e.g. `start-suggested-routine-<name>`).
+- Whenever a user-facing flow, screen, control, gesture, navigation path, or
+  interaction behavior is added or changed, add or update a deterministic UI
+  acceptance test in the same change. The flow must act through the rendered
+  interface like a user, capture a screenshot and accessibility tree after
+  every wrapped action, assert the expected functional state, and be added to
+  the acceptance inventory. Run the focused replay and record any functional,
+  visual, accessibility, performance, or experience concern before handoff;
+  do not treat a unit test or source inspection alone as acceptance coverage.
 - Comment style: doc comments state design intent and invariants, never
   narration of what the next line does.
 
