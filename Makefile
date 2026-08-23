@@ -5,7 +5,7 @@
 DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 export DEVELOPER_DIR
 
-.PHONY: test-core build-core test-data build-data build-stubs test test-app test-acceptance test-acceptance-watch test-acceptance-contracts test-acceptance-all acceptance-inventory acceptance-surfaces acceptance-boundaries acceptance-judge build-ios build-watch acceptance-report
+.PHONY: test-core build-core test-data build-data build-stubs test test-app test-acceptance test-acceptance-watch test-acceptance-lint test-acceptance-contracts test-acceptance-all acceptance-inventory acceptance-surfaces acceptance-boundaries acceptance-judge build-ios build-watch acceptance-report
 
 test-core:
 	cd Packages/ForgeCore && swift test
@@ -41,6 +41,9 @@ test-acceptance:
 
 test-acceptance-watch:
 	./scripts/run_acceptance_watch.sh
+
+test-acceptance-lint:
+	python3 scripts/test_acceptance_tree_lint.py
 
 test-acceptance-contracts:
 	cd Packages/ForgeCore && swift test --filter WatchSyncTests

@@ -33,6 +33,8 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
         let phase: String
         let invariants: [String]
         let oracles: [WatchAcceptanceOracle]
+        let sourceFile: String
+        let sourceLine: UInt
     }
 
     private final class Session {
@@ -102,15 +104,28 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
         visibleLabels: [String] = [],
         phase: String = "assertion",
         invariants: [String] = [],
-        oracles: [WatchAcceptanceOracle] = []
+        oracles: [WatchAcceptanceOracle] = [],
+        sourceFile: StaticString = #fileID,
+        sourceLine: UInt = #line
     ) {
         guard isEnabled, let currentScenarioID, let session = sessions[currentScenarioID] else { return }
+        if let pending = session.pendingExpectation {
+            session.failures.append(WatchAcceptanceFailure(
+                phase: pending.phase,
+                message: "declaredButUnused: expectation was replaced before a wrapped action ran",
+                checkpointID: nil,
+                sourceFile: pending.sourceFile,
+                sourceLine: pending.sourceLine
+            ))
+        }
         session.pendingExpectation = PendingExpectation(
             visibleIdentifiers: visibleIdentifiers,
             visibleLabels: visibleLabels,
             phase: phase,
             invariants: invariants + oracles.map(\.id),
-            oracles: oracles
+            oracles: oracles,
+            sourceFile: String(describing: sourceFile),
+            sourceLine: sourceLine
         )
     }
 
@@ -161,7 +176,9 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
             visibleLabels: [],
             phase: "assertion",
             invariants: [],
-            oracles: []
+            oracles: [],
+            sourceFile: "<implicit>",
+            sourceLine: 0
         )
         session.pendingExpectation = nil
         let checkpointID = String(format: "action-%04d", actionNumber)
@@ -352,6 +369,16 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
     private func finish(scenarioID: String, succeeded: Bool) {
         guard let session = sessions.removeValue(forKey: scenarioID) else { return }
         currentScenarioID = nil
+        if let pending = session.pendingExpectation {
+            session.failures.append(WatchAcceptanceFailure(
+                phase: pending.phase,
+                message: "declaredButUnused: no wrapped action consumed this expectation",
+                checkpointID: nil,
+                sourceFile: pending.sourceFile,
+                sourceLine: pending.sourceLine
+            ))
+            session.pendingExpectation = nil
+        }
 
         let scenario = WatchActionScenario(
             id: session.scenarioID,
@@ -362,11 +389,14 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
         )
         let artifactFiles = Array(session.artifactFiles).sorted() + ["manifest.json", "judge-request.json"]
         let failedCheckpointCount = session.evidence.filter { $0.outcome == "fail" }.count
+        let declaredButUnusedCount = session.failures.filter {
+            $0.message.hasPrefix("declaredButUnused:")
+        }.count
         let blocked = session.evidence.contains { $0.outcome == "blocked" }
         let unverified = session.evidence.filter { $0.outcome == "unverified" }.count
         let outcome = !succeeded
             ? (blocked ? "blocked" : "fail")
-            : (blocked ? "blocked" : (unverified > 0 ? "unverified" : "pass"))
+            : (blocked ? "blocked" : (declaredButUnusedCount > 0 ? "fail" : (unverified > 0 ? "unverified" : "pass")))
         let manifest = WatchActionManifest(
             schemaVersion: 3,
             runID: session.runID,
@@ -379,6 +409,10 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
             artifactFiles: artifactFiles,
             failures: session.failures,
             unverifiedCheckpointCount: unverified,
+            declaredButUnusedCount: declaredButUnusedCount,
+            gitCommit: AcceptanceRunConfiguration.gitCommit,
+            gitDirty: AcceptanceRunConfiguration.gitDirty,
+            commitUnknown: AcceptanceRunConfiguration.gitCommit == nil,
             rubricID: AcceptanceRunConfiguration.rubricID,
             rubricVersion: AcceptanceRunConfiguration.rubricVersion
         )
@@ -400,6 +434,9 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
                     evidencePaths: ["relative/path/to/evidence"]
                 )]
             ),
+            gitCommit: AcceptanceRunConfiguration.gitCommit,
+            gitDirty: AcceptanceRunConfiguration.gitDirty,
+            commitUnknown: AcceptanceRunConfiguration.gitCommit == nil,
             rubricID: AcceptanceRunConfiguration.rubricID,
             rubricVersion: AcceptanceRunConfiguration.rubricVersion,
             failures: session.failures
@@ -486,6 +523,10 @@ private struct WatchActionManifest: Codable {
     let artifactFiles: [String]
     let failures: [WatchAcceptanceFailure]
     let unverifiedCheckpointCount: Int
+    let declaredButUnusedCount: Int
+    let gitCommit: String?
+    let gitDirty: Bool
+    let commitUnknown: Bool
     let rubricID: String
     let rubricVersion: Int
 
@@ -501,6 +542,10 @@ private struct WatchActionManifest: Codable {
         artifactFiles: [String],
         failures: [WatchAcceptanceFailure] = [],
         unverifiedCheckpointCount: Int = 0,
+        declaredButUnusedCount: Int = 0,
+        gitCommit: String? = nil,
+        gitDirty: Bool = false,
+        commitUnknown: Bool = true,
         rubricID: String = "forgefit-ai-acceptance",
         rubricVersion: Int = 1
     ) {
@@ -515,6 +560,10 @@ private struct WatchActionManifest: Codable {
         self.artifactFiles = artifactFiles
         self.failures = failures
         self.unverifiedCheckpointCount = unverifiedCheckpointCount
+        self.declaredButUnusedCount = declaredButUnusedCount
+        self.gitCommit = gitCommit
+        self.gitDirty = gitDirty
+        self.commitUnknown = commitUnknown
         self.rubricID = rubricID
         self.rubricVersion = rubricVersion
     }
@@ -617,6 +666,9 @@ private struct WatchActionJudgeRequest: Codable {
     let checkpointEvidence: [WatchActionCheckpointEvidence]
     let judgeInstructions: String
     let responseSchema: WatchActionResponseSchema
+    let gitCommit: String?
+    let gitDirty: Bool
+    let commitUnknown: Bool
     let rubricID: String
     let rubricVersion: Int
     let failures: [WatchAcceptanceFailure]
@@ -627,6 +679,9 @@ private struct WatchActionJudgeRequest: Codable {
         checkpointEvidence: [WatchActionCheckpointEvidence],
         judgeInstructions: String,
         responseSchema: WatchActionResponseSchema,
+        gitCommit: String? = nil,
+        gitDirty: Bool = false,
+        commitUnknown: Bool = true,
         rubricID: String = "forgefit-ai-acceptance",
         rubricVersion: Int = 1,
         failures: [WatchAcceptanceFailure] = []
@@ -636,6 +691,9 @@ private struct WatchActionJudgeRequest: Codable {
         self.checkpointEvidence = checkpointEvidence
         self.judgeInstructions = judgeInstructions
         self.responseSchema = responseSchema
+        self.gitCommit = gitCommit
+        self.gitDirty = gitDirty
+        self.commitUnknown = commitUnknown
         self.rubricID = rubricID
         self.rubricVersion = rubricVersion
         self.failures = failures
@@ -663,14 +721,18 @@ func watchAcceptanceExpect(
     visibleLabels: [String] = [],
     phase: String = "assertion",
     invariants: [String] = [],
-    oracles: [WatchAcceptanceOracle] = []
+    oracles: [WatchAcceptanceOracle] = [],
+    file: StaticString = #fileID,
+    line: UInt = #line
 ) {
     WatchHumanActionRecorder.shared.expect(
         visibleIdentifiers: visibleIdentifiers,
         visibleLabels: visibleLabels,
         phase: phase,
         invariants: invariants,
-        oracles: oracles
+        oracles: oracles,
+        sourceFile: file,
+        sourceLine: line
     )
 }
 

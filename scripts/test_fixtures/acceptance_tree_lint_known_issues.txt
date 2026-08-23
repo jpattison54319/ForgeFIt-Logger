@@ -1,0 +1,8 @@
+Attributes: Application, 0x1, pid: 1, label: 'ForgeFit'
+Element subtree:
+ →Application, 0x1, pid: 1, label: 'ForgeFit'
+    Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}
+      Button, 0x3, {{10.0, 10.0}, {20.0, 20.0}}, identifier: 'tiny-button', label: 'Tiny'
+      Button, 0x4, {{40.0, 10.0}, {44.0, 44.0}}, identifier: 'empty-button'
+      TextField, 0x5, {{10.0, 50.0}, {200.0, 48.0}}, identifier: 'name-field', label: 'Name'
+      SearchField, 0x6, {{10.0, 110.0}, {200.0, 48.0}}, identifier: 'search-field', placeholderValue: 'Search'

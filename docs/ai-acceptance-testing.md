@@ -60,6 +60,11 @@ Each method is also classified as `acceptance`, `functional`, `performance`,
 or `capture`, and action-wrapped methods are marked `declared` or
 `legacy-unverified` depending on whether they call `acceptanceExpect` or
 `watchAcceptanceExpect`.
+The inventory reports contract adoption per simulator suite, including the
+unverified percentage, action-wrapper count, expectation count, and setup-gate
+count. The checked-in adoption policy requires the representative iPhone and
+three Watch journeys to remain fully contracted and fails if any suite's
+unverified percentage rises above its baseline.
 
 The companion production-surface inventory scans the shipping Swift targets
 for view declarations, navigation/presentation seams, route cases, and
@@ -141,12 +146,15 @@ and dirty-worktree bit in its manifest. Focused runs may set
 the default short settle is intentional so the screenshot represents the
 post-action UI rather than the first animation frame.
 
-`scripts/acceptance_tree_lint.py` runs deterministic checks over every saved
-tree: empty labels on interactive controls, sub-44-point frames, duplicate
-identifiers, and likely truncation. The AI reviewer handles the remaining
-visual and experience judgment. Before/after pairs are the default evidence;
-video is intentionally deferred to a small motion-focused pilot so the full
-matrix does not double storage and timing pressure on every action.
+`scripts/acceptance_tree_lint.py` parses the actual indented
+`XCUIApplication.debugDescription` format and runs deterministic checks over
+every saved tree: empty labels or placeholders on interactive controls,
+sub-44-point frames, duplicate identifiers, and likely truncation. Its parser
+regression fixture is run before every acceptance matrix so a format change
+cannot silently turn lint into an empty result. The AI reviewer handles the
+remaining visual and experience judgment. Before/after pairs are the default
+evidence; video is intentionally deferred to a small motion-focused pilot so
+the full matrix does not double storage and timing pressure on every action.
 
 A failed assertion is reviewed against the last post-action screenshot and
 tree before it is called a product defect. If the screenshot shows an empty,
@@ -220,8 +228,8 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 ```
 
 Each full run prints its `RUN_ROOT`, `COMMIT`, `DIRTY`, `REPORT`, `ATTACHMENTS`,
-`AGENT_EVIDENCE`, `BOUNDARY_AUDIT`, `SURFACE_INVENTORY`, `EVIDENCE_GATE`, and
-`JUDGE_REQUEST` paths. The report distinguishes `passed`, `failed`, `skipped`,
+`AGENT_EVIDENCE`, `BOUNDARY_AUDIT`, `SURFACE_INVENTORY`, `ADOPTION_GATE`,
+`EVIDENCE_GATE`, and `JUDGE_REQUEST` paths. The report distinguishes `passed`, `failed`, `skipped`,
 and `not-run`; it also reports how many flows have exported screenshots versus
 functional-only evidence. Runner-created DerivedData is removed on exit to
 keep repeated matrices from exhausting disk space; set
@@ -240,13 +248,17 @@ seconds; tune them for a slower environment with
 The runner writes a temporary marker because `xcodebuild` does not consistently
 forward arbitrary shell environment variables into XCTest. The marker carries
 the artifact root, commit, dirty state, rubric, and evidence requirement; it is
-restored or removed on exit so repeated runs do not mix evidence.
+restored or removed on exit so repeated runs do not mix evidence. A direct
+`xcodebuild` invocation that does not provide `GIT_COMMIT` records no commit
+value and sets `commitUnknown: true`; such evidence is visibly unattributed
+rather than being mistaken for release evidence.
 
-Set `FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS=1` for the strict release gate.
-Until every legacy flow has migrated to `acceptanceExpect` or
-`watchAcceptanceExpect`, the default staged gate still fails on missing
-artifacts but reports unverified contracts explicitly. No mode treats an
-unverified checkpoint as a pass.
+The runners always require contracts for the checked-in allowlist in
+`scripts/acceptance_adoption_policy.json`. Set
+`FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS=1` to require every legacy flow as well.
+Until all flows have migrated to `acceptanceExpect` or `watchAcceptanceExpect`,
+the report still exposes the unverified percentage and no unverified
+checkpoint is treated as a pass.
 
 ## Running an AI judge
 
@@ -264,6 +276,7 @@ python3 scripts/acceptance_report.py \
   --evidence-root artifacts/acceptance/<git-commit>/full-run.<id>/agent-evidence \
   --boundary-audit artifacts/acceptance/<git-commit>/full-run.<id>/boundary-audit.json \
   --surface-inventory artifacts/acceptance/<git-commit>/full-run.<id>/surface-inventory.json \
+  --adoption-gate artifacts/acceptance/<git-commit>/full-run.<id>/adoption-gate.json \
   --evidence-gate artifacts/acceptance/<git-commit>/full-run.<id>/evidence-gate.json \
   --judge-response /path/to/response.json \
   --platform ios \
@@ -340,6 +353,11 @@ checks in `acceptanceRequire` or an explicit `.setup` expectation, and put the
 behavior under test in `acceptanceAssert` or an `.assertion` expectation. This
 keeps missing demo data, permissions, and simulator timing as blocked evidence
 instead of false product failures.
+
+If an expectation is declared but no wrapped action consumes it, or a second
+expectation replaces it, the recorder writes `declaredButUnused` failure
+evidence and fails the scenario. This prevents a conditional or early-returned
+action from borrowing the next action's contract.
 
 When a flow changes persistent data, the contract should include a relaunch or
 fresh-context checkpoint. When it crosses devices, record each boundary

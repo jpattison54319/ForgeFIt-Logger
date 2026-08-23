@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--evidence-root", type=Path, help="Action-evidence artifact root")
     parser.add_argument("--boundary-audit", type=Path, help="Boundary audit JSON from acceptance_boundary_audit.py")
     parser.add_argument("--surface-inventory", type=Path, help="Production surface inventory JSON from acceptance_surface_inventory.py")
+    parser.add_argument("--adoption-gate", type=Path, help="Contract-adoption gate JSON from acceptance_adoption_gate.py")
     parser.add_argument("--evidence-gate", type=Path, help="Evidence gate JSON from acceptance_evidence_gate.py")
     parser.add_argument("--judge-response", type=Path, help="AI judge response JSON to validate and merge")
     parser.add_argument("--output", type=Path, help="Write a Markdown report here")
@@ -37,6 +38,7 @@ def main() -> int:
             args.evidence_root,
             args.boundary_audit,
             args.surface_inventory,
+            args.adoption_gate,
             args.evidence_gate,
             args.judge_response,
             args.output,
@@ -342,6 +344,10 @@ def load_evidence_gate(path: Path | None) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def load_adoption_gate(path: Path | None) -> dict:
+    return load_evidence_gate(path)
+
+
 JUDGE_OUTCOMES = {"pass", "fail", "suspect", "blocked"}
 JUDGE_SEVERITIES = {"blocker", "critical", "major", "minor", "polish"}
 JUDGE_CATEGORIES = {
@@ -457,6 +463,7 @@ def report_xcode_run(
     evidence_root: Path | None,
     boundary_audit_path: Path | None,
     surface_inventory_path: Path | None,
+    adoption_gate_path: Path | None,
     evidence_gate_path: Path | None,
     judge_response_path: Path | None,
     output: Path | None,
@@ -479,6 +486,7 @@ def report_xcode_run(
     )
     boundary_audit = load_boundary_audit(boundary_audit_path)
     surface_inventory = load_surface_inventory(surface_inventory_path)
+    adoption_gate = load_adoption_gate(adoption_gate_path)
     evidence_gate = load_evidence_gate(evidence_gate_path)
     flows = []
     for original in inventory["flows"]:
@@ -527,6 +535,8 @@ def report_xcode_run(
             for flow in flows
         ),
         "evidenceGate": evidence_gate,
+        "adoptionGate": adoption_gate,
+        "adoptionBySuite": inventory.get("adoptionBySuite", {}),
         "boundaryAudit": boundary_audit,
         "surfaceInventory": surface_inventory,
         "judgeOutcome": judge_response.get("outcome") if judge_response else None,
@@ -556,6 +566,29 @@ def report_xcode_run(
             lines.append(f"Gate reason: {evidence_gate['reason']}")
     else:
         lines.append("No evidence-gate result was supplied; this report is not an acceptance green light.")
+    lines.extend(["", "## Contract adoption", ""])
+    adoption = inventory.get("adoptionBySuite", {})
+    if adoption:
+        lines.extend([
+            "| Suite | Instrumented flows | Declared contracts | Legacy-unverified | Unverified | Expectation calls | Setup calls |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        for suite, summary in sorted(adoption.items()):
+            lines.append(
+                f"| `{suite}` | {summary.get('instrumentedFlows', 0)} | "
+                f"{summary.get('declaredContractFlows', 0)} | "
+                f"{summary.get('legacyUnverifiedFlows', 0)} | "
+                f"{float(summary.get('unverifiedPercent', 0.0)):.2f}% | "
+                f"{summary.get('expectationCallCount', 0)} | {summary.get('setupCallCount', 0)} |"
+            )
+    else:
+        lines.append("No contract-adoption inventory was supplied.")
+    if adoption_gate:
+        adoption_status = "PASS" if adoption_gate.get("complete") else "FAIL"
+        lines.append("")
+        lines.append(f"Contract-adoption gate: **{adoption_status}**.")
+        if adoption_gate.get("reason"):
+            lines.append(f"Adoption gate reason: {adoption_gate['reason']}")
     lines.extend(["", "## Boundary evidence", ""])
     if boundary_audit:
         boundary_counts = boundary_audit.get("counts", {})

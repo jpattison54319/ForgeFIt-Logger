@@ -22,7 +22,11 @@ RESPONSE_SCHEMA = RUBRIC["responseSchema"]
 REQUEST_SCHEMA_VERSION = 3
 
 
-def audit_request(request_path: Path, request: dict) -> dict:
+def audit_request(
+    request_path: Path,
+    request: dict,
+    required_contract_flows: set[str] | None,
+) -> dict:
     """Verify that a judge request contains a complete visual sequence.
 
     The XCTest process is responsible for creating the artifacts; this audit
@@ -34,9 +38,11 @@ def audit_request(request_path: Path, request: dict) -> dict:
     missing_artifacts: list[str] = []
     sequence_warnings: list[str] = []
     contract_warnings: list[str] = []
+    required_contract_warnings: list[str] = []
     schema_warnings: list[str] = []
     tree_lint: dict[str, list[dict[str, object]]] = {}
     checkpoint_ids: list[str] = []
+    scenario_id = str(request.get("scenario", {}).get("id", ""))
     if request.get("schemaVersion") != REQUEST_SCHEMA_VERSION:
         schema_warnings.append(
             f"request schemaVersion is {request.get('schemaVersion')!r}; expected {REQUEST_SCHEMA_VERSION}"
@@ -87,15 +93,22 @@ def audit_request(request_path: Path, request: dict) -> dict:
                 or checkpoint.get("invariants")
             )
             if not declared:
-                contract_warnings.append(
-                    f"{checkpoint_id}: no expected identifiers, labels, or invariants"
-                )
+                warning = f"{checkpoint_id}: no expected identifiers, labels, or invariants"
+                contract_warnings.append(warning)
+                if required_contract_flows is None or scenario_id in required_contract_flows:
+                    required_contract_warnings.append(warning)
             if evidence.get("outcome") == "pass" and not declared:
-                contract_warnings.append(f"{checkpoint_id}: pass outcome has no declared contract")
+                warning = f"{checkpoint_id}: pass outcome has no declared contract"
+                contract_warnings.append(warning)
+                if required_contract_flows is None or scenario_id in required_contract_flows:
+                    required_contract_warnings.append(warning)
         if evidence.get("outcome") == "pass" and (
             evidence.get("missingIdentifiers") or evidence.get("missingLabels")
         ):
-            contract_warnings.append(f"{checkpoint_id}: pass outcome contains missing expectations")
+            warning = f"{checkpoint_id}: pass outcome contains missing expectations"
+            contract_warnings.append(warning)
+            if required_contract_flows is None or scenario_id in required_contract_flows:
+                required_contract_warnings.append(warning)
 
     action_numbers = []
     for checkpoint_id in checkpoint_ids:
@@ -110,21 +123,36 @@ def audit_request(request_path: Path, request: dict) -> dict:
             )
 
     return {
-        "scenarioID": str(request.get("scenario", {}).get("id", "")),
+        "scenarioID": scenario_id,
         "checkpointCount": len(checkpoint_ids),
         "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not schema_warnings,
+        "releaseComplete": not missing_artifacts and not sequence_warnings and not required_contract_warnings and not schema_warnings,
         "artifactComplete": not missing_artifacts,
         "contractComplete": not contract_warnings,
+        "requiredContractComplete": not required_contract_warnings,
         "schemaComplete": not schema_warnings,
         "missingArtifacts": missing_artifacts,
         "sequenceWarnings": sequence_warnings,
         "contractWarnings": contract_warnings,
+        "requiredContractWarnings": required_contract_warnings,
         "schemaWarnings": schema_warnings,
         "treeLint": tree_lint,
     }
 
 
-def collect(run_root: Path) -> dict:
+def collect(
+    run_root: Path,
+    contract_policy_path: Path | None = None,
+    require_all_contracts: bool = False,
+) -> dict:
+    required_contract_flows: set[str] | None
+    if require_all_contracts or contract_policy_path is None:
+        required_contract_flows = None
+    else:
+        policy = json.loads(contract_policy_path.read_text(encoding="utf-8"))
+        required_contract_flows = {
+            str(flow_id) for flow_id in policy.get("requiredContractFlows", [])
+        }
     requests = []
     audits = []
     for path in sorted(run_root.glob("**/judge-request.json")):
@@ -138,7 +166,7 @@ def collect(run_root: Path) -> dict:
             continue
         request = dict(request)
         request["artifactRoot"] = str(path.parent.relative_to(run_root))
-        audit = audit_request(path, request)
+        audit = audit_request(path, request, required_contract_flows)
         request["rubricID"] = RUBRIC["id"]
         request["rubricVersion"] = RUBRIC["version"]
         request["rubric"] = RUBRIC
@@ -163,13 +191,18 @@ def collect(run_root: Path) -> dict:
         "checkpointCount": checkpoint_count,
         "evidenceAudit": {
             "complete": all(audit["complete"] for audit in audits),
+            "releaseComplete": all(audit["releaseComplete"] for audit in audits),
             "artifactComplete": all(audit["artifactComplete"] for audit in audits),
             "contractComplete": all(audit["contractComplete"] for audit in audits),
+            "requiredContractComplete": all(audit["requiredContractComplete"] for audit in audits),
             "schemaComplete": all(audit["schemaComplete"] for audit in audits),
             "sequenceComplete": all(not audit["sequenceWarnings"] for audit in audits),
             "scenarioAudits": audits,
             "incompleteScenarioCount": sum(not audit["complete"] for audit in audits),
             "uncontractedCheckpointCount": sum(len(audit["contractWarnings"]) for audit in audits),
+            "requiredUncontractedCheckpointCount": sum(
+                len(audit["requiredContractWarnings"]) for audit in audits
+            ),
             "automatedFindingCount": sum(
                 len(finding)
                 for audit in audits
@@ -178,6 +211,7 @@ def collect(run_root: Path) -> dict:
         },
         "rubricID": RUBRIC["id"],
         "rubricVersion": RUBRIC["version"],
+        "contractPolicy": str(contract_policy_path) if contract_policy_path else None,
         "rubric": RUBRIC,
         "judgeInstructions": RUBRIC["instructions"],
         "responseSchema": RESPONSE_SCHEMA,
@@ -190,19 +224,22 @@ def main() -> int:
     parser.add_argument("run", type=Path, help="Full acceptance run directory")
     parser.add_argument("--output", type=Path, help="Aggregate judge request path")
     parser.add_argument("--fail-on-incomplete", action="store_true")
+    parser.add_argument("--contract-policy", type=Path)
+    parser.add_argument("--require-all-contracts", action="store_true")
     args = parser.parse_args()
 
     run_root = args.run.resolve()
     if not run_root.is_dir():
         raise SystemExit(f"Run directory does not exist: {run_root}")
     output = args.output or run_root / "judge-request.json"
-    request = collect(run_root)
+    contract_policy = args.contract_policy.resolve() if args.contract_policy else None
+    request = collect(run_root, contract_policy, args.require_all_contracts)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"JUDGE_REQUEST={output}")
     print(f"SCENARIOS={request['scenarioCount']}")
     print(f"CHECKPOINTS={request['checkpointCount']}")
-    return 1 if args.fail_on_incomplete and not request["evidenceAudit"]["complete"] else 0
+    return 1 if args.fail_on_incomplete and not request["evidenceAudit"]["releaseComplete"] else 0
 
 
 if __name__ == "__main__":

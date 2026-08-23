@@ -15,10 +15,12 @@ result_bundle="$run_root/ForgeFitWatch.xcresult"
 log_path="$run_root/xcodebuild.log"
 inventory_path="$run_root/inventory.json"
 report_path="$run_root/report.md"
+adoption_gate_path="$run_root/adoption-gate.json"
 attachments_path="$run_root/attachments"
 agent_evidence_path="$run_root/agent-evidence"
 boundary_audit_path="$run_root/boundary-audit.json"
 surface_inventory_path="$run_root/surface-inventory.json"
+contract_policy="$repo_root/scripts/acceptance_adoption_policy.json"
 action_marker="${FORGEFIT_ACCEPTANCE_ACTION_MARKER:-/tmp/forgefit-acceptance/.capture-actions}"
 action_marker_preexisting=0
 marker_backup=""
@@ -51,9 +53,14 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$repo_root"
+python3 scripts/test_acceptance_tree_lint.py
 python3 scripts/acceptance_inventory.py --json-out "$inventory_path" --markdown-out "$run_root/inventory.md"
 python3 scripts/acceptance_boundary_audit.py --json-out "$boundary_audit_path" --markdown-out "$run_root/boundary-audit.md"
 python3 scripts/acceptance_surface_inventory.py --json-out "$surface_inventory_path" --markdown-out "$run_root/surface-inventory.md"
+set +e
+python3 scripts/acceptance_adoption_gate.py "$inventory_path" --policy "$contract_policy" --output "$adoption_gate_path"
+adoption_gate_exit=$?
+set -e
 developer_dir="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 if [[ ! -d "$developer_dir" && -d /Applications/Xcode-beta.app/Contents/Developer ]]; then
   developer_dir=/Applications/Xcode-beta.app/Contents/Developer
@@ -88,9 +95,9 @@ set -e
 judge_request_path="$run_root/judge-request.json"
 judge_request_exit=0
 set +e
-judge_args=("$run_root" "--output" "$judge_request_path")
+judge_args=("$run_root" "--output" "$judge_request_path" "--contract-policy" "$contract_policy" "--fail-on-incomplete")
 if [[ "${FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS:-0}" == "1" ]]; then
-  judge_args+=("--fail-on-incomplete")
+  judge_args+=("--require-all-contracts")
 fi
 python3 scripts/acceptance_judge.py "${judge_args[@]}"
 judge_request_exit=$?
@@ -100,8 +107,9 @@ evidence_gate_path="$run_root/evidence-gate.json"
 evidence_gate_exit=0
 set +e
 gate_args=("$run_root" "--output" "$evidence_gate_path")
+gate_args+=("--require-contracts" "--contract-policy" "$contract_policy")
 if [[ "${FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS:-0}" == "1" ]]; then
-  gate_args+=("--require-contracts")
+  gate_args+=("--require-all-contracts")
 fi
 python3 scripts/acceptance_evidence_gate.py "${gate_args[@]}"
 evidence_gate_exit=$?
@@ -126,11 +134,15 @@ python3 scripts/acceptance_report.py \
   --evidence-root "$agent_evidence_path" \
   --boundary-audit "$boundary_audit_path" \
   --surface-inventory "$surface_inventory_path" \
+  --adoption-gate "$adoption_gate_path" \
   --evidence-gate "$evidence_gate_path" \
   --platform watch \
   --output "$report_path"
 
 final_exit="$test_exit"
+if [[ "$final_exit" == "0" && "$adoption_gate_exit" != "0" ]]; then
+  final_exit="$adoption_gate_exit"
+fi
 if [[ "$final_exit" == "0" && "$judge_request_exit" != "0" && "${FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS:-0}" == "1" ]]; then
   final_exit="$judge_request_exit"
 fi
@@ -138,6 +150,6 @@ if [[ "$final_exit" == "0" && "$evidence_gate_exit" != "0" && "${FORGEFIT_ACCEPT
   final_exit="$evidence_gate_exit"
 fi
 
-printf 'RUN_ROOT=%s\nCOMMIT=%s\nDIRTY=%s\nLOG=%s\nREPORT=%s\nATTACHMENTS=%s\nAGENT_EVIDENCE=%s\nACTION_EVIDENCE=%s\nBOUNDARY_AUDIT=%s\nSURFACE_INVENTORY=%s\nEVIDENCE_GATE=%s\nJUDGE_REQUEST=%s\nEXIT_CODE=%s\nATTACHMENT_EXPORT_EXIT=%s\nJUDGE_REQUEST_EXIT=%s\nEVIDENCE_GATE_EXIT=%s\n' \
-  "$run_root" "$git_commit" "$git_dirty" "$log_path" "$report_path" "$attachments_path" "$agent_evidence_path" "$agent_evidence_path/action-evidence" "$boundary_audit_path" "$surface_inventory_path" "$evidence_gate_path" "$judge_request_path" "$final_exit" "$attachment_export_exit" "$judge_request_exit" "$evidence_gate_exit"
+printf 'RUN_ROOT=%s\nCOMMIT=%s\nDIRTY=%s\nLOG=%s\nREPORT=%s\nATTACHMENTS=%s\nAGENT_EVIDENCE=%s\nACTION_EVIDENCE=%s\nBOUNDARY_AUDIT=%s\nSURFACE_INVENTORY=%s\nADOPTION_GATE=%s\nEVIDENCE_GATE=%s\nJUDGE_REQUEST=%s\nEXIT_CODE=%s\nATTACHMENT_EXPORT_EXIT=%s\nADOPTION_GATE_EXIT=%s\nJUDGE_REQUEST_EXIT=%s\nEVIDENCE_GATE_EXIT=%s\n' \
+  "$run_root" "$git_commit" "$git_dirty" "$log_path" "$report_path" "$attachments_path" "$agent_evidence_path" "$agent_evidence_path/action-evidence" "$boundary_audit_path" "$surface_inventory_path" "$adoption_gate_path" "$evidence_gate_path" "$judge_request_path" "$final_exit" "$attachment_export_exit" "$adoption_gate_exit" "$judge_request_exit" "$evidence_gate_exit"
 exit "$final_exit"

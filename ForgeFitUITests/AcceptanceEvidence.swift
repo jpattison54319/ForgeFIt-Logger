@@ -54,6 +54,7 @@ struct AcceptanceRunManifest: Codable, Sendable {
     let artifactFiles: [String]
     let failures: [AcceptanceFailureEvidence]
     let unverifiedCheckpointCount: Int
+    let declaredButUnusedCount: Int
     let rubricID: String
     let rubricVersion: Int
 
@@ -70,6 +71,7 @@ struct AcceptanceRunManifest: Codable, Sendable {
         artifactFiles: [String],
         failures: [AcceptanceFailureEvidence] = [],
         unverifiedCheckpointCount: Int = 0,
+        declaredButUnusedCount: Int = 0,
         rubricID: String = "forgefit-ai-acceptance",
         rubricVersion: Int = 1
     ) {
@@ -85,6 +87,7 @@ struct AcceptanceRunManifest: Codable, Sendable {
         self.artifactFiles = artifactFiles
         self.failures = failures
         self.unverifiedCheckpointCount = unverifiedCheckpointCount
+        self.declaredButUnusedCount = declaredButUnusedCount
         self.rubricID = rubricID
         self.rubricVersion = rubricVersion
     }
@@ -100,6 +103,7 @@ struct AcceptanceEnvironment: Codable, Sendable {
     let dynamicType: String
     let gitCommit: String?
     let gitDirty: Bool
+    let commitUnknown: Bool
 
     init(
         platform: String,
@@ -110,7 +114,8 @@ struct AcceptanceEnvironment: Codable, Sendable {
         appearance: String,
         dynamicType: String,
         gitCommit: String?,
-        gitDirty: Bool = false
+        gitDirty: Bool = false,
+        commitUnknown: Bool? = nil
     ) {
         self.platform = platform
         self.device = device
@@ -121,6 +126,7 @@ struct AcceptanceEnvironment: Codable, Sendable {
         self.dynamicType = dynamicType
         self.gitCommit = gitCommit
         self.gitDirty = gitDirty
+        self.commitUnknown = commitUnknown ?? (gitCommit == nil)
     }
 }
 
@@ -245,6 +251,7 @@ struct AcceptanceCheckpointEvidence: Codable, Sendable {
 struct AcceptanceJudgeRequest: Codable, Sendable {
     let schemaVersion: Int
     let scenario: AcceptanceScenario
+    let environment: AcceptanceEnvironment
     let checkpointEvidence: [AcceptanceCheckpointEvidence]
     let judgeInstructions: String
     let responseSchema: AcceptanceJudgeResponseSchema
@@ -255,6 +262,7 @@ struct AcceptanceJudgeRequest: Codable, Sendable {
     init(
         schemaVersion: Int,
         scenario: AcceptanceScenario,
+        environment: AcceptanceEnvironment,
         checkpointEvidence: [AcceptanceCheckpointEvidence],
         judgeInstructions: String,
         responseSchema: AcceptanceJudgeResponseSchema,
@@ -264,6 +272,7 @@ struct AcceptanceJudgeRequest: Codable, Sendable {
     ) {
         self.schemaVersion = schemaVersion
         self.scenario = scenario
+        self.environment = environment
         self.checkpointEvidence = checkpointEvidence
         self.judgeInstructions = judgeInstructions
         self.responseSchema = responseSchema

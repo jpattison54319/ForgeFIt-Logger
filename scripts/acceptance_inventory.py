@@ -20,6 +20,9 @@ METHOD_RE = re.compile(r"^\s+(?:@MainActor\s+)?func\s+(test\w+)\s*\(", re.MULTIL
 ID_RE = re.compile(r"accessibilityIdentifier\(\"([^\"]+)")
 ARG_RE = re.compile(r"\"(--[a-zA-Z0-9_-]+)\"")
 ACTION_WRAPPER_RE = re.compile(r"\.(?:acceptance|watchAcceptance)[A-Z]")
+ACTION_CALL_RE = re.compile(r"\.(?:acceptance|watchAcceptance)[A-Z]\w*\s*\(")
+EXPECTATION_CALL_RE = re.compile(r"\b(?:acceptance|watchAcceptance)Expect\s*\(")
+SETUP_CALL_RE = re.compile(r"\b(?:acceptance|watchAcceptance)(?:Setup|Require)\s*\(")
 
 
 CAPABILITY_RULES = [
@@ -59,6 +62,52 @@ def classify(*parts: str) -> tuple[str, str]:
     return capability, risk
 
 
+def adoption_by_suite(flows: list[dict]) -> dict[str, dict[str, int | float]]:
+    """Summarize contract adoption for every simulator UI suite.
+
+    The denominator is every flow that wraps a human-like action, including
+    performance methods that use the recorder. Functional-only and capture
+    methods are not acceptance evidence and therefore do not distort the
+    adoption percentage.
+    """
+
+    suites: dict[str, dict[str, int | float]] = {}
+    for flow in flows:
+        if flow.get("humanActionInstrumentation") != "method-wrapped":
+            continue
+        suite = str(flow.get("platform", "unknown"))
+        summary = suites.setdefault(
+            suite,
+            {
+                "instrumentedFlows": 0,
+                "declaredContractFlows": 0,
+                "legacyUnverifiedFlows": 0,
+                "unverifiedPercent": 0.0,
+                "actionWrapperCount": 0,
+                "expectationCallCount": 0,
+                "setupCallCount": 0,
+            },
+        )
+        summary["instrumentedFlows"] += 1
+        if flow.get("acceptanceContract") == "declared":
+            summary["declaredContractFlows"] += 1
+        else:
+            summary["legacyUnverifiedFlows"] += 1
+        summary["actionWrapperCount"] += int(flow.get("actionWrapperCount", 0))
+        summary["expectationCallCount"] += int(flow.get("expectationCallCount", 0))
+        summary["setupCallCount"] += int(flow.get("setupCallCount", 0))
+
+    for summary in suites.values():
+        instrumented = int(summary["instrumentedFlows"])
+        summary["unverifiedPercent"] = round(
+            (int(summary["legacyUnverifiedFlows"]) * 100.0 / instrumented)
+            if instrumented
+            else 0.0,
+            4,
+        )
+    return dict(sorted(suites.items()))
+
+
 def inventory(root: Path) -> dict:
     flows: list[dict] = []
     files_seen = 0
@@ -95,8 +144,11 @@ def inventory(root: Path) -> dict:
                     else len(source)
                 )
                 method_source = source[method_match.start():next_method_start]
-                has_action_wrapper = bool(ACTION_WRAPPER_RE.search(method_source))
-                has_contract = "acceptanceExpect" in method_source or "watchAcceptanceExpect" in method_source
+                action_wrapper_count = len(ACTION_CALL_RE.findall(method_source))
+                expectation_call_count = len(EXPECTATION_CALL_RE.findall(method_source))
+                setup_call_count = len(SETUP_CALL_RE.findall(method_source))
+                has_action_wrapper = action_wrapper_count > 0 or bool(ACTION_WRAPPER_RE.search(method_source))
+                has_contract = expectation_call_count > 0
                 is_performance = "measure(" in method_source or "XCTApplicationLaunchMetric" in method_source
                 is_capture = "Capture" in class_name or "Capture" in method or "capture" in method.lower()
                 if is_performance:
@@ -121,6 +173,9 @@ def inventory(root: Path) -> dict:
                 "evidenceTier": "simulator-ui",
                     "flowRole": flow_role,
                     "humanActionInstrumentation": "method-wrapped" if has_action_wrapper else "missing",
+                    "actionWrapperCount": action_wrapper_count,
+                    "expectationCallCount": expectation_call_count,
+                    "setupCallCount": setup_call_count,
                     "acceptanceContract": (
                         "declared" if has_contract else
                         ("legacy-unverified" if has_action_wrapper else "not-applicable")
@@ -138,6 +193,7 @@ def inventory(root: Path) -> dict:
         "testFiles": files_seen,
         "flowCount": len(flows),
         "capabilities": dict(sorted(capabilities.items())),
+        "adoptionBySuite": adoption_by_suite(flows),
         "flows": flows,
         "limitations": [
             "Inventory proves source coverage only; runtime status must come from an xcodebuild log.",
@@ -172,6 +228,19 @@ def main() -> int:
             "|---|---:|",
         ]
         lines.extend(f"| {name} | {count} |" for name, count in result["capabilities"].items())
+        lines.extend([
+            "",
+            "## Contract adoption",
+            "",
+            "| Suite | Instrumented flows | Declared contracts | Legacy-unverified | Unverified | Expectation calls | Setup calls |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ])
+        lines.extend(
+            f"| `{suite}` | {summary['instrumentedFlows']} | {summary['declaredContractFlows']} | "
+            f"{summary['legacyUnverifiedFlows']} | {summary['unverifiedPercent']:.2f}% | "
+            f"{summary['expectationCallCount']} | {summary['setupCallCount']} |"
+            for suite, summary in result["adoptionBySuite"].items()
+        )
         lines.extend(["", "| Flow | Role | Contract | Capability | Risk | Evidence |", "|---|---|---|---|---|---|"])
         lines.extend(
             f"| `{flow['id']}` | {flow['flowRole']} | {flow['acceptanceContract']} | {flow['capability']} | {flow['risk']} | {flow['evidenceTier']} |"

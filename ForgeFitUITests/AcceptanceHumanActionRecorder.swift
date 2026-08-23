@@ -14,6 +14,8 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         let phase: AcceptanceCheckpointPhase
         let invariants: [String]
         let oracles: [AcceptanceOracle]
+        let sourceFile: String
+        let sourceLine: UInt
     }
 
     private final class Session {
@@ -98,15 +100,28 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         visibleLabels: [String] = [],
         phase: AcceptanceCheckpointPhase = .assertion,
         invariants: [String] = [],
-        oracles: [AcceptanceOracle] = []
+        oracles: [AcceptanceOracle] = [],
+        sourceFile: StaticString = #fileID,
+        sourceLine: UInt = #line
     ) {
         guard isEnabled, let currentScenarioID, let session = sessions[currentScenarioID] else { return }
+        if let pending = session.pendingExpectation {
+            session.failures.append(AcceptanceFailureEvidence(
+                phase: pending.phase,
+                message: "declaredButUnused: expectation was replaced before a wrapped action ran",
+                checkpointID: nil,
+                sourceFile: pending.sourceFile,
+                sourceLine: pending.sourceLine
+            ))
+        }
         session.pendingExpectation = PendingExpectation(
             visibleIdentifiers: visibleIdentifiers,
             visibleLabels: visibleLabels,
             phase: phase,
             invariants: invariants + oracles.map(\.id),
-            oracles: oracles
+            oracles: oracles,
+            sourceFile: String(describing: sourceFile),
+            sourceLine: sourceLine
         )
     }
 
@@ -158,7 +173,9 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             visibleLabels: [],
             phase: .assertion,
             invariants: [],
-            oracles: []
+            oracles: [],
+            sourceFile: "<implicit>",
+            sourceLine: 0
         )
         session.pendingExpectation = nil
         let checkpointID = String(format: "action-%04d", actionNumber)
@@ -366,6 +383,16 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         if currentScenarioID == testIdentifier {
             currentScenarioID = nil
         }
+        if let pending = session.pendingExpectation {
+            session.failures.append(AcceptanceFailureEvidence(
+                phase: pending.phase,
+                message: "declaredButUnused: no wrapped action consumed this expectation",
+                checkpointID: nil,
+                sourceFile: pending.sourceFile,
+                sourceLine: pending.sourceLine
+            ))
+            session.pendingExpectation = nil
+        }
 
         let scenario = AcceptanceScenario(
             id: session.scenarioID,
@@ -376,11 +403,26 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         )
         let artifactFiles = Array(session.artifactFiles).sorted() + ["manifest.json", "judge-request.json"]
         let failedCheckpointCount = session.evidence.filter { $0.outcome == .fail }.count
+        let declaredButUnusedCount = session.failures.filter {
+            $0.message.hasPrefix("declaredButUnused:")
+        }.count
         let setupBlocked = session.failures.contains { $0.phase == .setup }
             || session.evidence.contains { $0.outcome == .blocked }
         let assertionFailed = session.failures.contains { $0.phase == .assertion }
             || session.evidence.contains { $0.outcome == .fail }
+            || declaredButUnusedCount > 0
         let unverifiedCheckpointCount = session.evidence.filter { $0.outcome == .unverified }.count
+        let environment = AcceptanceEnvironment(
+            platform: "iOS Simulator",
+            device: "unknown",
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            locale: Locale.current.identifier,
+            timeZone: TimeZone.current.identifier,
+            appearance: "system",
+            dynamicType: "default",
+            gitCommit: AcceptanceRunConfiguration.gitCommit,
+            gitDirty: AcceptanceRunConfiguration.gitDirty
+        )
         let outcome: AcceptanceOutcome = assertionFailed || (!succeeded && !setupBlocked)
             ? .fail
             : setupBlocked
@@ -394,23 +436,14 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             startedAt: session.evidence.first?.startedAt ?? Date(),
             finishedAt: Date(),
             scenario: scenario,
-            environment: AcceptanceEnvironment(
-                platform: "iOS Simulator",
-                device: "unknown",
-                operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
-                locale: Locale.current.identifier,
-                timeZone: TimeZone.current.identifier,
-                appearance: "system",
-                dynamicType: "default",
-                gitCommit: AcceptanceRunConfiguration.gitCommit,
-                gitDirty: AcceptanceRunConfiguration.gitDirty
-            ),
+            environment: environment,
             outcome: outcome,
             checkpointCount: session.evidence.count,
             failedCheckpointCount: failedCheckpointCount + session.failures.filter { $0.phase == .assertion && $0.checkpointID == nil }.count,
             artifactFiles: artifactFiles,
             failures: session.failures,
             unverifiedCheckpointCount: unverifiedCheckpointCount,
+            declaredButUnusedCount: declaredButUnusedCount,
             rubricID: AcceptanceRunConfiguration.rubricID,
             rubricVersion: AcceptanceRunConfiguration.rubricVersion
         )
@@ -418,6 +451,7 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         let judgeRequest = AcceptanceJudgeRequest(
             schemaVersion: 3,
             scenario: scenario,
+            environment: environment,
             checkpointEvidence: session.evidence,
             judgeInstructions: "Use the checked-in forgefit-ai-acceptance rubric. Review every checkpoint in order, inspect before/after evidence, honor setup versus assertion phases, run the automated tree-lint findings, and report only observable issues. Return one JSON object matching responseSchema.",
             responseSchema: AcceptanceJudgeResponseSchema(
@@ -530,14 +564,18 @@ func acceptanceExpect(
     visibleLabels: [String] = [],
     phase: AcceptanceCheckpointPhase = .assertion,
     invariants: [String] = [],
-    oracles: [AcceptanceOracle] = []
+    oracles: [AcceptanceOracle] = [],
+    file: StaticString = #fileID,
+    line: UInt = #line
 ) {
     AcceptanceHumanActionRecorder.shared.expect(
         visibleIdentifiers: visibleIdentifiers,
         visibleLabels: visibleLabels,
         phase: phase,
         invariants: invariants,
-        oracles: oracles
+        oracles: oracles,
+        sourceFile: file,
+        sourceLine: line
     )
 }
 
@@ -808,14 +846,18 @@ extension XCUIApplication {
         visibleLabels: [String] = [],
         phase: AcceptanceCheckpointPhase = .assertion,
         invariants: [String] = [],
-        oracles: [AcceptanceOracle] = []
+        oracles: [AcceptanceOracle] = [],
+        file: StaticString = #fileID,
+        line: UInt = #line
     ) {
         AcceptanceHumanActionRecorder.shared.expect(
             visibleIdentifiers: visibleIdentifiers,
             visibleLabels: visibleLabels,
             phase: phase,
             invariants: invariants,
-            oracles: oracles
+            oracles: oracles,
+            sourceFile: file,
+            sourceLine: line
         )
     }
 

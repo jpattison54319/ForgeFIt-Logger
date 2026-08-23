@@ -15,6 +15,22 @@ final class CardioHistoryEditUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    private func savedDistanceOracle(_ app: XCUIApplication, id: String) -> AcceptanceOracle {
+        AcceptanceOracle(id: id) {
+            let readout = app.staticTexts
+                .matching(NSPredicate(format: "label CONTAINS '5.2'"))
+                .firstMatch
+            let passed = readout.exists && readout.label.contains("5.2")
+            return AcceptanceOracleResult(
+                id: id,
+                outcome: passed ? .pass : .fail,
+                message: passed
+                    ? "The saved cardio distance readout contains 5.2."
+                    : "The saved cardio distance readout was not visible after the action."
+            )
+        }
+    }
+
     @MainActor
     func testAddDistanceToPastTreadmillRun() throws {
         let app = XCUIApplication()
@@ -26,19 +42,20 @@ final class CardioHistoryEditUITests: XCTestCase {
         app.acceptanceLaunch()
 
         let profileReceipt = element(app, "profile-exercises")
-        if !profileReceipt.waitForExistence(timeout: 45) {
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
-            screenshot.name = "cardio-history-launch-failure"
-            screenshot.lifetime = .keepAlways
-            XCTContext.runActivity(named: "Capture launch failure") { activity in
-                activity.add(screenshot)
-                let tree = XCTAttachment(string: app.debugDescription)
-                tree.name = "cardio-history-launch-accessibility"
-                tree.lifetime = .keepAlways
-                activity.add(tree)
+        try acceptanceSetup("seeded profile readiness") {
+            guard profileReceipt.waitForExistence(timeout: 45) else {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "cardio-history-launch-failure"
+                screenshot.lifetime = .keepAlways
+                XCTContext.runActivity(named: "Capture launch failure") { activity in
+                    activity.add(screenshot)
+                    let tree = XCTAttachment(string: app.debugDescription)
+                    tree.name = "cardio-history-launch-accessibility"
+                    tree.lifetime = .keepAlways
+                    activity.add(tree)
+                }
+                throw XCTSkip("Expected the seeded Profile dashboard after deterministic launch data completed.")
             }
-            XCTFail("Expected the seeded Profile dashboard after deterministic launch data completed.")
-            return
         }
 
         // Profile → History. "See all" sits in the Workouts section header,
@@ -102,6 +119,10 @@ final class CardioHistoryEditUITests: XCTestCase {
         XCTAssertEqual(distance.value as? String, "5.2", "Decimal entry must survive typing.")
 
         // Done → the readout shows the added distance.
+        acceptanceExpect(
+            invariants: ["saved-cardio-distance-is-visible"],
+            oracles: [savedDistanceOracle(app, id: "saved-cardio-distance-is-visible")]
+        )
         cardioEdit.acceptanceTap()
         XCTAssertTrue(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS '5.2'")).firstMatch.waitForExistence(timeout: 5),
@@ -111,6 +132,10 @@ final class CardioHistoryEditUITests: XCTestCase {
         // Close and reopen the editor — the edit persisted.
         app.buttons["Close editor"].firstMatch.acceptanceTap()
         XCTAssertTrue(edit.waitForExistence(timeout: 8))
+        acceptanceExpect(
+            invariants: ["saved-cardio-distance-survives-reopen"],
+            oracles: [savedDistanceOracle(app, id: "saved-cardio-distance-survives-reopen")]
+        )
         edit.acceptanceTap()
         XCTAssertTrue(
             app.staticTexts.matching(NSPredicate(format: "label CONTAINS '5.2'")).firstMatch.waitForExistence(timeout: 8),

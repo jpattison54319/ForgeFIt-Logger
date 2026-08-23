@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "requiredContractFlows": [
+    "AcceptanceSmokeUITests/testRepresentativeAppTour",
+    "ForgeFitWatch_Watch_AppUITests/testWatchHomeDemo",
+    "ForgeFitWatch_Watch_AppUITests/testWatchActiveWorkoutDemo",
+    "ForgeFitWatch_Watch_AppUITests/testWatchExtendedSetShowsAndEditsItsPartials"
+  ],
+  "suites": {
+    "iOS Simulator": {
+      "baselineInstrumentedFlows": 115,
+      "baselineLegacyUnverifiedFlows": 114
+    },
+    "watchOS Simulator": {
+      "baselineInstrumentedFlows": 5,
+      "baselineLegacyUnverifiedFlows": 2
+    }
+  }
+}
