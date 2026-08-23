@@ -37,6 +37,7 @@ FRAME_RE = re.compile(
     r"\{\{\s*(?P<x>[^,]+),\s*(?P<y>[^}]+)\},\s*\{\s*(?P<width>[^,]+),\s*(?P<height>[^}]+)\}\}"
 )
 STATE_PREFIX = "ForgeFitAcceptanceState:"
+STATE_SUMMARY_PREFIX = "ForgeFitAcceptanceStateSummary:"
 
 # SF Symbol identifiers are implementation names, not semantic identifiers.
 # Dotted names cover the general case (``info.circle``); these common
@@ -129,24 +130,52 @@ def _parse_state_records(lines: list[str]) -> list[dict[str, object]]:
             "exists": value.get("exists"),
             "hittable": value.get("hittable"),
             "enabled": value.get("enabled"),
+            "hittabilitySource": value.get("hittabilitySource"),
         })
     return records
 
 
+def _parse_state_summary(lines: list[str]) -> dict[str, object] | None:
+    summaries: list[dict[str, object]] = []
+    for line in lines:
+        if not line.startswith(STATE_SUMMARY_PREFIX):
+            continue
+        try:
+            value = json.loads(line[len(STATE_SUMMARY_PREFIX) :].strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            summaries.append(value)
+    return summaries[-1] if summaries else None
+
+
+def _state_index(
+    states: list[dict[str, object]],
+) -> dict[tuple[str, str, str], list[dict[str, object]]]:
+    index: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    for state in states:
+        key = (
+            str(state.get("type", "")),
+            str(state.get("identifier", "")),
+            str(state.get("label", "")),
+        )
+        index.setdefault(key, []).append(state)
+    return index
+
+
 def _state_for_node(
     node: dict[str, object],
-    states: list[dict[str, object]],
+    states: dict[tuple[str, str, str], list[dict[str, object]]],
 ) -> dict[str, object] | None:
     """Match a debug-description node to its live XCTest state snapshot."""
 
     node_frame = node.get("frame")
-    for state in states:
-        if state.get("type") != node.get("normalized_type"):
-            continue
-        if state.get("identifier") != node.get("identifier"):
-            continue
-        if state.get("label") != node.get("label"):
-            continue
+    key = (
+        str(node.get("normalized_type", "")),
+        str(node.get("identifier", "")),
+        str(node.get("label", "")),
+    )
+    for state in states.get(key, []):
         state_frame = state.get("frame")
         if isinstance(node_frame, dict) and isinstance(state_frame, dict):
             if any(
@@ -183,12 +212,41 @@ def _finding_context(node: dict[str, object]) -> dict[str, object]:
     context: dict[str, object] = {
         "breadcrumb": [_breadcrumb_part(ancestor) for ancestor in ancestors] + [_breadcrumb_part(node)],
     }
+    if isinstance(node.get("frame"), dict):
+        context["frame"] = node["frame"]
     if identified:
         nearest = identified[-1]
         context["ancestorIdentifier"] = nearest.get("identifier", "")
         if nearest.get("label"):
             context["ancestorLabel"] = nearest["label"]
     return context
+
+
+def _covered_by_labeled_interactive_ancestor(node: dict[str, object]) -> bool:
+    """Recognize SwiftUI's duplicate inner Button accessibility wrapper.
+
+    A label-less interactive child with the same frame as a labeled interactive
+    ancestor is not a second user action. Reporting both creates an anonymous
+    false positive while the actionable outer control is already semantic.
+    """
+
+    frame = node.get("frame")
+    if not isinstance(frame, dict):
+        return False
+    for ancestor in reversed(list(node.get("ancestors", []))):
+        if str(ancestor.get("normalized_type", "")) not in INTERACTIVE_TYPES:
+            continue
+        if not ancestor.get("label") and not ancestor.get("placeholder"):
+            continue
+        ancestor_frame = ancestor.get("frame")
+        if not isinstance(ancestor_frame, dict):
+            continue
+        if all(
+            abs(float(frame[key]) - float(ancestor_frame[key])) <= 0.5
+            for key in ("x", "y", "width", "height")
+        ):
+            return True
+    return False
 
 
 def _repeated_row_is_tolerated(records: list[dict[str, object]]) -> bool:
@@ -247,16 +305,34 @@ def _same_row_component_is_tolerated(records: list[dict[str, object]]) -> bool:
     )
 
 
-def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, object]]:
+def inspect_tree(path: Path, minimum_touch_target: float = 44.0) -> dict[str, object]:
     findings: list[dict[str, object]] = []
     identifiers: dict[str, list[dict[str, object]]] = {}
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as error:
-        return [{"rule": "tree-unreadable", "message": str(error), "line": 0}]
+        return {
+            "findings": [{"rule": "tree-unreadable", "message": str(error), "line": 0}],
+            "stateCaptureComplete": False,
+            "stateCaptureWarnings": [str(error)],
+            "stateRecordCount": 0,
+            "interactiveNodeCount": 0,
+            "matchedStateNodeCount": 0,
+            "touchTargetCandidateCount": 0,
+            "matchedStateCandidateCount": 0,
+        }
 
     states = _parse_state_records(lines)
+    states_by_identity = _state_index(states)
+    state_summary = _parse_state_summary(lines)
+    application_running = not any(
+        line.strip() == "Application not running" for line in lines
+    )
     stack: list[dict[str, object]] = []
+    interactive_node_count = 0
+    matched_state_node_count = 0
+    touch_target_candidate_count = 0
+    matched_state_candidate_count = 0
     for line_number, line in enumerate(lines, start=1):
         stripped = line.lstrip()
         node_type = _node_type(stripped)
@@ -283,15 +359,33 @@ def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, 
         if normalized_type not in INTERACTIVE_TYPES:
             continue
 
+        interactive_node_count += 1
+        state = _state_for_node(node, states_by_identity)
+        if state is not None:
+            matched_state_node_count += 1
+
         identifier = str(node["identifier"])
         label = str(node["label"])
         placeholder = str(node["placeholder"])
         if identifier:
             identifiers.setdefault(identifier, []).append(node)
         field_has_placeholder = normalized_type in {"textfield", "securetextfield", "searchfield"} and bool(placeholder)
-        if not label and not field_has_placeholder:
+        if (
+            not label
+            and not field_has_placeholder
+            and not _covered_by_labeled_interactive_ancestor(node)
+        ):
             context = _finding_context(node)
-            inside = f" inside {context['ancestorIdentifier']!r}" if context.get("ancestorIdentifier") else ""
+            if context.get("ancestorIdentifier"):
+                inside = f" inside {context['ancestorIdentifier']!r}"
+            elif isinstance(node.get("frame"), dict):
+                frame = node["frame"]
+                inside = (
+                    f" at {float(frame['x']):g},{float(frame['y']):g} "
+                    f"({float(frame['width']):g}x{float(frame['height']):g}; tree line {line_number})"
+                )
+            else:
+                inside = f" at tree line {line_number}"
             findings.append({
                 "rule": "interactive-label",
                 "message": f"{node_type} has no accessibility label or placeholder{inside}",
@@ -304,18 +398,26 @@ def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, 
         if isinstance(frame, dict):
             width = float(frame["width"])
             height = float(frame["height"])
-            state = _state_for_node(node, states)
+            is_touch_target_candidate = width < minimum_touch_target or height < minimum_touch_target
+            if is_touch_target_candidate:
+                touch_target_candidate_count += 1
+                if state is not None:
+                    matched_state_candidate_count += 1
             if state is None:
-                # Legacy trees have no hittability metadata. Suppress only
-                # clearly collapsed nodes so the fallback cannot hide the
-                # 18–20pt controls this check is intended to catch.
-                touch_target_eligible = min(width, height) >= 10.0
+                if state_summary is None:
+                    # Legacy trees have no hittability metadata. Suppress only
+                    # clearly collapsed nodes. New captures carry a summary;
+                    # if a node is unmatched there, fail closed and retain the
+                    # touch-target finding rather than hiding a real 8pt bug.
+                    touch_target_eligible = min(width, height) >= 10.0
+                else:
+                    touch_target_eligible = True
             else:
                 touch_target_eligible = all(
                     state.get(key) is not False
                     for key in ("exists", "hittable", "enabled")
                 )
-            if touch_target_eligible and (width < minimum_touch_target or height < minimum_touch_target):
+            if touch_target_eligible and is_touch_target_candidate:
                 finding: dict[str, object] = {
                     "rule": "touch-target",
                     "message": f"{node_type} frame is {width:g}x{height:g}, below {minimum_touch_target:g}pt",
@@ -326,6 +428,7 @@ def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, 
                 if state is not None:
                     finding["hittable"] = state.get("hittable")
                     finding["enabled"] = state.get("enabled")
+                    finding["hittabilitySource"] = state.get("hittabilitySource")
                 else:
                     finding["stateKnown"] = False
                 findings.append(finding)
@@ -360,7 +463,48 @@ def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, 
             _finding_context(record).get("breadcrumb", []) for record in records
         ]
         findings.append(finding)
-    return findings
+
+    state_capture_warnings: list[str] = []
+    if state_summary is None and application_running:
+        state_capture_warnings.append("live element-state summary is missing")
+    elif state_summary is not None:
+        if state_summary.get("schemaVersion") != 1:
+            state_capture_warnings.append(
+                f"element-state schemaVersion is {state_summary.get('schemaVersion')!r}; expected 1"
+            )
+        if state_summary.get("recordCount") != len(states):
+            state_capture_warnings.append(
+                "element-state summary count does not match emitted records"
+            )
+        if state_summary.get("serializationErrorCount") not in (None, 0):
+            state_capture_warnings.append("one or more element-state records failed serialization")
+        if state_summary.get("candidateCount") != touch_target_candidate_count:
+            state_capture_warnings.append(
+                "element-state summary candidate count does not match touch-target candidates"
+            )
+        if matched_state_candidate_count != touch_target_candidate_count:
+            state_capture_warnings.append(
+                f"live state matched {matched_state_candidate_count} of "
+                f"{touch_target_candidate_count} touch-target candidates"
+            )
+
+    return {
+        "findings": findings,
+        "stateCaptureComplete": not state_capture_warnings,
+        "stateCaptureApplicable": application_running,
+        "applicationRunning": application_running,
+        "stateCaptureWarnings": state_capture_warnings,
+        "stateRecordCount": len(states),
+        "interactiveNodeCount": interactive_node_count,
+        "matchedStateNodeCount": matched_state_node_count,
+        "touchTargetCandidateCount": touch_target_candidate_count,
+        "matchedStateCandidateCount": matched_state_candidate_count,
+        "stateSummary": state_summary,
+    }
+
+
+def lint_tree(path: Path, minimum_touch_target: float = 44.0) -> list[dict[str, object]]:
+    return list(inspect_tree(path, minimum_touch_target)["findings"])
 
 
 def main() -> int:
@@ -370,11 +514,23 @@ def main() -> int:
     parser.add_argument("--strict", action="store_true")
     args = parser.parse_args()
 
+    inspections = {
+        str(path): inspect_tree(path, args.minimum_touch_target)
+        for path in args.trees
+    }
     result = {
         "treeCount": len(args.trees),
         "findings": {
-            str(path): lint_tree(path, args.minimum_touch_target)
-            for path in args.trees
+            path: inspection["findings"]
+            for path, inspection in inspections.items()
+        },
+        "stateCapture": {
+            path: {
+                key: value
+                for key, value in inspection.items()
+                if key != "findings"
+            }
+            for path, inspection in inspections.items()
         },
     }
     print(json.dumps(result, indent=2, sort_keys=True))

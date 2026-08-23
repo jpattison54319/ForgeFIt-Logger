@@ -42,6 +42,7 @@ def audit(
         and evidence_audit.get("schemaComplete", False)
         and evidence_audit.get("sequenceComplete", False)
         and evidence_audit.get("checkpointFailureComplete", False)
+        and evidence_audit.get("stateCaptureComplete", False)
         and sequence_complete
         and (
             not require_contracts
@@ -65,6 +66,8 @@ def audit(
         reasons.append("one or more action checkpoint sequences are incomplete or reordered")
     if not evidence_audit.get("checkpointFailureComplete", False):
         reasons.append("one or more declared checkpoints failed")
+    if not evidence_audit.get("stateCaptureComplete", False):
+        reasons.append("one or more action trees have missing or incomplete live element-state capture")
     if require_contracts:
         contract_key = "contractComplete" if require_all_contracts or contract_policy_path is None else "requiredContractComplete"
         if not evidence_audit.get(contract_key, False):

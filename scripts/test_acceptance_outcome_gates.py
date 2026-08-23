@@ -28,7 +28,11 @@ class AcceptanceOutcomeGateTests(unittest.TestCase):
         ):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("Attributes: Application, 0x1, label: 'ForgeFit'\n", encoding="utf-8")
+            path.write_text(
+                "Attributes: Application, 0x1, label: 'ForgeFit'\n"
+                "ForgeFitAcceptanceStateSummary: {\"schemaVersion\":1,\"candidateCount\":0,\"recordCount\":0,\"serializationErrorCount\":0,\"conservativeRecordCount\":0,\"queryCount\":0,\"queriedTypes\":[],\"durationMilliseconds\":0}\n",
+                encoding="utf-8",
+            )
         checkpoint = {
             "id": "action-0001",
             "title": "After save",
@@ -51,7 +55,7 @@ class AcceptanceOutcomeGateTests(unittest.TestCase):
         return {
             "schemaVersion": 3,
             "rubricID": "forgefit-ai-acceptance",
-            "rubricVersion": 1,
+            "rubricVersion": 3,
             "scenario": {"id": "ExampleFlow", "title": "Example flow"},
             "checkpointEvidence": [evidence],
         }
@@ -82,6 +86,19 @@ class AcceptanceOutcomeGateTests(unittest.TestCase):
             self.assertFalse(aggregate["evidenceAudit"]["releaseComplete"])
             self.assertEqual(aggregate["evidenceAudit"]["checkpointFailureCount"], 1)
 
+    def test_missing_live_state_capture_is_release_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            request = self._request(root)
+            for tree in root.glob("accessibility/*.txt"):
+                tree.write_text("Attributes: Application, 0x1, label: 'ForgeFit'\n", encoding="utf-8")
+
+            audit = audit_request(root / "judge-request.json", request, required_contract_flows=None)
+
+            self.assertFalse(audit["stateCaptureComplete"])
+            self.assertFalse(audit["releaseComplete"])
+            self.assertEqual(len(audit["stateCaptureWarnings"]), 2)
+
     def test_evidence_gate_fails_when_checkpoint_failed_even_without_strict_contract_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -94,6 +111,7 @@ class AcceptanceOutcomeGateTests(unittest.TestCase):
                     "schemaComplete": True,
                     "sequenceComplete": True,
                     "checkpointFailureComplete": False,
+                    "stateCaptureComplete": True,
                     "scenarioAudits": [{"sequenceWarnings": []}],
                     "contractComplete": True,
                     "requiredContractComplete": True,

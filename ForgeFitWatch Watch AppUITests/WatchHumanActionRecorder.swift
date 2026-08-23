@@ -339,10 +339,8 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
                 ? (app?.debugDescription ?? "No registered Watch application tree")
                 : "Application not running"
             if isRunning, let app {
-                let stateLines = acceptanceElementStateLines(app: app)
-                if !stateLines.isEmpty {
-                    tree += "\n\n--- ForgeFit acceptance element state (JSONL) ---\n\(stateLines)\n"
-                }
+                let stateLines = acceptanceElementStateLines(app: app, tree: tree)
+                tree += "\n\n--- ForgeFit acceptance element state (JSONL) ---\n\(stateLines)\n"
             }
             try tree.write(to: treeURL, atomically: true, encoding: .utf8)
             accessibilityTreeFile = treeRelativePath
@@ -358,41 +356,225 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
         )
     }
 
-    private func acceptanceElementStateLines(app: XCUIApplication) -> String {
-        let interactiveTypes: Set<String> = [
-            "button", "cell", "collectionview", "datepicker", "link", "menuitem",
-            "picker", "searchfield", "segmentedcontrol", "slider", "stepper", "switch",
-            "securetextfield", "textfield", "textview", "toggle"
+    private struct AcceptanceElementTypeQuery {
+        let elementType: XCUIElement.ElementType
+        let debugName: String
+    }
+
+    private struct AcceptanceStateCandidate {
+        let query: AcceptanceElementTypeQuery
+        let identifier: String
+        let label: String
+        let frame: CGRect
+    }
+
+    private struct AcceptanceCandidateQueryKey: Hashable {
+        let typeName: String
+        let identifier: String
+        let label: String
+    }
+
+    private func acceptanceElementStateLines(app: XCUIApplication, tree: String) -> String {
+        let startedAt = Date.now
+        let interactiveTypes = [
+            AcceptanceElementTypeQuery(elementType: .button, debugName: "Button"),
+            AcceptanceElementTypeQuery(elementType: .cell, debugName: "Cell"),
+            AcceptanceElementTypeQuery(elementType: .collectionView, debugName: "CollectionView"),
+            AcceptanceElementTypeQuery(elementType: .datePicker, debugName: "DatePicker"),
+            AcceptanceElementTypeQuery(elementType: .link, debugName: "Link"),
+            AcceptanceElementTypeQuery(elementType: .menuItem, debugName: "MenuItem"),
+            AcceptanceElementTypeQuery(elementType: .picker, debugName: "Picker"),
+            AcceptanceElementTypeQuery(elementType: .searchField, debugName: "SearchField"),
+            AcceptanceElementTypeQuery(elementType: .segmentedControl, debugName: "SegmentedControl"),
+            AcceptanceElementTypeQuery(elementType: .slider, debugName: "Slider"),
+            AcceptanceElementTypeQuery(elementType: .stepper, debugName: "Stepper"),
+            AcceptanceElementTypeQuery(elementType: .switch, debugName: "Switch"),
+            AcceptanceElementTypeQuery(elementType: .secureTextField, debugName: "SecureTextField"),
+            AcceptanceElementTypeQuery(elementType: .textField, debugName: "TextField"),
+            AcceptanceElementTypeQuery(elementType: .textView, debugName: "TextView"),
+            AcceptanceElementTypeQuery(elementType: .toggle, debugName: "Toggle")
         ]
-        return app.descendants(matching: .any).allElementsBoundByIndex.compactMap { element in
-            let type = String(describing: element.elementType)
-                .replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "_", with: "")
-                .replacingOccurrences(of: "xcuielementtype", with: "")
-                .lowercased()
-            guard interactiveTypes.contains(type) else { return nil }
-            let frame = element.frame
-            let object: [String: Any] = [
-                "type": String(describing: element.elementType),
-                "identifier": element.identifier,
-                "label": element.label,
-                "frame": [
-                    "x": Double(frame.origin.x),
-                    "y": Double(frame.origin.y),
-                    "width": Double(frame.size.width),
-                    "height": Double(frame.size.height)
-                ],
-                "exists": element.exists,
-                "hittable": element.isHittable,
-                "enabled": element.isEnabled
-            ]
-            guard JSONSerialization.isValidJSONObject(object),
-                  let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-                  let json = String(data: data, encoding: .utf8) else {
-                return nil
+        let candidates = acceptanceStateCandidates(in: tree, interactiveTypes: interactiveTypes)
+        var records: [String] = []
+        var serializationErrorCount = 0
+        var geometricNonHittableCount = 0
+        var conservativeRecordCount = 0
+        var queryCount = 0
+        var queriedTypes = Set<String>()
+        let applicationFrame = app.frame
+
+        var groupedCandidates: [AcceptanceCandidateQueryKey: [AcceptanceStateCandidate]] = [:]
+        for candidate in candidates {
+            guard acceptanceFrameIsInViewport(candidate.frame, viewport: applicationFrame) else {
+                geometricNonHittableCount += 1
+                acceptanceAppendStateRecord(candidate: candidate, hittable: false, enabled: true,
+                    source: "outsideViewport", records: &records,
+                    serializationErrorCount: &serializationErrorCount)
+                continue
             }
-            return "ForgeFitAcceptanceState: \(json)"
-        }.joined(separator: "\n")
+            guard !candidate.identifier.isEmpty || !candidate.label.isEmpty else {
+                conservativeRecordCount += 1
+                acceptanceAppendStateRecord(candidate: candidate, hittable: true, enabled: true,
+                    source: "conservativeAnonymous", records: &records,
+                    serializationErrorCount: &serializationErrorCount)
+                continue
+            }
+            let key = AcceptanceCandidateQueryKey(
+                typeName: candidate.query.debugName,
+                identifier: candidate.identifier,
+                label: candidate.identifier.isEmpty ? candidate.label : ""
+            )
+            groupedCandidates[key, default: []].append(candidate)
+        }
+
+        for (key, group) in groupedCandidates {
+            guard let first = group.first else { continue }
+            queryCount += 1
+            queriedTypes.insert(first.query.debugName)
+            let baseQuery = app.descendants(matching: first.query.elementType)
+            let targetedQuery = key.identifier.isEmpty
+                ? baseQuery.matching(NSPredicate(format: "label == %@", key.label))
+                : baseQuery.matching(NSPredicate(format: "identifier == %@", key.identifier))
+            var unresolved = group
+            for element in targetedQuery.allElementsBoundByIndex {
+                let resolvedFrame = element.frame
+                guard let index = unresolved.firstIndex(where: {
+                    acceptanceFramesMatch($0.frame, resolvedFrame)
+                }) else { continue }
+                let candidate = unresolved.remove(at: index)
+                let canResolveHittability = acceptanceFrameIsInViewport(resolvedFrame, viewport: applicationFrame)
+                acceptanceAppendStateRecord(
+                    candidate: candidate,
+                    hittable: canResolveHittability ? element.isHittable : false,
+                    enabled: element.isEnabled,
+                    source: canResolveHittability ? "xctest" : "outsideViewport",
+                    records: &records,
+                    serializationErrorCount: &serializationErrorCount
+                )
+            }
+            for candidate in unresolved {
+                conservativeRecordCount += 1
+                acceptanceAppendStateRecord(candidate: candidate, hittable: true, enabled: true,
+                    source: "unresolvedConservative", records: &records,
+                    serializationErrorCount: &serializationErrorCount)
+            }
+        }
+
+        let durationMilliseconds = Int(Date.now.timeIntervalSince(startedAt) * 1_000)
+        let summary: [String: Any] = [
+            "schemaVersion": 1,
+            "candidateCount": candidates.count,
+            "recordCount": records.count,
+            "serializationErrorCount": serializationErrorCount,
+            "geometricNonHittableCount": geometricNonHittableCount,
+            "conservativeRecordCount": conservativeRecordCount,
+            "queryCount": queryCount,
+            "queriedTypes": queriedTypes.sorted(),
+            "durationMilliseconds": durationMilliseconds
+        ]
+        let summaryJSON = acceptanceJSONString(summary)
+            ?? "{\"recordCount\":0,\"schemaVersion\":1,\"serializationErrorCount\":1}"
+        records.append("ForgeFitAcceptanceStateSummary: \(summaryJSON)")
+        return records.joined(separator: "\n")
+    }
+
+    private func acceptanceStateCandidates(
+        in tree: String,
+        interactiveTypes: [AcceptanceElementTypeQuery]
+    ) -> [AcceptanceStateCandidate] {
+        let typesByName = Dictionary(uniqueKeysWithValues: interactiveTypes.map { ($0.debugName, $0) })
+        return tree.split(separator: "\n").compactMap { rawLine in
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            while let first = line.first, "→▿▹-".contains(first) {
+                line.removeFirst()
+                line = line.trimmingCharacters(in: .whitespaces)
+            }
+            guard let comma = line.firstIndex(of: ","),
+                  let query = typesByName[String(line[..<comma])],
+                  let frame = acceptanceFrame(in: line),
+                  frame.width < 44 || frame.height < 44 else { return nil }
+            return AcceptanceStateCandidate(
+                query: query,
+                identifier: acceptanceField("identifier", in: line),
+                label: acceptanceField("label", in: line),
+                frame: frame
+            )
+        }
+    }
+
+    private func acceptanceFrame(in line: String) -> CGRect? {
+        guard let start = line.range(of: "{{"),
+              let end = line.range(of: "}}", range: start.lowerBound..<line.endIndex) else { return nil }
+        let values = String(line[start.lowerBound..<end.upperBound])
+            .components(separatedBy: CharacterSet(charactersIn: "{}, "))
+            .filter { !$0.isEmpty }
+            .compactMap(Double.init)
+        guard values.count == 4 else { return nil }
+        return CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+    }
+
+    private func acceptanceField(_ name: String, in line: String) -> String {
+        let prefix = "\(name): '"
+        guard let start = line.range(of: prefix) else { return "" }
+        let remainder = line[start.upperBound...]
+        guard let end = remainder.firstIndex(of: "'") else { return "" }
+        return String(remainder[..<end])
+    }
+
+    private func acceptanceFrameIsInViewport(_ frame: CGRect, viewport: CGRect) -> Bool {
+        let values = [
+            frame.origin.x, frame.origin.y, frame.size.width, frame.size.height,
+            viewport.origin.x, viewport.origin.y, viewport.size.width, viewport.size.height
+        ]
+        guard values.allSatisfy(\.isFinite) else { return false }
+        let intersection = frame.intersection(viewport)
+        return !intersection.isNull && !intersection.isEmpty
+            && intersection.width >= 1 && intersection.height >= 1
+    }
+
+    private func acceptanceFramesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) <= 1
+            && abs(lhs.origin.y - rhs.origin.y) <= 1
+            && abs(lhs.width - rhs.width) <= 1
+            && abs(lhs.height - rhs.height) <= 1
+    }
+
+    private func acceptanceAppendStateRecord(
+        candidate: AcceptanceStateCandidate,
+        hittable: Bool,
+        enabled: Bool,
+        source: String,
+        records: inout [String],
+        serializationErrorCount: inout Int
+    ) {
+        let object: [String: Any] = [
+            "type": candidate.query.debugName,
+            "identifier": candidate.identifier,
+            "label": candidate.label,
+            "frame": [
+                "x": Double(candidate.frame.origin.x),
+                "y": Double(candidate.frame.origin.y),
+                "width": Double(candidate.frame.width),
+                "height": Double(candidate.frame.height)
+            ],
+            "exists": true,
+            "hittable": hittable,
+            "hittabilitySource": source,
+            "enabled": enabled
+        ]
+        guard let json = acceptanceJSONString(object) else {
+            serializationErrorCount += 1
+            return
+        }
+        records.append("ForgeFitAcceptanceState: \(json)")
+    }
+
+    private func acceptanceJSONString(_ object: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {
@@ -605,7 +787,7 @@ private struct WatchActionManifest: Codable {
         gitDirty: Bool = false,
         commitUnknown: Bool = true,
         rubricID: String = "forgefit-ai-acceptance",
-        rubricVersion: Int = 1
+        rubricVersion: Int = 3
     ) {
         self.schemaVersion = schemaVersion
         self.runID = runID
@@ -741,7 +923,7 @@ private struct WatchActionJudgeRequest: Codable {
         gitDirty: Bool = false,
         commitUnknown: Bool = true,
         rubricID: String = "forgefit-ai-acceptance",
-        rubricVersion: Int = 1,
+        rubricVersion: Int = 3,
         failures: [WatchAcceptanceFailure] = []
     ) {
         self.schemaVersion = schemaVersion

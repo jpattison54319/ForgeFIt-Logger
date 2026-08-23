@@ -1,0 +1,9 @@
+Attributes: Application, 0x1, pid: 1, label: 'ForgeFit'
+Element subtree:
+ →Application, 0x1, pid: 1, label: 'ForgeFit'
+    Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}
+      Button, 0x3, {{10.0, 10.0}, {20.0, 20.0}}, identifier: 'small-button', label: 'Small'
+
+--- ForgeFit acceptance element state (JSONL) ---
+ForgeFitAcceptanceState: {"type":"Button","identifier":"small-button","label":"Small","frame":{"x":10.0,"y":10.0,"width":20.0,"height":20.0},"exists":true,"hittable":true,"enabled":true}
+ForgeFitAcceptanceStateSummary: {"schemaVersion":1,"candidateCount":1,"recordCount":1,"serializationErrorCount":0,"conservativeRecordCount":0,"queryCount":1,"queriedTypes":["Button"],"durationMilliseconds":12}

@@ -4,6 +4,7 @@ Element subtree:
     Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}
       Button, 0x3, {{10.0, 10.0}, {20.0, 20.0}}, identifier: 'tiny-button', label: 'Tiny'
       Button, 0x4, {{40.0, 10.0}, {44.0, 44.0}}, identifier: 'empty-button'
+      Button, 0x13, {{40.0, 280.0}, {44.0, 44.0}}
       Button, 0x5, {{90.0, 10.0}, {20.0, 20.0}}, identifier: 'small-button', label: 'Small'
       Button, 0x6, {{120.0, 10.0}, {29.9, 5.3}}, identifier: 'collapsed-button', label: 'Collapsed'
       Button, 0x7, {{160.0, 10.0}, {52.0, 52.0}}, identifier: 'history-sort-menu', label: 'Sort'

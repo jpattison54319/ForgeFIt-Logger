@@ -73,7 +73,7 @@ struct AcceptanceRunManifest: Codable, Sendable {
         unverifiedCheckpointCount: Int = 0,
         declaredButUnusedCount: Int = 0,
         rubricID: String = "forgefit-ai-acceptance",
-        rubricVersion: Int = 1
+        rubricVersion: Int = 3
     ) {
         self.schemaVersion = schemaVersion
         self.runID = runID
@@ -267,7 +267,7 @@ struct AcceptanceJudgeRequest: Codable, Sendable {
         judgeInstructions: String,
         responseSchema: AcceptanceJudgeResponseSchema,
         rubricID: String = "forgefit-ai-acceptance",
-        rubricVersion: Int = 1,
+        rubricVersion: Int = 3,
         failures: [AcceptanceFailureEvidence] = []
     ) {
         self.schemaVersion = schemaVersion

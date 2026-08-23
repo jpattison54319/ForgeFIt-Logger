@@ -27,7 +27,7 @@ enum AcceptanceRunConfiguration {
     }
 
     static var rubricVersion: Int {
-        Int(value(for: "FORGEFIT_ACCEPTANCE_RUBRIC_VERSION") ?? "1") ?? 1
+        Int(value(for: "FORGEFIT_ACCEPTANCE_RUBRIC_VERSION") ?? "3") ?? 3
     }
 
     static var markerPath: String {

@@ -151,17 +151,43 @@ post-action UI rather than the first animation frame.
 `XCUIApplication.debugDescription` format and runs deterministic checks over
 every saved tree: empty labels or placeholders on interactive controls,
 sub-44-point frames, duplicate identifiers, and likely truncation. Each new
-capture also appends a JSONL state snapshot containing `exists`, `hittable`,
-`enabled`, and frame data for interactive elements. Touch-target findings are
-limited to controls that are live, enabled, and hittable; legacy trees without
-state metadata suppress only clearly collapsed dimensions below 10pt. Label
-findings include the nearest identified ancestor and a breadcrumb, while SF
-Symbol names, same-row subcontrol reuse, and identical repeated-row controls
-are not treated as duplicate semantic identifiers. Its parser regression
-fixture is run before every acceptance matrix so a format change cannot
-silently turn lint into an empty result. The report includes the automated
-findings; the AI reviewer handles the remaining visual and experience
-judgment. Before/after pairs are the default evidence; video is intentionally
+capture also appends JSONL state records containing `exists`, `hittable`,
+`enabled`, and frame data for touch-target candidates: interactive tree nodes
+whose width or height is below 44 points. The recorder parses those candidates
+from the already-captured tree and performs identifier- or label-scoped typed
+XCTest queries only for visible, locatable candidates. It never enumerates all
+app descendants. Offscreen candidates are classified geometrically; anonymous
+or unresolved candidates receive explicit conservative records and remain
+lint-eligible rather than being silently hidden. A summary stores candidate,
+query, conservative-record, emitted-record, serialization-failure, and timing
+counts. The evidence gate fails if the summary is missing, counts disagree, or
+any candidate lacks matching state. This prevents an expensive but empty state
+capture from silently falling back to weaker lint without imposing a full-tree
+query on every screenshot.
+
+The first before-frame may intentionally precede launch. Its `Application not
+running` tree is marked state-capture-not-applicable, not incomplete. The same
+observation after a user interaction remains visible to the reviewer as an app
+or environment symptom; this distinction keeps instrumentation health separate
+from the product verdict.
+
+Touch-target findings are limited to controls that are live, enabled, and
+hittable. Legacy trees without state metadata suppress only clearly collapsed
+dimensions below 10pt; current action evidence cannot pass the gate in that
+legacy mode. If a current tree declares state capture but a node is unmatched,
+lint fails closed and retains even a sub-10-point finding. Label findings
+include the nearest identified ancestor, full breadcrumb, frame, and tree
+line, while SF Symbol names, same-row subcontrol reuse, and identical
+repeated-row controls are not treated as duplicate semantic identifiers.
+Label-less inner SwiftUI `Button` wrappers are also suppressed when a labeled
+interactive ancestor has the same frame; they are one semantic action, not an
+anonymous second control. Its
+parser regression fixtures run before every acceptance matrix so a format
+change cannot silently turn lint or state capture into an empty result. The
+report includes automated findings plus candidate, conservative-state,
+record, and capture-time counts; the AI reviewer handles the remaining visual
+and experience judgment.
+Before/after pairs are the default evidence; video is intentionally
 deferred to a small motion-focused pilot so the full matrix does not double
 storage and timing pressure on every action.
 

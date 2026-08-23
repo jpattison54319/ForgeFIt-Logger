@@ -598,6 +598,9 @@ def report_xcode_run(
             flow.get("humanActionEvidenceDetails", {}).get("treeLintFindingCount", 0)
             for flow in flows
         ),
+        "stateCaptureWarningCount": int(
+            aggregate_evidence_audit.get("stateCaptureWarningCount", 0)
+        ),
         "evidenceGate": evidence_gate,
         "aggregateEvidenceAudit": aggregate_evidence_audit,
         "adoptionGate": adoption_gate,
@@ -637,6 +640,26 @@ def report_xcode_run(
             lines.append(f"Gate reason: {evidence_gate['reason']}")
     else:
         lines.append("No evidence-gate result was supplied; this report is not an acceptance green light.")
+    if aggregate_evidence_audit:
+        state_status = "COMPLETE" if aggregate_evidence_audit.get("stateCaptureComplete") else "INCOMPLETE"
+        lines.append(
+            "Live element-state capture: "
+            f"**{state_status}** across **{aggregate_evidence_audit.get('stateCaptureTreeCount', 0)} trees** "
+            f"with **{aggregate_evidence_audit.get('stateRecordCount', 0)} records** for "
+            f"**{aggregate_evidence_audit.get('touchTargetCandidateCount', 0)} touch-target candidates** "
+            f"in **{aggregate_evidence_audit.get('stateCaptureDurationMilliseconds', 0)} ms**."
+        )
+        conservative_count = aggregate_evidence_audit.get("conservativeStateRecordCount", 0)
+        if conservative_count:
+            lines.append(
+                f"Conservative fail-closed state records: **{conservative_count}** "
+                "(these controls remain lint-eligible rather than being silently suppressed)."
+            )
+        if aggregate_evidence_audit.get("stateCaptureWarnings"):
+            lines.append(
+                "First state-capture warning: "
+                + str(aggregate_evidence_audit["stateCaptureWarnings"][0])
+            )
     lines.extend(["", "## Automated accessibility-tree lint", ""])
     lint_count = report["automatedTreeLintFindingCount"]
     if not lint_count:

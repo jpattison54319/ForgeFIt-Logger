@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from acceptance_tree_lint import lint_tree
+from acceptance_tree_lint import inspect_tree
 
 
 RUBRIC_PATH = Path(__file__).with_name("acceptance_rubric.json")
@@ -40,8 +40,10 @@ def audit_request(
     contract_warnings: list[str] = []
     required_contract_warnings: list[str] = []
     checkpoint_failure_warnings: list[str] = []
+    state_capture_warnings: list[str] = []
     schema_warnings: list[str] = []
     tree_lint: dict[str, list[dict[str, object]]] = {}
+    tree_state_capture: dict[str, dict[str, object]] = {}
     checkpoint_ids: list[str] = []
     scenario_id = str(request.get("scenario", {}).get("id", ""))
     if request.get("schemaVersion") != REQUEST_SCHEMA_VERSION:
@@ -106,7 +108,18 @@ def audit_request(
             if not candidate.is_file():
                 missing_artifacts.append(f"{checkpoint_id}: {relative}")
             elif field.lower().endswith("accessibilitytreefile"):
-                tree_lint[f"{checkpoint_id}:{field}"] = lint_tree(candidate)
+                evidence_key = f"{checkpoint_id}:{field}"
+                inspection = inspect_tree(candidate)
+                tree_lint[evidence_key] = list(inspection["findings"])
+                tree_state_capture[evidence_key] = {
+                    key: value
+                    for key, value in inspection.items()
+                    if key != "findings"
+                }
+                if checkpoint_id.startswith("action-") and not inspection["stateCaptureComplete"]:
+                    warnings = inspection.get("stateCaptureWarnings", [])
+                    detail = "; ".join(map(str, warnings)) or "unknown state-capture failure"
+                    state_capture_warnings.append(f"{evidence_key}: {detail}")
 
         if checkpoint_id.startswith("action-"):
             declared = (
@@ -147,20 +160,23 @@ def audit_request(
     return {
         "scenarioID": scenario_id,
         "checkpointCount": len(checkpoint_ids),
-        "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not checkpoint_failure_warnings and not schema_warnings,
-        "releaseComplete": not missing_artifacts and not sequence_warnings and not required_contract_warnings and not checkpoint_failure_warnings and not schema_warnings,
+        "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not checkpoint_failure_warnings and not state_capture_warnings and not schema_warnings,
+        "releaseComplete": not missing_artifacts and not sequence_warnings and not required_contract_warnings and not checkpoint_failure_warnings and not state_capture_warnings and not schema_warnings,
         "artifactComplete": not missing_artifacts,
         "contractComplete": not contract_warnings,
         "requiredContractComplete": not required_contract_warnings,
         "checkpointFailureComplete": not checkpoint_failure_warnings,
+        "stateCaptureComplete": not state_capture_warnings,
         "schemaComplete": not schema_warnings,
         "missingArtifacts": missing_artifacts,
         "sequenceWarnings": sequence_warnings,
         "contractWarnings": contract_warnings,
         "requiredContractWarnings": required_contract_warnings,
         "checkpointFailureWarnings": checkpoint_failure_warnings,
+        "stateCaptureWarnings": state_capture_warnings,
         "schemaWarnings": schema_warnings,
         "treeLint": tree_lint,
+        "treeStateCapture": tree_state_capture,
     }
 
 
@@ -220,6 +236,7 @@ def collect(
             "contractComplete": all(audit["contractComplete"] for audit in audits),
             "requiredContractComplete": all(audit["requiredContractComplete"] for audit in audits),
             "checkpointFailureComplete": all(audit["checkpointFailureComplete"] for audit in audits),
+            "stateCaptureComplete": all(audit["stateCaptureComplete"] for audit in audits),
             "schemaComplete": all(audit["schemaComplete"] for audit in audits),
             "sequenceComplete": all(not audit["sequenceWarnings"] for audit in audits),
             "scenarioAudits": audits,
@@ -236,6 +253,39 @@ def collect(
                 for audit in audits
                 for warning in audit["checkpointFailureWarnings"]
             ],
+            "stateCaptureWarningCount": sum(
+                len(audit["stateCaptureWarnings"]) for audit in audits
+            ),
+            "stateCaptureWarnings": [
+                warning
+                for audit in audits
+                for warning in audit["stateCaptureWarnings"]
+            ],
+            "stateCaptureTreeCount": sum(
+                len(audit["treeStateCapture"]) for audit in audits
+            ),
+            "stateRecordCount": sum(
+                int(tree.get("stateRecordCount", 0))
+                for audit in audits
+                for tree in audit["treeStateCapture"].values()
+            ),
+            "touchTargetCandidateCount": sum(
+                int(tree.get("touchTargetCandidateCount", 0))
+                for audit in audits
+                for tree in audit["treeStateCapture"].values()
+            ),
+            "conservativeStateRecordCount": sum(
+                int((tree.get("stateSummary") or {}).get("conservativeRecordCount", 0))
+                for audit in audits
+                for tree in audit["treeStateCapture"].values()
+                if isinstance(tree.get("stateSummary"), dict)
+            ),
+            "stateCaptureDurationMilliseconds": sum(
+                int((tree.get("stateSummary") or {}).get("durationMilliseconds", 0))
+                for audit in audits
+                for tree in audit["treeStateCapture"].values()
+                if isinstance(tree.get("stateSummary"), dict)
+            ),
             "automatedFindingCount": sum(
                 len(finding)
                 for audit in audits

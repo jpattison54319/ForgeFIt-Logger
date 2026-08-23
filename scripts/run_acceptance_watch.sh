@@ -37,7 +37,7 @@ print -r -- "GIT_COMMIT=$git_commit" >> "$action_marker"
 print -r -- "GIT_DIRTY=$git_dirty" >> "$action_marker"
 print -r -- "FORGEFIT_ACCEPTANCE_REQUIRE_EVIDENCE=1" >> "$action_marker"
 print -r -- "FORGEFIT_ACCEPTANCE_RUBRIC_ID=forgefit-ai-acceptance" >> "$action_marker"
-print -r -- "FORGEFIT_ACCEPTANCE_RUBRIC_VERSION=1" >> "$action_marker"
+print -r -- "FORGEFIT_ACCEPTANCE_RUBRIC_VERSION=3" >> "$action_marker"
 
 cleanup() {
   if [[ "$action_marker_preexisting" == "1" && -n "$marker_backup" && -f "$marker_backup" ]]; then
@@ -76,7 +76,7 @@ set +e
 FORGEFIT_ACCEPTANCE_ARTIFACTS="$agent_evidence_path" \
 FORGEFIT_ACCEPTANCE_ACTION_MARKER="$action_marker" \
 FORGEFIT_ACCEPTANCE_RUBRIC_ID="forgefit-ai-acceptance" \
-FORGEFIT_ACCEPTANCE_RUBRIC_VERSION="1" \
+FORGEFIT_ACCEPTANCE_RUBRIC_VERSION="3" \
 GIT_COMMIT="$git_commit" \
 GIT_DIRTY="$git_dirty" \
 DEVELOPER_DIR="$developer_dir" xcodebuild test \
