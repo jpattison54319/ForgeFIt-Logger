@@ -39,6 +39,7 @@ def audit_request(
     sequence_warnings: list[str] = []
     contract_warnings: list[str] = []
     required_contract_warnings: list[str] = []
+    checkpoint_failure_warnings: list[str] = []
     schema_warnings: list[str] = []
     tree_lint: dict[str, list[dict[str, object]]] = {}
     checkpoint_ids: list[str] = []
@@ -66,6 +67,27 @@ def audit_request(
         elif checkpoint_id in checkpoint_ids:
             sequence_warnings.append(f"duplicate checkpoint id: {checkpoint_id}")
         checkpoint_ids.append(checkpoint_id)
+        if evidence.get("outcome") == "fail":
+            details: list[str] = []
+            missing_identifiers = evidence.get("missingIdentifiers") or []
+            missing_labels = evidence.get("missingLabels") or []
+            if missing_identifiers:
+                details.append("missing identifiers: " + ", ".join(map(str, missing_identifiers)))
+            if missing_labels:
+                details.append("missing labels: " + ", ".join(map(str, missing_labels)))
+            oracle_results = evidence.get("oracleResults", [])
+            oracle_results = oracle_results if isinstance(oracle_results, list) else []
+            oracle_failures = [
+                result.get("message", result.get("id", "oracle failed"))
+                for result in oracle_results
+                if isinstance(result, dict) and result.get("outcome") != "pass"
+            ]
+            if oracle_failures:
+                details.append("oracle: " + "; ".join(map(str, oracle_failures)))
+            suffix = f" ({'; '.join(details)})" if details else ""
+            checkpoint_failure_warnings.append(
+                f"{checkpoint_id}: declared checkpoint outcome is fail{suffix}"
+            )
         fields = ["screenshotFile", "accessibilityTreeFile"]
         if checkpoint_id.startswith("action-"):
             fields.extend(["beforeScreenshotFile", "beforeAccessibilityTreeFile"])
@@ -125,16 +147,18 @@ def audit_request(
     return {
         "scenarioID": scenario_id,
         "checkpointCount": len(checkpoint_ids),
-        "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not schema_warnings,
-        "releaseComplete": not missing_artifacts and not sequence_warnings and not required_contract_warnings and not schema_warnings,
+        "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not checkpoint_failure_warnings and not schema_warnings,
+        "releaseComplete": not missing_artifacts and not sequence_warnings and not required_contract_warnings and not checkpoint_failure_warnings and not schema_warnings,
         "artifactComplete": not missing_artifacts,
         "contractComplete": not contract_warnings,
         "requiredContractComplete": not required_contract_warnings,
+        "checkpointFailureComplete": not checkpoint_failure_warnings,
         "schemaComplete": not schema_warnings,
         "missingArtifacts": missing_artifacts,
         "sequenceWarnings": sequence_warnings,
         "contractWarnings": contract_warnings,
         "requiredContractWarnings": required_contract_warnings,
+        "checkpointFailureWarnings": checkpoint_failure_warnings,
         "schemaWarnings": schema_warnings,
         "treeLint": tree_lint,
     }
@@ -195,6 +219,7 @@ def collect(
             "artifactComplete": all(audit["artifactComplete"] for audit in audits),
             "contractComplete": all(audit["contractComplete"] for audit in audits),
             "requiredContractComplete": all(audit["requiredContractComplete"] for audit in audits),
+            "checkpointFailureComplete": all(audit["checkpointFailureComplete"] for audit in audits),
             "schemaComplete": all(audit["schemaComplete"] for audit in audits),
             "sequenceComplete": all(not audit["sequenceWarnings"] for audit in audits),
             "scenarioAudits": audits,
@@ -203,6 +228,14 @@ def collect(
             "requiredUncontractedCheckpointCount": sum(
                 len(audit["requiredContractWarnings"]) for audit in audits
             ),
+            "checkpointFailureCount": sum(
+                len(audit["checkpointFailureWarnings"]) for audit in audits
+            ),
+            "checkpointFailureWarnings": [
+                warning
+                for audit in audits
+                for warning in audit["checkpointFailureWarnings"]
+            ],
             "automatedFindingCount": sum(
                 len(finding)
                 for audit in audits

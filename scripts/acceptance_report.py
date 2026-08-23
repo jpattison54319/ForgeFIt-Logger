@@ -25,9 +25,15 @@ def main() -> int:
     parser.add_argument("--surface-inventory", type=Path, help="Production surface inventory JSON from acceptance_surface_inventory.py")
     parser.add_argument("--adoption-gate", type=Path, help="Contract-adoption gate JSON from acceptance_adoption_gate.py")
     parser.add_argument("--evidence-gate", type=Path, help="Evidence gate JSON from acceptance_evidence_gate.py")
+    parser.add_argument("--judge-request", type=Path, help="Aggregate judge request with evidence audits")
     parser.add_argument("--judge-response", type=Path, help="AI judge response JSON to validate and merge")
     parser.add_argument("--output", type=Path, help="Write a Markdown report here")
     parser.add_argument("--json", action="store_true", help="Print the judge request JSON")
+    parser.add_argument(
+        "--fail-on-incomplete",
+        action="store_true",
+        help="Return nonzero when the supplied acceptance gates are incomplete",
+    )
     args = parser.parse_args()
 
     if args.xcode_log:
@@ -40,10 +46,12 @@ def main() -> int:
             args.surface_inventory,
             args.adoption_gate,
             args.evidence_gate,
+            args.judge_request,
             args.judge_response,
             args.output,
             args.json,
             args.platform,
+            args.fail_on_incomplete,
         )
 
     if not args.run:
@@ -89,6 +97,8 @@ def main() -> int:
         elif response:
             print(f"\nJudge outcome: {response['outcome']} ({len(response['findings'])} findings)")
     print("\nReview each checkpoint screenshot and accessibility tree, then write findings using the schema requested in judge-request.json.")
+    if args.fail_on_incomplete and manifest.get("outcome") != "pass":
+        return 1
     return 0
 
 
@@ -235,12 +245,32 @@ def load_agent_evidence(evidence_root: Path | None) -> dict[str, int]:
     return counts
 
 
-def load_agent_evidence_details(evidence_root: Path | None) -> dict[str, dict[str, int]]:
+def load_agent_evidence_details(
+    evidence_root: Path | None,
+    aggregate_judge_request_path: Path | None = None,
+) -> dict[str, dict[str, object]]:
     """Return action-evidence quality metrics without counting milestone writers."""
 
     if not evidence_root or not evidence_root.exists():
         return {}
-    details: dict[str, dict[str, int]] = {}
+    details: dict[str, dict[str, object]] = {}
+    aggregate_audits: dict[str, dict] = {}
+    aggregate_paths = [
+        path for path in (
+            aggregate_judge_request_path,
+            evidence_root.parent / "judge-request.json",
+            evidence_root / "judge-request.json",
+        )
+        if path is not None
+    ]
+    for aggregate_path in aggregate_paths:
+        try:
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for audit in aggregate.get("evidenceAudit", {}).get("scenarioAudits", []):
+            if isinstance(audit, dict) and audit.get("scenarioID"):
+                aggregate_audits[str(audit["scenarioID"])] = audit
     for manifest_path in evidence_root.glob("**/manifest.json"):
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -259,6 +289,19 @@ def load_agent_evidence_details(evidence_root: Path | None) -> dict[str, dict[st
         except (OSError, json.JSONDecodeError):
             judge_request = {}
         evidence = judge_request.get("checkpointEvidence", [])
+        evidence_audit = judge_request.get("evidenceAudit", {})
+        tree_lint = evidence_audit.get("treeLint", {}) if isinstance(evidence_audit, dict) else {}
+        tree_lint = tree_lint if isinstance(tree_lint, dict) else {}
+        if not tree_lint:
+            aggregate_audit = aggregate_audits.get(scenario_id, {})
+            tree_lint = aggregate_audit.get("treeLint", {}) if isinstance(aggregate_audit, dict) else {}
+            tree_lint = tree_lint if isinstance(tree_lint, dict) else {}
+        tree_lint_findings = {
+            str(key): value
+            for key, value in tree_lint.items()
+            if isinstance(value, list)
+        }
+        tree_lint_count = sum(len(value) for value in tree_lint_findings.values())
         unverified = int(manifest.get("unverifiedCheckpointCount", 0))
         if not unverified:
             unverified = sum(item.get("outcome") == "unverified" for item in evidence if isinstance(item, dict))
@@ -284,11 +327,17 @@ def load_agent_evidence_details(evidence_root: Path | None) -> dict[str, dict[st
             "beforeAfterCount": 0,
             "unverifiedCheckpointCount": 0,
             "contractGapCount": 0,
+            "treeLintFindingCount": 0,
+            "treeLintFindings": {},
         })
         bucket["checkpointCount"] += int(manifest.get("checkpointCount", len(action_checkpoints)))
         bucket["beforeAfterCount"] += before_after
         bucket["unverifiedCheckpointCount"] += unverified
         bucket["contractGapCount"] += contract_gaps
+        bucket["treeLintFindingCount"] += tree_lint_count
+        existing_tree_lint = bucket["treeLintFindings"]
+        if isinstance(existing_tree_lint, dict):
+            existing_tree_lint.update(tree_lint_findings)
     return details
 
 
@@ -465,10 +514,12 @@ def report_xcode_run(
     surface_inventory_path: Path | None,
     adoption_gate_path: Path | None,
     evidence_gate_path: Path | None,
+    judge_request_path: Path | None,
     judge_response_path: Path | None,
     output: Path | None,
     as_json: bool,
     platform: str,
+    fail_on_incomplete: bool,
 ) -> int:
     if not inventory_path or not inventory_path.exists():
         raise SystemExit("--inventory is required for an xcode log report")
@@ -477,7 +528,7 @@ def report_xcode_run(
     failure_details = parse_failure_details(log_path)
     visual_evidence = load_visual_evidence(attachments_path)
     agent_evidence = load_agent_evidence(evidence_root)
-    agent_evidence_details = load_agent_evidence_details(evidence_root)
+    agent_evidence_details = load_agent_evidence_details(evidence_root, judge_request_path)
     checkpoint_ids = load_agent_checkpoint_ids(evidence_root)
     judge_response, judge_validation_errors = load_judge_response(
         judge_response_path,
@@ -488,6 +539,15 @@ def report_xcode_run(
     surface_inventory = load_surface_inventory(surface_inventory_path)
     adoption_gate = load_adoption_gate(adoption_gate_path)
     evidence_gate = load_evidence_gate(evidence_gate_path)
+    aggregate_evidence_audit: dict = {}
+    if judge_request_path and judge_request_path.exists():
+        try:
+            aggregate_request = json.loads(judge_request_path.read_text(encoding="utf-8"))
+            value = aggregate_request.get("evidenceAudit", {})
+            if isinstance(value, dict):
+                aggregate_evidence_audit = value
+        except (OSError, json.JSONDecodeError):
+            aggregate_evidence_audit = {}
     flows = []
     for original in inventory["flows"]:
         if platform == "ios" and original["platform"] != "iOS Simulator":
@@ -534,7 +594,12 @@ def report_xcode_run(
             flow.get("humanActionEvidenceDetails", {}).get("contractGapCount", 0)
             for flow in flows
         ),
+        "automatedTreeLintFindingCount": sum(
+            flow.get("humanActionEvidenceDetails", {}).get("treeLintFindingCount", 0)
+            for flow in flows
+        ),
         "evidenceGate": evidence_gate,
+        "aggregateEvidenceAudit": aggregate_evidence_audit,
         "adoptionGate": adoption_gate,
         "adoptionBySuite": inventory.get("adoptionBySuite", {}),
         "boundaryAudit": boundary_audit,
@@ -544,9 +609,15 @@ def report_xcode_run(
         "judgeValidationErrors": judge_validation_errors,
         "flows": flows,
     }
+    report_incomplete = fail_on_incomplete and (
+        not evidence_gate.get("complete", False)
+        or (adoption_gate_path is not None and not adoption_gate.get("complete", False))
+        or aggregate_evidence_audit.get("checkpointFailureComplete") is False
+        or bool(judge_validation_errors)
+    )
     if as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
-        return 0
+        return 1 if report_incomplete else 0
     lines = [
         "# ForgeFit AI acceptance run",
         "",
@@ -566,6 +637,44 @@ def report_xcode_run(
             lines.append(f"Gate reason: {evidence_gate['reason']}")
     else:
         lines.append("No evidence-gate result was supplied; this report is not an acceptance green light.")
+    lines.extend(["", "## Automated accessibility-tree lint", ""])
+    lint_count = report["automatedTreeLintFindingCount"]
+    if not lint_count:
+        lines.append("No automated tree-lint findings were recorded in the action evidence.")
+    else:
+        lines.append(
+            f"Automated lint recorded **{lint_count} findings** across action evidence. "
+            "Findings are filtered to live hittable/enabled controls when state metadata is available; "
+            "the full JSON detail remains in each flow's evidence record."
+        )
+        lines.extend(["", "| Flow | Findings | Examples |", "|---|---:|---|"])
+        for flow in flows:
+            details = flow.get("humanActionEvidenceDetails", {})
+            count = details.get("treeLintFindingCount", 0)
+            if not count:
+                continue
+            examples: list[str] = []
+            tree_findings = details.get("treeLintFindings", {})
+            if isinstance(tree_findings, dict):
+                for finding_list in tree_findings.values():
+                    if not isinstance(finding_list, list):
+                        continue
+                    for finding in finding_list:
+                        if not isinstance(finding, dict):
+                            continue
+                        message = str(finding.get("message", "")).replace("|", "\\|")
+                        examples.append(
+                            f"{finding.get('rule', 'finding')} line {finding.get('line', '?')}: {message}"
+                        )
+                        if len(examples) >= 3:
+                            break
+                    if len(examples) >= 3:
+                        break
+            lines.append(
+                f"| `{flow['id']}` | {count} | "
+                + "<br>".join(examples or ["details in JSON"])
+                + " |"
+            )
     lines.extend(["", "## Contract adoption", ""])
     adoption = inventory.get("adoptionBySuite", {})
     if adoption:
@@ -692,7 +801,7 @@ def report_xcode_run(
         output.write_text(rendered, encoding="utf-8")
     else:
         print(rendered)
-    return 0
+    return 1 if report_incomplete else 0
 
 
 if __name__ == "__main__":

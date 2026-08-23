@@ -50,6 +50,50 @@ class AcceptanceTreeLintTests(unittest.TestCase):
             )
         )
 
+    def test_live_state_filters_collapsed_controls_but_keeps_real_small_targets(self) -> None:
+        fixture = SCRIPT_ROOT / "test_fixtures" / "acceptance_tree_lint_known_issues.txt"
+
+        findings = lint_tree(fixture)
+
+        self.assertTrue(any(
+            finding.get("identifier") == "small-button"
+            and finding["rule"] == "touch-target"
+            and finding.get("hittable") is True
+            for finding in findings
+        ))
+        self.assertFalse(any(
+            finding.get("identifier") == "collapsed-button"
+            and finding["rule"] == "touch-target"
+            for finding in findings
+        ))
+
+    def test_label_findings_include_the_nearest_identified_ancestor(self) -> None:
+        fixture = SCRIPT_ROOT / "test_fixtures" / "acceptance_tree_lint_known_issues.txt"
+
+        findings = lint_tree(fixture)
+
+        unlabeled = next(
+            finding for finding in findings
+            if finding.get("rule") == "interactive-label"
+            and finding.get("ancestorIdentifier") == "history-sort-menu"
+        )
+        self.assertIn("history-sort-menu", unlabeled["message"])
+        self.assertTrue(any("history-sort-menu" in item for item in unlabeled["breadcrumb"]))
+
+    def test_duplicate_identifier_lint_ignores_symbols_and_repeated_rows(self) -> None:
+        fixture = SCRIPT_ROOT / "test_fixtures" / "acceptance_tree_lint_known_issues.txt"
+
+        findings = lint_tree(fixture)
+
+        duplicates = {
+            finding.get("identifier")
+            for finding in findings
+            if finding["rule"] == "duplicate-identifier"
+        }
+        self.assertIn("same-id", duplicates)
+        self.assertNotIn("row-action", duplicates)
+        self.assertNotIn("info.circle", duplicates)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,7 @@ def audit(
         and evidence_audit.get("artifactComplete", False)
         and evidence_audit.get("schemaComplete", False)
         and evidence_audit.get("sequenceComplete", False)
+        and evidence_audit.get("checkpointFailureComplete", False)
         and sequence_complete
         and (
             not require_contracts
@@ -62,6 +63,8 @@ def audit(
         reasons.append("one or more evidence requests use an unsupported schema or rubric version")
     if not sequence_complete:
         reasons.append("one or more action checkpoint sequences are incomplete or reordered")
+    if not evidence_audit.get("checkpointFailureComplete", False):
+        reasons.append("one or more declared checkpoints failed")
     if require_contracts:
         contract_key = "contractComplete" if require_all_contracts or contract_policy_path is None else "requiredContractComplete"
         if not evidence_audit.get(contract_key, False):

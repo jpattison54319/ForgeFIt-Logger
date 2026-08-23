@@ -270,6 +270,21 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
             oracleResults: oracleResults
         ))
         session.lastCheckpointID = checkpointID
+        if outcome == "fail" {
+            let missing = (missingIdentifiers + missingLabels).joined(separator: ", ")
+            let oracleMessages = oracleResults
+                .filter { $0.outcome != "pass" }
+                .map { "\($0.id): \($0.message)" }
+                .joined(separator: "; ")
+            let details = [missing.isEmpty ? nil : "missing=\(missing)", oracleMessages.isEmpty ? nil : oracleMessages]
+                .compactMap { $0 }
+                .joined(separator: "; ")
+            XCTFail(
+                "Watch acceptance contract failed at \(checkpointID)\(details.isEmpty ? "" : ": \(details)")",
+                file: sourceFile,
+                line: sourceLine
+            )
+        }
     }
 
     private struct CapturedState {
@@ -320,9 +335,15 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
             let isRunning = app.map {
                 $0.state == .runningForeground || $0.state == .runningBackground
             } ?? false
-            let tree = isRunning
+            var tree = isRunning
                 ? (app?.debugDescription ?? "No registered Watch application tree")
                 : "Application not running"
+            if isRunning, let app {
+                let stateLines = acceptanceElementStateLines(app: app)
+                if !stateLines.isEmpty {
+                    tree += "\n\n--- ForgeFit acceptance element state (JSONL) ---\n\(stateLines)\n"
+                }
+            }
             try tree.write(to: treeURL, atomically: true, encoding: .utf8)
             accessibilityTreeFile = treeRelativePath
             session.artifactFiles.insert(treeRelativePath)
@@ -335,6 +356,43 @@ final class WatchHumanActionRecorder: NSObject, XCTestObservation {
             accessibilityTreeFile: accessibilityTreeFile,
             notes: notes
         )
+    }
+
+    private func acceptanceElementStateLines(app: XCUIApplication) -> String {
+        let interactiveTypes: Set<String> = [
+            "button", "cell", "collectionview", "datepicker", "link", "menuitem",
+            "picker", "searchfield", "segmentedcontrol", "slider", "stepper", "switch",
+            "securetextfield", "textfield", "textview", "toggle"
+        ]
+        return app.descendants(matching: .any).allElementsBoundByIndex.compactMap { element in
+            let type = String(describing: element.elementType)
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "_", with: "")
+                .replacingOccurrences(of: "xcuielementtype", with: "")
+                .lowercased()
+            guard interactiveTypes.contains(type) else { return nil }
+            let frame = element.frame
+            let object: [String: Any] = [
+                "type": String(describing: element.elementType),
+                "identifier": element.identifier,
+                "label": element.label,
+                "frame": [
+                    "x": Double(frame.origin.x),
+                    "y": Double(frame.origin.y),
+                    "width": Double(frame.size.width),
+                    "height": Double(frame.size.height)
+                ],
+                "exists": element.exists,
+                "hittable": element.isHittable,
+                "enabled": element.isEnabled
+            ]
+            guard JSONSerialization.isValidJSONObject(object),
+                  let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+                  let json = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return "ForgeFitAcceptanceState: \(json)"
+        }.joined(separator: "\n")
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {

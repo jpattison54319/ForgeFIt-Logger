@@ -7,8 +7,9 @@ and observed state for each checkpoint. This makes a run replayable while
 keeping subjective visual and experience review explicit.
 
 The harness is fail-closed about evidence, not merely test exit codes. A green
-XCTest result with missing action evidence, an undeclared action contract, an
-unsupported schema, or a failed evidence gate is not an acceptance approval.
+XCTest result with missing action evidence, an undeclared action contract, a
+failed declared checkpoint, an unsupported schema, or a failed evidence gate is
+not an acceptance approval.
 Legacy flows that have not yet declared expectations are reported as
 `unverified` until they are migrated.
 
@@ -149,12 +150,20 @@ post-action UI rather than the first animation frame.
 `scripts/acceptance_tree_lint.py` parses the actual indented
 `XCUIApplication.debugDescription` format and runs deterministic checks over
 every saved tree: empty labels or placeholders on interactive controls,
-sub-44-point frames, duplicate identifiers, and likely truncation. Its parser
-regression fixture is run before every acceptance matrix so a format change
-cannot silently turn lint into an empty result. The AI reviewer handles the
-remaining visual and experience judgment. Before/after pairs are the default
-evidence; video is intentionally deferred to a small motion-focused pilot so
-the full matrix does not double storage and timing pressure on every action.
+sub-44-point frames, duplicate identifiers, and likely truncation. Each new
+capture also appends a JSONL state snapshot containing `exists`, `hittable`,
+`enabled`, and frame data for interactive elements. Touch-target findings are
+limited to controls that are live, enabled, and hittable; legacy trees without
+state metadata suppress only clearly collapsed dimensions below 10pt. Label
+findings include the nearest identified ancestor and a breadcrumb, while SF
+Symbol names, same-row subcontrol reuse, and identical repeated-row controls
+are not treated as duplicate semantic identifiers. Its parser regression
+fixture is run before every acceptance matrix so a format change cannot
+silently turn lint into an empty result. The report includes the automated
+findings; the AI reviewer handles the remaining visual and experience
+judgment. Before/after pairs are the default evidence; video is intentionally
+deferred to a small motion-focused pilot so the full matrix does not double
+storage and timing pressure on every action.
 
 A failed assertion is reviewed against the last post-action screenshot and
 tree before it is called a product defect. If the screenshot shows an empty,
@@ -278,23 +287,29 @@ python3 scripts/acceptance_report.py \
   --surface-inventory artifacts/acceptance/<git-commit>/full-run.<id>/surface-inventory.json \
   --adoption-gate artifacts/acceptance/<git-commit>/full-run.<id>/adoption-gate.json \
   --evidence-gate artifacts/acceptance/<git-commit>/full-run.<id>/evidence-gate.json \
+  --judge-request artifacts/acceptance/<git-commit>/full-run.<id>/judge-request.json \
   --judge-response /path/to/response.json \
   --platform ios \
+  --fail-on-incomplete \
   --output artifacts/acceptance/<git-commit>/full-run.<id>/report-with-judge.md
 ```
 
 `acceptance_report.py` validates the outcome, finding categories, checkpoint
 IDs, confidence range, and evidence paths. Invalid responses remain visible as
 validation errors; they are never silently treated as a pass. For a single
-scenario run, use `make acceptance-report RUN=... RESPONSE=...`.
+scenario run, use `make acceptance-report RUN=... RESPONSE=...`; it returns
+nonzero when that scenario is not a passing acceptance result.
 
 `scripts/acceptance_rubric.json` is the checked-in rubric and response schema.
 `scripts/acceptance_judge.py` injects it into every per-scenario request,
 audits before/after artifacts and accessibility trees, and runs the automated
 tree lint. `scripts/acceptance_evidence_gate.py` then fails the runner when no
 action evidence exists, artifacts are incomplete, requests are out of order,
-or the strict contract mode finds an uncontracted action. The report always
-shows the gate result, even when the XCTest process itself exits successfully.
+an assertion checkpoint is `.fail`, or the strict contract mode finds an
+uncontracted action. The runners invoke `acceptance_report.py
+--fail-on-incomplete`, so the report and the runner both return nonzero when a
+gate is incomplete even if XCTest itself exits successfully. The report still
+writes the evidence summary before returning that failure.
 
 ## AI judge contract
 

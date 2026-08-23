@@ -4,5 +4,21 @@ Element subtree:
     Window (Main), 0x2, {{0.0, 0.0}, {402.0, 874.0}}
       Button, 0x3, {{10.0, 10.0}, {20.0, 20.0}}, identifier: 'tiny-button', label: 'Tiny'
       Button, 0x4, {{40.0, 10.0}, {44.0, 44.0}}, identifier: 'empty-button'
+      Button, 0x5, {{90.0, 10.0}, {20.0, 20.0}}, identifier: 'small-button', label: 'Small'
+      Button, 0x6, {{120.0, 10.0}, {29.9, 5.3}}, identifier: 'collapsed-button', label: 'Collapsed'
+      Button, 0x7, {{160.0, 10.0}, {52.0, 52.0}}, identifier: 'history-sort-menu', label: 'Sort'
+        Button, 0x8, {{170.0, 20.0}, {20.0, 20.0}}
+      Button, 0x9, {{10.0, 160.0}, {52.0, 52.0}}, identifier: 'row-one', label: 'Row one'
+        Button, 0xa, {{10.0, 160.0}, {20.0, 20.0}}, identifier: 'row-action', label: 'Edit'
+      Button, 0xb, {{70.0, 160.0}, {52.0, 52.0}}, identifier: 'row-two', label: 'Row two'
+        Button, 0xc, {{70.0, 160.0}, {20.0, 20.0}}, identifier: 'row-action', label: 'Edit'
+      Button, 0xd, {{130.0, 160.0}, {52.0, 52.0}}, identifier: 'conflict-one', label: 'Open'
+      Button, 0xe, {{190.0, 160.0}, {52.0, 52.0}}, identifier: 'conflict-two', label: 'Close'
+        Button, 0xf, {{190.0, 160.0}, {20.0, 20.0}}, identifier: 'same-id', label: 'Open'
+      Button, 0x10, {{250.0, 160.0}, {52.0, 52.0}}, identifier: 'same-id', label: 'Close'
+      Button, 0x11, {{310.0, 160.0}, {52.0, 52.0}}, identifier: 'info.circle', label: 'Info'
+      Button, 0x12, {{310.0, 220.0}, {52.0, 52.0}}, identifier: 'info.circle', label: 'Info'
       TextField, 0x5, {{10.0, 50.0}, {200.0, 48.0}}, identifier: 'name-field', label: 'Name'
       SearchField, 0x6, {{10.0, 110.0}, {200.0, 48.0}}, identifier: 'search-field', placeholderValue: 'Search'
+ForgeFitAcceptanceState: {"type":"XCUIElementTypeButton","identifier":"collapsed-button","label":"Collapsed","frame":{"x":120.0,"y":10.0,"width":29.9,"height":5.3},"exists":true,"hittable":false,"enabled":true}
+ForgeFitAcceptanceState: {"type":"Button","identifier":"small-button","label":"Small","frame":{"x":90.0,"y":10.0,"width":20.0,"height":20.0},"exists":true,"hittable":true,"enabled":true}

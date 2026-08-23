@@ -44,6 +44,7 @@ test-acceptance-watch:
 
 test-acceptance-lint:
 	python3 scripts/test_acceptance_tree_lint.py
+	python3 scripts/test_acceptance_outcome_gates.py
 
 test-acceptance-contracts:
 	cd Packages/ForgeCore && swift test --filter WatchSyncTests
@@ -69,7 +70,7 @@ acceptance-judge:
 
 acceptance-report:
 	@test -n "$(RUN)" || (echo "Usage: make acceptance-report RUN=/path/to/run" && exit 2)
-	python3 scripts/acceptance_report.py "$(RUN)" $(if $(RESPONSE),--judge-response "$(RESPONSE)",)
+	python3 scripts/acceptance_report.py "$(RUN)" --fail-on-incomplete $(if $(RESPONSE),--judge-response "$(RESPONSE)",)
 
 build-ios:
 	xcodebuild -project ForgeFit.xcodeproj -scheme ForgeFit -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
