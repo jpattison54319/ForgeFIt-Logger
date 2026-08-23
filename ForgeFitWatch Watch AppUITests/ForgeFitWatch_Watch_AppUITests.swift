@@ -8,15 +8,6 @@
 import Foundation
 import XCTest
 
-private struct WatchAcceptanceManifest: Codable {
-    let schemaVersion: Int
-    let scenarioID: String
-    let runID: String
-    let startedAt: Date
-    let finishedAt: Date
-    let checkpoints: [String]
-}
-
 private struct WatchAcceptanceScenario: Codable {
     let id: String
     let title: String
@@ -32,156 +23,8 @@ private struct WatchAcceptanceCheckpoint: Codable {
     let expectedVisibleIdentifiers: [String]
     let expectedVisibleLabels: [String]
     let screenshotRequired: Bool
-}
-
-private struct WatchAcceptanceCheckpointEvidence: Codable {
-    let scenarioID: String
-    let checkpoint: WatchAcceptanceCheckpoint
-    let outcome: String
-    let startedAt: Date
-    let finishedAt: Date
-    let observedIdentifiers: [String]
-    let observedLabels: [String]
-    let missingIdentifiers: [String]
-    let missingLabels: [String]
-    let screenshotFile: String?
-    let accessibilityTreeFile: String?
-    let notes: [String]
-}
-
-private struct WatchAcceptanceJudgeRequest: Codable {
-    let schemaVersion: Int
-    let scenario: WatchAcceptanceScenario
-    let checkpointEvidence: [WatchAcceptanceCheckpointEvidence]
-    let judgeInstructions: String
-    let responseSchema: WatchAcceptanceResponseSchema
-}
-
-private struct WatchAcceptanceResponseSchema: Codable {
-    let outcome: String
-    let findings: [WatchAcceptanceFinding]
-}
-
-private struct WatchAcceptanceFinding: Codable {
-    let severity: String
-    let category: String
-    let observation: String
-    let expected: String
-    let actual: String
-    let confidence: Double
-    let checkpointID: String
-    let evidencePaths: [String]
-}
-
-private final class WatchAcceptanceEvidenceWriter {
-    let scenarioID: String
-    let runID = UUID().uuidString.lowercased()
-    let rootURL: URL
-    private var checkpoints: [String] = []
-    private var evidence: [WatchAcceptanceCheckpointEvidence] = []
-
-    init(scenarioID: String) throws {
-        self.scenarioID = scenarioID
-        let basePath = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_ARTIFACTS"]
-            ?? "/tmp/forgefit-acceptance"
-        rootURL = URL(fileURLWithPath: basePath, isDirectory: true)
-            .appendingPathComponent(scenarioID, isDirectory: true)
-            .appendingPathComponent(runID, isDirectory: true)
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-    }
-
-    @MainActor
-    func capture(_ checkpoint: WatchAcceptanceCheckpoint, app: XCUIApplication) throws {
-        let checkpointID = checkpoint.id
-        let screenshotURL = rootURL.appendingPathComponent("screenshots/\(checkpointID).png")
-        try FileManager.default.createDirectory(
-            at: screenshotURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let screenshot = app.screenshot()
-        XCTContext.runActivity(named: "Capture \(checkpointID)") { activity in
-            let attachment = XCTAttachment(screenshot: screenshot)
-            attachment.name = checkpointID
-            attachment.lifetime = .keepAlways
-            activity.add(attachment)
-        }
-        try screenshot.pngRepresentation.write(to: screenshotURL, options: .atomic)
-
-        let treeURL = rootURL.appendingPathComponent("accessibility/\(checkpointID).txt")
-        try FileManager.default.createDirectory(
-            at: treeURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try app.debugDescription.write(to: treeURL, atomically: true, encoding: .utf8)
-        checkpoints.append(checkpointID)
-
-        let observedIdentifiers = checkpoint.expectedVisibleIdentifiers.filter {
-            app.descendants(matching: .any)[$0].firstMatch.exists
-        }
-        let observedLabels = checkpoint.expectedVisibleLabels.filter {
-            app.staticTexts[$0].firstMatch.exists || app.buttons[$0].firstMatch.exists
-        }
-        evidence.append(WatchAcceptanceCheckpointEvidence(
-            scenarioID: scenarioID,
-            checkpoint: checkpoint,
-            outcome: "pass",
-            startedAt: .now,
-            finishedAt: .now,
-            observedIdentifiers: observedIdentifiers,
-            observedLabels: observedLabels,
-            missingIdentifiers: checkpoint.expectedVisibleIdentifiers.filter {
-                !observedIdentifiers.contains($0)
-            },
-            missingLabels: checkpoint.expectedVisibleLabels.filter {
-                !observedLabels.contains($0)
-            },
-            screenshotFile: "screenshots/\(checkpointID).png",
-            accessibilityTreeFile: "accessibility/\(checkpointID).txt",
-            notes: []
-        ))
-    }
-
-    func finish(scenario: WatchAcceptanceScenario, startedAt: Date) throws {
-        let manifest = WatchAcceptanceManifest(
-            schemaVersion: 1,
-            scenarioID: scenarioID,
-            runID: runID,
-            startedAt: startedAt,
-            finishedAt: .now,
-            checkpoints: checkpoints
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(manifest).write(
-            to: rootURL.appendingPathComponent("manifest.json"),
-            options: .atomic
-        )
-
-        let judgeRequest = WatchAcceptanceJudgeRequest(
-            schemaVersion: 1,
-            scenario: scenario,
-            checkpointEvidence: evidence,
-            judgeInstructions: "Review every screenshot and accessibility tree. Report only observable issues. Distinguish confirmed failures from suspects. Check functionality, visual hierarchy, copy, affordances, accessibility, and consistency with the checkpoint contract. Return one JSON object matching responseSchema. Use an empty findings array when no issue is observed.",
-            responseSchema: WatchAcceptanceResponseSchema(
-                outcome: "pass | fail | suspect | blocked",
-                findings: [WatchAcceptanceFinding(
-                    severity: "blocker | critical | major | minor | polish",
-                    category: "functionality | visual | accessibility | copy | interaction | persistence | performance | privacy | watch-sync | reliability",
-                    observation: "What was observed",
-                    expected: "What the contract or platform convention requires",
-                    actual: "What the evidence shows",
-                    confidence: 0.0,
-                    checkpointID: "checkpoint id",
-                    evidencePaths: ["relative/path/to/evidence"]
-                )]
-            )
-        )
-        try encoder.encode(judgeRequest).write(
-            to: rootURL.appendingPathComponent("judge-request.json"),
-            options: .atomic
-        )
-    }
+    let phase: String = "assertion"
+    let invariants: [String] = []
 }
 
 final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
@@ -201,8 +44,6 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
 
     @MainActor
     func testWatchHomeDemo() throws {
-        let startedAt = Date()
-        let evidence = try WatchAcceptanceEvidenceWriter(scenarioID: "watch-home-demo")
         let scenario = WatchAcceptanceScenario(
             id: "watch-home-demo",
             title: "Watch home demo",
@@ -225,16 +66,11 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             scenarioID: "ForgeFitWatch_Watch_AppUITests/testWatchHomeDemo"
         )
         app.launchArguments = scenario.fixtureArguments
-        app.launchEnvironment["FORGEFIT_ACCEPTANCE_RUN_ID"] = evidence.runID
+        watchAcceptanceExpect(
+            ["watch-home", "watch-empty-workout"],
+            visibleLabels: ["Empty Workout"]
+        )
         app.watchAcceptanceLaunch()
-
-        defer {
-            do {
-                try evidence.finish(scenario: scenario, startedAt: startedAt)
-            } catch {
-                XCTFail("Could not write Watch acceptance evidence: \(error.localizedDescription)")
-            }
-        }
 
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-home"].firstMatch.waitForExistence(timeout: 15),
@@ -244,18 +80,19 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             app.buttons["watch-empty-workout"].firstMatch.exists,
             "The Watch must expose the visible Empty Workout action"
         )
+        watchAcceptanceExpect(
+            ["watch-home", "watch-routine-Push Day"],
+            visibleLabels: ["Push Day"]
+        )
         app.watchAcceptanceSwipeUp()
         XCTAssertTrue(
             app.buttons["watch-routine-Push Day"].firstMatch.waitForExistence(timeout: 10),
             "The Watch must render the synced Push Day routine"
         )
-        try evidence.capture(scenario.checkpoints[0], app: app)
     }
 
     @MainActor
     func testWatchActiveWorkoutDemo() throws {
-        let startedAt = Date()
-        let evidence = try WatchAcceptanceEvidenceWriter(scenarioID: "watch-active-workout-demo")
         let scenario = WatchAcceptanceScenario(
             id: "watch-active-workout-demo",
             title: "Watch active workout demo",
@@ -302,16 +139,10 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             scenarioID: "ForgeFitWatch_Watch_AppUITests/testWatchActiveWorkoutDemo"
         )
         app.launchArguments = scenario.fixtureArguments
-        app.launchEnvironment["FORGEFIT_ACCEPTANCE_RUN_ID"] = evidence.runID
+        watchAcceptanceExpect(
+            ["watch-active-workout", "watch-exercises-page", "watch-exercise-Barbell Bench Press"]
+        )
         app.watchAcceptanceLaunch()
-
-        defer {
-            do {
-                try evidence.finish(scenario: scenario, startedAt: startedAt)
-            } catch {
-                XCTFail("Could not write Watch acceptance evidence: \(error.localizedDescription)")
-            }
-        }
 
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-active-workout"].firstMatch.waitForExistence(timeout: 15),
@@ -325,10 +156,10 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             app.descendants(matching: .any)["watch-exercise-Barbell Bench Press"].firstMatch.exists,
             "The Watch must render the seeded exercise"
         )
-        try evidence.capture(scenario.checkpoints[0], app: app)
 
         let exercise = app.descendants(matching: .any)["watch-exercise-Barbell Bench Press"].firstMatch
         XCTAssertTrue(exercise.isHittable, "The seeded exercise must be interactable")
+        watchAcceptanceExpect(["watch-set-list", "watch-toggle-set-3"])
         exercise.watchAcceptanceTap()
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-set-list"].firstMatch.waitForExistence(timeout: 10),
@@ -338,11 +169,12 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
         let thirdSet = app.descendants(matching: .any)["watch-toggle-set-3"].firstMatch
         XCTAssertTrue(thirdSet.waitForExistence(timeout: 10), "The third set must be directly completable")
         XCTAssertTrue(thirdSet.isHittable, "The third set control must be hittable")
+        watchAcceptanceExpect(["watch-set-list", "watch-toggle-set-3"])
         thirdSet.watchAcceptanceTap()
-        try evidence.capture(scenario.checkpoints[1], app: app)
 
         let back = app.navigationBars.buttons.firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 10), "The set list must provide visible back navigation")
+        watchAcceptanceExpect(["watch-exercises-page"])
         back.watchAcceptanceTap()
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-exercises-page"].firstMatch.waitForExistence(timeout: 10),
@@ -351,24 +183,29 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
 
         let pageStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.52))
         let pageEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.12))
+        watchAcceptanceExpect(["watch-exercises-page"])
         pageStart.watchAcceptancePress(forDuration: 0.1, thenDragTo: pageEnd)
+        watchAcceptanceExpect(["watch-controls-page"], visibleLabels: ["Discard"])
         app.watchAcceptanceSwipeUp()
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-controls-page"].firstMatch.waitForExistence(timeout: 10),
             "The active workout must expose controls as a visible page"
         )
-        try evidence.capture(scenario.checkpoints[2], app: app)
 
         let discard = app.buttons["Discard"].firstMatch
         XCTAssertTrue(discard.waitForExistence(timeout: 10), "Discard must be visible in the controls page")
+        watchAcceptanceExpect(
+            ["watch-controls-page"],
+            visibleLabels: ["Discard workout?", "All logged sets from this session will be lost."]
+        )
         discard.watchAcceptanceTap()
         XCTAssertTrue(app.staticTexts["Discard workout?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["All logged sets from this session will be lost."].exists)
-        try evidence.capture(scenario.checkpoints[3], app: app)
         let cancel = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label IN %@", ["Close", "Cancel", "Dismiss"]))
             .firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5), "The discard dialog must provide a visible close action")
+        watchAcceptanceExpect(["watch-controls-page"], visibleLabels: ["Discard"])
         cancel.watchAcceptanceTap()
     }
 
@@ -376,8 +213,6 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
     /// that followed the full-range reps, and the editor can change them.
     @MainActor
     func testWatchExtendedSetShowsAndEditsItsPartials() throws {
-        let startedAt = Date()
-        let evidence = try WatchAcceptanceEvidenceWriter(scenarioID: "watch-lengthened-extended-set")
         let scenario = WatchAcceptanceScenario(
             id: "watch-lengthened-extended-set",
             title: "Watch extended set partials",
@@ -408,16 +243,8 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             scenarioID: "ForgeFitWatch_Watch_AppUITests/testWatchExtendedSetShowsAndEditsItsPartials"
         )
         app.launchArguments = scenario.fixtureArguments
-        app.launchEnvironment["FORGEFIT_ACCEPTANCE_RUN_ID"] = evidence.runID
+        watchAcceptanceExpect(["watch-active-workout"])
         app.watchAcceptanceLaunch()
-
-        defer {
-            do {
-                try evidence.finish(scenario: scenario, startedAt: startedAt)
-            } catch {
-                XCTFail("Could not write Watch acceptance evidence: \(error.localizedDescription)")
-            }
-        }
 
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-active-workout"].firstMatch.waitForExistence(timeout: 15),
@@ -427,6 +254,7 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
         let exercise = app.descendants(matching: .any)["watch-exercise-Incline Dumbbell Press"].firstMatch
         XCTAssertTrue(exercise.waitForExistence(timeout: 10), "The seeded exercise must be reachable")
         if !exercise.isHittable { app.watchAcceptanceSwipeUp() }
+        watchAcceptanceExpect(["watch-set-list", "watch-toggle-set-3E"])
         exercise.watchAcceptanceTap()
         XCTAssertTrue(
             app.descendants(matching: .any)["watch-set-list"].firstMatch.waitForExistence(timeout: 10),
@@ -439,16 +267,15 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
             extendedRow.label.contains("+4 partials"),
             "The wrist row must state the partials that followed; saw \(extendedRow.label)."
         )
-        try evidence.capture(scenario.checkpoints[0], app: app)
 
         let edit = app.descendants(matching: .any)["watch-edit-set-3E"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 10), "The row must expose a visible edit control")
+        watchAcceptanceExpect(visibleLabels: ["partials"])
         edit.watchAcceptanceTap()
         XCTAssertTrue(
             app.staticTexts["partials"].waitForExistence(timeout: 10),
             "The wrist editor must offer the partials value on an extended set"
         )
-        try evidence.capture(scenario.checkpoints[1], app: app)
     }
 
     @MainActor

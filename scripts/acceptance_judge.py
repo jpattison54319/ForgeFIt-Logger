@@ -13,22 +13,13 @@ import json
 import re
 from pathlib import Path
 
+from acceptance_tree_lint import lint_tree
 
-RESPONSE_SCHEMA = {
-    "outcome": "pass | fail | suspect | blocked",
-    "findings": [
-        {
-            "severity": "blocker | critical | major | minor | polish",
-            "category": "functionality | visual | accessibility | copy | interaction | persistence | performance | privacy | watch-sync | reliability",
-            "observation": "What was observed",
-            "expected": "What the contract or platform convention requires",
-            "actual": "What the evidence shows",
-            "confidence": 0.0,
-            "checkpointID": "checkpoint id",
-            "evidencePaths": ["relative/path/to/evidence"],
-        }
-    ],
-}
+
+RUBRIC_PATH = Path(__file__).with_name("acceptance_rubric.json")
+RUBRIC = json.loads(RUBRIC_PATH.read_text(encoding="utf-8"))
+RESPONSE_SCHEMA = RUBRIC["responseSchema"]
+REQUEST_SCHEMA_VERSION = 3
 
 
 def audit_request(request_path: Path, request: dict) -> dict:
@@ -42,19 +33,69 @@ def audit_request(request_path: Path, request: dict) -> dict:
     request_root = request_path.parent
     missing_artifacts: list[str] = []
     sequence_warnings: list[str] = []
+    contract_warnings: list[str] = []
+    schema_warnings: list[str] = []
+    tree_lint: dict[str, list[dict[str, object]]] = {}
     checkpoint_ids: list[str] = []
+    if request.get("schemaVersion") != REQUEST_SCHEMA_VERSION:
+        schema_warnings.append(
+            f"request schemaVersion is {request.get('schemaVersion')!r}; expected {REQUEST_SCHEMA_VERSION}"
+        )
+    if request.get("rubricID") not in (None, RUBRIC["id"]):
+        schema_warnings.append(f"request rubricID is not {RUBRIC['id']!r}")
+    if request.get("rubricVersion") not in (None, RUBRIC["version"]):
+        schema_warnings.append(f"request rubricVersion is not {RUBRIC['version']}")
+    request_root = request_root.resolve()
     for evidence in request.get("checkpointEvidence", []):
+        if not isinstance(evidence, dict):
+            schema_warnings.append("checkpointEvidence contains a non-object entry")
+            continue
         checkpoint = evidence.get("checkpoint", {})
+        if not isinstance(checkpoint, dict):
+            schema_warnings.append("checkpointEvidence contains a checkpoint with the wrong shape")
+            continue
         checkpoint_id = str(checkpoint.get("id", ""))
+        if not checkpoint_id:
+            schema_warnings.append("checkpoint has no id")
+        elif checkpoint_id in checkpoint_ids:
+            sequence_warnings.append(f"duplicate checkpoint id: {checkpoint_id}")
         checkpoint_ids.append(checkpoint_id)
-        for field in ("screenshotFile", "accessibilityTreeFile"):
+        fields = ["screenshotFile", "accessibilityTreeFile"]
+        if checkpoint_id.startswith("action-"):
+            fields.extend(["beforeScreenshotFile", "beforeAccessibilityTreeFile"])
+        for field in fields:
             relative_path = evidence.get(field)
             if not relative_path:
                 missing_artifacts.append(f"{checkpoint_id}: missing {field}")
                 continue
-            candidate = request_root / str(relative_path)
+            relative = str(relative_path)
+            candidate = (request_root / relative).resolve()
+            try:
+                candidate.relative_to(request_root)
+            except ValueError:
+                missing_artifacts.append(f"{checkpoint_id}: unsafe evidence path {relative}")
+                continue
             if not candidate.is_file():
-                missing_artifacts.append(f"{checkpoint_id}: {relative_path}")
+                missing_artifacts.append(f"{checkpoint_id}: {relative}")
+            elif field.lower().endswith("accessibilitytreefile"):
+                tree_lint[f"{checkpoint_id}:{field}"] = lint_tree(candidate)
+
+        if checkpoint_id.startswith("action-"):
+            declared = (
+                checkpoint.get("expectedVisibleIdentifiers")
+                or checkpoint.get("expectedVisibleLabels")
+                or checkpoint.get("invariants")
+            )
+            if not declared:
+                contract_warnings.append(
+                    f"{checkpoint_id}: no expected identifiers, labels, or invariants"
+                )
+            if evidence.get("outcome") == "pass" and not declared:
+                contract_warnings.append(f"{checkpoint_id}: pass outcome has no declared contract")
+        if evidence.get("outcome") == "pass" and (
+            evidence.get("missingIdentifiers") or evidence.get("missingLabels")
+        ):
+            contract_warnings.append(f"{checkpoint_id}: pass outcome contains missing expectations")
 
     action_numbers = []
     for checkpoint_id in checkpoint_ids:
@@ -71,9 +112,15 @@ def audit_request(request_path: Path, request: dict) -> dict:
     return {
         "scenarioID": str(request.get("scenario", {}).get("id", "")),
         "checkpointCount": len(checkpoint_ids),
-        "complete": not missing_artifacts and not sequence_warnings,
+        "complete": not missing_artifacts and not sequence_warnings and not contract_warnings and not schema_warnings,
+        "artifactComplete": not missing_artifacts,
+        "contractComplete": not contract_warnings,
+        "schemaComplete": not schema_warnings,
         "missingArtifacts": missing_artifacts,
         "sequenceWarnings": sequence_warnings,
+        "contractWarnings": contract_warnings,
+        "schemaWarnings": schema_warnings,
+        "treeLint": tree_lint,
     }
 
 
@@ -92,6 +139,11 @@ def collect(run_root: Path) -> dict:
         request = dict(request)
         request["artifactRoot"] = str(path.parent.relative_to(run_root))
         audit = audit_request(path, request)
+        request["rubricID"] = RUBRIC["id"]
+        request["rubricVersion"] = RUBRIC["version"]
+        request["rubric"] = RUBRIC
+        request["judgeInstructions"] = RUBRIC["instructions"]
+        request["responseSchema"] = RESPONSE_SCHEMA
         request["evidenceAudit"] = audit
         audits.append(audit)
         requests.append(request)
@@ -104,27 +156,30 @@ def collect(run_root: Path) -> dict:
         for request in requests
     )
     return {
-        "schemaVersion": 1,
+        "schemaVersion": REQUEST_SCHEMA_VERSION,
         "type": "ForgeFitAcceptanceJudgeRequest",
         "runRoot": str(run_root),
         "scenarioCount": len(requests),
         "checkpointCount": checkpoint_count,
         "evidenceAudit": {
             "complete": all(audit["complete"] for audit in audits),
+            "artifactComplete": all(audit["artifactComplete"] for audit in audits),
+            "contractComplete": all(audit["contractComplete"] for audit in audits),
+            "schemaComplete": all(audit["schemaComplete"] for audit in audits),
+            "sequenceComplete": all(not audit["sequenceWarnings"] for audit in audits),
             "scenarioAudits": audits,
             "incompleteScenarioCount": sum(not audit["complete"] for audit in audits),
+            "uncontractedCheckpointCount": sum(len(audit["contractWarnings"]) for audit in audits),
+            "automatedFindingCount": sum(
+                len(finding)
+                for audit in audits
+                for finding in audit["treeLint"].values()
+            ),
         },
-        "judgeInstructions": (
-            "Review every checkpoint in every scenario, including every action-level "
-            "checkpoint in a human-like replay. Inspect the screenshot and accessibility "
-            "tree at each artifactRoot in order; do not sample or review only the final "
-            "screen. Report only observable issues. "
-            "If evidenceAudit.complete is false for a scenario, report it as blocked/incomplete "
-            "rather than treating the flow as visually passed. "
-            "Distinguish confirmed failures from suspects and environmental blockers. "
-            "Every finding must name the first divergent checkpoint and the smallest "
-            "useful evidence paths. Return one JSON object matching responseSchema."
-        ),
+        "rubricID": RUBRIC["id"],
+        "rubricVersion": RUBRIC["version"],
+        "rubric": RUBRIC,
+        "judgeInstructions": RUBRIC["instructions"],
         "responseSchema": RESPONSE_SCHEMA,
         "scenarioRequests": requests,
     }
@@ -134,6 +189,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("run", type=Path, help="Full acceptance run directory")
     parser.add_argument("--output", type=Path, help="Aggregate judge request path")
+    parser.add_argument("--fail-on-incomplete", action="store_true")
     args = parser.parse_args()
 
     run_root = args.run.resolve()
@@ -146,7 +202,7 @@ def main() -> int:
     print(f"JUDGE_REQUEST={output}")
     print(f"SCENARIOS={request['scenarioCount']}")
     print(f"CHECKPOINTS={request['checkpointCount']}")
-    return 0
+    return 1 if args.fail_on_incomplete and not request["evidenceAudit"]["complete"] else 0
 
 
 if __name__ == "__main__":

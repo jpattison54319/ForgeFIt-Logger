@@ -75,7 +75,7 @@ def inventory(root: Path) -> dict:
             files_seen += 1
             identifiers = sorted(set(ID_RE.findall(source)))
             launch_arguments = sorted(set(ARG_RE.findall(source)))
-            for method_match in method_matches:
+            for method_index, method_match in enumerate(method_matches):
                 owning_class = next(
                     (
                         class_match
@@ -89,6 +89,24 @@ def inventory(root: Path) -> dict:
                 class_name = owning_class.group(1)
                 method = method_match.group(1)
                 capability, risk = classify(path.stem, class_name, method)
+                next_method_start = (
+                    method_matches[method_index + 1].start()
+                    if method_index + 1 < len(method_matches)
+                    else len(source)
+                )
+                method_source = source[method_match.start():next_method_start]
+                has_action_wrapper = bool(ACTION_WRAPPER_RE.search(method_source))
+                has_contract = "acceptanceExpect" in method_source or "watchAcceptanceExpect" in method_source
+                is_performance = "measure(" in method_source or "XCTApplicationLaunchMetric" in method_source
+                is_capture = "Capture" in class_name or "Capture" in method or "capture" in method.lower()
+                if is_performance:
+                    flow_role = "performance"
+                elif is_capture and not has_action_wrapper:
+                    flow_role = "capture"
+                elif has_action_wrapper:
+                    flow_role = "acceptance"
+                else:
+                    flow_role = "functional"
                 flows.append({
                     "id": f"{class_name}/{method}",
                     "selector": f"{relative_root}/{path.relative_to(test_root).with_suffix('')}/{method}",
@@ -101,8 +119,13 @@ def inventory(root: Path) -> dict:
                     "launchArguments": launch_arguments,
                 "sourceIdentifiers": identifiers,
                 "evidenceTier": "simulator-ui",
-                "humanActionInstrumentation": "source-wrapped" if ACTION_WRAPPER_RE.search(source) else "missing",
-                "status": "not-run",
+                    "flowRole": flow_role,
+                    "humanActionInstrumentation": "method-wrapped" if has_action_wrapper else "missing",
+                    "acceptanceContract": (
+                        "declared" if has_contract else
+                        ("legacy-unverified" if has_action_wrapper else "not-applicable")
+                    ),
+                    "status": "not-run",
             })
 
     capabilities = {}
@@ -120,6 +143,7 @@ def inventory(root: Path) -> dict:
             "Inventory proves source coverage only; runtime status must come from an xcodebuild log.",
             "Simulator UI evidence does not prove physical Watch, HealthKit, or WidgetKit-face behavior.",
             "Human-like acceptance runs wrap user actions and capture a rendered screenshot plus accessibility tree after every action; flows without those wrappers remain functional-only.",
+            "Action wrappers without acceptanceExpect/watchAcceptanceExpect are legacy-unverified until their post-action contracts are migrated.",
         ],
     }
 
@@ -148,9 +172,9 @@ def main() -> int:
             "|---|---:|",
         ]
         lines.extend(f"| {name} | {count} |" for name, count in result["capabilities"].items())
-        lines.extend(["", "| Flow | Capability | Risk | Evidence |", "|---|---|---|---|"])
+        lines.extend(["", "| Flow | Role | Contract | Capability | Risk | Evidence |", "|---|---|---|---|---|---|"])
         lines.extend(
-            f"| `{flow['id']}` | {flow['capability']} | {flow['risk']} | {flow['evidenceTier']} |"
+            f"| `{flow['id']}` | {flow['flowRole']} | {flow['acceptanceContract']} | {flow['capability']} | {flow['risk']} | {flow['evidenceTier']} |"
             for flow in result["flows"]
         )
         args.markdown_out.write_text("\n".join(lines) + "\n", encoding="utf-8")

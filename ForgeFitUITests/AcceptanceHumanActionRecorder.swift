@@ -8,6 +8,14 @@ import XCTest
 final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
     static let shared = AcceptanceHumanActionRecorder()
 
+    private struct PendingExpectation {
+        let visibleIdentifiers: [String]
+        let visibleLabels: [String]
+        let phase: AcceptanceCheckpointPhase
+        let invariants: [String]
+        let oracles: [AcceptanceOracle]
+    }
+
     private final class Session {
         let scenarioID: String
         let runID: String
@@ -17,6 +25,9 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         var artifactFiles = Set<String>()
         var nextActionNumber = 1
         var previousScreenshotFile: String?
+        var pendingExpectation: PendingExpectation?
+        var failures: [AcceptanceFailureEvidence] = []
+        var lastCheckpointID: String?
 
         init(scenarioID: String, runID: String, rootURL: URL, app: XCUIApplication) {
             self.scenarioID = scenarioID
@@ -35,12 +46,7 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
     }
 
     private var isEnabled: Bool {
-        if ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_ACTIONS"] == "1" {
-            return true
-        }
-        let marker = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_ACTION_MARKER"]
-            ?? "/tmp/forgefit-acceptance/.capture-actions"
-        return FileManager.default.fileExists(atPath: marker)
+        AcceptanceRunConfiguration.actionCaptureEnabled
     }
 
     /// Register the app instance used by the current XCTest flow. `testName`
@@ -59,9 +65,7 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         }
 
         let runID = UUID().uuidString.lowercased()
-        let basePath = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_ARTIFACTS"]
-            ?? "/tmp/forgefit-acceptance"
-        let rootURL = URL(fileURLWithPath: basePath, isDirectory: true)
+        let rootURL = AcceptanceRunConfiguration.artifactRoot
             .appendingPathComponent("action-evidence", isDirectory: true)
             .appendingPathComponent(safePathComponent(scenarioID), isDirectory: true)
             .appendingPathComponent(runID, isDirectory: true)
@@ -84,6 +88,42 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
     func attach(_ app: XCUIApplication) {
         guard isEnabled, let currentScenarioID, let session = sessions[currentScenarioID] else { return }
         session.app = app
+    }
+
+    /// Declare the contract that the next wrapped action must satisfy. Keeping
+    /// this separate from the gesture makes the expected post-action state
+    /// explicit without hiding it inside a helper implementation.
+    func expect(
+        visibleIdentifiers: [String] = [],
+        visibleLabels: [String] = [],
+        phase: AcceptanceCheckpointPhase = .assertion,
+        invariants: [String] = [],
+        oracles: [AcceptanceOracle] = []
+    ) {
+        guard isEnabled, let currentScenarioID, let session = sessions[currentScenarioID] else { return }
+        session.pendingExpectation = PendingExpectation(
+            visibleIdentifiers: visibleIdentifiers,
+            visibleLabels: visibleLabels,
+            phase: phase,
+            invariants: invariants + oracles.map(\.id),
+            oracles: oracles
+        )
+    }
+
+    func recordFailure(
+        phase: AcceptanceCheckpointPhase,
+        message: String,
+        sourceFile: StaticString,
+        sourceLine: UInt
+    ) {
+        guard isEnabled, let currentScenarioID, let session = sessions[currentScenarioID] else { return }
+        session.failures.append(AcceptanceFailureEvidence(
+            phase: phase,
+            message: message,
+            checkpointID: session.lastCheckpointID,
+            sourceFile: String(describing: sourceFile),
+            sourceLine: sourceLine
+        ))
     }
 
     func perform(
@@ -113,21 +153,126 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         let targetIdentifier = target?.identifier ?? ""
         let targetLabel = target?.label ?? ""
         let targetFrame = target.map { String(describing: $0.frame) } ?? ""
+        let expectation = session.pendingExpectation ?? PendingExpectation(
+            visibleIdentifiers: [],
+            visibleLabels: [],
+            phase: .assertion,
+            invariants: [],
+            oracles: []
+        )
+        session.pendingExpectation = nil
+        let checkpointID = String(format: "action-%04d", actionNumber)
+        let targetApplication = session.app ?? app
+        let before = captureState(
+            session: session,
+            app: targetApplication,
+            checkpointID: checkpointID,
+            phase: "before"
+        )
 
         operation()
-        settleForRenderedState()
+        settleForRenderedState(app: session.app ?? app, action: action)
 
-        let checkpointID = String(format: "action-%04d", actionNumber)
-        let title = "After \(action): \(targetIdentifier.isEmpty ? targetLabel : targetIdentifier)"
-        let screenshotRelativePath = "screenshots/\(checkpointID)-after.png"
-        let treeRelativePath = "accessibility/\(checkpointID)-after.txt"
+        let after = captureState(
+            session: session,
+            app: session.app ?? app,
+            checkpointID: checkpointID,
+            phase: "after"
+        )
         var notes = [
             "targetIdentifier=\(targetIdentifier)",
             "targetLabel=\(targetLabel)",
             "targetFrameBefore=\(targetFrame)",
             "source=\(sourceFile):\(sourceLine)",
-            "previousScreenshot=\(session.previousScreenshotFile ?? "")"
+            "previousScreenshot=\(session.previousScreenshotFile ?? "")",
+            "contractDeclared=\(!expectation.visibleIdentifiers.isEmpty || !expectation.visibleLabels.isEmpty || !expectation.invariants.isEmpty || !expectation.oracles.isEmpty)",
+            "phase=\(expectation.phase.rawValue)",
+            "invariants=\(expectation.invariants.joined(separator: ","))"
         ]
+        notes.append(contentsOf: before.notes.map { "before_\($0)" })
+        notes.append(contentsOf: after.notes.map { "after_\($0)" })
+
+        let checkpoint = AcceptanceCheckpoint(
+            id: checkpointID,
+            title: "After \(action): \(targetIdentifier.isEmpty ? targetLabel : targetIdentifier)",
+            action: "Perform \(action) on \(targetIdentifier.isEmpty ? targetLabel : targetIdentifier)",
+            expectedVisibleIdentifiers: expectation.visibleIdentifiers,
+            expectedVisibleLabels: expectation.visibleLabels,
+            screenshotRequired: true,
+            phase: expectation.phase,
+            invariants: expectation.invariants
+        )
+        let observedIdentifiers = expectation.visibleIdentifiers.filter {
+            (session.app ?? app)?.descendants(matching: .any)[$0].firstMatch.exists ?? false
+        }
+        let observedLabels = expectation.visibleLabels.filter {
+            guard let app = session.app ?? app else { return false }
+            let predicate = NSPredicate(format: "label == %@", $0)
+            return app.descendants(matching: .any).matching(predicate).firstMatch.exists
+        }
+        let missingIdentifiers = expectation.visibleIdentifiers.filter {
+            !observedIdentifiers.contains($0)
+        }
+        let missingLabels = expectation.visibleLabels.filter {
+            !observedLabels.contains($0)
+        }
+        let oracleResults = expectation.oracles.map { $0.evaluate() }
+        let oracleFailed = oracleResults.contains { $0.outcome != .pass }
+        let contractDeclared = !expectation.visibleIdentifiers.isEmpty
+            || !expectation.visibleLabels.isEmpty
+            || !expectation.invariants.isEmpty
+            || !expectation.oracles.isEmpty
+        let artifactsComplete = before.screenshotFile != nil
+            && before.accessibilityTreeFile != nil
+            && after.screenshotFile != nil
+            && after.accessibilityTreeFile != nil
+        let outcome: AcceptanceOutcome
+        if !artifactsComplete {
+            outcome = .blocked
+            notes.append("evidenceIncomplete=true")
+        } else if !contractDeclared {
+            outcome = .unverified
+        } else if !missingIdentifiers.isEmpty || !missingLabels.isEmpty || oracleFailed {
+            outcome = expectation.phase == .setup ? .blocked : .fail
+        } else {
+            outcome = .pass
+        }
+
+        session.evidence.append(AcceptanceCheckpointEvidence(
+            scenarioID: session.scenarioID,
+            checkpoint: checkpoint,
+            outcome: outcome,
+            startedAt: startedAt,
+            finishedAt: Date(),
+            observedIdentifiers: observedIdentifiers,
+            observedLabels: observedLabels,
+            missingIdentifiers: missingIdentifiers,
+            missingLabels: missingLabels,
+            screenshotFile: after.screenshotFile,
+            accessibilityTreeFile: after.accessibilityTreeFile,
+            notes: notes,
+            beforeScreenshotFile: before.screenshotFile,
+            beforeAccessibilityTreeFile: before.accessibilityTreeFile,
+            oracleResults: oracleResults
+        ))
+        session.lastCheckpointID = checkpointID
+    }
+
+    private struct CapturedState {
+        let screenshotFile: String?
+        let accessibilityTreeFile: String?
+        let notes: [String]
+    }
+
+    private func captureState(
+        session: Session,
+        app: XCUIApplication?,
+        checkpointID: String,
+        phase: String
+    ) -> CapturedState {
+        let screenshotRelativePath = "screenshots/\(checkpointID)-\(phase).png"
+        let treeRelativePath = "accessibility/\(checkpointID)-\(phase).txt"
+        var notes: [String] = []
         var screenshotFile: String?
         var accessibilityTreeFile: String?
 
@@ -137,23 +282,19 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                 at: screenshotURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            // Asking a terminated application for a screenshot raises its own
-            // test failure, which turned every relaunch flow ("terminate, then
-            // verify from a cold store") into a harness failure at the exact
-            // point the evidence mattered. The screen still has something worth
-            // recording after a terminate, so fall back to it.
-            let target = session.app ?? app
-            let isRunning = target.map {
+            let isRunning = app.map {
                 $0.state == .runningForeground || $0.state == .runningBackground
             } ?? false
             let screenshot = isRunning
-                ? (target?.screenshot() ?? XCUIScreen.main.screenshot())
+                ? (app?.screenshot() ?? XCUIScreen.main.screenshot())
                 : XCUIScreen.main.screenshot()
             if !isRunning { notes.append("appState=notRunning") }
             try screenshot.pngRepresentation.write(to: screenshotURL, options: .atomic)
             screenshotFile = screenshotRelativePath
             session.artifactFiles.insert(screenshotRelativePath)
-            session.previousScreenshotFile = screenshotRelativePath
+            if phase == "after" {
+                session.previousScreenshotFile = screenshotRelativePath
+            }
         } catch {
             notes.append("screenshotError=\(error.localizedDescription)")
         }
@@ -164,12 +305,11 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                 at: treeURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let treeSource = session.app ?? app
-            let treeIsAvailable = treeSource.map {
+            let isRunning = app.map {
                 $0.state == .runningForeground || $0.state == .runningBackground
             } ?? false
-            let tree = treeIsAvailable
-                ? (treeSource?.debugDescription ?? "No registered application tree")
+            let tree = isRunning
+                ? (app?.debugDescription ?? "No registered application tree")
                 : "Application not running"
             try tree.write(to: treeURL, atomically: true, encoding: .utf8)
             accessibilityTreeFile = treeRelativePath
@@ -178,28 +318,11 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             notes.append("accessibilityTreeError=\(error.localizedDescription)")
         }
 
-        let checkpoint = AcceptanceCheckpoint(
-            id: checkpointID,
-            title: title,
-            action: "Perform \(action) on \(targetIdentifier.isEmpty ? targetLabel : targetIdentifier)",
-            expectedVisibleIdentifiers: [],
-            expectedVisibleLabels: [],
-            screenshotRequired: true
-        )
-        session.evidence.append(AcceptanceCheckpointEvidence(
-            scenarioID: session.scenarioID,
-            checkpoint: checkpoint,
-            outcome: .pass,
-            startedAt: startedAt,
-            finishedAt: Date(),
-            observedIdentifiers: [],
-            observedLabels: [],
-            missingIdentifiers: [],
-            missingLabels: [],
+        return CapturedState(
             screenshotFile: screenshotFile,
             accessibilityTreeFile: accessibilityTreeFile,
             notes: notes
-        ))
+        )
     }
 
     func testCaseDidFinish(_ testCase: XCTestCase) {
@@ -212,6 +335,24 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             // single-session fallback keeps artifacts attached to the flow.
             finish(testIdentifier: onlyIdentifier, succeeded: testCase.testRun?.hasSucceeded ?? true)
         }
+    }
+
+    func testCase(
+        _ testCase: XCTestCase,
+        didFailWithDescription description: String,
+        inFile filePath: String?,
+        atLine lineNumber: Int
+    ) {
+        guard isEnabled else { return }
+        let testIdentifier = normalizeTestIdentifier(testCase.name, sourceFile: "")
+        let session = sessions[testIdentifier] ?? (sessions.count == 1 ? sessions.values.first : nil)
+        session?.failures.append(AcceptanceFailureEvidence(
+            phase: .assertion,
+            message: description,
+            checkpointID: session?.lastCheckpointID,
+            sourceFile: filePath ?? "",
+            sourceLine: UInt(max(lineNumber, 0))
+        ))
     }
 
     private func installObserverIfNeeded() {
@@ -234,8 +375,21 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             checkpoints: session.evidence.map(\.checkpoint)
         )
         let artifactFiles = Array(session.artifactFiles).sorted() + ["manifest.json", "judge-request.json"]
+        let failedCheckpointCount = session.evidence.filter { $0.outcome == .fail }.count
+        let setupBlocked = session.failures.contains { $0.phase == .setup }
+            || session.evidence.contains { $0.outcome == .blocked }
+        let assertionFailed = session.failures.contains { $0.phase == .assertion }
+            || session.evidence.contains { $0.outcome == .fail }
+        let unverifiedCheckpointCount = session.evidence.filter { $0.outcome == .unverified }.count
+        let outcome: AcceptanceOutcome = assertionFailed || (!succeeded && !setupBlocked)
+            ? .fail
+            : setupBlocked
+                ? .blocked
+                : unverifiedCheckpointCount > 0
+                    ? .unverified
+                    : .pass
         let manifest = AcceptanceRunManifest(
-            schemaVersion: 2,
+            schemaVersion: 3,
             runID: session.runID,
             startedAt: session.evidence.first?.startedAt ?? Date(),
             finishedAt: Date(),
@@ -248,19 +402,24 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                 timeZone: TimeZone.current.identifier,
                 appearance: "system",
                 dynamicType: "default",
-                gitCommit: ProcessInfo.processInfo.environment["GIT_COMMIT"]
+                gitCommit: AcceptanceRunConfiguration.gitCommit,
+                gitDirty: AcceptanceRunConfiguration.gitDirty
             ),
-            outcome: succeeded ? .pass : .fail,
+            outcome: outcome,
             checkpointCount: session.evidence.count,
-            failedCheckpointCount: succeeded ? 0 : 1,
-            artifactFiles: artifactFiles
+            failedCheckpointCount: failedCheckpointCount + session.failures.filter { $0.phase == .assertion && $0.checkpointID == nil }.count,
+            artifactFiles: artifactFiles,
+            failures: session.failures,
+            unverifiedCheckpointCount: unverifiedCheckpointCount,
+            rubricID: AcceptanceRunConfiguration.rubricID,
+            rubricVersion: AcceptanceRunConfiguration.rubricVersion
         )
 
         let judgeRequest = AcceptanceJudgeRequest(
-            schemaVersion: 2,
+            schemaVersion: 3,
             scenario: scenario,
             checkpointEvidence: session.evidence,
-            judgeInstructions: "Each checkpoint is the rendered screen immediately after one user-like action. Inspect every checkpoint screenshot and accessibility tree in sequence. Do not review only a representative subset. Compare the resulting state with the action and look for visual defects, clipping, duplicated rows, stale labels, missing affordances, failed transitions, touch-target concerns, loading/error states, and anything a human user would find confusing or suspicious. Report the first divergent checkpoint and use an empty findings array only when the complete sequence is clean.",
+            judgeInstructions: "Use the checked-in forgefit-ai-acceptance rubric. Review every checkpoint in order, inspect before/after evidence, honor setup versus assertion phases, run the automated tree-lint findings, and report only observable issues. Return one JSON object matching responseSchema.",
             responseSchema: AcceptanceJudgeResponseSchema(
                 outcome: "pass | fail | suspect | blocked",
                 findings: [AcceptanceJudgeFinding(
@@ -273,7 +432,10 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
                     checkpointID: "action checkpoint id",
                     evidencePaths: ["relative/path/to/evidence"]
                 )]
-            )
+            ),
+            rubricID: AcceptanceRunConfiguration.rubricID,
+            rubricVersion: AcceptanceRunConfiguration.rubricVersion,
+            failures: session.failures
         )
 
         let encoder = JSONEncoder()
@@ -293,12 +455,36 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         }
     }
 
-    private func settleForRenderedState() {
+    private func settleForRenderedState(app: XCUIApplication?, action: String) {
         let value = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_SETTLE_SECONDS"]
             .flatMap(TimeInterval.init)
             ?? 0.12
-        guard value > 0 else { return }
-        Thread.sleep(forTimeInterval: min(value, 1.0))
+        guard action != "terminate", let app else {
+            if value > 0 { Thread.sleep(forTimeInterval: min(value, 1.0)) }
+            return
+        }
+        let idleTimeout = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_IDLE_TIMEOUT"]
+            .flatMap(TimeInterval.init)
+            ?? 2.0
+        guard app.wait(for: .runningForeground, timeout: min(idleTimeout, 5.0)) else {
+            if value > 0 { Thread.sleep(forTimeInterval: min(value, 1.0)) }
+            return
+        }
+        let deadline = Date().addingTimeInterval(max(0, idleTimeout))
+        var stableSamples = 0
+        while Date() < deadline {
+            let hasVisibleActivity = app.activityIndicators.allElementsBoundByIndex.contains {
+                $0.exists && $0.isHittable
+            }
+            if hasVisibleActivity {
+                stableSamples = 0
+            } else {
+                stableSamples += 1
+                if stableSamples >= 2 { break }
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        if value > 0 { Thread.sleep(forTimeInterval: min(value, 1.0)) }
     }
 
     private func normalizeTestIdentifier(_ testName: String, sourceFile: String) -> String {
@@ -335,6 +521,87 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         .joined()
         .replacingOccurrences(of: "/", with: "--")
         .replacingOccurrences(of: " ", with: "-")
+    }
+}
+
+/// Declare the expected state for the next wrapped user action.
+func acceptanceExpect(
+    _ visibleIdentifiers: [String] = [],
+    visibleLabels: [String] = [],
+    phase: AcceptanceCheckpointPhase = .assertion,
+    invariants: [String] = [],
+    oracles: [AcceptanceOracle] = []
+) {
+    AcceptanceHumanActionRecorder.shared.expect(
+        visibleIdentifiers: visibleIdentifiers,
+        visibleLabels: visibleLabels,
+        phase: phase,
+        invariants: invariants,
+        oracles: oracles
+    )
+}
+
+/// Setup failures are recorded as blocked evidence and stop the flow without
+/// presenting the fixture failure as a product defect.
+@discardableResult
+func acceptanceRequire(
+    _ condition: @autoclosure () -> Bool,
+    _ message: @autoclosure () -> String,
+    file: StaticString = #fileID,
+    line: UInt = #line
+) throws -> Bool {
+    guard condition() else {
+        let text = message()
+        AcceptanceHumanActionRecorder.shared.recordFailure(
+            phase: .setup,
+            message: text,
+            sourceFile: file,
+            sourceLine: line
+        )
+        throw XCTSkip("Acceptance setup blocked: \(text)")
+    }
+    return true
+}
+
+/// Product assertions keep their first failed checkpoint in the evidence
+/// manifest instead of reducing the failure to a test-level boolean.
+@discardableResult
+func acceptanceAssert(
+    _ condition: @autoclosure () -> Bool,
+    _ message: @autoclosure () -> String,
+    file: StaticString = #fileID,
+    line: UInt = #line
+) -> Bool {
+    guard condition() else {
+        let text = message()
+        AcceptanceHumanActionRecorder.shared.recordFailure(
+            phase: .assertion,
+            message: text,
+            sourceFile: file,
+            sourceLine: line
+        )
+        XCTFail(text, file: file, line: line)
+        return false
+    }
+    return true
+}
+
+func acceptanceSetup(
+    _ name: String,
+    file: StaticString = #fileID,
+    line: UInt = #line,
+    operation: () throws -> Void
+) throws {
+    do {
+        try operation()
+    } catch {
+        AcceptanceHumanActionRecorder.shared.recordFailure(
+            phase: .setup,
+            message: "\(name): \(error.localizedDescription)",
+            sourceFile: file,
+            sourceLine: line
+        )
+        throw error
     }
 }
 
@@ -431,6 +698,33 @@ extension XCUIElement {
         }
     }
 
+    func acceptanceClearAndType(_ text: String, file: StaticString = #fileID, line: UInt = #line) {
+        AcceptanceHumanActionRecorder.shared.perform(
+            action: "clearAndType",
+            target: self,
+            sourceFile: file,
+            sourceLine: line
+        ) {
+            self.tap()
+            if let currentValue = self.value as? String, !currentValue.isEmpty {
+                self.typeText(String(repeating: "\u{8}", count: currentValue.count))
+            }
+            self.typeText(text)
+        }
+    }
+
+    func acceptanceTapScoped(
+        in container: XCUIElement,
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) {
+        let identifier = self.identifier
+        let scoped = !identifier.isEmpty
+            ? container.descendants(matching: .any)[identifier].firstMatch
+            : container.descendants(matching: .any)[self.label].firstMatch
+        scoped.acceptanceTap(file: file, line: line)
+    }
+
     func acceptancePress(forDuration duration: TimeInterval, file: StaticString = #fileID, line: UInt = #line) {
         AcceptanceHumanActionRecorder.shared.perform(
             action: "press",
@@ -509,6 +803,51 @@ extension XCUICoordinate {
 }
 
 extension XCUIApplication {
+    func acceptanceExpect(
+        _ visibleIdentifiers: [String] = [],
+        visibleLabels: [String] = [],
+        phase: AcceptanceCheckpointPhase = .assertion,
+        invariants: [String] = [],
+        oracles: [AcceptanceOracle] = []
+    ) {
+        AcceptanceHumanActionRecorder.shared.expect(
+            visibleIdentifiers: visibleIdentifiers,
+            visibleLabels: visibleLabels,
+            phase: phase,
+            invariants: invariants,
+            oracles: oracles
+        )
+    }
+
+    func acceptanceElement(_ identifier: String, in container: XCUIElement) -> XCUIElement {
+        container.descendants(matching: .any)[identifier].firstMatch
+    }
+
+    func acceptanceButton(_ identifier: String, in container: XCUIElement) -> XCUIElement {
+        container.buttons[identifier].firstMatch
+    }
+
+    @discardableResult
+    func acceptanceWaitForIdle(timeout: TimeInterval = 15) -> Bool {
+        let foregroundWait = min(max(timeout, 0), 5)
+        guard wait(for: .runningForeground, timeout: foregroundWait) else { return false }
+        let deadline = Date().addingTimeInterval(max(0, timeout - foregroundWait))
+        var stableSamples = 0
+        while Date() < deadline {
+            let hasVisibleActivity = activityIndicators.allElementsBoundByIndex.contains {
+                $0.exists && $0.isHittable
+            }
+            if hasVisibleActivity {
+                stableSamples = 0
+            } else {
+                stableSamples += 1
+                if stableSamples >= 2 { return true }
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        return false
+    }
+
     func acceptanceLaunch(file: StaticString = #fileID, line: UInt = #line) {
         AcceptanceHumanActionRecorder.shared.attach(self)
         AcceptanceHumanActionRecorder.shared.perform(

@@ -6,6 +6,12 @@ reviewer receives the saved screenshot, accessibility tree, scenario contract,
 and observed state for each checkpoint. This makes a run replayable while
 keeping subjective visual and experience review explicit.
 
+The harness is fail-closed about evidence, not merely test exit codes. A green
+XCTest result with missing action evidence, an undeclared action contract, an
+unsupported schema, or a failed evidence gate is not an acceptance approval.
+Legacy flows that have not yet declared expectations are reported as
+`unverified` until they are migrated.
+
 Current triage from the latest run is tracked in
 [`ai-acceptance-fix-list-2026-08-22.md`](ai-acceptance-fix-list-2026-08-22.md).
 
@@ -15,8 +21,15 @@ Every acceptance run must include a second, independent agent review of the
 ordered action evidence. The primary agent still performs the deterministic
 rendered-UI replay and owns the final synthesis:
 
-- Codex must spawn a Luna agent for the independent acceptance review.
-- Claude must spawn a Sonnet agent for the independent acceptance review.
+- Model names are exact selections, not role labels. If a task requests Luna,
+  Terra, or Sol, spawn the corresponding catalog model (`gpt-5.6-luna`,
+  `gpt-5.6-terra`, or `gpt-5.6-sol`) and verify the selected ID with
+  `codex debug models --bundled`; writing “you are Luna”, “you are Terra”, or
+  “you are Sol” in a prompt while using another model does not satisfy this
+  gate. For this acceptance workflow, Codex must spawn `gpt-5.6-luna`.
+- Claude must spawn a separate subagent using an explicitly selected Sonnet
+  model. Record the provider/model ID in the review notes; naming the agent
+  “Sonnet” in the prompt while using another model does not satisfy this gate.
 
 Give the reviewer the run's scenario contracts, screenshots, accessibility
 trees, and observed functional results. Ask it to inspect every checkpoint in
@@ -24,6 +37,10 @@ order and report functional, visual, accessibility, performance, and
 experience concerns with evidence paths. Keep the worker bounded to review and
 findings; the primary agent integrates changes, reruns validation, and makes
 the release decision.
+
+The primary Codex agent remains responsible for the full replay and final
+review. The Luna subagent is an independent second opinion, not a replacement
+for running the app or inspecting the saved evidence.
 
 ## Coverage model
 
@@ -39,6 +56,10 @@ make acceptance-inventory
 The inventory currently includes the iPhone UI suite and the Watch UI suite.
 Its `limitations` field is intentional: source coverage, a simulator pass, a
 rendered screenshot, and physical-device behavior are separate evidence states.
+Each method is also classified as `acceptance`, `functional`, `performance`,
+or `capture`, and action-wrapped methods are marked `declared` or
+`legacy-unverified` depending on whether they call `acceptanceExpect` or
+`watchAcceptanceExpect`.
 
 The companion production-surface inventory scans the shipping Swift targets
 for view declarations, navigation/presentation seams, route cases, and
@@ -65,18 +86,42 @@ The normal acceptance sequence is:
 
 ## Human-like replay contract
 
-The acceptance runner now records the interaction sequence, not just a few
+The acceptance runner records the interaction sequence, not just a few
 milestone screenshots. When the runner creates its temporary
 `/tmp/forgefit-acceptance/.capture-actions` marker, the iPhone and Watch UI
 test targets wrap user-facing launches, taps, swipes, text entry, presses, and
-drags. After each wrapped action the recorder waits briefly for the rendered
-state to settle, then saves:
+drags. After each wrapped action the recorder waits for the app to return to a
+foreground, non-busy state and saves:
 
 - a full-viewport PNG of exactly what the agent could see;
 - the complete XCUITest accessibility tree at that moment;
 - the target identifier, label, frame, source location, and previous
   checkpoint path;
 - a machine-readable checkpoint in the scenario's `judge-request.json`.
+
+Every wrapped action must have a one-shot expectation declared immediately
+before it:
+
+```swift
+acceptanceExpect(
+    ["save-routine-button", "routine-detail"],
+    visibleLabels: ["Push Day"]
+)
+saveButton.acceptanceTap()
+```
+
+Use `phase: .setup` for fixture/readiness work, `phase: .transition` for an
+intermediate animation or navigation state, and `phase: .assertion` for the
+product behavior being tested. Use `acceptanceRequire` for setup gates and
+`acceptanceAssert` for product claims. Setup failures become `blocked`; an
+assertion failure becomes `fail`; an action without a declared contract is
+`unverified`, never an automatic pass.
+
+The same vocabulary is available on Watch as `watchAcceptanceExpect` and the
+`watchAcceptance...` action wrappers. For persistent or arithmetic behavior,
+pass typed `AcceptanceOracle` checks; their pass/fail result is saved beside
+the screenshots instead of asking a visual reviewer to infer persistence from
+pixels.
 
 The AI judge must inspect those checkpoints in order, including intermediate
 screens, and may not review only the final state or a representative sample.
@@ -86,13 +131,22 @@ looks present but has an unusable target. The action sequence is evidence of
 the seeded simulator state; it is not a substitute for physical-device,
 HealthKit, WatchConnectivity, or WidgetKit-face evidence.
 
-Action artifacts are stored under
-`<run-root>/agent-evidence/action-evidence/<flow>/<run-id>/` by the full
-runners. During focused iteration they remain under
-`/tmp/forgefit-acceptance/action-evidence/`. Set
+Action artifacts from a full run are stored under
+`artifacts/acceptance/<git-commit>/<run-id>/agent-evidence/action-evidence/<flow>/<run-id>/`.
+The directory is ignored by Git because screenshots, accessibility trees, and
+result bundles are generated evidence, while the run records the commit hash
+and dirty-worktree bit in its manifest. Focused runs may set
+`FORGEFIT_ACCEPTANCE_ROOT` to a temporary directory. Set
 `FORGEFIT_ACCEPTANCE_SETTLE_SECONDS=0` only when diagnosing a timing issue;
 the default short settle is intentional so the screenshot represents the
 post-action UI rather than the first animation frame.
+
+`scripts/acceptance_tree_lint.py` runs deterministic checks over every saved
+tree: empty labels on interactive controls, sub-44-point frames, duplicate
+identifiers, and likely truncation. The AI reviewer handles the remaining
+visual and experience judgment. Before/after pairs are the default evidence;
+video is intentionally deferred to a small motion-focused pilot so the full
+matrix does not double storage and timing pressure on every action.
 
 A failed assertion is reviewed against the last post-action screenshot and
 tree before it is called a product defect. If the screenshot shows an empty,
@@ -121,7 +175,9 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
   make test-acceptance
 ```
 
-Evidence is written under `/tmp/forgefit-acceptance/<scenario>/<run-id>/`.
+This uses the same persistent runner as the full matrix, focused on the
+representative tour. Evidence is written under
+`artifacts/acceptance/<git-commit>/full-run.<id>/`.
 The directory contains:
 
 - `manifest.json` — environment, outcome, and artifact index.
@@ -129,10 +185,10 @@ The directory contains:
 - `screenshots/*.png` — rendered checkpoints.
 - `accessibility/*.txt` — XCUITest accessibility trees.
 
-To summarize a run:
+To summarize a run, read the generated report:
 
 ```bash
-make acceptance-report RUN=/tmp/forgefit-acceptance/representative-app-tour/<run-id>
+cat artifacts/acceptance/<git-commit>/full-run.<id>/report.md
 ```
 
 Use `--json` to print the judge request. Sending that request to a model is a
@@ -163,9 +219,9 @@ DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
   ./scripts/run_acceptance_watch.sh     # Watch, all Watch UI tests
 ```
 
-Each full run prints its `RUN_ROOT`, `REPORT`, `ATTACHMENTS`,
-`AGENT_EVIDENCE`, `BOUNDARY_AUDIT`, `SURFACE_INVENTORY`, and `JUDGE_REQUEST`
-paths. The report distinguishes `passed`, `failed`, `skipped`,
+Each full run prints its `RUN_ROOT`, `COMMIT`, `DIRTY`, `REPORT`, `ATTACHMENTS`,
+`AGENT_EVIDENCE`, `BOUNDARY_AUDIT`, `SURFACE_INVENTORY`, `EVIDENCE_GATE`, and
+`JUDGE_REQUEST` paths. The report distinguishes `passed`, `failed`, `skipped`,
 and `not-run`; it also reports how many flows have exported screenshots versus
 functional-only evidence. Runner-created DerivedData is removed on exit to
 keep repeated matrices from exhausting disk space; set
@@ -181,11 +237,16 @@ seconds; tune them for a slower environment with
 `FORGEFIT_MAX_TEST_EXECUTION_ALLOWANCE`, or set
 `FORGEFIT_TEST_TIMEOUTS_ENABLED=NO` only when investigating the timeout itself.
 
-The XCTest evidence writer and action recorder use a stable fallback directory because
-`xcodebuild` does not consistently forward arbitrary shell environment
-variables into UI-test runners. The runner snapshots the pre-run manifests and
-copies only manifests created by that run into its own `AGENT_EVIDENCE` folder,
-so repeated runs do not mix evidence.
+The runner writes a temporary marker because `xcodebuild` does not consistently
+forward arbitrary shell environment variables into XCTest. The marker carries
+the artifact root, commit, dirty state, rubric, and evidence requirement; it is
+restored or removed on exit so repeated runs do not mix evidence.
+
+Set `FORGEFIT_ACCEPTANCE_REQUIRE_CONTRACTS=1` for the strict release gate.
+Until every legacy flow has migrated to `acceptanceExpect` or
+`watchAcceptanceExpect`, the default staged gate still fails on missing
+artifacts but reports unverified contracts explicitly. No mode treats an
+unverified checkpoint as a pass.
 
 ## Running an AI judge
 
@@ -197,15 +258,16 @@ agent's single response object to a file and merge it into the report:
 
 ```bash
 python3 scripts/acceptance_report.py \
-  --xcode-log /tmp/forgefit-acceptance/full-run.<id>/xcodebuild.log \
-  --inventory /tmp/forgefit-acceptance/full-run.<id>/inventory.json \
-  --attachments /tmp/forgefit-acceptance/full-run.<id>/attachments \
-  --evidence-root /tmp/forgefit-acceptance/full-run.<id>/agent-evidence \
-  --boundary-audit /tmp/forgefit-acceptance/full-run.<id>/boundary-audit.json \
-  --surface-inventory /tmp/forgefit-acceptance/full-run.<id>/surface-inventory.json \
+  --xcode-log artifacts/acceptance/<git-commit>/full-run.<id>/xcodebuild.log \
+  --inventory artifacts/acceptance/<git-commit>/full-run.<id>/inventory.json \
+  --attachments artifacts/acceptance/<git-commit>/full-run.<id>/attachments \
+  --evidence-root artifacts/acceptance/<git-commit>/full-run.<id>/agent-evidence \
+  --boundary-audit artifacts/acceptance/<git-commit>/full-run.<id>/boundary-audit.json \
+  --surface-inventory artifacts/acceptance/<git-commit>/full-run.<id>/surface-inventory.json \
+  --evidence-gate artifacts/acceptance/<git-commit>/full-run.<id>/evidence-gate.json \
   --judge-response /path/to/response.json \
   --platform ios \
-  --output /tmp/forgefit-acceptance/full-run.<id>/report-with-judge.md
+  --output artifacts/acceptance/<git-commit>/full-run.<id>/report-with-judge.md
 ```
 
 `acceptance_report.py` validates the outcome, finding categories, checkpoint
@@ -213,12 +275,21 @@ IDs, confidence range, and evidence paths. Invalid responses remain visible as
 validation errors; they are never silently treated as a pass. For a single
 scenario run, use `make acceptance-report RUN=... RESPONSE=...`.
 
+`scripts/acceptance_rubric.json` is the checked-in rubric and response schema.
+`scripts/acceptance_judge.py` injects it into every per-scenario request,
+audits before/after artifacts and accessibility trees, and runs the automated
+tree lint. `scripts/acceptance_evidence_gate.py` then fails the runner when no
+action evidence exists, artifacts are incomplete, requests are out of order,
+or the strict contract mode finds an uncontracted action. The report always
+shows the gate result, even when the XCTest process itself exits successfully.
+
 ## AI judge contract
 
 For each deterministic scenario, the judge input is `judge-request.json`. It
 contains the scenario purpose, the action and expected state for every
 checkpoint, observed identifiers and labels, the screenshot path, and the
-accessibility tree path. The judge should inspect all checkpoints and return
+accessibility tree path. Action checkpoints also include before/after paths,
+oracle results, and automated tree-lint findings. The judge should inspect all checkpoints and return
 the schema included in that file:
 
 ```json
@@ -254,6 +325,21 @@ Keep one scenario independent per launch. Seed data through existing DEBUG
 fixtures and assert persistence from a fresh context when the journey changes
 stored data. Simulator evidence does not establish physical iPhone, Watch,
 HealthKit, or WidgetKit-face behavior.
+
+Whenever a new user flow, control, navigation path, gesture, or interaction
+behavior is added or changed, add or update its deterministic acceptance test
+in the same change. Wrap every user action, declare the expected post-action
+state before the wrapper, and use the hardened helpers where applicable:
+`acceptanceClearAndType`, `acceptanceTapScoped(in:)`, and
+`acceptanceWaitForIdle()`. Queries should be scoped to the sheet/card/container
+that owns the control; a bare label is not a stable contract when multiple
+surfaces can contain it.
+
+Do not classify a fixture lookup as a product assertion. Put seed/readiness
+checks in `acceptanceRequire` or an explicit `.setup` expectation, and put the
+behavior under test in `acceptanceAssert` or an `.assertion` expectation. This
+keeps missing demo data, permissions, and simulator timing as blocked evidence
+instead of false product failures.
 
 When a flow changes persistent data, the contract should include a relaunch or
 fresh-context checkpoint. When it crosses devices, record each boundary

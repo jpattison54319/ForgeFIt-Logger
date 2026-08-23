@@ -84,14 +84,20 @@ watch destinations often fail to resolve.
   the acceptance inventory. Run the focused replay and record any functional,
   visual, accessibility, performance, or experience concern before handoff;
   do not treat a unit test or source inspection alone as acceptance coverage.
-- Acceptance reviews must include an independent subagent pass. When Codex is
-  the orchestrator, it must spawn a Luna agent for the independent review;
-  when Claude is the orchestrator, it must spawn a Sonnet agent. The subagent
-  reviews the deterministic action evidence for functional, visual,
-  accessibility, performance, and experience concerns and returns findings to
-  the primary agent. The primary agent retains responsibility for integration,
-  evidence synthesis, fixes, and release decisions; a subagent review never
-  replaces the end-to-end replay.
+- Acceptance reviews must include an independent subagent pass. Model names are
+  exact selections, not role labels: if a task requests Luna, Terra, or Sol,
+  spawn the corresponding catalog model (`gpt-5.6-luna`, `gpt-5.6-terra`, or
+  `gpt-5.6-sol`) and verify the selected ID with `codex debug models --bundled`.
+  Writing “you are Luna”, “you are Terra”, or “you are Sol” in a prompt while
+  invoking another model does not satisfy the request. When Codex is the
+  orchestrator for acceptance review, it must spawn the exact `gpt-5.6-luna`
+  model; when Claude is the orchestrator, it must explicitly select a Sonnet
+  model as a subagent and record its model ID. The subagent reviews the
+  deterministic action evidence for functional, visual, accessibility,
+  performance, and experience concerns and returns findings to the primary
+  agent. The primary agent retains responsibility for integration, evidence
+  synthesis, fixes, and release decisions; a subagent review never replaces
+  the end-to-end replay.
 - Comment style: doc comments state design intent and invariants, never
   narration of what the next line does.
 

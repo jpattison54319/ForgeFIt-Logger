@@ -37,7 +37,7 @@ test-app:
 	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -only-testing:ForgeFitTests
 
 test-acceptance:
-	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -only-testing:ForgeFitUITests/AcceptanceSmokeUITests/testRepresentativeAppTour -parallel-testing-enabled NO
+	FORGEFIT_ACCEPTANCE_ONLY_TESTING=ForgeFitUITests/AcceptanceSmokeUITests/testRepresentativeAppTour ./scripts/run_acceptance_all.sh
 
 test-acceptance-watch:
 	./scripts/run_acceptance_watch.sh

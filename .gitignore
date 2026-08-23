@@ -14,3 +14,7 @@ xcuserdata/
 # Python bytecode from scripts/
 __pycache__/
 *.pyc
+
+# Acceptance screenshots, accessibility trees, and result bundles are local
+# release evidence keyed by commit; the generated binaries are not source.
+artifacts/acceptance/

@@ -5,6 +5,40 @@ enum AcceptanceOutcome: String, Codable, Sendable {
     case fail
     case suspect
     case blocked
+    case unverified
+}
+
+enum AcceptanceCheckpointPhase: String, Codable, Sendable {
+    case setup
+    case transition
+    case assertion
+}
+
+struct AcceptanceFailureEvidence: Codable, Sendable {
+    let phase: AcceptanceCheckpointPhase
+    let message: String
+    let checkpointID: String?
+    let sourceFile: String
+    let sourceLine: UInt
+}
+
+struct AcceptanceOracleResult: Codable, Sendable {
+    let id: String
+    let outcome: AcceptanceOutcome
+    let message: String
+}
+
+/// A typed, deterministic check that runs after the user action. The result
+/// is persisted beside the visual evidence so an AI reviewer never has to
+/// infer a persistence or arithmetic invariant from a screenshot alone.
+struct AcceptanceOracle {
+    let id: String
+    let evaluate: () -> AcceptanceOracleResult
+
+    init(id: String, evaluate: @escaping () -> AcceptanceOracleResult) {
+        self.id = id
+        self.evaluate = evaluate
+    }
 }
 
 struct AcceptanceRunManifest: Codable, Sendable {
@@ -18,6 +52,42 @@ struct AcceptanceRunManifest: Codable, Sendable {
     let checkpointCount: Int
     let failedCheckpointCount: Int
     let artifactFiles: [String]
+    let failures: [AcceptanceFailureEvidence]
+    let unverifiedCheckpointCount: Int
+    let rubricID: String
+    let rubricVersion: Int
+
+    init(
+        schemaVersion: Int,
+        runID: String,
+        startedAt: Date,
+        finishedAt: Date,
+        scenario: AcceptanceScenario,
+        environment: AcceptanceEnvironment,
+        outcome: AcceptanceOutcome,
+        checkpointCount: Int,
+        failedCheckpointCount: Int,
+        artifactFiles: [String],
+        failures: [AcceptanceFailureEvidence] = [],
+        unverifiedCheckpointCount: Int = 0,
+        rubricID: String = "forgefit-ai-acceptance",
+        rubricVersion: Int = 1
+    ) {
+        self.schemaVersion = schemaVersion
+        self.runID = runID
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.scenario = scenario
+        self.environment = environment
+        self.outcome = outcome
+        self.checkpointCount = checkpointCount
+        self.failedCheckpointCount = failedCheckpointCount
+        self.artifactFiles = artifactFiles
+        self.failures = failures
+        self.unverifiedCheckpointCount = unverifiedCheckpointCount
+        self.rubricID = rubricID
+        self.rubricVersion = rubricVersion
+    }
 }
 
 struct AcceptanceEnvironment: Codable, Sendable {
@@ -29,6 +99,95 @@ struct AcceptanceEnvironment: Codable, Sendable {
     let appearance: String
     let dynamicType: String
     let gitCommit: String?
+    let gitDirty: Bool
+
+    init(
+        platform: String,
+        device: String,
+        operatingSystem: String,
+        locale: String,
+        timeZone: String,
+        appearance: String,
+        dynamicType: String,
+        gitCommit: String?,
+        gitDirty: Bool = false
+    ) {
+        self.platform = platform
+        self.device = device
+        self.operatingSystem = operatingSystem
+        self.locale = locale
+        self.timeZone = timeZone
+        self.appearance = appearance
+        self.dynamicType = dynamicType
+        self.gitCommit = gitCommit
+        self.gitDirty = gitDirty
+    }
+}
+
+struct AcceptanceCheckpoint: Codable, Sendable {
+    let id: String
+    let title: String
+    let action: String
+    let expectedVisibleIdentifiers: [String]
+    let expectedVisibleLabels: [String]
+    let screenshotRequired: Bool
+    let phase: AcceptanceCheckpointPhase
+    let invariants: [String]
+
+    init(
+        id: String,
+        title: String,
+        action: String,
+        expectedVisibleIdentifiers: [String],
+        expectedVisibleLabels: [String],
+        screenshotRequired: Bool,
+        phase: AcceptanceCheckpointPhase = .assertion,
+        invariants: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.action = action
+        self.expectedVisibleIdentifiers = expectedVisibleIdentifiers
+        self.expectedVisibleLabels = expectedVisibleLabels
+        self.screenshotRequired = screenshotRequired
+        self.phase = phase
+        self.invariants = invariants
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case action
+        case expectedVisibleIdentifiers
+        case expectedVisibleLabels
+        case screenshotRequired
+        case phase
+        case invariants
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        action = try container.decode(String.self, forKey: .action)
+        expectedVisibleIdentifiers = try container.decode([String].self, forKey: .expectedVisibleIdentifiers)
+        expectedVisibleLabels = try container.decode([String].self, forKey: .expectedVisibleLabels)
+        screenshotRequired = try container.decode(Bool.self, forKey: .screenshotRequired)
+        phase = try container.decodeIfPresent(AcceptanceCheckpointPhase.self, forKey: .phase) ?? .assertion
+        invariants = try container.decodeIfPresent([String].self, forKey: .invariants) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(action, forKey: .action)
+        try container.encode(expectedVisibleIdentifiers, forKey: .expectedVisibleIdentifiers)
+        try container.encode(expectedVisibleLabels, forKey: .expectedVisibleLabels)
+        try container.encode(screenshotRequired, forKey: .screenshotRequired)
+        try container.encode(phase, forKey: .phase)
+        try container.encode(invariants, forKey: .invariants)
+    }
 }
 
 struct AcceptanceCheckpointEvidence: Codable, Sendable {
@@ -44,6 +203,43 @@ struct AcceptanceCheckpointEvidence: Codable, Sendable {
     let screenshotFile: String?
     let accessibilityTreeFile: String?
     let notes: [String]
+    let beforeScreenshotFile: String?
+    let beforeAccessibilityTreeFile: String?
+    let oracleResults: [AcceptanceOracleResult]
+
+    init(
+        scenarioID: String,
+        checkpoint: AcceptanceCheckpoint,
+        outcome: AcceptanceOutcome,
+        startedAt: Date,
+        finishedAt: Date,
+        observedIdentifiers: [String],
+        observedLabels: [String],
+        missingIdentifiers: [String],
+        missingLabels: [String],
+        screenshotFile: String?,
+        accessibilityTreeFile: String?,
+        notes: [String],
+        beforeScreenshotFile: String? = nil,
+        beforeAccessibilityTreeFile: String? = nil,
+        oracleResults: [AcceptanceOracleResult] = []
+    ) {
+        self.scenarioID = scenarioID
+        self.checkpoint = checkpoint
+        self.outcome = outcome
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.observedIdentifiers = observedIdentifiers
+        self.observedLabels = observedLabels
+        self.missingIdentifiers = missingIdentifiers
+        self.missingLabels = missingLabels
+        self.screenshotFile = screenshotFile
+        self.accessibilityTreeFile = accessibilityTreeFile
+        self.notes = notes
+        self.beforeScreenshotFile = beforeScreenshotFile
+        self.beforeAccessibilityTreeFile = beforeAccessibilityTreeFile
+        self.oracleResults = oracleResults
+    }
 }
 
 struct AcceptanceJudgeRequest: Codable, Sendable {
@@ -52,6 +248,29 @@ struct AcceptanceJudgeRequest: Codable, Sendable {
     let checkpointEvidence: [AcceptanceCheckpointEvidence]
     let judgeInstructions: String
     let responseSchema: AcceptanceJudgeResponseSchema
+    let rubricID: String
+    let rubricVersion: Int
+    let failures: [AcceptanceFailureEvidence]
+
+    init(
+        schemaVersion: Int,
+        scenario: AcceptanceScenario,
+        checkpointEvidence: [AcceptanceCheckpointEvidence],
+        judgeInstructions: String,
+        responseSchema: AcceptanceJudgeResponseSchema,
+        rubricID: String = "forgefit-ai-acceptance",
+        rubricVersion: Int = 1,
+        failures: [AcceptanceFailureEvidence] = []
+    ) {
+        self.schemaVersion = schemaVersion
+        self.scenario = scenario
+        self.checkpointEvidence = checkpointEvidence
+        self.judgeInstructions = judgeInstructions
+        self.responseSchema = responseSchema
+        self.rubricID = rubricID
+        self.rubricVersion = rubricVersion
+        self.failures = failures
+    }
 }
 
 struct AcceptanceJudgeResponseSchema: Codable, Sendable {

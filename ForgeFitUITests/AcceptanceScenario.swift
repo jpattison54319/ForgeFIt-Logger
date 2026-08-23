@@ -10,15 +10,6 @@ struct AcceptanceScenario: Codable, Sendable {
     let checkpoints: [AcceptanceCheckpoint]
 }
 
-struct AcceptanceCheckpoint: Codable, Sendable {
-    let id: String
-    let title: String
-    let action: String
-    let expectedVisibleIdentifiers: [String]
-    let expectedVisibleLabels: [String]
-    let screenshotRequired: Bool
-}
-
 enum AcceptanceScenarioCatalog {
     static let representativeTour = AcceptanceScenario(
         id: "representative-app-tour",

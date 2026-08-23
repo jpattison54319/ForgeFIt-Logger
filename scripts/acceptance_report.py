@@ -20,9 +20,10 @@ def main() -> int:
     parser.add_argument("--inventory", type=Path, help="Inventory JSON from acceptance_inventory.py")
     parser.add_argument("--platform", choices=("ios", "watch", "all"), default="all")
     parser.add_argument("--attachments", type=Path, help="Exported xcresult attachment directory")
-    parser.add_argument("--evidence-root", type=Path, help="AcceptanceEvidenceWriter artifact root")
+    parser.add_argument("--evidence-root", type=Path, help="Action-evidence artifact root")
     parser.add_argument("--boundary-audit", type=Path, help="Boundary audit JSON from acceptance_boundary_audit.py")
     parser.add_argument("--surface-inventory", type=Path, help="Production surface inventory JSON from acceptance_surface_inventory.py")
+    parser.add_argument("--evidence-gate", type=Path, help="Evidence gate JSON from acceptance_evidence_gate.py")
     parser.add_argument("--judge-response", type=Path, help="AI judge response JSON to validate and merge")
     parser.add_argument("--output", type=Path, help="Write a Markdown report here")
     parser.add_argument("--json", action="store_true", help="Print the judge request JSON")
@@ -36,6 +37,7 @@ def main() -> int:
             args.evidence_root,
             args.boundary_audit,
             args.surface_inventory,
+            args.evidence_gate,
             args.judge_response,
             args.output,
             args.json,
@@ -198,9 +200,9 @@ def load_visual_evidence(attachments_path: Path | None) -> dict[str, list[dict[s
 def load_agent_evidence(evidence_root: Path | None) -> dict[str, int]:
     """Count only complete action-sequence manifests.
 
-    The repository also has explicit milestone evidence writers. Those
-    screenshots are useful, but must not inflate the post-action checkpoint
-    count presented as human-like visual evidence.
+    A manifest that contains only named milestone checkpoints is useful
+    context, but must not inflate the post-action checkpoint count presented
+    as human-like visual evidence.
     """
 
     if not evidence_root or not evidence_root.exists():
@@ -229,6 +231,63 @@ def load_agent_evidence(evidence_root: Path | None) -> dict[str, int]:
                 checkpoint_count = len(action_checkpoints)
             counts[scenario_id] = counts.get(scenario_id, 0) + int(checkpoint_count)
     return counts
+
+
+def load_agent_evidence_details(evidence_root: Path | None) -> dict[str, dict[str, int]]:
+    """Return action-evidence quality metrics without counting milestone writers."""
+
+    if not evidence_root or not evidence_root.exists():
+        return {}
+    details: dict[str, dict[str, int]] = {}
+    for manifest_path in evidence_root.glob("**/manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        scenario_id = str(manifest.get("scenario", {}).get("id", "") or manifest.get("scenarioID", ""))
+        checkpoints = manifest.get("scenario", {}).get("checkpoints", [])
+        action_checkpoints = [
+            checkpoint for checkpoint in checkpoints
+            if isinstance(checkpoint, dict) and str(checkpoint.get("id", "")).startswith("action-")
+        ]
+        if not scenario_id or not action_checkpoints or len(action_checkpoints) != len(checkpoints):
+            continue
+        try:
+            judge_request = json.loads((manifest_path.parent / "judge-request.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            judge_request = {}
+        evidence = judge_request.get("checkpointEvidence", [])
+        unverified = int(manifest.get("unverifiedCheckpointCount", 0))
+        if not unverified:
+            unverified = sum(item.get("outcome") == "unverified" for item in evidence if isinstance(item, dict))
+        contract_gaps = sum(
+            not (
+                item.get("checkpoint", {}).get("expectedVisibleIdentifiers")
+                or item.get("checkpoint", {}).get("expectedVisibleLabels")
+                or item.get("checkpoint", {}).get("invariants")
+            )
+            for item in evidence
+            if isinstance(item, dict)
+        )
+        before_after = sum(
+            bool(item.get("beforeScreenshotFile"))
+            and bool(item.get("beforeAccessibilityTreeFile"))
+            and bool(item.get("screenshotFile"))
+            and bool(item.get("accessibilityTreeFile"))
+            for item in evidence
+            if isinstance(item, dict)
+        )
+        bucket = details.setdefault(scenario_id, {
+            "checkpointCount": 0,
+            "beforeAfterCount": 0,
+            "unverifiedCheckpointCount": 0,
+            "contractGapCount": 0,
+        })
+        bucket["checkpointCount"] += int(manifest.get("checkpointCount", len(action_checkpoints)))
+        bucket["beforeAfterCount"] += before_after
+        bucket["unverifiedCheckpointCount"] += unverified
+        bucket["contractGapCount"] += contract_gaps
+    return details
 
 
 def load_agent_checkpoint_ids(evidence_root: Path | None) -> set[str]:
@@ -264,6 +323,16 @@ def load_boundary_audit(path: Path | None) -> dict:
 
 
 def load_surface_inventory(path: Path | None) -> dict:
+    if not path or not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def load_evidence_gate(path: Path | None) -> dict:
     if not path or not path.exists():
         return {}
     try:
@@ -388,6 +457,7 @@ def report_xcode_run(
     evidence_root: Path | None,
     boundary_audit_path: Path | None,
     surface_inventory_path: Path | None,
+    evidence_gate_path: Path | None,
     judge_response_path: Path | None,
     output: Path | None,
     as_json: bool,
@@ -400,6 +470,7 @@ def report_xcode_run(
     failure_details = parse_failure_details(log_path)
     visual_evidence = load_visual_evidence(attachments_path)
     agent_evidence = load_agent_evidence(evidence_root)
+    agent_evidence_details = load_agent_evidence_details(evidence_root)
     checkpoint_ids = load_agent_checkpoint_ids(evidence_root)
     judge_response, judge_validation_errors = load_judge_response(
         judge_response_path,
@@ -408,6 +479,7 @@ def report_xcode_run(
     )
     boundary_audit = load_boundary_audit(boundary_audit_path)
     surface_inventory = load_surface_inventory(surface_inventory_path)
+    evidence_gate = load_evidence_gate(evidence_gate_path)
     flows = []
     for original in inventory["flows"]:
         if platform == "ios" and original["platform"] != "iOS Simulator":
@@ -420,6 +492,7 @@ def report_xcode_run(
         flow["visualEvidence"] = visual_evidence.get(flow["id"], [])
         flow["visualEvidenceCount"] = len(flow["visualEvidence"])
         flow["humanActionEvidenceCount"] = agent_evidence.get(flow["id"], 0)
+        flow["humanActionEvidenceDetails"] = agent_evidence_details.get(flow["id"], {})
         flow["evidenceStatus"] = "action-sequence" if flow["humanActionEvidenceCount"] else ("screenshot" if flow["visualEvidenceCount"] else "functional-only")
         flow["failureEvidence"] = failure_details.get(flow["id"], [])
         flow["recommendations"] = recommendations(flow, status)
@@ -441,6 +514,19 @@ def report_xcode_run(
         "visualEvidenceScreenshotCount": sum(flow["visualEvidenceCount"] for flow in flows),
         "agentEvidenceCheckpoints": sum(agent_evidence.values()),
         "humanActionEvidenceFlowCount": sum(flow["humanActionEvidenceCount"] > 0 for flow in flows),
+        "agentEvidenceBeforeAfterCheckpoints": sum(
+            flow.get("humanActionEvidenceDetails", {}).get("beforeAfterCount", 0)
+            for flow in flows
+        ),
+        "unverifiedAcceptanceCheckpoints": sum(
+            flow.get("humanActionEvidenceDetails", {}).get("unverifiedCheckpointCount", 0)
+            for flow in flows
+        ),
+        "contractGapCount": sum(
+            flow.get("humanActionEvidenceDetails", {}).get("contractGapCount", 0)
+            for flow in flows
+        ),
+        "evidenceGate": evidence_gate,
         "boundaryAudit": boundary_audit,
         "surfaceInventory": surface_inventory,
         "judgeOutcome": judge_response.get("outcome") if judge_response else None,
@@ -458,10 +544,19 @@ def report_xcode_run(
         f"Results: **{counts.get('passed', 0)} passed**, **{counts.get('failed', 0)} failed**, **{counts.get('skipped', 0)} skipped**, **{counts.get('not-run', 0)} not run**.",
         f"Representative visual evidence: **{report['visualEvidenceScreenshotCount']} screenshots** across **{report['visualEvidenceFlowCount']} flows**.",
         f"Human-action visual evidence: **{report['agentEvidenceCheckpoints']} post-action checkpoints** across **{report['humanActionEvidenceFlowCount']} flows**; **{len(flows) - report['humanActionEvidenceFlowCount']} flows** have no action sequence.",
+        f"Before/after action pairs: **{report['agentEvidenceBeforeAfterCheckpoints']}**; unverified action contracts: **{report['unverifiedAcceptanceCheckpoints']}**; contract gaps: **{report['contractGapCount']}**.",
         "",
-        "## Boundary evidence",
+        "## Evidence gate",
         "",
     ]
+    if evidence_gate:
+        gate_status = "COMPLETE" if evidence_gate.get("complete") else "INCOMPLETE"
+        lines.append(f"Action evidence gate: **{gate_status}**.")
+        if evidence_gate.get("reason"):
+            lines.append(f"Gate reason: {evidence_gate['reason']}")
+    else:
+        lines.append("No evidence-gate result was supplied; this report is not an acceptance green light.")
+    lines.extend(["", "## Boundary evidence", ""])
     if boundary_audit:
         boundary_counts = boundary_audit.get("counts", {})
         lines.append(
