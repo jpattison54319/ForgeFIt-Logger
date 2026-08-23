@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+#if canImport(Darwin)
+import Darwin
+#endif
 #if canImport(UIKit)
 import ImageIO
 import UIKit
@@ -25,21 +28,26 @@ enum ExercisePhotoSlot: String, CaseIterable, Sendable {
 
 /// One photo in the editor: either the one already stored in this slot, or one
 /// the user just picked and hasn't committed yet.
-struct ExercisePhotoDraft: Equatable {
-    enum Kind: Equatable {
+struct ExercisePhotoDraft: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
         case stored(URL)
         case new(Data)
+        /// Already normalized to the app's bounded JPEG representation. The
+        /// photo picker produces this off the main actor so Save only performs
+        /// file operations.
+        case prepared(Data)
     }
 
     let kind: Kind
 
     static func stored(_ url: URL) -> ExercisePhotoDraft { ExercisePhotoDraft(kind: .stored(url)) }
     static func new(_ data: Data) -> ExercisePhotoDraft { ExercisePhotoDraft(kind: .new(data)) }
+    static func prepared(_ data: Data) -> ExercisePhotoDraft { ExercisePhotoDraft(kind: .prepared(data)) }
 }
 
 /// The pair of photos an exercise can hold. Either slot may be empty: one
 /// photo of the machine is a complete answer, and so is a start/end pair.
-struct ExercisePhotoSet: Equatable {
+struct ExercisePhotoSet: Equatable, Sendable {
     var start: ExercisePhotoDraft?
     var end: ExercisePhotoDraft?
 
@@ -87,8 +95,8 @@ final class CustomExerciseMedia {
     /// Longest edge kept on import. A camera-roll original is ~4000px and
     /// several megabytes; nothing in the app renders one larger than a phone
     /// screen.
-    private static let maxStoredPixelSize: CGFloat = 1600
-    private static let compressionQuality: CGFloat = 0.8
+    nonisolated private static let maxStoredPixelSize: CGFloat = 1600
+    nonisolated private static let compressionQuality: CGFloat = 0.8
 
     /// Bumped on every mutation. Views read it through the accessors below, so
     /// a thumbnail on any screen refreshes the moment a photo changes.
@@ -99,6 +107,17 @@ final class CustomExerciseMedia {
     #endif
 
     private init() {}
+
+    /// Deterministic failure seams for transaction regression tests. These are
+    /// main-actor isolated with the store and never consulted in release builds.
+    enum TransactionFailurePoint: Equatable {
+        case beforeInstall
+        case afterInstall
+    }
+
+    #if DEBUG
+    var transactionFailurePointForTesting: TransactionFailurePoint?
+    #endif
 
     // MARK: - Locations
 
@@ -203,53 +222,92 @@ final class CustomExerciseMedia {
     /// directory so a failure part-way cannot leave the exercise holding one
     /// new photo and one stale one.
     func apply(_ photos: ExercisePhotoSet, for exerciseID: UUID) throws {
-        let directory = directory(for: exerciseID)
-        let staging = directory.appending(path: ".staging", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: staging)
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: staging) }
-
-        for slot in ExercisePhotoSlot.allCases {
-            guard let draft = photos[slot] else { continue }
-            let destination = staging.appending(path: slot.fileName, directoryHint: .notDirectory)
-            switch draft.kind {
-            case .stored(let url):
-                try FileManager.default.copyItem(at: url, to: destination)
-            case .new(let data):
-                guard let stored = Self.reencodedForStorage(data) else { throw MediaError.unreadableImage }
-                try stored.write(to: destination, options: .atomic)
-            }
-        }
-
-        for slot in ExercisePhotoSlot.allCases {
-            try? FileManager.default.removeItem(at: fileURL(for: exerciseID, slot: slot))
-            let staged = staging.appending(path: slot.fileName, directoryHint: .notDirectory)
-            guard FileManager.default.fileExists(atPath: staged.path) else { continue }
-            try FileManager.default.moveItem(at: staged, to: fileURL(for: exerciseID, slot: slot))
-        }
-        invalidate(exerciseID)
+        try apply(photos: photos, notes: notes(for: exerciseID), for: exerciseID)
     }
     #endif
+
+    /// Commits the complete media record as one directory transaction. Photos
+    /// and description either all become visible together or the previous
+    /// directory is restored byte-for-byte.
+    func apply(photos: ExercisePhotoSet, notes text: String?, for exerciseID: UUID) throws {
+        let fileManager = FileManager.default
+        let live = directory(for: exerciseID)
+        let transactionID = UUID().uuidString
+        let staging = Self.rootDirectory.appending(
+            path: ".\(exerciseID.uuidString).\(transactionID).staging",
+            directoryHint: .isDirectory
+        )
+        let hadLiveDirectory = fileManager.fileExists(atPath: live.path)
+
+        do {
+            try fileManager.createDirectory(at: Self.rootDirectory, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+            defer {
+                try? fileManager.removeItem(at: staging)
+            }
+
+            #if canImport(UIKit)
+            for slot in ExercisePhotoSlot.allCases {
+                guard let draft = photos[slot] else { continue }
+                let destination = staging.appending(path: slot.fileName, directoryHint: .notDirectory)
+                switch draft.kind {
+                case .stored(let url):
+                    try fileManager.copyItem(at: url, to: destination)
+                case .new(let data):
+                    guard let stored = Self.reencodedForStorage(data) else {
+                        throw MediaError.unreadableImage
+                    }
+                    try stored.write(to: destination, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                case .prepared(let data):
+                    try data.write(to: destination, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                }
+            }
+            #endif
+
+            let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty {
+                let notes = staging.appending(path: "notes.txt", directoryHint: .notDirectory)
+                try Data(trimmed.utf8).write(
+                    to: notes,
+                    options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+                )
+            }
+
+            try failForTesting(at: .beforeInstall)
+
+            if hadLiveDirectory {
+                // Both directories live under the same Application Support
+                // root, so Darwin can exchange their names atomically. After
+                // the swap `live` is the complete new record and `staging` is
+                // the untouched previous record, ready for an exact rollback.
+                try swapDirectories(staging, live)
+            } else {
+                try fileManager.moveItem(at: staging, to: live)
+            }
+
+            do {
+                try failForTesting(at: .afterInstall)
+            } catch {
+                if hadLiveDirectory {
+                    try swapDirectories(staging, live)
+                } else if fileManager.fileExists(atPath: live.path) {
+                    try fileManager.removeItem(at: live)
+                }
+                throw error
+            }
+
+            invalidate(exerciseID)
+        } catch let error as MediaError {
+            throw error
+        } catch {
+            throw MediaError.couldNotWrite
+        }
+    }
 
     /// Throws rather than swallowing: a description the user typed and lost is
     /// exactly as bad as a photo they lost, and the form reports both.
     func setNotes(_ text: String?, for exerciseID: UUID) throws {
-        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let url = notesURL(for: exerciseID)
-        defer { invalidate(exerciseID) }
-        guard !trimmed.isEmpty else {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
-            return
-        }
-        do {
-            try FileManager.default.createDirectory(at: directory(for: exerciseID), withIntermediateDirectories: true)
-            try Data(trimmed.utf8).write(to: url, options: .atomic)
-        } catch {
-            throw MediaError.couldNotWrite
-        }
+        try apply(photos: photoSet(for: exerciseID), notes: text, for: exerciseID)
     }
 
     /// Everything one exercise owns. No in-app flow deletes a single exercise
@@ -296,6 +354,29 @@ final class CustomExerciseMedia {
             .jpegData(compressionQuality: compressionQuality)
     }
 
+    /// The picker can hand over a multi-megabyte camera original. Normalize it
+    /// before placing it in SwiftUI state so the editor retains only bounded
+    /// data and Save never performs image work on the main actor.
+    nonisolated static func preparedForStorage(_ data: Data) async -> Data? {
+        await Task.detached(priority: .userInitiated) {
+            reencodedForStorage(data)
+        }.value
+    }
+
+    nonisolated static func previewImage(
+        for draft: ExercisePhotoDraft,
+        maxPixelSize: CGFloat
+    ) async -> UIImage? {
+        switch draft.kind {
+        case .stored(let url):
+            await downsampled(url: url, maxPixelSize: maxPixelSize)
+        case .new(let data), .prepared(let data):
+            await Task.detached(priority: .userInitiated) {
+                downsampled(data: data, maxPixelSize: maxPixelSize)
+            }.value
+        }
+    }
+
     /// Shared ImageIO downsample, used for storage, for row thumbnails, and by
     /// the editor's own tiles — nothing in the app decodes a camera-sized
     /// original just to draw it small.
@@ -321,4 +402,34 @@ final class CustomExerciseMedia {
         return UIImage(cgImage: cg)
     }
     #endif
+
+    /// Atomically exchanges two existing directories on the same volume.
+    /// There is never an instant where the live record is absent or partial.
+    private func swapDirectories(_ first: URL, _ second: URL) throws {
+        #if canImport(Darwin)
+        let result = first.withUnsafeFileSystemRepresentation { firstPath in
+            second.withUnsafeFileSystemRepresentation { secondPath in
+                guard let firstPath, let secondPath else { return Int32(-1) }
+                return renameatx_np(
+                    AT_FDCWD,
+                    firstPath,
+                    AT_FDCWD,
+                    secondPath,
+                    UInt32(RENAME_SWAP)
+                )
+            }
+        }
+        guard result == 0 else { throw MediaError.couldNotWrite }
+        #else
+        throw MediaError.couldNotWrite
+        #endif
+    }
+
+    private func failForTesting(at point: TransactionFailurePoint) throws {
+        #if DEBUG
+        guard transactionFailurePointForTesting == point else { return }
+        transactionFailurePointForTesting = nil
+        throw MediaError.couldNotWrite
+        #endif
+    }
 }

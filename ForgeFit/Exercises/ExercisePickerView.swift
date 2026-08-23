@@ -994,7 +994,7 @@ struct CreateExerciseView: View {
 
                     if mediaSaveFailed {
                         Text("The exercise is saved. Its photos and description could not be written to this device — Save again to retry just those.")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.footnote.bold())
                             .foregroundStyle(theme.danger)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("exercise-media-save-error")
@@ -1485,10 +1485,11 @@ struct CreateExerciseView: View {
     private func applyMedia() -> Bool {
         let target = editing?.id ?? mediaID
         do {
-            try CustomExerciseMedia.shared.setNotes(notesDraft, for: target)
-            #if canImport(UIKit)
-            try CustomExerciseMedia.shared.apply(photoDrafts, for: target)
-            #endif
+            try CustomExerciseMedia.shared.apply(
+                photos: photoDrafts,
+                notes: notesDraft,
+                for: target
+            )
             mediaSaveFailed = false
             return true
         } catch {

@@ -18,7 +18,10 @@ struct CustomExerciseMediaTests {
     /// whole test host.
     private func withExercise(_ body: (UUID) throws -> Void) rethrows {
         let id = UUID()
-        defer { CustomExerciseMedia.shared.deleteAll(for: id) }
+        defer {
+            CustomExerciseMedia.shared.transactionFailurePointForTesting = nil
+            CustomExerciseMedia.shared.deleteAll(for: id)
+        }
         try body(id)
     }
 
@@ -33,6 +36,40 @@ struct CustomExerciseMediaTests {
     }
 
     // MARK: - Photos
+
+    @Test
+    func photoModeIsInferredWithoutPersistingSeparateState() {
+        #expect(ExercisePhotoMode.inferred(from: .empty) == .single)
+        #expect(
+            ExercisePhotoMode.inferred(
+                from: ExercisePhotoSet(start: .new(Data([1])))
+            ) == .single
+        )
+        #expect(
+            ExercisePhotoMode.inferred(
+                from: ExercisePhotoSet(start: .new(Data([1])), end: .new(Data([2])))
+            ) == .startAndEnd
+        )
+    }
+
+    @Test
+    func legacyEndOnlyPhotoNormalizesToTheSinglePhotoSlot() {
+        let end = ExercisePhotoDraft.new(Data([2]))
+        let normalized = ExercisePhotoSet(end: end).normalizedSinglePhoto
+
+        #expect(normalized.start == end)
+        #expect(normalized.end == nil)
+    }
+
+    @Test
+    func collapsingAStartAndEndPairKeepsTheExplicitChoice() {
+        let start = ExercisePhotoDraft.new(Data([1]))
+        let end = ExercisePhotoDraft.new(Data([2]))
+        let pair = ExercisePhotoSet(start: start, end: end)
+
+        #expect(pair.singlePhoto(keeping: .start) == ExercisePhotoSet(start: start))
+        #expect(pair.singlePhoto(keeping: .end) == ExercisePhotoSet(start: end))
+    }
 
     @Test
     func storesEachPositionUnderItsOwnSlot() throws {
@@ -157,11 +194,125 @@ struct CustomExerciseMediaTests {
         }
     }
 
+    /// The compatibility API used by fixtures and non-editor callers must be
+    /// symmetric: changing text cannot discard an existing start/end pair.
+    @Test
+    func descriptionEditsLeaveThePhotosAlone() throws {
+        try withExercise { id in
+            try CustomExerciseMedia.shared.apply(
+                ExercisePhotoSet(start: .new(imageData(.red)), end: .new(imageData(.green))),
+                for: id
+            )
+            let originalStart = try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .start)
+            ))
+            let originalEnd = try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .end)
+            ))
+
+            try CustomExerciseMedia.shared.setNotes("Seat height 4", for: id)
+
+            #expect(try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .start)
+            )) == originalStart)
+            #expect(try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .end)
+            )) == originalEnd)
+        }
+    }
+
+    @Test
+    func photosAndDescriptionCommitTogether() throws {
+        try withExercise { id in
+            try CustomExerciseMedia.shared.apply(
+                photos: ExercisePhotoSet(
+                    start: .new(imageData(.red)),
+                    end: .new(imageData(.green))
+                ),
+                notes: "Seat height 4",
+                for: id
+            )
+
+            #expect(CustomExerciseMedia.shared.photoURLs(for: id).count == 2)
+            #expect(CustomExerciseMedia.shared.notes(for: id) == "Seat height 4")
+        }
+    }
+
+    @Test(arguments: [
+        CustomExerciseMedia.TransactionFailurePoint.beforeInstall,
+        CustomExerciseMedia.TransactionFailurePoint.afterInstall,
+    ])
+    func aFailedTransactionRestoresEveryPreviousByte(
+        failurePoint: CustomExerciseMedia.TransactionFailurePoint
+    ) throws {
+        try withExercise { id in
+            try CustomExerciseMedia.shared.apply(
+                photos: ExercisePhotoSet(
+                    start: .new(imageData(.red)),
+                    end: .new(imageData(.green))
+                ),
+                notes: "Original description",
+                for: id
+            )
+            let originalStart = try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .start)
+            ))
+            let originalEnd = try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .end)
+            ))
+
+            CustomExerciseMedia.shared.transactionFailurePointForTesting = failurePoint
+            #expect(throws: CustomExerciseMedia.MediaError.couldNotWrite) {
+                try CustomExerciseMedia.shared.apply(
+                    photos: ExercisePhotoSet(start: .new(imageData(.blue))),
+                    notes: "Replacement description",
+                    for: id
+                )
+            }
+
+            #expect(CustomExerciseMedia.shared.notes(for: id) == "Original description")
+            #expect(try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .start)
+            )) == originalStart)
+            #expect(try Data(contentsOf: #require(
+                CustomExerciseMedia.shared.photoURL(for: id, slot: .end)
+            )) == originalEnd)
+        }
+    }
+
+    @Test
+    func aFailedFirstTransactionLeavesNoPartialRecord() throws {
+        try withExercise { id in
+            CustomExerciseMedia.shared.transactionFailurePointForTesting = .afterInstall
+
+            #expect(throws: CustomExerciseMedia.MediaError.couldNotWrite) {
+                try CustomExerciseMedia.shared.apply(
+                    photos: ExercisePhotoSet(start: .new(imageData(.blue))),
+                    notes: "Should not survive",
+                    for: id
+                )
+            }
+
+            #expect(CustomExerciseMedia.shared.photoURLs(for: id).isEmpty)
+            #expect(CustomExerciseMedia.shared.notes(for: id) == nil)
+        }
+    }
+
+    @Test
+    func pickerPreparationBoundsDataBeforeItEntersTheDraft() async throws {
+        let original = imageData(.purple, size: 3000)
+        let prepared = try #require(await CustomExerciseMedia.preparedForStorage(original))
+        let image = try #require(UIImage(data: prepared))
+
+        #expect(prepared.count < original.count)
+        #expect(max(image.size.width, image.size.height) <= 1600)
+    }
+
     /// An unreadable pick is refused loudly. The form reports it instead of
     /// dismissing over a photo that silently never arrived.
     @Test
     func refusesDataThatIsNotAnImage() throws {
-        try withExercise { id in
+        withExercise { id in
             #expect(throws: CustomExerciseMedia.MediaError.unreadableImage) {
                 try CustomExerciseMedia.shared.apply(
                     ExercisePhotoSet(start: .new(Data("not an image".utf8))),

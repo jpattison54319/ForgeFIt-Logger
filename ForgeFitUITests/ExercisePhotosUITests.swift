@@ -66,6 +66,52 @@ final class ExercisePhotosUITests: XCTestCase {
         field.acceptanceTypeText(text)
     }
 
+    /// One photo is the default, while the optional start/end treatment is a
+    /// visible peer choice rather than a requirement hidden in helper copy.
+    @MainActor
+    func testPhotoEditorMakesSingleAndStartEndChoicesExplicit() throws {
+        let app = XCUIApplication()
+        launch(app)
+        openExercisePicker(in: app)
+
+        acceptanceExpect(
+            ["exercise-photo-mode", "add-exercise-photo-single"],
+            visibleLabels: ["Single photo", "Start + end"],
+            invariants: ["A single photo is visibly supported without requiring a second image."]
+        )
+        tapWhenReady(element(app, "create-exercise-button"))
+
+        let mode = element(app, "exercise-photo-mode")
+        for _ in 0..<5 where !mode.isHittable {
+            acceptanceExpect(["exercise-photo-mode"])
+            app.acceptanceSwipeUp()
+        }
+        XCTAssertTrue(mode.waitForExistence(timeout: 8))
+        XCTAssertTrue(element(app, "add-exercise-photo-single").exists)
+        XCTAssertFalse(element(app, "add-exercise-photo-start").exists)
+        XCTAssertFalse(element(app, "add-exercise-photo-end").exists)
+        XCTAssertTrue(
+            app.staticTexts[
+                "Start + end animates the movement. Photos stay on this device."
+            ].exists
+        )
+        attachScreenshot(app, name: "exercise-photo-single-mode")
+
+        let startAndEnd = app.buttons["Start + end"].firstMatch
+        XCTAssertTrue(startAndEnd.waitForExistence(timeout: 5))
+        acceptanceExpect(
+            ["add-exercise-photo-start", "add-exercise-photo-end"],
+            visibleLabels: ["Start", "End"],
+            invariants: ["Start and end are presented as an optional animated treatment."]
+        )
+        tapWhenReady(startAndEnd)
+
+        XCTAssertTrue(element(app, "add-exercise-photo-start").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "add-exercise-photo-end").exists)
+        XCTAssertFalse(element(app, "add-exercise-photo-single").exists)
+        attachScreenshot(app, name: "exercise-photo-start-end-mode")
+    }
+
     /// The description is written on the exercise form and read back on the
     /// exercise itself — the same Save/Cancel contract as every other field.
     @MainActor
@@ -250,6 +296,21 @@ final class ExercisePhotosUITests: XCTestCase {
         XCTAssertTrue(
             media.label.contains("start and end"),
             "A start/end pair should be announced as the athlete's own; saw \(media.label)."
+        )
+        let playback = element(app, "exercise-photo-playback")
+        XCTAssertTrue(
+            playback.waitForExistence(timeout: 5),
+            "Animation playback should have a visible, accessible control."
+        )
+        let initialPlaybackLabel = playback.label
+        XCTAssertTrue(
+            ["Pause photo movement", "Show end position"].contains(initialPlaybackLabel),
+            "Playback should either animate normally or offer manual frames under Reduce Motion; saw \(initialPlaybackLabel)."
+        )
+        playback.acceptanceTap()
+        XCTAssertEqual(
+            playback.label,
+            initialPlaybackLabel == "Show end position" ? "Show start position" : "Play photo movement"
         )
         XCTAssertTrue(
             element(app, "exercise-user-description").waitForExistence(timeout: 5),

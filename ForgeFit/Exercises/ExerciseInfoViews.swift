@@ -6,6 +6,7 @@ import UIKit
 
 struct ExerciseAnimationView: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let exercise: ExerciseLibraryModel
     var cornerRadius: CGFloat = Radius.card
 
@@ -13,25 +14,23 @@ struct ExerciseAnimationView: View {
     @State private var isPaused = false
 
     #if canImport(UIKit)
+    @State private var userStart: UIImage?
+    @State private var userEnd: UIImage?
+
     /// The athlete's own photos replace the illustration entirely when they
     /// exist — they photographed this machine because the stock drawing wasn't
     /// the thing in front of them. Their start/end pair drives the same
     /// crossfade the bundled two-frame illustrations use, so one photo is a
     /// still and two play the movement.
-    private var userStart: UIImage? { userImage(.start) }
-    private var userEnd: UIImage? { userImage(.end) }
-    private var hasUserPhoto: Bool { userStart != nil || userEnd != nil }
+    private var media: CustomExerciseMedia { CustomExerciseMedia.shared }
+    private var hasUserPhoto: Bool { media.hasPhotos(for: exercise.id) }
     private var startImage: UIImage? {
-        userStart ?? userEnd ?? ExerciseCatalog.localThumbnail(path: exercise.mediaSlug)
+        if hasUserPhoto { return userStart ?? userEnd }
+        return ExerciseCatalog.localThumbnail(path: exercise.mediaSlug)
     }
     private var endImage: UIImage? {
         if hasUserPhoto { return userStart != nil ? userEnd : nil }
         return ExerciseCatalog.localThumbnail(path: ExerciseCatalog.frameOnePath(from: exercise.mediaSlug))
-    }
-
-    private func userImage(_ slot: ExercisePhotoSlot) -> UIImage? {
-        guard let url = CustomExerciseMedia.shared.photoURL(for: exercise.id, slot: slot) else { return nil }
-        return UIImage(contentsOfFile: url.path)
     }
     #endif
 
@@ -68,29 +67,38 @@ struct ExerciseAnimationView: View {
             fallback
             #endif
 
-            if isPaused, animates {
-                Image(systemName: "pause.fill")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(.black.opacity(0.55))
-                    .clipShape(Circle())
+            if animates {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: changePlayback) {
+                            Image(systemName: playbackSymbol)
+                                .font(.body.bold())
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.62))
+                                .clipShape(.circle)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(playbackLabel)
+                        .accessibilityIdentifier("exercise-photo-playback")
+                    }
+                }
+                .padding(12)
             }
         }
         .aspectRatio(exercise.isYoga && !hasUserPhotoOnThisPlatform ? 1 : 4 / 3, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .clipShape(.rect(cornerRadius: cornerRadius))
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(theme.separator, lineWidth: 1)
         }
-        .contentShape(Rectangle())
-        // Only a two-frame view can be paused, so only a two-frame view claims
-        // the tap. A single photo is a still and behaves like one.
-        .onTapGesture {
-            if animates { isPaused.toggle() }
+        .task(id: mediaLoadID) {
+            await loadUserFrames()
         }
-        .task {
-            guard animates else { return }
+        .task(id: "\(animates)-\(reduceMotion)") {
+            guard animates, !reduceMotion else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(0.9))
                 guard !Task.isCancelled, !isPaused else { continue }
@@ -99,6 +107,10 @@ struct ExerciseAnimationView: View {
                 }
             }
         }
+        // Keep the media itself and its playback button as distinct elements:
+        // VoiceOver should announce whose photos these are without swallowing
+        // the control nested inside the same visual card.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(mediaAccessibilityLabel)
         .accessibilityHint(mediaAccessibilityHint)
         .accessibilityIdentifier(hasUserPhotoOnThisPlatform ? "exercise-user-photos" : "")
@@ -133,13 +145,65 @@ struct ExerciseAnimationView: View {
         return exercise.isYoga ? "\(exercise.name) pose demonstration" : "Exercise demonstration"
     }
 
+    private var playbackSymbol: String {
+        if reduceMotion { return "arrow.left.arrow.right" }
+        return isPaused ? "play.fill" : "pause.fill"
+    }
+
+    private var playbackLabel: String {
+        if reduceMotion {
+            return showEnd ? "Show start position" : "Show end position"
+        }
+        return isPaused ? "Play photo movement" : "Pause photo movement"
+    }
+
     private var mediaAccessibilityHint: String {
-        if animates { return "Tap to pause or resume" }
         if exercise.isYoga, !hasUserPhotoOnThisPlatform {
             return "Use the instructor control below to change the model"
         }
         return ""
     }
+
+    private func changePlayback() {
+        if reduceMotion {
+            showEnd.toggle()
+        } else {
+            isPaused.toggle()
+        }
+    }
+
+    private var mediaLoadID: String {
+        #if canImport(UIKit)
+        return "\(exercise.id)-\(media.revision)"
+        #else
+        return exercise.id.uuidString
+        #endif
+    }
+
+    private func loadUserFrames() async {
+        #if canImport(UIKit)
+        userStart = nil
+        userEnd = nil
+        showEnd = false
+        isPaused = false
+
+        let startURL = media.photoURL(for: exercise.id, slot: .start)
+        let endURL = media.photoURL(for: exercise.id, slot: .end)
+        async let loadedStart = loadFrame(at: startURL)
+        async let loadedEnd = loadFrame(at: endURL)
+        let frames = await (loadedStart, loadedEnd)
+        guard !Task.isCancelled else { return }
+        userStart = frames.0
+        userEnd = frames.1
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func loadFrame(at url: URL?) async -> UIImage? {
+        guard let url else { return nil }
+        return await CustomExerciseMedia.downsampled(url: url, maxPixelSize: 1600)
+    }
+    #endif
 
     private var fallback: some View {
         Image(systemName: exercise.isCardio ? "figure.run" : "dumbbell.fill")

@@ -38,8 +38,11 @@ enum CustomExerciseMediaUITestFixture {
               let start = swatch(label: "START", barOffset: 0.72),
               let end = swatch(label: "END", barOffset: 0.28) else { return }
         for exercise in matches {
-            try media.apply(ExercisePhotoSet(start: .new(start), end: .new(end)), for: exercise.id)
-            try media.setNotes(description, for: exercise.id)
+            try media.apply(
+                photos: ExercisePhotoSet(start: .new(start), end: .new(end)),
+                notes: description,
+                for: exercise.id
+            )
         }
         #endif
     }

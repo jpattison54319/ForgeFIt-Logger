@@ -7,10 +7,8 @@ import UIKit
 /// Photos and a written description for one exercise, edited inside the
 /// exercise form.
 ///
-/// Two labelled slots rather than a gallery: an exercise photo answers "what
-/// does this look like at the start" and "what does it look like at the end",
-/// and filling both is what makes the exercise screen play the movement. Each
-/// slot stands alone — one photo of the machine is a complete answer.
+/// A visible mode choice makes the two supported outcomes explicit: one photo
+/// can represent the exercise, or a start/end pair can play the movement.
 ///
 /// Changes are staged, not written: the form's Save commits them and its
 /// Cancel discards them, the same contract the name and muscle fields have.
@@ -22,27 +20,53 @@ struct ExerciseMediaEditorCard: View {
     @State private var pickerSlot: ExercisePhotoSlot?
     @State private var selection: PhotosPickerItem?
     @State private var loadFailed = false
+    @State private var processingSlot: ExercisePhotoSlot?
+    @State private var mode: ExercisePhotoMode
+    @State private var showingSinglePhotoChoice = false
+
+    init(photos: Binding<ExercisePhotoSet>, notes: Binding<String>) {
+        _photos = photos
+        _notes = notes
+        _mode = State(initialValue: .inferred(from: photos.wrappedValue))
+    }
 
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
-                FieldLabel("Photos")
+                FieldLabel("Photo")
 
-                HStack(alignment: .top, spacing: Space.md) {
-                    ForEach(ExercisePhotoSlot.allCases, id: \.self) { slot in
-                        slotColumn(slot)
+                Picker("Photo style", selection: $mode) {
+                    ForEach(ExercisePhotoMode.allCases) { option in
+                        Text(option.title).tag(option)
                     }
-                    Spacer(minLength: 0)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("exercise-photo-mode")
+
+                Group {
+                    if mode == .single {
+                        HStack(alignment: .top, spacing: Space.md) {
+                            slotColumn(.start, title: "Photo", identifier: "single")
+                            Spacer(minLength: 0)
+                        }
+                    } else {
+                        HStack(alignment: .top, spacing: Space.md) {
+                            ForEach(ExercisePhotoSlot.allCases, id: \.self) { slot in
+                                slotColumn(slot, title: slot.title, identifier: slot.rawValue)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
                 }
 
-                Text(caption)
-                    .font(.system(size: 12))
+                Text("Start + end animates the movement. Photos stay on this device.")
+                    .font(.footnote)
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if loadFailed {
                     Text("That image could not be read. Try a different one.")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.footnote.bold())
                         .foregroundStyle(theme.danger)
                         .accessibilityIdentifier("exercise-photo-error")
                 }
@@ -69,33 +93,67 @@ struct ExerciseMediaEditorCard: View {
             guard let item, let slot = pickerSlot else { return }
             Task { await load(item, into: slot) }
         }
+        .onAppear {
+            if mode == .single {
+                photos = photos.normalizedSinglePhoto
+            }
+        }
+        .onChange(of: mode) { oldMode, newMode in
+            guard oldMode != newMode else { return }
+            if newMode == .single, photos.animates {
+                mode = oldMode
+                showingSinglePhotoChoice = true
+            } else if newMode == .single {
+                photos = photos.normalizedSinglePhoto
+            }
+        }
+        .confirmationDialog(
+            "Use one photo?",
+            isPresented: $showingSinglePhotoChoice,
+            titleVisibility: .visible
+        ) {
+            Button("Keep Start Photo") {
+                photos = photos.singlePhoto(keeping: .start)
+                mode = .single
+            }
+            Button("Keep End Photo") {
+                photos = photos.singlePhoto(keeping: .end)
+                mode = .single
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The other photo will be removed when you save.")
+        }
     }
 
-    /// Says what filling the second slot buys, because that consequence is not
-    /// visible from an empty tile — and stops once both are filled.
-    private var caption: String {
-        if photos.animates {
-            return "Both positions saved — the exercise plays through the movement. Stays on this device."
-        }
-        if photos.isEmpty {
-            return "Add a start and an end position to play through the movement. Your photos stay on this device."
-        }
-        return "Add the other position to play through the movement. Stays on this device."
-    }
-
-    private func slotColumn(_ slot: ExercisePhotoSlot) -> some View {
+    private func slotColumn(
+        _ slot: ExercisePhotoSlot,
+        title: String,
+        identifier: String
+    ) -> some View {
         VStack(spacing: 6) {
-            tile(slot)
-            Text(slot.title)
-                .font(.system(size: 12, weight: .semibold))
+            tile(slot, title: title, identifier: identifier)
+            Text(title)
+                .font(.caption.bold())
                 .foregroundStyle(photos[slot] == nil ? theme.textSecondary : theme.textPrimary)
         }
         .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
-    private func tile(_ slot: ExercisePhotoSlot) -> some View {
-        if let photo = photos[slot] {
+    private func tile(
+        _ slot: ExercisePhotoSlot,
+        title: String,
+        identifier: String
+    ) -> some View {
+        if processingSlot == slot {
+            ProgressView()
+                .tint(theme.accent)
+                .frame(width: 84, height: 84)
+                .background(theme.surfaceElevated)
+                .clipShape(.rect(cornerRadius: Radius.control))
+                .accessibilityLabel("Preparing \(title.lowercased())")
+        } else if let photo = photos[slot] {
             Menu {
                 Button("Replace photo", systemImage: "photo") { pickerSlot = slot }
                 if photos.animates {
@@ -111,9 +169,9 @@ struct ExerciseMediaEditorCard: View {
                     withAnimation(Motion.stateChange) { photos[slot] = nil }
                 }
             } label: {
-                preview(photo)
+                ExercisePhotoDraftPreview(photo: photo)
                     .frame(width: 84, height: 84)
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .clipShape(.rect(cornerRadius: Radius.control))
                     // A photo that opens a menu has to look like it does. The
                     // badge is the affordance; the menu is the mechanic.
                     .overlay(alignment: .bottomTrailing) {
@@ -124,9 +182,9 @@ struct ExerciseMediaEditorCard: View {
                             .padding(4)
                     }
             }
-            .accessibilityLabel("\(slot.title) photo")
+            .accessibilityLabel(title == "Photo" ? "Exercise photo" : "\(title) photo")
             .accessibilityHint("Replace or remove this photo")
-            .accessibilityIdentifier("exercise-photo-\(slot.rawValue)")
+            .accessibilityIdentifier("exercise-photo-\(identifier)")
         } else {
             Button {
                 pickerSlot = slot
@@ -135,63 +193,69 @@ struct ExerciseMediaEditorCard: View {
                     Image(systemName: "photo.badge.plus")
                         .font(.system(size: 20, weight: .semibold))
                     Text("Add")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.bold())
                 }
                 .foregroundStyle(theme.accentForeground)
                 .frame(width: 84, height: 84)
                 .background(theme.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                .clipShape(.rect(cornerRadius: Radius.control))
                 .overlay {
                     RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                         .strokeBorder(theme.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Add \(slot.title.lowercased()) position photo")
-            .accessibilityIdentifier("add-exercise-photo-\(slot.rawValue)")
+            .accessibilityLabel(title == "Photo" ? "Add exercise photo" : "Add \(title.lowercased()) position photo")
+            .accessibilityIdentifier("add-exercise-photo-\(identifier)")
         }
     }
-
-    @ViewBuilder
-    private func preview(_ photo: ExercisePhotoDraft) -> some View {
-        #if canImport(UIKit)
-        if let image = downsampledPreview(photo) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            theme.surfaceElevated
-        }
-        #else
-        theme.surfaceElevated
-        #endif
-    }
-
-    #if canImport(UIKit)
-    /// Decoded down to tile size. A camera original is several megabytes; a
-    /// full-resolution decode to draw 84 points is the per-row hitch this app
-    /// already avoids everywhere else it shows an image.
-    private func downsampledPreview(_ photo: ExercisePhotoDraft) -> UIImage? {
-        switch photo.kind {
-        case .stored(let url):
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
-            return CustomExerciseMedia.downsampled(data: data, maxPixelSize: 84 * 3)
-        case .new(let data):
-            return CustomExerciseMedia.downsampled(data: data, maxPixelSize: 84 * 3)
-        }
-    }
-    #endif
 
     private func load(_ item: PhotosPickerItem, into slot: ExercisePhotoSlot) async {
         defer {
             selection = nil
             pickerSlot = nil
+            processingSlot = nil
         }
+        processingSlot = slot
         guard let data = try? await item.loadTransferable(type: Data.self) else {
             loadFailed = true
             return
         }
+        guard let prepared = await CustomExerciseMedia.preparedForStorage(data) else {
+            loadFailed = true
+            return
+        }
         loadFailed = false
-        withAnimation(Motion.stateChange) { photos[slot] = .new(data) }
+        withAnimation(Motion.stateChange) { photos[slot] = .prepared(prepared) }
+    }
+}
+
+private struct ExercisePhotoDraftPreview: View {
+    @Environment(\.theme) private var theme
+    let photo: ExercisePhotoDraft
+
+    #if canImport(UIKit)
+    @State private var image: UIImage?
+    #endif
+
+    var body: some View {
+        ZStack {
+            theme.surfaceElevated
+            #if canImport(UIKit)
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ProgressView()
+                    .tint(theme.accent)
+            }
+            #endif
+        }
+        #if canImport(UIKit)
+        .task(id: photo.kind) {
+            image = await CustomExerciseMedia.previewImage(for: photo, maxPixelSize: 84 * 3)
+        }
+        #endif
     }
 }
