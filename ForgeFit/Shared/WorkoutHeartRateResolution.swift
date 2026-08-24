@@ -6,7 +6,7 @@ import Foundation
 /// manual, or no-permission workouts. A timed modality shares the whole metric
 /// only when its clock spans the workout; narrower cardio, yoga, and
 /// conditioning sections keep metrics from their own timestamp window.
-enum WorkoutHeartRateResolution {
+nonisolated enum WorkoutHeartRateResolution {
     struct Metrics: Equatable {
         let averageBPM: Int?
         let maximumBPM: Int?

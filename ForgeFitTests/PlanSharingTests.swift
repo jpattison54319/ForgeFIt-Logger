@@ -3,6 +3,8 @@ import ForgeData
 import Foundation
 import SwiftData
 import Testing
+import UIKit
+import UniformTypeIdentifiers
 @testable import ForgeFit
 
 @Suite(.serialized)
@@ -21,7 +23,7 @@ struct PlanSharingTests {
         })
         #expect(Set(planType["UTTypeConformsTo"] as? [String] ?? []) == [
             "public.content",
-            "public.data",
+            "public.json",
         ])
         let tags = try #require(planType["UTTypeTagSpecification"] as? [String: Any])
         #expect(tags["public.filename-extension"] as? [String] == [
@@ -55,7 +57,20 @@ struct PlanSharingTests {
 
         #expect(item.contentTypeIdentifier == ForgeFitPlanFileType.identifier)
         #expect(item.fileURL == url)
+        #expect(ForgeFitPlanFileType.contentType.conforms(to: .json))
+        #expect(ForgeFitPlanFileType.contentType.conforms(to: .content))
+        #expect(ForgeFitPlanFileType.contentType.conforms(to: .data))
         #expect(provider.registeredTypeIdentifiers.first == ForgeFitPlanFileType.identifier)
+
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+        #expect(
+            item.activityViewController(controller, itemForActivityType: .message) as? URL
+                == url
+        )
+        #expect(
+            item.activityViewController(controller, dataTypeIdentifierForActivityType: .message)
+                == ForgeFitPlanFileType.identifier
+        )
     }
 
     @Test func mesocycleRoundTripPreservesCompletePlanAndExcludesPrivateData() throws {

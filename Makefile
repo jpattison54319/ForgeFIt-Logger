@@ -34,7 +34,7 @@ test: test-core test-data build-stubs
 # "collecting diagnostics" step after the tests pass, and have failed
 # outright with "runner never established connection" (the 2026-07-14 hang).
 test-app:
-	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -only-testing:ForgeFitTests
+	xcodebuild test -workspace ForgeFit.xcworkspace -scheme ForgeFit -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' -parallel-testing-enabled NO -only-testing:ForgeFitTests
 
 test-acceptance:
 	FORGEFIT_ACCEPTANCE_ONLY_TESTING=ForgeFitUITests/AcceptanceSmokeUITests/testRepresentativeAppTour ./scripts/run_acceptance_all.sh

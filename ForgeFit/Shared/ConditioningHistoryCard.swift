@@ -112,6 +112,12 @@ struct ConditioningHistoryCard: View {
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
             .accessibilityIdentifier("conditioning-block-header")
+        } else if isFinalizing, !hasRecordedWork {
+            headerContent(showsChevron: false)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(blockTitle), Finalizing workout data")
+                .accessibilityValue("Heart rate and performance are still syncing")
+                .accessibilityIdentifier("conditioning-history-summary")
         } else {
             headerContent(showsChevron: false)
         }

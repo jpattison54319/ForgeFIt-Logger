@@ -754,9 +754,13 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
             if value > 0 { Thread.sleep(forTimeInterval: min(value, 1.0)) }
             return
         }
+        // A clean automation launch rebuilds the bundled exercise catalog
+        // behind the app's explicit preparation barrier. Give that one action
+        // enough time to reach seeded UI; ordinary interactions should still
+        // fail quickly when they never settle.
         let idleTimeout = ProcessInfo.processInfo.environment["FORGEFIT_ACCEPTANCE_IDLE_TIMEOUT"]
             .flatMap(TimeInterval.init)
-            ?? 2.0
+            ?? (action == "launch" ? 60.0 : 2.0)
         guard app.wait(for: .runningForeground, timeout: min(idleTimeout, 5.0)) else {
             if value > 0 { Thread.sleep(forTimeInterval: min(value, 1.0)) }
             return

@@ -96,8 +96,19 @@ final class ForgeFitUITests: XCTestCase {
     /// Interactive charts intentionally own press-and-drag gestures in their
     /// plot area. Scroll from the screen gutter when a route contains charts
     /// so the test exercises the parent ScrollView instead of chart scrubbing.
-    private func scrollPastCharts(in app: XCUIApplication, attempts: Int = 8) {
+    private func scrollPastCharts(
+        in app: XCUIApplication,
+        attempts: Int = 8,
+        retaining acceptanceIdentifier: String? = nil
+    ) {
         for _ in 0..<attempts {
+            if let acceptanceIdentifier {
+                acceptanceExpect(
+                    [acceptanceIdentifier],
+                    phase: .setup,
+                    invariants: ["The selected app section remains available while scrolling"]
+                )
+            }
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.78))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.22))
             start.acceptancePress(forDuration: 0.05, thenDragTo: end)
@@ -1239,32 +1250,52 @@ final class ForgeFitUITests: XCTestCase {
             "-didOnboard", "YES",
             "-initialTab", "profile",
         ]
+        acceptanceExpect(
+            ["tab-profile"],
+            phase: .setup,
+            invariants: ["The requested Profile fixture launches successfully"]
+        )
         app.acceptanceLaunch()
 
         let workout = app.buttons["profile-workout-AX400"].firstMatch
-        scrollPastCharts(in: app, attempts: 4)
-        XCTAssertTrue(workout.waitForExistence(timeout: 8))
-        XCTAssertTrue(
+        scrollPastCharts(in: app, attempts: 4, retaining: "tab-profile")
+        try acceptanceRequire(
+            workout.waitForExistence(timeout: 8),
+            "The AX400 finalization fixture did not appear in Profile"
+        )
+        guard acceptanceAssert(
             workout.label.contains("Status Finalizing"),
             "The saved workout card should say Finalizing instead of Skipped while its result is pending."
+        ) else { return }
+        acceptanceExpect(
+            ["workout-finalization-status", "conditioning-history-summary"],
+            invariants: [
+                "The workout stays saved while enrichment is pending",
+                "Completed AX400 work is never described as skipped"
+            ]
         )
         tapWhenReady(workout)
 
         let status = app.descendants(matching: .any)["workout-finalization-status"].firstMatch
-        XCTAssertTrue(
+        guard acceptanceAssert(
             status.waitForExistence(timeout: 5),
             "A recent incomplete HealthKit/performance snapshot should explain that finalization is still running."
-        )
-        XCTAssertTrue(status.label.contains("Finalizing workout data"))
+        ) else { return }
+        guard acceptanceAssert(
+            status.label.contains("Finalizing workout data"),
+            "The detail status should name the bounded finalization state"
+        ) else { return }
 
-        let historyTitle = app.descendants(matching: .any)["conditioning-history-title"].firstMatch
-        scrollPastCharts(in: app, attempts: 5)
-        XCTAssertTrue(historyTitle.exists)
-        XCTAssertEqual(historyTitle.label, "AX400")
-        let historyState = app.descendants(matching: .any)["conditioning-history-state"].firstMatch
-        XCTAssertTrue(historyState.exists)
-        XCTAssertEqual(historyState.label, "Finalizing…")
-        XCTAssertFalse(app.staticTexts["Skipped"].firstMatch.exists)
+        let historySummary = app.descendants(matching: .any)["conditioning-history-summary"].firstMatch
+        guard acceptanceAssert(historySummary.exists, "AX400 should expose one combined finalization announcement") else { return }
+        guard acceptanceAssert(
+            historySummary.label == "AX400, Finalizing workout data",
+            "VoiceOver should announce the workout identity and current finalization state together"
+        ) else { return }
+        acceptanceAssert(
+            !app.staticTexts["Skipped"].firstMatch.exists,
+            "Completed AX400 work must not be presented as skipped"
+        )
         attachScreenshot(app, name: "recent-ax400-finalizing-workout-data")
     }
 
@@ -1279,22 +1310,51 @@ final class ForgeFitUITests: XCTestCase {
             "--seed-workout-finalization",
             "-didOnboard", "YES",
             "-initialTab", "profile",
+            "-weightUnitRaw", "lb",
         ]
+        acceptanceExpect(
+            ["tab-profile"],
+            phase: .setup,
+            invariants: ["The requested Profile fixture launches successfully"]
+        )
         app.acceptanceLaunch()
 
         let workout = app.buttons["profile-workout-Finalizing Strength"].firstMatch
-        scrollPastCharts(in: app, attempts: 4)
-        XCTAssertTrue(workout.waitForExistence(timeout: 8))
-        XCTAssertTrue(
+        scrollPastCharts(in: app, attempts: 4, retaining: "tab-profile")
+        try acceptanceRequire(
+            workout.waitForExistence(timeout: 8),
+            "The populated strength finalization fixture did not appear in Profile"
+        )
+        guard acceptanceAssert(
             workout.label.contains("Finalizing workout data"),
             "The saved strength workout should expose its visible Finalizing state to VoiceOver."
-        )
+        ) else { return }
+        guard acceptanceAssert(
+            workout.label.contains("Volume 1,764 lbs") && workout.label.contains("Sets 1"),
+            "Finalization should coexist with the fixture's completed 100 kg x 8 strength set"
+        ) else { return }
         attachScreenshot(app, name: "strength-saved-card-finalizing")
 
+        acceptanceExpect(
+            ["workout-finalization-status", "workout-overview-summary"],
+            invariants: [
+                "The completed strength set remains visible while enrichment is pending",
+                "The workout stays saved while enrichment is pending"
+            ]
+        )
         tapWhenReady(workout)
         let detailStatus = app.descendants(matching: .any)["workout-finalization-status"].firstMatch
-        XCTAssertTrue(detailStatus.waitForExistence(timeout: 5))
-        XCTAssertTrue(detailStatus.label.contains("Finalizing workout data"))
+        guard acceptanceAssert(detailStatus.waitForExistence(timeout: 5), "The detail finalization status should appear") else { return }
+        guard acceptanceAssert(
+            detailStatus.label.contains("Finalizing workout data"),
+            "The strength detail should name the bounded finalization state"
+        ) else { return }
+        let overview = app.descendants(matching: .any)["workout-overview-summary"].firstMatch
+        guard acceptanceAssert(overview.exists, "The populated strength summary should remain visible") else { return }
+        acceptanceAssert(
+            overview.label.contains("Volume 1,764 lbs") && overview.label.contains("Sets 1"),
+            "The detail summary should retain the completed set and nonzero volume while finalizing"
+        )
         attachScreenshot(app, name: "strength-detail-finalizing")
     }
 

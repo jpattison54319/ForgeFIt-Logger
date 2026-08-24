@@ -435,6 +435,9 @@ private struct DashboardTileLabel: View {
             }
             .foregroundStyle(theme.textPrimary)
         }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
     }
 }
 

@@ -578,6 +578,7 @@ struct WorkoutDetailView: View {
             "Workout summary. "
                 + facts.map { "\($0.label) \($0.value)" }.joined(separator: ", ")
         )
+        .accessibilityIdentifier("workout-overview-summary")
     }
 
     private func scheduleDeleteWorkout() {
