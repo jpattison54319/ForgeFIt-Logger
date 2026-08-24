@@ -15,6 +15,7 @@ struct ConditioningHistoryCard: View {
     let hrSamples: [(date: Date, bpm: Int)]
     var heartRateMetrics: WorkoutHeartRateResolution.Metrics? = nil
     let collapsible: Bool
+    var isFinalizing = false
 
     @Environment(\.theme) private var theme
     @Query(sort: \IntervalPresetModel.updatedAt, order: .reverse)
@@ -23,6 +24,10 @@ struct ConditioningHistoryCard: View {
 
     private var hasRecordedWork: Bool {
         result != nil || (plan == nil && session?.endedAt != nil)
+    }
+
+    private var blockTitle: String {
+        ConditioningPlanPresentation.title(for: plan)
     }
 
     private var completionStatus: ConditioningSharePresentation.CompletionStatus {
@@ -103,7 +108,7 @@ struct ConditioningHistoryCard: View {
                 headerContent(showsChevron: true)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Conditioning block")
+            .accessibilityLabel(ConditioningPlanPresentation.accessibilityLabel(for: plan))
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Double tap to \(isExpanded ? "collapse" : "expand")")
             .accessibilityIdentifier("conditioning-block-header")
@@ -120,13 +125,15 @@ struct ConditioningHistoryCard: View {
                 .background(theme.surfaceElevated)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text("Conditioning")
+                Text(blockTitle)
                     .font(.bodyStrong)
                     .foregroundStyle(theme.warmup)
-                Text(hasRecordedWork ? subtitle : "Skipped")
+                    .accessibilityIdentifier("conditioning-history-title")
+                Text(hasRecordedWork ? subtitle : (isFinalizing ? "Finalizing…" : "Skipped"))
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
+                    .accessibilityIdentifier("conditioning-history-state")
             }
             Spacer(minLength: Space.sm)
             if showsChevron {
@@ -134,6 +141,11 @@ struct ConditioningHistoryCard: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(theme.textTertiary)
                     .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            } else if isFinalizing, !hasRecordedWork {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(theme.warmup)
+                    .accessibilityHidden(true)
             } else {
                 Image(systemName: statusIcon)
                     .foregroundStyle(statusColor)
@@ -194,7 +206,7 @@ struct ConditioningHistoryCard: View {
             }
         }
 
-        if collapsible, let session, session.endedAt != nil {
+        if let session, session.endedAt != nil {
             HStack {
                 StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
                 StatColumn(label: "Max HR", value: displayMaximumHR.map(String.init) ?? "—", valueColor: theme.danger)
@@ -206,7 +218,8 @@ struct ConditioningHistoryCard: View {
                     maxHR: displayMaximumHR,
                     durationSeconds: session.durationSeconds,
                     zoneSeconds: displayZoneSeconds,
-                    source: displayZoneSeconds == nil ? .estimated : .measured
+                    source: displayZoneSeconds == nil ? .estimated : .measured,
+                    showsAverageInHeader: false
                 )
             }
             if let window = CardioBlockSupport.blockWindow(

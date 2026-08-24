@@ -14,10 +14,11 @@ struct RoutineDetailPresentationTests {
         let sets = types.enumerated().map { index, type in
             RoutineSetModel(userID: userID, position: index, setType: type)
         }
-        let expectedBadges = ["W", "1", "D", "R", "2B", "3A", "M", "C"]
+        let expectedBadges = ["W", "1", "D", "R", "2B", "3A", "M", "C", "4P", "5E"]
         let expectedNames = [
             "Warm-up", "Working", "Drop set", "Rest-pause",
-            "Back-off", "AMRAP", "Myo-reps", "Cluster"
+            "Back-off", "AMRAP", "Myo-reps", "Cluster",
+            "Lengthened partials", "Extended set (lengthened)"
         ]
 
         #expect(zip(sets.indices, sets).map {

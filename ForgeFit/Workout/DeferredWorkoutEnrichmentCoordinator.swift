@@ -1,6 +1,7 @@
 import ForgeCore
 import ForgeData
 import Foundation
+import Observation
 import SwiftData
 
 /// Owns post-finish HealthKit fills. Scheduled work carries only value
@@ -9,11 +10,16 @@ import SwiftData
 /// while the refetch/deletion guards independently protect history deletion
 /// and a cancellation that races the HealthKit callback.
 @MainActor
+@Observable
 final class DeferredWorkoutEnrichmentCoordinator {
     static let shared = DeferredWorkoutEnrichmentCoordinator()
 
     struct SessionRequest: Sendable {
         let sessionID: UUID
+        /// Supplying the parent makes the saved-card state immediate. Older
+        /// call sites may omit it; the coordinator resolves the relationship
+        /// from the durable session before scheduling.
+        var workoutID: UUID? = nil
         let start: Date
         let end: Date
         let modality: CardioKind
@@ -40,8 +46,14 @@ final class DeferredWorkoutEnrichmentCoordinator {
     /// request retries from its original value snapshot and stable model ID.
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var activeAttempts: [UUID: Attempt] = [:]
+    private var pendingWorkoutCounts: [UUID: Int] = [:]
+    private(set) var finalizationRevision = 0
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     private var isLiveWorkoutActive = false
+
+    func isFinalizing(workoutID: UUID) -> Bool {
+        pendingWorkoutCounts[workoutID, default: 0] > 0
+    }
 
     func setLiveWorkoutActive(_ isActive: Bool) {
         guard isLiveWorkoutActive != isActive else { return }
@@ -60,7 +72,9 @@ final class DeferredWorkoutEnrichmentCoordinator {
         _ request: SessionRequest,
         container: ModelContainer
     ) -> Task<Void, Never> {
-        schedule { @MainActor [weak self] in
+        let workoutID = request.workoutID
+            ?? parentWorkoutID(for: request.sessionID, container: container)
+        return schedule(workoutID: workoutID) { @MainActor [weak self] in
             guard let self else { return }
             await self.enrichSession(request, container: container) {
                 await HealthService.shared.importSnapshot(
@@ -93,7 +107,7 @@ final class DeferredWorkoutEnrichmentCoordinator {
         container: ModelContainer,
         snapshot: @escaping @Sendable () async -> CardioSnapshot
     ) -> Task<Void, Never> {
-        schedule { @MainActor [weak self] in
+        schedule(workoutID: request.workoutID) { @MainActor [weak self] in
             guard let self else { return }
             await self.enrichWorkout(request, container: container, snapshot: snapshot)
         }
@@ -101,11 +115,29 @@ final class DeferredWorkoutEnrichmentCoordinator {
 
     @discardableResult
     private func schedule(
+        workoutID: UUID?,
         _ operation: @escaping @MainActor () async -> Void
     ) -> Task<Void, Never> {
         let token = UUID()
+        if let workoutID {
+            pendingWorkoutCounts[workoutID, default: 0] += 1
+            finalizationRevision &+= 1
+        }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.tasks[token] = nil
+                self.activeAttempts[token] = nil
+                if let workoutID {
+                    let remaining = self.pendingWorkoutCounts[workoutID, default: 1] - 1
+                    if remaining > 0 {
+                        self.pendingWorkoutCounts[workoutID] = remaining
+                    } else {
+                        self.pendingWorkoutCounts[workoutID] = nil
+                    }
+                    self.finalizationRevision &+= 1
+                }
+            }
             while !Task.isCancelled {
                 await waitUntilIdle()
                 guard !Task.isCancelled else { break }
@@ -125,11 +157,20 @@ final class DeferredWorkoutEnrichmentCoordinator {
                 if attemptTask.isCancelled || isLiveWorkoutActive { continue }
                 break
             }
-            self.tasks[token] = nil
-            self.activeAttempts[token] = nil
         }
         tasks[token] = task
         return task
+    }
+
+    private func parentWorkoutID(
+        for sessionID: UUID,
+        container: ModelContainer
+    ) -> UUID? {
+        let context = ModelContext(container)
+        let id = sessionID
+        return try? context.fetch(
+            FetchDescriptor<CardioSessionModel>(predicate: #Predicate { $0.id == id })
+        ).first?.workout?.id
     }
 
     func cancelAll() {
@@ -171,7 +212,7 @@ final class DeferredWorkoutEnrichmentCoordinator {
               session.endedAt != nil else { return }
 
         let wholeWorkoutMetricsApply = session.workout.map {
-            WorkoutHeartRateResolution.isSoleTimedModality(session, in: $0)
+            WorkoutHeartRateResolution.sharesWholeWorkoutWindow(session, in: $0)
         } ?? false
         let wholeWorkoutAverage = wholeWorkoutMetricsApply ? session.workout?.avgHR : nil
         let wholeWorkoutMaximum = wholeWorkoutMetricsApply ? session.workout?.maxHR : nil
@@ -240,7 +281,7 @@ final class DeferredWorkoutEnrichmentCoordinator {
         }
         if let session = workout.cardioSessions.first(where: {
             $0.deletedAt == nil && $0.endedAt != nil
-                && WorkoutHeartRateResolution.isSoleTimedModality($0, in: workout)
+                && WorkoutHeartRateResolution.sharesWholeWorkoutWindow($0, in: workout)
         }) {
             if let average = workout.avgHR { session.avgHR = average }
             if let maximum = workout.maxHR { session.maxHR = maximum }
@@ -249,6 +290,10 @@ final class DeferredWorkoutEnrichmentCoordinator {
                 session.hrZoneSeconds = workout.hrZoneSeconds
             }
         }
+        // History/feed memoization deliberately keys off the workout clock,
+        // so every completed enrichment invalidates all saved-workout
+        // surfaces together, including clearing their Finalizing state.
+        workout.updatedAt = Date()
         guard !Task.isCancelled, !isLiveWorkoutActive else { return }
         try? context.save()
     }

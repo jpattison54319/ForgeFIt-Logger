@@ -686,6 +686,7 @@ struct CardioExerciseCard: View {
             DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
                 .init(
                     sessionID: outcome.sessionID,
+                    workoutID: workout.id,
                     start: outcome.start,
                     end: outcome.end,
                     modality: kind,

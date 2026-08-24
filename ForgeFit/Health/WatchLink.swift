@@ -803,6 +803,7 @@ final class WatchLink: NSObject {
                 DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
                     .init(
                         sessionID: outcome.sessionID,
+                        workoutID: active?.id,
                         start: outcome.start,
                         end: outcome.end,
                         modality: kind,
@@ -1147,6 +1148,7 @@ final class WatchLink: NSObject {
             DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
                 .init(
                     sessionID: outcome.sessionID,
+                    workoutID: workout.id,
                     start: outcome.start,
                     end: outcome.end,
                     modality: .other,
@@ -1196,6 +1198,7 @@ final class WatchLink: NSObject {
         DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
             .init(
                 sessionID: session.id,
+                workoutID: session.workout?.id,
                 start: start,
                 end: end,
                 modality: modality,

@@ -160,10 +160,7 @@ struct ConditioningBlockCard: View {
     }
 
     private var title: String {
-        guard plan?.sections.count == 1,
-              let name = plan?.sections.first?.name,
-              !name.isEmpty else { return "Conditioning" }
-        return name
+        ConditioningPlanPresentation.title(for: plan)
     }
 
     private var resultSummary: String {

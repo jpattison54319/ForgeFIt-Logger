@@ -61,11 +61,26 @@ struct ShareCardRenderTests {
         #expect((image?.size.height ?? 0) > (image?.size.width ?? 0))
     }
 
-    @Test func routineCardRenders() {
-        let set = RoutineSetModel(userID: userID, position: 0, targetRepsLow: 8, targetRepsHigh: 12, targetWeight: 100, targetRPE: 8)
-        let re = RoutineExerciseModel(userID: userID, exerciseID: benchID, position: 0, sets: [set])
+    @Test func routineCardRendersEverySetType() {
+        let sets = SetType.allCases.enumerated().map { index, type in
+            RoutineSetModel(
+                userID: userID,
+                position: index,
+                setType: type,
+                targetRepsLow: 8,
+                targetRepsHigh: 12,
+                targetWeight: 100,
+                targetRPE: 8,
+                targetDurationSeconds: type == .amrap ? 60 : nil,
+                plannedMiniSetCount: type == .myoRep ? 4 : nil,
+                plannedMiniRepsJSON: type == .cluster ? "[3,3,2]" : nil
+            )
+        }
+        let re = RoutineExerciseModel(userID: userID, exerciseID: benchID, position: 0, sets: sets)
         let routine = RoutineModel(userID: userID, name: "Upper A", exercises: [re])
-        #expect(RoutineShareRenderer.image(for: routine, exercises: library, theme: .sage) != nil)
+        let image = RoutineShareRenderer.image(for: routine, exercises: library, theme: .sage)
+        #expect(image != nil)
+        #expect((image?.size.height ?? 0) > (image?.size.width ?? 0))
     }
 
     @Test func conditioningOnlyAndMixedSavedImagesRenderMeaningfulScores() throws {

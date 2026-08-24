@@ -146,6 +146,92 @@ struct PlanSharingTests {
         #expect(try repeatedContext.fetch(FetchDescriptor<ExerciseLibraryModel>()).count == exercises.count)
     }
 
+    @Test func everySetTypeAndAuthoredTargetSurvivesAPlanRoundTrip() throws {
+        let (sourceContainer, sourceContext) = try TestStore.make()
+        defer { withExtendedLifetime(sourceContainer) {} }
+
+        let exercise = ExerciseLibraryModel(
+            ownerID: userID,
+            name: "Set Type Contract",
+            defaultWeightMode: .external
+        )
+        let sourceSets = SetType.allCases.enumerated().map { index, type in
+            RoutineSetModel(
+                userID: userID,
+                position: index,
+                setType: type,
+                targetRepsLow: 6 + index,
+                targetRepsHigh: 8 + index,
+                targetWeight: 40 + Double(index),
+                loadPrescriptionMode: .percentEstimatedOneRepMax,
+                target1RMPercentLow: 70,
+                target1RMPercentHigh: 75,
+                targetRPE: 8.5,
+                targetRIR: 2,
+                targetDurationSeconds: 30 + index,
+                targetDistanceMeters: 100 + Double(index),
+                plannedMiniSetCount: type == .myoRep ? 4 : nil,
+                plannedMiniRepsJSON: type == .cluster ? "[3,3,2]" : nil
+            )
+        }
+        let row = RoutineExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            sets: sourceSets
+        )
+        let routine = RoutineModel(userID: userID, name: "Every Set Type", exercises: [row])
+        sourceContext.insert(exercise)
+        sourceContext.insert(routine)
+        try sourceContext.save()
+
+        let document = try PlanShareService.routineDocument(routine, exercises: [exercise])
+        #expect(document.formatVersion == 3)
+        #expect(document.routines.first?.exercises.first?.sets.map(\.setTypeRaw) == SetType.allCases.map(\.rawValue))
+
+        // Builds released before v3 could already emit v2 files containing
+        // these raw values. Current ForgeFit must continue accepting them.
+        var legacyV2 = document
+        legacyV2.formatVersion = 2
+        try PlanImportService.validate(legacyV2)
+
+        var predatingVocabulary = document
+        predatingVocabulary.formatVersion = 1
+        #expect(throws: PlanImportService.ImportError.self) {
+            try PlanImportService.validate(predatingVocabulary)
+        }
+
+        let decoded = try ForgeFitPlanCodec.decode(ForgeFitPlanCodec.encode(document))
+        let (recipientContainer, recipientContext) = try TestStore.make()
+        defer { withExtendedLifetime(recipientContainer) {} }
+        let result = try PlanImportService.commit(decoded, in: recipientContext)
+
+        let freshContext = ModelContext(recipientContainer)
+        let importedRoutine = try #require(
+            try freshContext.fetch(FetchDescriptor<RoutineModel>())
+                .first { result.routineIDs.contains($0.id) }
+        )
+        let importedSets = importedRoutine.exercises
+            .flatMap(\.sets)
+            .sorted { $0.position < $1.position }
+        #expect(importedSets.count == SetType.allCases.count)
+
+        for (source, imported) in zip(sourceSets, importedSets) {
+            #expect(imported.setType == source.setType)
+            #expect(imported.targetRepsLow == source.targetRepsLow)
+            #expect(imported.targetRepsHigh == source.targetRepsHigh)
+            #expect(imported.targetWeight == source.targetWeight)
+            #expect(imported.loadPrescriptionMode == source.loadPrescriptionMode)
+            #expect(imported.target1RMPercentLow == source.target1RMPercentLow)
+            #expect(imported.target1RMPercentHigh == source.target1RMPercentHigh)
+            #expect(imported.targetRPE == source.targetRPE)
+            #expect(imported.targetRIR == source.targetRIR)
+            #expect(imported.targetDurationSeconds == source.targetDurationSeconds)
+            #expect(imported.targetDistanceMeters == source.targetDistanceMeters)
+            #expect(imported.plannedMiniSetCount == source.plannedMiniSetCount)
+            #expect(imported.plannedMiniRepsJSON == source.plannedMiniRepsJSON)
+        }
+    }
+
     @Test func validatorRejectsFutureAndBrokenDocumentsBeforeImport() throws {
         let exerciseID = UUID()
         let definition = SharedPlanExercise(
@@ -198,7 +284,7 @@ struct PlanSharingTests {
             alternations: [alternation],
             exercises: []
         )
-        #expect(document.formatVersion == 2)
+        #expect(document.formatVersion == 3)
         #expect(document.routines.map(\.name) == ["AX400", "Cindy"])
         #expect(document.alternations == [SharedPlanAlternation(
             id: alternation.id,

@@ -1191,6 +1191,22 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(workout.isHittable, "Expected the visible AX400 workout row to be tappable.")
         tapWhenReady(workout)
 
+        let historyTitle = app.descendants(matching: .any)["conditioning-history-title"].firstMatch
+        scrollPastCharts(in: app, attempts: 5)
+        XCTAssertTrue(historyTitle.exists, "Expected the completed conditioning block title.")
+        XCTAssertEqual(
+            historyTitle.label,
+            "AX400",
+            "A completed one-section block should keep its preset name instead of showing Conditioning."
+        )
+        let sectionAverage = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == 'stat-avg-hr' AND label == 'Avg HR 166'")
+        ).firstMatch
+        XCTAssertTrue(
+            sectionAverage.waitForExistence(timeout: 5),
+            "AX400 should show its exact section-window average, separate from the workout average."
+        )
+
         let presetLink = app.descendants(matching: .any)["conditioning-preset-history-link"].firstMatch
         scrollPastCharts(in: app, attempts: 5)
         XCTAssertTrue(presetLink.exists)
@@ -1209,6 +1225,77 @@ final class ForgeFitUITests: XCTestCase {
             "Historical preset navigation should retain the saved preset edit action."
         )
         attachScreenshot(app, name: "conditioning-history-opens-ax400-detail")
+    }
+
+    /// A just-saved Watch workout explains delayed HealthKit/performance data
+    /// without falsely calling completed AX400 work skipped.
+    @MainActor
+    func testRecentlySavedAX400ShowsBoundedFinalizationStatus() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-conditioning-finalization",
+            "-didOnboard", "YES",
+            "-initialTab", "profile",
+        ]
+        app.acceptanceLaunch()
+
+        let workout = app.buttons["profile-workout-AX400"].firstMatch
+        scrollPastCharts(in: app, attempts: 4)
+        XCTAssertTrue(workout.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            workout.label.contains("Status Finalizing"),
+            "The saved workout card should say Finalizing instead of Skipped while its result is pending."
+        )
+        tapWhenReady(workout)
+
+        let status = app.descendants(matching: .any)["workout-finalization-status"].firstMatch
+        XCTAssertTrue(
+            status.waitForExistence(timeout: 5),
+            "A recent incomplete HealthKit/performance snapshot should explain that finalization is still running."
+        )
+        XCTAssertTrue(status.label.contains("Finalizing workout data"))
+
+        let historyTitle = app.descendants(matching: .any)["conditioning-history-title"].firstMatch
+        scrollPastCharts(in: app, attempts: 5)
+        XCTAssertTrue(historyTitle.exists)
+        XCTAssertEqual(historyTitle.label, "AX400")
+        let historyState = app.descendants(matching: .any)["conditioning-history-state"].firstMatch
+        XCTAssertTrue(historyState.exists)
+        XCTAssertEqual(historyState.label, "Finalizing…")
+        XCTAssertFalse(app.staticTexts["Skipped"].firstMatch.exists)
+        attachScreenshot(app, name: "recent-ax400-finalizing-workout-data")
+    }
+
+    /// The same saved-card/detail contract is owned by the shared enrichment
+    /// pipeline, not by conditioning-specific presentation.
+    @MainActor
+    func testRecentlySavedStrengthWorkoutShowsAppWideFinalizationStatus() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-workout-finalization",
+            "-didOnboard", "YES",
+            "-initialTab", "profile",
+        ]
+        app.acceptanceLaunch()
+
+        let workout = app.buttons["profile-workout-Finalizing Strength"].firstMatch
+        scrollPastCharts(in: app, attempts: 4)
+        XCTAssertTrue(workout.waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            workout.label.contains("Finalizing workout data"),
+            "The saved strength workout should expose its visible Finalizing state to VoiceOver."
+        )
+        attachScreenshot(app, name: "strength-saved-card-finalizing")
+
+        tapWhenReady(workout)
+        let detailStatus = app.descendants(matching: .any)["workout-finalization-status"].firstMatch
+        XCTAssertTrue(detailStatus.waitForExistence(timeout: 5))
+        XCTAssertTrue(detailStatus.label.contains("Finalizing workout data"))
+        attachScreenshot(app, name: "strength-detail-finalizing")
     }
 
     /// Opening exercise details from active search isolates the detail from

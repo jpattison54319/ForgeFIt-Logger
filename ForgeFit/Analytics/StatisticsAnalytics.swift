@@ -371,7 +371,7 @@ nonisolated extension TrainingAnalytics {
     ) -> Int? {
         if let explicitAverage { return explicitAverage }
         if let workout = session.workout,
-           WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout) {
+           WorkoutHeartRateResolution.sharesWholeWorkoutWindow(session, in: workout) {
             return workout.avgHR ?? session.avgHR
         }
         return session.avgHR

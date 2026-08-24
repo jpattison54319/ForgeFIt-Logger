@@ -278,10 +278,7 @@ struct ConditioningWorkoutView: View {
 
     private var blockTitle: String {
         guard block != nil else { return workout.title ?? "Conditioning" }
-        if plan.sections.count == 1, let name = plan.sections.first?.name, !name.isEmpty {
-            return name
-        }
-        return "Conditioning"
+        return ConditioningPlanPresentation.title(for: plan)
     }
 
     private func scheduleBlockEnrichment(
@@ -296,6 +293,7 @@ struct ConditioningWorkoutView: View {
         DeferredWorkoutEnrichmentCoordinator.shared.scheduleSession(
             .init(
                 sessionID: sessionID,
+                workoutID: workout.id,
                 start: start,
                 end: end,
                 modality: .other,

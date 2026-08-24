@@ -569,6 +569,7 @@ enum WorkoutFinisher {
                 let bleStats = LiveMetricsHub.shared.bleWindowStats(from: start, to: now)
                 let enrichmentRequest = DeferredWorkoutEnrichmentCoordinator.SessionRequest(
                     sessionID: session.id,
+                    workoutID: workout.id,
                     start: start,
                     end: now,
                     modality: .other,
@@ -604,6 +605,7 @@ enum WorkoutFinisher {
                     .flatMap { IntervalPlan.decode(from: $0.intervalPlanJSON)?.hasSteps } == true
                 let enrichmentRequest = DeferredWorkoutEnrichmentCoordinator.SessionRequest(
                     sessionID: session.id,
+                    workoutID: workout.id,
                     start: start,
                     end: now,
                     modality: kind,

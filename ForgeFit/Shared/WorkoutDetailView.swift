@@ -25,6 +25,112 @@ private struct ExpandedRouteTarget: Identifiable {
     let kind: CardioKind
 }
 
+enum WorkoutFinalizationPresentation {
+    /// Apple Health can expose a just-ended workout before its complete sample
+    /// series is queryable. Keep the status bounded so denied Health access or
+    /// an interrupted import can never leave the workout looking permanently busy.
+    static let recentWorkoutWindow: TimeInterval = 30 * 60
+    static let heartRateTailTolerance: TimeInterval = 2 * 60
+
+    static func shouldShow(
+        endedAt: Date?,
+        now: Date,
+        isEnrichmentPending: Bool = false,
+        expectsHeartRate: Bool,
+        heartRateLoaded: Bool,
+        latestHeartRateSampleAt: Date?,
+        hasPendingConditioningResult: Bool
+    ) -> Bool {
+        guard let endedAt else { return false }
+        let age = now.timeIntervalSince(endedAt)
+        guard age >= -60, age <= recentWorkoutWindow else { return false }
+
+        if isEnrichmentPending { return true }
+        if hasPendingConditioningResult { return true }
+        guard expectsHeartRate else { return false }
+        guard heartRateLoaded, let latestHeartRateSampleAt else { return true }
+        return latestHeartRateSampleAt < endedAt.addingTimeInterval(-heartRateTailTolerance)
+    }
+
+    static func expectsHeartRate(in workout: WorkoutModel) -> Bool {
+        workout.avgHR != nil
+            || workout.maxHR != nil
+            || workout.cardioSessions.contains { $0.avgHR != nil || $0.maxHR != nil }
+    }
+
+    static func hasPendingConditioningResult(in workout: WorkoutModel) -> Bool {
+        if workout.blocks.contains(where: { block in
+            guard block.kind == .conditioning,
+                  ConditioningPlan.decode(from: block.planSnapshotJSON) != nil,
+                  ConditioningResult.decode(from: block.resultJSON) == nil else { return false }
+            if let progress = ConditioningProgress.decode(from: block.progressJSON),
+               progress.status != .ready {
+                return true
+            }
+            if workout.cardioSessions.contains(where: {
+                $0.workoutBlockID == block.id && ($0.liveStartedAt != nil || $0.endedAt != nil)
+            }) {
+                return true
+            }
+            return workout.exercises
+                .filter { $0.generatedByWorkoutBlockID == block.id }
+                .flatMap(\.sets)
+                .contains { $0.completedAt != nil }
+        }) {
+            return true
+        }
+
+        guard ConditioningPlan.decode(from: workout.conditioningPlanSnapshotJSON) != nil,
+              ConditioningResult.decode(from: workout.conditioningResultJSON) == nil else { return false }
+        if let progress = ConditioningProgress.decode(from: workout.conditioningProgressJSON),
+           progress.status != .ready {
+            return true
+        }
+        return workout.cardioSessions.contains {
+            $0.workoutBlockID == nil
+                && $0.workoutExerciseID == nil
+                && $0.isConditioningSession
+                && ($0.liveStartedAt != nil || $0.endedAt != nil)
+        }
+    }
+
+    static func shouldShowOnSavedCard(
+        for workout: WorkoutModel,
+        now: Date,
+        isEnrichmentPending: Bool = false
+    ) -> Bool {
+        shouldShowOnSavedCard(
+            endedAt: workout.endedAt,
+            now: now,
+            isEnrichmentPending: isEnrichmentPending,
+            hasPendingConditioningResult: hasPendingConditioningResult(in: workout)
+        )
+    }
+
+    /// Value-only form used by history rows so they can react to shared
+    /// enrichment without retaining or faulting a SwiftData workout graph.
+    static func shouldShowOnSavedCard(
+        endedAt: Date?,
+        now: Date,
+        isEnrichmentPending: Bool = false,
+        hasPendingConditioningResult: Bool
+    ) -> Bool {
+        shouldShow(
+            endedAt: endedAt,
+            now: now,
+            isEnrichmentPending: isEnrichmentPending,
+            expectsHeartRate: false,
+            heartRateLoaded: true,
+            latestHeartRateSampleAt: nil,
+            hasPendingConditioningResult: hasPendingConditioningResult
+        )
+    }
+
+    static func savedCardExpiration(endedAt: Date?) -> Date? {
+        endedAt?.addingTimeInterval(recentWorkoutWindow)
+    }
+}
+
 /// Lightweight editor for a cardio session's laps: rename or delete individual
 /// segments. Used to confirm/adjust auto-detected intervals.
 private struct IntervalSplitsEditor: View {
@@ -108,6 +214,8 @@ struct WorkoutDetailView: View {
     @State private var isDeleting = false
     @State private var hrSamples: [(date: Date, bpm: Int)] = []
     @State private var hrLoaded = false
+    @State private var finalizationDelayElapsed = false
+    @State private var finalizationWindowExpired = false
     @State private var heartRateRefreshError: String?
     @State private var recoveryPoints: [SetRecoveryPoint] = []
     @State private var showSharePreview = false
@@ -147,6 +255,20 @@ struct WorkoutDetailView: View {
             || workout.activeEnergyKcal != nil
             || workout.readinessAtStart != nil
     }
+    private var isFinalizingWorkoutData: Bool {
+        guard finalizationDelayElapsed, !finalizationWindowExpired else { return false }
+        return WorkoutFinalizationPresentation.shouldShow(
+            endedAt: workout.endedAt,
+            now: .now,
+            isEnrichmentPending: DeferredWorkoutEnrichmentCoordinator.shared.isFinalizing(
+                workoutID: workout.id
+            ),
+            expectsHeartRate: WorkoutFinalizationPresentation.expectsHeartRate(in: workout),
+            heartRateLoaded: hrLoaded,
+            latestHeartRateSampleAt: hrSamples.map(\.date).max(),
+            hasPendingConditioningResult: WorkoutFinalizationPresentation.hasPendingConditioningResult(in: workout)
+        )
+    }
 
     var body: some View {
         let plan = presentationPlan
@@ -159,6 +281,10 @@ struct WorkoutDetailView: View {
                     Text(workout.title ?? "Workout").font(.screenTitle).foregroundStyle(theme.textPrimary)
                     Text(workout.startedAt.formatted(date: .complete, time: .shortened))
                         .font(.system(size: 14)).foregroundStyle(theme.textSecondary)
+                }
+
+                if isFinalizingWorkoutData {
+                    finalizingWorkoutDataCard
                 }
 
                 if let note = WorkoutNotePolicy.userText(in: workout) {
@@ -252,7 +378,8 @@ struct WorkoutDetailView: View {
                             workouts: detailHistory,
                             hrSamples: hrSamples,
                             heartRateMetrics: resolvedHeartRateMetrics(for: session),
-                            collapsible: isMixedWorkout
+                            collapsible: isMixedWorkout,
+                            isFinalizing: isFinalizingWorkoutData
                         )
                     case .session(let session, _):
                         if session.isYogaSession {
@@ -274,7 +401,8 @@ struct WorkoutDetailView: View {
                                 workouts: detailHistory,
                                 hrSamples: hrSamples,
                                 heartRateMetrics: resolvedHeartRateMetrics(for: session),
-                                collapsible: isMixedWorkout
+                                collapsible: isMixedWorkout,
+                                isFinalizing: isFinalizingWorkoutData
                             )
                         } else {
                             cardioCard(session, workoutExercise: nil, exercise: nil)
@@ -289,6 +417,7 @@ struct WorkoutDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
         .task(id: workout.id) { await loadHeartRateSamples() }
+        .task(id: workout.id) { await armFinalizationStatus() }
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
         }
@@ -343,6 +472,59 @@ struct WorkoutDetailView: View {
         }
     }
 
+    private var finalizingWorkoutDataCard: some View {
+        Card(padding: Space.md, fill: theme.surfaceElevated) {
+            HStack(alignment: .top, spacing: Space.md) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(theme.warmup)
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("Finalizing workout data")
+                        .font(.bodyStrong)
+                        .foregroundStyle(theme.textPrimary)
+                    Text("Heart rate and performance can take a moment to finish syncing. You can leave and check back shortly.")
+                        .font(.label)
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Finalizing workout data")
+        .accessibilityValue("Heart rate and performance can take a moment to finish syncing. You can leave and check back shortly.")
+        .accessibilityIdentifier("workout-finalization-status")
+    }
+
+    private func armFinalizationStatus() async {
+        finalizationDelayElapsed = false
+        finalizationWindowExpired = false
+        do {
+            try await Task.sleep(for: .milliseconds(500))
+        } catch {
+            return
+        }
+        guard !Task.isCancelled else { return }
+        finalizationDelayElapsed = true
+
+        guard let endedAt = workout.endedAt else { return }
+        let remaining = endedAt.addingTimeInterval(
+            WorkoutFinalizationPresentation.recentWorkoutWindow
+        ).timeIntervalSinceNow
+        guard remaining > 0 else {
+            finalizationWindowExpired = true
+            return
+        }
+        do {
+            try await Task.sleep(for: .seconds(remaining))
+        } catch {
+            return
+        }
+        guard !Task.isCancelled else { return }
+        finalizationWindowExpired = true
+    }
+
     private var header: some View {
         HStack {
             CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
@@ -375,13 +557,18 @@ struct WorkoutDetailView: View {
             durationSeconds: summary.durationSeconds,
             averageHeartRate: workoutHeartRateMetrics.averageBPM
         )
+        let facts = overview.facts.map { fact in
+            isFinalizingWorkoutData && fact.label == "Status"
+                ? WorkoutOverviewPresentation.Fact(label: fact.label, value: "Finalizing")
+                : fact
+        }
         return Card {
             LazyVGrid(
                 columns: [GridItem(.flexible()), GridItem(.flexible())],
                 alignment: .leading,
                 spacing: Space.md
             ) {
-                ForEach(Array(overview.facts.enumerated()), id: \.offset) { _, fact in
+                ForEach(Array(facts.enumerated()), id: \.offset) { _, fact in
                     StatColumn(label: fact.label, value: fact.value)
                 }
             }
@@ -389,7 +576,7 @@ struct WorkoutDetailView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "Workout summary. "
-                + overview.facts.map { "\($0.label) \($0.value)" }.joined(separator: ", ")
+                + facts.map { "\($0.label) \($0.value)" }.joined(separator: ", ")
         )
     }
 
@@ -653,7 +840,8 @@ struct WorkoutDetailView: View {
                 workouts: detailHistory,
                 hrSamples: hrSamples,
                 heartRateMetrics: resolvedHeartRateMetrics(for: session),
-                collapsible: isMixedWorkout
+                collapsible: isMixedWorkout,
+                isFinalizing: isFinalizingWorkoutData
             )
         } else {
             Card(padding: Space.md) {

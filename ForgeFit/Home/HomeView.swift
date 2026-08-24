@@ -2018,17 +2018,34 @@ struct RecoveryHeroCard: View {
 /// A workout row used across Home / Profile feeds.
 struct WorkoutFeedRow: View {
     @Environment(\.theme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var finalizationClockRevision = 0
     let workout: WorkoutModel
     let analytics: TrainingAnalytics
 
     var body: some View {
+        let _ = finalizationClockRevision
         let s = analytics.summary(for: workout)
         let shape = WorkoutShareShape.of(workout: workout, summary: s)
+        let isFinalizing = WorkoutFinalizationPresentation.shouldShowOnSavedCard(
+            for: workout,
+            now: Date(),
+            isEnrichmentPending: DeferredWorkoutEnrichmentCoordinator.shared.isFinalizing(
+                workoutID: workout.id
+            )
+        )
+        let finalizationExpiration = isFinalizing
+            ? WorkoutFinalizationPresentation.savedCardExpiration(endedAt: workout.endedAt)
+            : nil
         let facts = WorkoutOverviewPresentation.make(
             workout: workout,
             exercises: analytics.exercises,
             durationSeconds: s.durationSeconds
-        ).facts
+        ).facts.map { fact in
+            isFinalizing && fact.label == "Status"
+                ? WorkoutOverviewPresentation.Fact(label: fact.label, value: "Finalizing")
+                : fact
+        }
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
@@ -2042,6 +2059,19 @@ struct WorkoutFeedRow: View {
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
+                    if isFinalizing {
+                        HStack(spacing: 5) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(theme.warmup)
+                            Text("Finalizing")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Finalizing workout data")
+                        .accessibilityIdentifier("saved-workout-finalization-status")
+                    }
                     Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
                 }
                 HStack {
@@ -2052,5 +2082,30 @@ struct WorkoutFeedRow: View {
             }
         }
         .accessibilityIdentifier("home-workout-\(workout.title ?? "Workout")")
+        .task(id: finalizationExpiration) {
+            await refreshAtFinalizationExpiration(finalizationExpiration)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { finalizationClockRevision &+= 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.significantTimeChangeNotification
+        )) { _ in
+            finalizationClockRevision &+= 1
+        }
+    }
+
+    private func refreshAtFinalizationExpiration(_ expiration: Date?) async {
+        guard let expiration else { return }
+        let remaining = expiration.timeIntervalSinceNow
+        if remaining > 0 {
+            do {
+                try await Task.sleep(for: .seconds(remaining))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        finalizationClockRevision &+= 1
     }
 }

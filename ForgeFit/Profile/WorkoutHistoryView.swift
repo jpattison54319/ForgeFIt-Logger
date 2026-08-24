@@ -488,6 +488,8 @@ struct WorkoutHistoryView: View {
 /// feed and the full history read as one surface.
 private struct WorkoutHistoryRow: View {
     @Environment(\.theme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var finalizationClockRevision = 0
     let entry: WorkoutHistoryEntry
     let showsYear: Bool
 
@@ -498,6 +500,23 @@ private struct WorkoutHistoryRow: View {
     }
 
     var body: some View {
+        let _ = finalizationClockRevision
+        let isFinalizing = WorkoutFinalizationPresentation.shouldShowOnSavedCard(
+            endedAt: entry.endedAt,
+            now: Date(),
+            isEnrichmentPending: DeferredWorkoutEnrichmentCoordinator.shared.isFinalizing(
+                workoutID: entry.id
+            ),
+            hasPendingConditioningResult: entry.hasPendingConditioningResult
+        )
+        let finalizationExpiration = isFinalizing
+            ? WorkoutFinalizationPresentation.savedCardExpiration(endedAt: entry.endedAt)
+            : nil
+        let facts = entry.facts.map { fact in
+            isFinalizing && fact.label == "Status"
+                ? WorkoutHistoryEntry.Fact(label: fact.label, value: "Finalizing")
+                : fact
+        }
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
@@ -520,15 +539,53 @@ private struct WorkoutHistoryRow: View {
                             .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
+                    if isFinalizing {
+                        HStack(spacing: 5) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(theme.warmup)
+                            Text("Finalizing")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Finalizing workout data")
+                        .accessibilityIdentifier("saved-workout-finalization-status")
+                    }
                     Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(theme.textTertiary)
                 }
                 HStack {
-                    ForEach(Array(entry.facts.prefix(3).enumerated()), id: \.offset) { _, fact in
+                    ForEach(Array(facts.prefix(3).enumerated()), id: \.offset) { _, fact in
                         StatColumn(label: fact.label, value: fact.value)
                     }
                 }
             }
         }
         .accessibilityIdentifier("history-workout-\(entry.title)")
+        .task(id: finalizationExpiration) {
+            await refreshAtFinalizationExpiration(finalizationExpiration)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { finalizationClockRevision &+= 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.significantTimeChangeNotification
+        )) { _ in
+            finalizationClockRevision &+= 1
+        }
+    }
+
+    private func refreshAtFinalizationExpiration(_ expiration: Date?) async {
+        guard let expiration else { return }
+        let remaining = expiration.timeIntervalSinceNow
+        if remaining > 0 {
+            do {
+                try await Task.sleep(for: .seconds(remaining))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        finalizationClockRevision &+= 1
     }
 }

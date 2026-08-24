@@ -1965,6 +1965,23 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-conditioning-preset-rename") {
                 try ConditioningPresetUITestFixture.seed(in: modelContext)
             }
+            if ProcessInfo.processInfo.arguments.contains("--seed-conditioning-finalization") {
+                try ConditioningPresetUITestFixture.seedFinalizing(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--seed-workout-finalization") {
+                let workout = try WorkoutFinalizationUITestFixture.seed(in: modelContext)
+                if let end = workout.endedAt {
+                    let pendingSnapshot = CardioSnapshot()
+                    DeferredWorkoutEnrichmentCoordinator.shared.scheduleWorkout(
+                        .init(workoutID: workout.id, start: workout.startedAt, end: end),
+                        container: modelContext.container,
+                        snapshot: {
+                            try? await Task.sleep(for: .seconds(10 * 60))
+                            return pendingSnapshot
+                        }
+                    )
+                }
+            }
             if ProcessInfo.processInfo.arguments.contains("--seed-experiment-demo") {
                 try ExperimentDemoSeed.seed(in: modelContext)
             }

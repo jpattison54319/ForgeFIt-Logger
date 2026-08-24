@@ -134,13 +134,11 @@ struct YogaHistoryCard: View {
             LoggedNoteView(title: "Exercise note", text: note)
         }
 
-        if collapsible {
-            HStack {
-                StatColumn(label: "Duration", value: Fmt.durationShort(durationSeconds), valueColor: theme.accent)
-                StatColumn(label: "Poses", value: poses.isEmpty ? "—" : "\(poses.count)")
-                StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
-                StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
-            }
+        HStack {
+            StatColumn(label: "Duration", value: Fmt.durationShort(durationSeconds), valueColor: theme.accent)
+            StatColumn(label: "Poses", value: poses.isEmpty ? "—" : "\(poses.count)")
+            StatColumn(label: "Avg HR", value: displayAverageHR.map(String.init) ?? "—", valueColor: theme.danger)
+            StatColumn(label: "Energy", value: displayEnergyKcal.map { "\(Int($0)) kcal" } ?? "—")
         }
 
         if !poses.isEmpty {
@@ -185,17 +183,17 @@ struct YogaHistoryCard: View {
             }
         }
 
-        if collapsible, let session, let avgHR = displayAverageHR {
+        if let session, let avgHR = displayAverageHR {
             HRZoneBar(
                 avgHR: avgHR,
                 maxHR: displayMaximumHR,
                 durationSeconds: session.durationSeconds,
                 zoneSeconds: displayZoneSeconds,
-                source: displayZoneSeconds == nil ? .estimated : .measured
+                source: displayZoneSeconds == nil ? .estimated : .measured,
+                showsAverageInHeader: false
             )
         }
-        if collapsible,
-           let session,
+        if let session,
            let window = CardioBlockSupport.blockWindow(
                startedAt: session.startedAt,
                liveStartedAt: session.liveStartedAt,

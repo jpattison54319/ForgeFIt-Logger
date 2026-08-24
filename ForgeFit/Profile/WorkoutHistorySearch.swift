@@ -49,6 +49,8 @@ struct WorkoutHistoryEntry: Identifiable, Equatable, Sendable {
     let kindSystemImage: String   // cardio rows show their modality's figure
     let facts: [Fact]
     let avgHR: Int?
+    let endedAt: Date?
+    let hasPendingConditioningResult: Bool
     let isImported: Bool
     let prCount: Int              // strength PRs plus conditioning/yoga awards
     let exerciseIDs: Set<UUID>
@@ -293,6 +295,9 @@ enum WorkoutHistoryIndexer {
                 kindSystemImage: (kind == .cardio || kind == .yoga) ? kindImage : kind.systemImage,
                 facts: facts,
                 avgHR: cardioSessions.first?.avgHR ?? workout.avgHR,
+                endedAt: workout.endedAt,
+                hasPendingConditioningResult:
+                    WorkoutFinalizationPresentation.hasPendingConditioningResult(in: workout),
                 isImported: workout.isImportedHistory,
                 prCount: prCount,
                 exerciseIDs: entryExerciseIDs,

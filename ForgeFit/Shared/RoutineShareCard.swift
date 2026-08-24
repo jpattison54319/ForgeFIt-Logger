@@ -132,7 +132,7 @@ struct RoutineShareCard: View {
                 ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
                     let style = SetTypeStyle.of(set.setType, theme: theme)
                     HStack {
-                        Text(style.numbered ? "\(numberedIndex(sets, upTo: index))" : (style.badge.isEmpty ? "•" : style.badge))
+                        Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sets))
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundStyle(set.setType == .working ? theme.textPrimary : style.color)
                             .frame(width: 40, alignment: .leading)
@@ -144,7 +144,7 @@ struct RoutineShareCard: View {
                             Text(Fmt.load(set.targetWeight, unit: unit))
                                 .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(repsText(set))
+                            Text(RoutineSetPresentation.repsText(for: set))
                                 .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -160,19 +160,6 @@ struct RoutineShareCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func numberedIndex(_ sets: [RoutineSetModel], upTo index: Int) -> Int {
-        sets.prefix(index + 1).filter { SetTypeStyle.of($0.setType).numbered }.count
-    }
-
-    private func repsText(_ set: RoutineSetModel) -> String {
-        switch (set.targetRepsLow, set.targetRepsHigh) {
-        case let (lo?, hi?) where lo != hi: "\(lo)–\(hi)"
-        case let (lo?, _): "\(lo)"
-        case let (_, hi?): "\(hi)"
-        default: "—"
-        }
     }
 
     private func rpeText(_ set: RoutineSetModel) -> String {

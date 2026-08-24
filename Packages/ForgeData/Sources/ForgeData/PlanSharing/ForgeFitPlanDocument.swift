@@ -1,9 +1,41 @@
+import ForgeCore
 import Foundation
+
+/// The plan-file vocabulary for authored set types. This switch is
+/// intentionally exhaustive: adding a `SetType` cannot compile until its
+/// sharing compatibility is classified. Raising the returned version also
+/// raises `ForgeFitPlanDocument.currentVersion` automatically.
+public enum ForgeFitPlanSetTypeContract {
+    public static func introducedVersion(for type: SetType) -> Int {
+        switch type {
+        case .warmup, .working, .drop, .restPause, .backoff, .amrap, .myoRep, .cluster:
+            1
+        case .lengthenedPartial, .lengthenedExtended:
+            3
+        }
+    }
+
+    public static var latestVersion: Int {
+        SetType.allCases.map(introducedVersion(for:)).max() ?? 1
+    }
+
+    public static func supports(_ type: SetType, in documentVersion: Int) -> Bool {
+        if documentVersion >= introducedVersion(for: type) { return true }
+
+        // Builds between the set-type launch and the explicit v3 contract
+        // emitted these two raw values in v2 files. Keep those files usable.
+        return documentVersion == 2
+            && (type == .lengthenedPartial || type == .lengthenedExtended)
+    }
+}
 
 /// A user-created training plan that can leave ForgeFit without carrying any
 /// workout history, Health data, account identity, or local progress state.
 public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
-    public static let currentVersion = 2
+    /// v3 adds the lengthened-partial and lengthened-extended set vocabulary.
+    /// Keeping this distinct from v2 makes older recipients request an app
+    /// update instead of misdiagnosing a valid set type as document damage.
+    public static let currentVersion = max(2, ForgeFitPlanSetTypeContract.latestVersion)
 
     public var formatVersion: Int
     public var packageID: UUID

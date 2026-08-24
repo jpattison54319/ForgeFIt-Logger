@@ -236,9 +236,11 @@ struct DeferredWorkoutEnrichmentTests {
             snapshot: { await gate.provide() }
         )
         await gate.waitUntilStarted()
+        #expect(DeferredWorkoutEnrichmentCoordinator.shared.isFinalizing(workoutID: id))
         DeferredWorkoutEnrichmentCoordinator.shared.cancelAll()
         await gate.release()
         await task.value
+        #expect(!DeferredWorkoutEnrichmentCoordinator.shared.isFinalizing(workoutID: id))
 
         let fresh = ModelContext(container)
         let row = try #require(fresh.fetch(

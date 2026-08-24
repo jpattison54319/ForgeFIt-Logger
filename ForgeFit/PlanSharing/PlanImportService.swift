@@ -390,6 +390,7 @@ enum PlanImportService {
                     }
                 }
                 for set in row.sets {
+                    let setType = SetType(rawValue: set.setTypeRaw)
                     let percentageIsValid: Bool = if let low = set.target1RMPercentLow {
                         EstimatedOneRepMaxPrescription(
                             lowPercent: low,
@@ -398,7 +399,8 @@ enum PlanImportService {
                     } else {
                         set.target1RMPercentHigh == nil
                     }
-                    guard SetType(rawValue: set.setTypeRaw) != nil,
+                    guard let setType,
+                          ForgeFitPlanSetTypeContract.supports(setType, in: document.formatVersion),
                           set.loadPrescriptionModeRaw.map({ LoadPrescriptionMode(rawValue: $0) != nil }) ?? true,
                           percentageIsValid,
                           nonnegative(set.targetRepsLow), nonnegative(set.targetRepsHigh),

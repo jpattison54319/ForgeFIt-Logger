@@ -3,9 +3,9 @@ import Foundation
 
 /// Resolves one heart-rate truth for history presentation and derived metrics.
 /// Fresh HealthKit samples win; stored values remain the fallback for imported,
-/// manual, or no-permission workouts. A sole timed modality shares the whole
-/// workout metric so one run/yoga/conditioning session cannot disagree with
-/// its own workout summary.
+/// manual, or no-permission workouts. A timed modality shares the whole metric
+/// only when its clock spans the workout; narrower cardio, yoga, and
+/// conditioning sections keep metrics from their own timestamp window.
 enum WorkoutHeartRateResolution {
     struct Metrics: Equatable {
         let averageBPM: Int?
@@ -56,7 +56,7 @@ enum WorkoutHeartRateResolution {
         in workout: WorkoutModel,
         samples: [(date: Date, bpm: Int)]
     ) -> Metrics {
-        if isSoleTimedModality(session, in: workout) {
+        if sharesWholeWorkoutWindow(session, in: workout) {
             let whole = workoutMetrics(for: workout, samples: samples)
             return Metrics(
                 averageBPM: whole.averageBPM ?? session.avgHR,
@@ -100,7 +100,7 @@ enum WorkoutHeartRateResolution {
 
         for session in workout.cardioSessions where session.deletedAt == nil && session.endedAt != nil {
             let measured: CardioBlockSupport.HeartRateSummary?
-            if isSoleTimedModality(session, in: workout),
+            if sharesWholeWorkoutWindow(session, in: workout),
                let average = workout.avgHR,
                let maximum = workout.maxHR {
                 measured = .init(averageBPM: average, maximumBPM: maximum)
@@ -110,13 +110,13 @@ enum WorkoutHeartRateResolution {
             if let measured {
                 changed = assign(measured, average: &session.avgHR, maximum: &session.maxHR) || changed
             }
-            if isSoleTimedModality(session, in: workout),
+            if sharesWholeWorkoutWindow(session, in: workout),
                let energy = workout.activeEnergyKcal,
                session.activeEnergyKcal != energy {
                 session.activeEnergyKcal = energy
                 changed = true
             }
-            if isSoleTimedModality(session, in: workout),
+            if sharesWholeWorkoutWindow(session, in: workout),
                workout.hrZoneSeconds.contains(where: { $0 > 0 }),
                session.hrZoneSeconds != workout.hrZoneSeconds {
                 session.hrZoneSeconds = workout.hrZoneSeconds
@@ -136,6 +136,26 @@ enum WorkoutHeartRateResolution {
         guard completed.count == 1, completed.first?.id == session.id else { return false }
         let modalities = WorkoutPresentationPlan.make(for: workout).modalities
         return modalities.count == 1 && !modalities.contains(.strength)
+    }
+
+    /// A single timed modality can still occupy only part of the saved workout
+    /// (for example, AX400 started after setup and ended before the user saved).
+    /// Only genuinely coextensive windows may reuse the whole-workout average.
+    static func sharesWholeWorkoutWindow(
+        _ session: CardioSessionModel,
+        in workout: WorkoutModel,
+        tolerance: TimeInterval = 60
+    ) -> Bool {
+        guard isSoleTimedModality(session, in: workout) else { return false }
+        guard let workoutEnd = workout.endedAt,
+              let sessionWindow = CardioBlockSupport.blockWindow(
+                  startedAt: session.startedAt,
+                  liveStartedAt: session.liveStartedAt,
+                  endedAt: session.endedAt,
+                  durationSeconds: session.durationSeconds
+              ) else { return false }
+        return abs(sessionWindow.lowerBound.timeIntervalSince(workout.startedAt)) <= tolerance
+            && abs(sessionWindow.upperBound.timeIntervalSince(workoutEnd)) <= tolerance
     }
 
     private static func blockMetrics(

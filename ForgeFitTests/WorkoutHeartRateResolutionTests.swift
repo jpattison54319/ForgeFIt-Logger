@@ -92,27 +92,7 @@ struct WorkoutHeartRateResolutionTests {
         #expect(session.maxHR == 161)
     }
 
-    @Test func mixedWorkoutKeepsEachTimedBlockWindowSpecific() {
-        let session = CardioSessionModel(
-            userID: userID,
-            modality: CardioKind.run.rawValue,
-            startedAt: start.addingTimeInterval(300),
-            liveStartedAt: start.addingTimeInterval(300),
-            endedAt: start.addingTimeInterval(600),
-            durationSeconds: 300,
-            avgHR: 95,
-            maxHR: 100
-        )
-        let strength = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
-        let workout = WorkoutModel(
-            userID: userID,
-            startedAt: start,
-            endedAt: start.addingTimeInterval(600),
-            avgHR: 125,
-            maxHR: 170,
-            exercises: [strength],
-            cardioSessions: [session]
-        )
+    @Test func mixedWorkoutKeepsCardioYogaAndConditioningWindowsSpecific() {
         let samples = [
             (date: start.addingTimeInterval(60), bpm: 100),
             (date: start.addingTimeInterval(300), bpm: 150),
@@ -120,14 +100,82 @@ struct WorkoutHeartRateResolutionTests {
             (date: start.addingTimeInterval(600), bpm: 170),
         ]
 
-        let metrics = WorkoutHeartRateResolution.sessionMetrics(
+        for modality in [
+            CardioKind.run.rawValue,
+            CardioSessionModel.yogaModality,
+            CardioSessionModel.conditioningModality,
+        ] {
+            let session = CardioSessionModel(
+                userID: userID,
+                modality: modality,
+                startedAt: start.addingTimeInterval(300),
+                liveStartedAt: start.addingTimeInterval(300),
+                endedAt: start.addingTimeInterval(600),
+                durationSeconds: 300,
+                avgHR: 95,
+                maxHR: 100
+            )
+            let strength = WorkoutExerciseModel(userID: userID, exerciseID: UUID())
+            let workout = WorkoutModel(
+                userID: userID,
+                startedAt: start,
+                endedAt: start.addingTimeInterval(600),
+                avgHR: 125,
+                maxHR: 170,
+                exercises: [strength],
+                cardioSessions: [session]
+            )
+
+            #expect(!WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout))
+            #expect(WorkoutHeartRateResolution.sessionMetrics(
+                for: session,
+                in: workout,
+                samples: samples
+            ) == .init(averageBPM: 160, maximumBPM: 170))
+        }
+    }
+
+    @Test func soleConditioningStillUsesItsNarrowerSectionWindow() {
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: start.addingTimeInterval(300),
+            liveStartedAt: start.addingTimeInterval(300),
+            endedAt: start.addingTimeInterval(900),
+            durationSeconds: 600,
+            activeEnergyKcal: 200,
+            avgHR: 95,
+            maxHR: 100
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(1_200),
+            avgHR: 132,
+            maxHR: 178,
+            activeEnergyKcal: 299,
+            cardioSessions: [session]
+        )
+        let samples = [
+            (date: start.addingTimeInterval(60), bpm: 100),
+            (date: start.addingTimeInterval(300), bpm: 166),
+            (date: start.addingTimeInterval(600), bpm: 166),
+            (date: start.addingTimeInterval(900), bpm: 166),
+            (date: start.addingTimeInterval(1_140), bpm: 100),
+        ]
+
+        #expect(WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout))
+        #expect(!WorkoutHeartRateResolution.sharesWholeWorkoutWindow(session, in: workout))
+        #expect(WorkoutHeartRateResolution.sessionMetrics(
             for: session,
             in: workout,
             samples: samples
-        )
+        ) == .init(averageBPM: 166, maximumBPM: 166, activeEnergyKcal: 200))
 
-        #expect(!WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout))
-        #expect(metrics == .init(averageBPM: 160, maximumBPM: 170))
+        #expect(WorkoutHeartRateResolution.reconcile(workout: workout, samples: samples))
+        #expect(session.avgHR == 166)
+        #expect(session.maxHR == 166)
+        #expect(session.activeEnergyKcal == 200)
     }
 
     @Test func soleYogaAndConditioningShareTheWholeWorkoutContract() {
@@ -143,12 +191,41 @@ struct WorkoutHeartRateResolutionTests {
             )
 
             #expect(WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout))
+            #expect(WorkoutHeartRateResolution.sharesWholeWorkoutWindow(session, in: workout))
             #expect(WorkoutHeartRateResolution.sessionMetrics(
                 for: session,
                 in: workout,
                 samples: []
             ) == .init(averageBPM: 142, maximumBPM: 165))
         }
+    }
+
+    @Test func invalidSectionWindowNeverBorrowsWholeWorkoutHeartRate() {
+        let session = CardioSessionModel(
+            userID: userID,
+            modality: CardioSessionModel.conditioningModality,
+            startedAt: start,
+            endedAt: start,
+            durationSeconds: 0,
+            avgHR: 95,
+            maxHR: 100
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            startedAt: start,
+            endedAt: start.addingTimeInterval(600),
+            avgHR: 142,
+            maxHR: 165,
+            cardioSessions: [session]
+        )
+
+        #expect(WorkoutHeartRateResolution.isSoleTimedModality(session, in: workout))
+        #expect(!WorkoutHeartRateResolution.sharesWholeWorkoutWindow(session, in: workout))
+        #expect(WorkoutHeartRateResolution.sessionMetrics(
+            for: session,
+            in: workout,
+            samples: []
+        ) == .init(averageBPM: 95, maximumBPM: 100))
     }
 
     private func timedSession(modality: String) -> CardioSessionModel {
