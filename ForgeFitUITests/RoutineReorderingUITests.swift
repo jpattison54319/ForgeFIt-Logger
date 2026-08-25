@@ -35,7 +35,7 @@ final class RoutineReorderingUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(moveRoutine.frame.width, 44)
         XCTAssertGreaterThanOrEqual(moveRoutine.frame.height, 44)
         moveRoutine.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).acceptanceTap()
-        let folderOneDestination = app.buttons["Move to Folder One"].firstMatch
+        let folderOneDestination = app.buttons["Move to Mesocycle / Folder One"].firstMatch
         XCTAssertTrue(folderOneDestination.waitForExistence(timeout: 2))
         folderOneDestination.acceptanceTap()
 
@@ -101,6 +101,35 @@ final class RoutineReorderingUITests: XCTestCase {
         relaunchedOrganize.acceptanceTap()
         XCTAssertTrue(app.navigationBars["Organize Routines"].firstMatch.waitForExistence(timeout: 3))
         assertRoutine("One A", appearsAfter: "One C", in: app)
+    }
+
+    @MainActor
+    func testRoutineDragFromUngroupedIntoFolderChangesMembership() {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "-didOnboard", "YES",
+            "-initialTab", "workout",
+            "-workoutUngroupedCollapsed", "NO",
+            "--reset-store",
+            "--seed-routine-reorder",
+        ]
+        app.acceptanceLaunch()
+
+        let organize = app.buttons["organize-routines-button"].firstMatch
+        XCTAssertTrue(organize.waitForExistence(timeout: 8))
+        organize.acceptanceTap()
+
+        let source = app.buttons["Reorder Ungrouped One"].firstMatch
+        let folderRoutine = app.buttons["Reorder One A"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 3))
+        XCTAssertTrue(folderRoutine.exists)
+        source.acceptancePress(forDuration: 0.5, thenDragTo: folderRoutine)
+
+        let placement = app.buttons["Placement options for routine Ungrouped One"].firstMatch
+        XCTAssertTrue(placement.exists)
+        placement.acceptanceTap()
+        XCTAssertTrue(app.buttons["Move to Ungrouped"].firstMatch.waitForExistence(timeout: 2))
     }
 
     @MainActor

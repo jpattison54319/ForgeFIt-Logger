@@ -5,11 +5,10 @@ enum ForgeFitPlanFileType {
     static let identifier = "org.xpetsllc.ForgeFit.plan"
     static let filenameExtension = "forgefitplan"
     static let mimeType = "application/vnd.xpetsllc.forgefit-plan"
-    /// The encoded document is JSON. Keeping that real conformance lets
-    /// Messages and Files preserve a usable document when ForgeFit is not the
-    /// process transporting the attachment, while the proprietary identifier
-    /// still routes taps back to ForgeFit.
-    static let contentType = UTType(exportedAs: identifier, conformingTo: .json)
+    /// Conforming to .data (opaque data) ensures iOS LaunchServices and QuickLook
+    /// route taps directly to ForgeFit rather than opening an inline JSON text preview
+    /// in Messages or Files.
+    static let contentType = UTType(exportedAs: identifier, conformingTo: .data)
 }
 
 /// Keeps the proprietary plan type attached as the file crosses Messages,

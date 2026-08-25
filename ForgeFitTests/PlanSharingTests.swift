@@ -22,8 +22,7 @@ struct PlanSharingTests {
             $0["UTTypeIdentifier"] as? String == ForgeFitPlanFileType.identifier
         })
         #expect(Set(planType["UTTypeConformsTo"] as? [String] ?? []) == [
-            "public.content",
-            "public.json",
+            "public.data",
         ])
         let tags = try #require(planType["UTTypeTagSpecification"] as? [String: Any])
         #expect(tags["public.filename-extension"] as? [String] == [
@@ -57,8 +56,7 @@ struct PlanSharingTests {
 
         #expect(item.contentTypeIdentifier == ForgeFitPlanFileType.identifier)
         #expect(item.fileURL == url)
-        #expect(ForgeFitPlanFileType.contentType.conforms(to: .json))
-        #expect(ForgeFitPlanFileType.contentType.conforms(to: .content))
+        #expect(!ForgeFitPlanFileType.contentType.conforms(to: .json))
         #expect(ForgeFitPlanFileType.contentType.conforms(to: .data))
         #expect(provider.registeredTypeIdentifiers.first == ForgeFitPlanFileType.identifier)
 

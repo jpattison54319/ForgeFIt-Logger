@@ -94,8 +94,7 @@
 			<string>ForgeFit Plan</string>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.content</string>
-				<string>public.json</string>
+				<string>public.data</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>

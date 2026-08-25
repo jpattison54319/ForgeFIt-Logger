@@ -52,6 +52,7 @@ struct RoutineOrganizerView: View {
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(0)
             .scrollContentBackground(.hidden)
             .background(theme.background)
             .environment(\.editMode, .constant(.active))
