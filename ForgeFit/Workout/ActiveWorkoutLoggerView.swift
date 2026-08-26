@@ -1593,9 +1593,7 @@ private struct PostWorkoutSummaryView: View {
     /// in, then the XP bar fills from its pre-award position.
     @State private var cardsRevealed = false
     @State private var xpRevealed = false
-    @State private var routinePlan: RoutineChangeSync.Plan?
-    @State private var routineName: String?
-    @State private var showRoutineUpdatePrompt = false
+    @State private var routineUpdatePrompt: RoutineUpdatePrompt?
     @State private var saveError: String?
     /// FF-006 in-flight gate: held from the moment a Save commits until the
     /// sheet dismisses (success) or the finisher surfaces a failure (release
@@ -1748,17 +1746,12 @@ private struct PostWorkoutSummaryView: View {
         } message: {
             Text("\(saveError ?? "") Your workout is still active — nothing was lost. Try saving again.")
         }
-        .confirmationDialog(
-            routineUpdatePromptTitle,
-            isPresented: $showRoutineUpdatePrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Update Routine") { applyRoutineChangesAndSave() }
-            Button("Keep Routine As-Is", role: .cancel) { commitSave() }
-        } message: {
-            if let summary = routinePlan?.summary, !summary.isEmpty {
-                Text("\(summary)\n\nYour performed weight and reps stay on this workout only — only structure is applied to the routine.")
-            }
+        .sheet(item: $routineUpdatePrompt) { prompt in
+            RoutineUpdateSheet(
+                prompt: prompt,
+                onUpdateAndSave: updateRoutineAndSave,
+                onSaveOnly: saveWorkoutOnly
+            )
         }
     }
 
@@ -1975,15 +1968,10 @@ private struct PostWorkoutSummaryView: View {
 
     // MARK: - Routine update flow
 
-    private var routineUpdatePromptTitle: String {
-        if let name = routineName { return "Update “\(name)” with your changes?" }
-        return "Update routine with your changes?"
-    }
-
     /// On Save: if this workout was started from a routine and structural
     /// changes were made mid-session, ask before finishing. Otherwise save
     /// straight away. The gate is checked (not held) here — the routine
-    /// prompt must not strand it if dismissed without a choice.
+    /// prompt must not acquire it before the user makes a choice.
     private func requestSave() {
         guard !saveGate.isActive else { return }
         guard let routineID = workout.routineID,
@@ -1993,12 +1981,23 @@ private struct PostWorkoutSummaryView: View {
         }
         let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
         if plan.hasChanges {
-            routinePlan = plan
-            routineName = routine.name
-            showRoutineUpdatePrompt = true
+            routineUpdatePrompt = RoutineUpdatePrompt(
+                routineName: routine.name,
+                changeSummary: plan.summary
+            )
         } else {
             commitSave()
         }
+    }
+
+    private func updateRoutineAndSave() {
+        routineUpdatePrompt = nil
+        applyRoutineChangesAndSave()
+    }
+
+    private func saveWorkoutOnly() {
+        routineUpdatePrompt = nil
+        commitSave()
     }
 
     private func applyRoutineChangesAndSave() {

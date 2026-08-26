@@ -31,7 +31,7 @@ struct PostWorkoutActionBar: View {
                 )
                 .accessibilityIdentifier("post-workout-share-button")
 
-                Button(isSaving ? "Saving…" : "Save", systemImage: "checkmark", action: onSave)
+                Button(isSaving ? "Saving…" : "Save Workout", systemImage: "checkmark", action: onSave)
                     .font(.bodyStrong)
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.capsule)
