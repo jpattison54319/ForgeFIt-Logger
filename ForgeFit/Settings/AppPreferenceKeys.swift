@@ -96,6 +96,7 @@ enum AppPreferenceKeys {
     /// Retired preferences kept only so Erase All Data also cleans installs
     /// that previously used the streak feature.
     static let deprecated = [
+        "importedExerciseClassificationBackfill.v1.didRun",
         "weeklyWorkoutGoal",
         "streakNudgeEnabled",
         "activeMacroFolderID",

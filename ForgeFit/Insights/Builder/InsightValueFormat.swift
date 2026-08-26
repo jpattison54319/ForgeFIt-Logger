@@ -21,9 +21,11 @@ enum InsightValueFormat {
         case .massKilograms, .massPerMinute:
             return resolvedWeightUnit.displayValue(fromKilograms: value)
                 .formatted(.number.precision(.fractionLength(0...1)))
-        case .distanceMeters, .elevationMeters:
+        case .distanceMeters:
             return Fmt.distanceUnit.distance(fromMeters: value)
                 .formatted(.number.precision(.fractionLength(0...1)))
+        case .elevationMeters:
+            return Int(value.rounded()).formatted()
         case .speed:
             return (Fmt.distanceUnit.distance(fromMeters: value) * 3_600)
                 .formatted(.number.precision(.fractionLength(0...1)))
@@ -58,7 +60,8 @@ enum InsightValueFormat {
         case .massPerMinute: "\(resolvedWeightUnit.shortSuffix)/min"
         case .bodyweightMultiple: "× bodyweight"
         case .durationSeconds: "min:sec"
-        case .distanceMeters, .elevationMeters: Fmt.distanceUnit.abbreviation
+        case .distanceMeters: Fmt.distanceUnit.abbreviation
+        case .elevationMeters: "m"
         case .pace: paceAxisUnit(modality: modality)
         case .speed: Fmt.distanceUnit.speedSuffix
         case .heartRateBPM: "bpm"

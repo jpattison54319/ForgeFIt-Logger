@@ -650,53 +650,46 @@ struct ContentView: View {
             tabScreens
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            quickActionsScrim
-                .opacity(bottomChromeHidden ? 0 : 1)
-                .allowsHitTesting(!bottomChromeHidden)
+            if !bottomChromeHidden {
+                quickActionsScrim
 
-            VStack(spacing: Space.sm) {
-                // The quick-action bubble and the mini bar never coexist: an
-                // active workout owns the band above the tab bar, and most
-                // bubble actions are workout starts anyway. The two hand over
-                // (workout start/finish) with a keyed swap animation so one
-                // floating element doesn't hard-cut into the other.
-                if activeWorkout == nil {
-                    quickActionsBubbleRow
-                        .transition(Motion.scaleIn(0.8, anchor: .bottomTrailing, reduceMotion: reduceMotion))
+                VStack(spacing: Space.sm) {
+                    // The quick-action bubble and the mini bar never coexist: an
+                    // active workout owns the band above the tab bar, and most
+                    // bubble actions are workout starts anyway. The two hand over
+                    // (workout start/finish) with a keyed swap animation so one
+                    // floating element doesn't hard-cut into the other.
+                    if activeWorkout == nil {
+                        quickActionsBubbleRow
+                            .transition(Motion.scaleIn(0.8, anchor: .bottomTrailing, reduceMotion: reduceMotion))
+                    }
+                    if let activeWorkout {
+                        MiniWorkoutBar(
+                            workout: activeWorkout,
+                            exercises: exercises,
+                            onExpand: { appState.showingLogger = true },
+                            onDiscard: { workoutPendingDiscard = activeWorkout }
+                        )
+                        .padding(.horizontal, Space.lg)
+                        .transition(Motion.riseIn(reduceMotion: reduceMotion))
+                    }
+                    ForgeTabBar(selection: $appState.selectedTab, onSelect: selectTab)
                 }
-                if let activeWorkout {
-                    MiniWorkoutBar(
-                        workout: activeWorkout,
-                        exercises: exercises,
-                        onExpand: { appState.showingLogger = true },
-                        onDiscard: { workoutPendingDiscard = activeWorkout }
-                    )
-                    .padding(.horizontal, Space.lg)
-                    .transition(Motion.riseIn(reduceMotion: reduceMotion))
-                }
-                ForgeTabBar(selection: $appState.selectedTab, onSelect: selectTab)
+                .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: activeWorkout == nil)
+                .padding(.bottom, Space.sm)
+                // Scoped to just this bottom-bar layer (not the whole `appShell`
+                // ZStack): SwiftUI's default keyboard avoidance would otherwise
+                // lift this VStack — tab bar + mini bar — above the keyboard,
+                // colliding with the logger's keyboard accessory pills. Apple's
+                // own tab bars don't avoid the keyboard either; it should slide
+                // over them. `tabScreens` is a separate ZStack sibling below,
+                // untouched by this modifier, so its own ScrollView content still
+                // gets normal keyboard avoidance/insetting.
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .transition(.opacity)
             }
-            .animation(reduceMotion ? Motion.reduced : Motion.entrance, value: activeWorkout == nil)
-            .padding(.bottom, Space.sm)
-            // Scoped to just this bottom-bar layer (not the whole `appShell`
-            // ZStack): SwiftUI's default keyboard avoidance would otherwise
-            // lift this VStack — tab bar + mini bar — above the keyboard,
-            // colliding with the logger's keyboard accessory pills. Apple's
-            // own tab bars don't avoid the keyboard either; it should slide
-            // over them. `tabScreens` is a separate ZStack sibling below,
-            // untouched by this modifier, so its own ScrollView content still
-            // gets normal keyboard avoidance/insetting.
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-            // Belt to the exemption's suspenders: on a pushed editor
-            // (RoutineEditorView) SwiftUI's automatic keyboard avoidance was
-            // lifting this whole layer — tab bar + quick-action bubble — into a
-            // black gap above the keyboard anyway. Behind the keyboard it's
-            // unusable, so hide it outright while editing; it can't be raised
-            // into view if it isn't drawn.
-            .opacity(bottomChromeHidden ? 0 : 1)
-            .allowsHitTesting(!bottomChromeHidden)
-            .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: bottomChromeHidden)
         }
+        .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: bottomChromeHidden)
     }
 
     private var bottomChromeHidden: Bool {
@@ -1987,6 +1980,12 @@ struct ContentView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--seed-routine-reorder") {
                 try RoutineReorderUITestFixture.seed(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--seed-data-display-audit") {
+                try DataDisplayUITestFixture.seed(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains(ImportedExerciseReviewUITestFixture.launchArgument) {
+                try ImportedExerciseReviewUITestFixture.seed(in: modelContext)
             }
             if ProcessInfo.processInfo.arguments.contains("--seed-microcycle-tracking") {
                 try MicrocycleTrackingUITestFixture.seed(in: modelContext)

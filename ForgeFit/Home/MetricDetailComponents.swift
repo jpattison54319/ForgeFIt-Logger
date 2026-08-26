@@ -79,6 +79,10 @@ struct MetricBaselineBandChart: View {
     }
 
     var body: some View {
+        let yDomain = ChartYDomain.padded(
+            values: trend.points.map(\.value) + [trend.median, trend.lowerBound, trend.upperBound],
+            lowerLimit: 0
+        )
         Chart {
             ForEach(trend.points) { point in
                 AreaMark(
@@ -124,6 +128,7 @@ struct MetricBaselineBandChart: View {
                     .accessibilityHidden(true)
             }
         }
+        .chartYScale(domain: yDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())

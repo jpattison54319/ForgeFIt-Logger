@@ -318,12 +318,17 @@ enum WorkoutHistoryImportService {
     /// classifier to borrow muscle data from.
     static func seedCorpus() -> [ExerciseInfo] {
         ExerciseCatalog.load().map { seed in
-            ExerciseInfo(
+            let refined = MuscleRefinement.refine(
+                name: seed.name,
+                primaryMuscles: seed.primaryMuscles,
+                secondaryMuscles: seed.secondaryMuscles
+            )
+            return ExerciseInfo(
                 id: ExerciseCatalog.deterministicID(for: seed.slug),
                 name: seed.name,
                 movementPattern: seed.force,
-                primaryMuscles: seed.primaryMuscles,
-                secondaryMuscles: seed.secondaryMuscles,
+                primaryMuscles: refined.primary,
+                secondaryMuscles: refined.secondary,
                 equipment: seed.equipment
             )
         }

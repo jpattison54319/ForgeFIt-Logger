@@ -211,31 +211,71 @@ enum ExerciseCatalog {
         if persist, changed > 0 { try context.save() }
     }
 
-    // MARK: - Filter taxonomy for the picker
+    // MARK: - Muscle picker taxonomy
 
+    /// Recognized training targets for exercise filters and classification.
+    /// `hips` and `spine` remain recognized as legacy stored regions below,
+    /// but new exercises use anatomically meaningful muscle groups instead.
     static let muscleGroups = [
-        "cardiovascular", "abdominals", "biceps", "triceps", "chest", "shoulders", "back", "lats",
-        "middle back", "upper back", "lower back", "traps", "quadriceps", "hamstrings",
-        "glutes", "calves", "forearms", "abductors", "adductors", "obliques", "neck",
-        // Pseudo-regions for yoga/mobility work, following the
-        // `cardiovascular` precedent: broad stretch targets the strict muscle
-        // list can't express.
-        "hips", "spine"
+        "abdominals", "abductors", "adductors", "back", "biceps", "calves",
+        "cardiovascular", "chest", "forearms", "glutes", "hamstrings", "hip flexors",
+        "lats", "lower back", "middle back", "neck", "obliques", "quadriceps",
+        "shoulders", "traps", "triceps", "upper back",
     ]
 
-    /// The picker's grouped view of `muscleGroups`: parents that drill down
-    /// into sub-muscles (via `MuscleTaxonomy`), everything else standalone.
-    /// A parent is selectable on its own — broad tagging stays valid.
-    static let muscleHierarchy: [(group: String, children: [String])] = {
+    /// Assignment excludes Cardiovascular because it is a training-system
+    /// category, not a muscle. Cardio exercises derive that target from their
+    /// modality; filters and classification still retain it above.
+    static let selectableMuscleGroups = muscleGroups.filter { $0 != "cardiovascular" }
+
+    /// Old yoga and custom-exercise data can still be read and displayed. The
+    /// values are intentionally absent from new-exercise picker choices.
+    static let legacyMuscleRegions = ["hips", "spine"]
+
+    static let recognizedMuscleTags = Set(
+        muscleGroups + legacyMuscleRegions + MuscleTaxonomy.children.values.flatMap { $0 }
+    )
+
+    /// Broad taxonomy parents drill down to their existing children. Hips is
+    /// a navigation-only grouping: it exposes concrete targets but cannot be
+    /// stored as though it were one muscle.
+    static let muscleHierarchy = makeMuscleHierarchy(from: muscleGroups)
+
+    static let selectableMuscleHierarchy = makeMuscleHierarchy(from: selectableMuscleGroups)
+
+    private static func makeMuscleHierarchy(
+        from muscles: [String]
+    ) -> [ExerciseMusclePickerEntry] {
+        let hipChildren = ["abductors", "adductors", "glutes", "hip flexors"]
+        let hipChildSet = Set(hipChildren)
         var seen = Set<String>()
-        var result: [(group: String, children: [String])] = []
-        for muscle in muscleGroups {
+        var result: [ExerciseMusclePickerEntry] = []
+        for muscle in muscles where !hipChildSet.contains(muscle) {
             let parent = MuscleTaxonomy.parent(of: muscle)
             guard seen.insert(parent).inserted else { continue }
-            result.append((group: parent, children: MuscleTaxonomy.children[parent] ?? []))
+            result.append(ExerciseMusclePickerEntry(
+                group: parent,
+                children: alphabeticallySorted(MuscleTaxonomy.children[parent] ?? []),
+                allowsGroupSelection: true
+            ))
         }
-        return result
-    }()
+        result.append(ExerciseMusclePickerEntry(
+            group: "hips",
+            children: alphabeticallySorted(hipChildren),
+            allowsGroupSelection: false
+        ))
+        return result.sorted { displayComesBefore($0.group, $1.group) }
+    }
+
+    nonisolated private static func alphabeticallySorted(_ muscles: [String]) -> [String] {
+        muscles.sorted(by: displayComesBefore)
+    }
+
+    nonisolated private static func displayComesBefore(_ lhs: String, _ rhs: String) -> Bool {
+        MuscleTaxonomy.displayName(lhs).localizedStandardCompare(
+            MuscleTaxonomy.displayName(rhs)
+        ) == .orderedAscending
+    }
 
     static let equipmentTypes = [
         "treadmill", "bike", "rower", "elliptical", "stair", "barbell", "dumbbell",

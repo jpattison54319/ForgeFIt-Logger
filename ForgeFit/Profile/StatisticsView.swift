@@ -190,9 +190,9 @@ struct StatisticsView: View {
                 if series.contains(where: { $0.value > 0 }) {
                     BarTrendChart(
                         points: series,
-                        valueFormatter: { trendMetric.formatted($0) },
-                        axisValueFormatter: { trendMetric.axisValue($0) },
-                        yAxisLabel: trendMetric.axisLabel
+                        valueFormatter: { trendMetric.weeklyFormatted($0) },
+                        axisValueFormatter: { trendMetric.weeklyAxisValue($0) },
+                        yAxisLabel: trendMetric.weeklyAxisLabel
                     )
                 } else {
                     Text("No data in this range yet.")

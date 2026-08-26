@@ -132,7 +132,7 @@ public final class ExerciseClassifier {
 
     private func cardioClassification(name: String, hint: ExerciseClassificationHint) -> ExerciseClassification? {
         var modality: String?
-        for rule in Self.cardioRules where rule.keywords.contains(where: { name.contains($0) }) {
+        for rule in Self.cardioRules where Self.matches(name, anyOf: rule.keywords) {
             modality = rule.modality
             return ExerciseClassification(
                 primaryMuscles: rule.primary,
@@ -165,10 +165,15 @@ public final class ExerciseClassifier {
     // MARK: - Tier 1: keyword
 
     private func keywordClassification(name: String) -> ExerciseClassification? {
-        for rule in Self.keywordRules where rule.keywords.contains(where: { name.contains($0) }) {
-            return ExerciseClassification(
+        for rule in Self.keywordRules where Self.matches(name, anyOf: rule.keywords) {
+            let refined = MuscleRefinement.refine(
+                name: name,
                 primaryMuscles: rule.primary,
-                secondaryMuscles: rule.secondary,
+                secondaryMuscles: rule.secondary
+            )
+            return ExerciseClassification(
+                primaryMuscles: refined.primary,
+                secondaryMuscles: refined.secondary,
                 isCardio: false,
                 equipment: Self.inferredEquipment(name: name),
                 confidence: 0.9,
@@ -195,7 +200,10 @@ public final class ExerciseClassifier {
         }
         return ExerciseClassification(
             primaryMuscles: seed.primaryMuscles,
-            secondaryMuscles: seed.secondaryMuscles,
+            // Secondary muscles are much less identity-defining than the
+            // movement's primary target. Only carry them across a near-exact
+            // fuzzy match; weaker guesses should be sparse instead of noisy.
+            secondaryMuscles: result.score >= 90 ? seed.secondaryMuscles : [],
             isCardio: false,
             movementPattern: seed.movementPattern,
             equipment: seed.equipment ?? Self.inferredEquipment(name: Self.normalized(rawName)),
@@ -225,7 +233,9 @@ public final class ExerciseClassifier {
         let confidence = min(0.78, max(0, (bestSim - 0.5) / 0.5 * 0.78))
         return ExerciseClassification(
             primaryMuscles: seed.primaryMuscles,
-            secondaryMuscles: seed.secondaryMuscles,
+            // Embedding-only matches are intentionally reviewable. Do not
+            // multiply their uncertainty with speculative secondary muscles.
+            secondaryMuscles: [],
             isCardio: false,
             movementPattern: seed.movementPattern,
             equipment: seed.equipment,
@@ -289,6 +299,32 @@ public final class ExerciseClassifier {
         return nil
     }
 
+    /// Match normalized token sequences rather than arbitrary substrings.
+    /// Import names frequently contain words such as "rowing" and "curling";
+    /// treating `row` or `curl` inside those words as a strength movement can
+    /// assign a completely unrelated muscle group.
+    private static func matches(_ name: String, anyOf keywords: [String]) -> Bool {
+        let nameTokens = name.split(separator: " ").map { tokenStem(String($0)) }
+        return keywords.contains { keyword in
+            let keywordTokens = normalized(keyword).split(separator: " ").map { tokenStem(String($0)) }
+            guard !keywordTokens.isEmpty, keywordTokens.count <= nameTokens.count else { return false }
+            if keywordTokens.count == 1 {
+                return nameTokens.contains(keywordTokens[0])
+            }
+            for start in 0...(nameTokens.count - keywordTokens.count) {
+                if Array(nameTokens[start..<(start + keywordTokens.count)]) == keywordTokens {
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    private static func tokenStem(_ token: String) -> String {
+        guard token.count > 4, token.hasSuffix("s"), !token.hasSuffix("ss") else { return token }
+        return String(token.dropLast())
+    }
+
     // MARK: - Rule tables
 
     private struct MuscleRule {
@@ -307,20 +343,32 @@ public final class ExerciseClassifier {
 
     /// Cardio detection, most-specific first.
     private static let cardioRules: [CardioRule] = [
-        CardioRule(keywords: ["treadmill", "jog", "sprint", "running", "run "], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "run", equipment: "treadmill"),
         CardioRule(keywords: ["trail run"], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "trailRun", equipment: nil),
+        CardioRule(keywords: ["treadmill", "jog", "jogging", "sprint", "running", "run"], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "run", equipment: "treadmill"),
         CardioRule(keywords: ["elliptical"], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "elliptical", equipment: "elliptical"),
         CardioRule(keywords: ["stair", "step mill", "stepmill", "stairmaster", "stair climber"], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["calves"], modality: "stair", equipment: "stair"),
         CardioRule(keywords: ["jump rope", "jumprope", "skip rope", "skipping"], primary: ["cardiovascular", "calves"], secondary: ["shoulders"], modality: "jumpRope", equipment: nil),
-        CardioRule(keywords: ["rower", "row erg", "rowing machine", "concept 2", "concept2", "ski erg", "skierg", "erg "], primary: ["cardiovascular", "lats", "upper back"], secondary: ["quadriceps", "biceps", "hamstrings"], modality: "row", equipment: "rower"),
+        CardioRule(keywords: ["rower", "rowing", "row erg", "rowing machine", "concept 2", "concept2", "ski erg", "skierg", "erg"], primary: ["cardiovascular", "lats", "upper back"], secondary: ["quadriceps", "biceps", "hamstrings"], modality: "row", equipment: "rower"),
         CardioRule(keywords: ["assault bike", "air bike", "spin bike", "spinning", "stationary bike", "cycling", "indoor cycle", "peloton"], primary: ["cardiovascular", "quadriceps"], secondary: ["glutes", "calves", "hamstrings"], modality: "cycle", equipment: "bike"),
-        CardioRule(keywords: ["swim"], primary: ["cardiovascular", "lats", "shoulders"], secondary: ["upper back", "triceps"], modality: "swim", equipment: nil),
-        CardioRule(keywords: ["hike", "hiking", "walk", "rucking", "ruck "], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "walk", equipment: nil),
+        CardioRule(keywords: ["swim", "swimming"], primary: ["cardiovascular", "lats", "shoulders"], secondary: ["upper back", "triceps"], modality: "swim", equipment: nil),
+        CardioRule(keywords: ["hike", "hiking", "walk", "walking", "rucking", "ruck"], primary: ["cardiovascular", "quadriceps", "glutes"], secondary: ["hamstrings", "calves"], modality: "walk", equipment: nil),
     ]
 
     /// Strength keyword → muscles, most-specific first (compound names like
     /// "leg curl" must precede the generic "curl").
     private static let keywordRules: [MuscleRule] = [
+        // Common import-library names whose movement is obvious but whose
+        // wording does not appear verbatim in the bundled catalog.
+        MuscleRule(keywords: ["lat prayer", "straight arm pulldown", "straight arm lat pulldown", "straightarm lat pulldown"], primary: ["lats"], secondary: []),
+        MuscleRule(keywords: ["hip abduction", "cable abduction", "stretch abduction", "abduction", "abductor", "clamshell"], primary: ["abductors"], secondary: ["glutes"]),
+        MuscleRule(keywords: ["hip adduction", "cable adduction", "adduction", "adductor"], primary: ["adductors"], secondary: []),
+        MuscleRule(keywords: ["jefferson curl"], primary: ["lower back", "hamstrings"], secondary: ["glutes"]),
+        MuscleRule(keywords: ["wrist extension", "wrist curl", "reverse wrist", "gripper", "hand squeeze"], primary: ["forearms"], secondary: []),
+        MuscleRule(keywords: ["tricep dip", "triceps dip", "seated dip machine"], primary: ["triceps"], secondary: ["chest"]),
+        MuscleRule(keywords: ["side bend", "torso rotation"], primary: ["obliques"], secondary: ["abdominals"]),
+        MuscleRule(keywords: ["bird dog", "superman", "lumbar extension"], primary: ["lower back"], secondary: ["glutes", "abdominals"]),
+        MuscleRule(keywords: ["y raise"], primary: ["shoulders"], secondary: ["traps"]),
+        MuscleRule(keywords: ["jm press"], primary: ["triceps"], secondary: ["chest"]),
         // Hamstrings / posterior
         MuscleRule(keywords: ["leg curl", "lying leg curl", "seated leg curl", "hamstring curl", "nordic curl"], primary: ["hamstrings"], secondary: ["calves"]),
         MuscleRule(keywords: ["romanian deadlift", "rdl", "stiff leg deadlift", "stiff-leg", "good morning"], primary: ["hamstrings", "glutes"], secondary: ["lower back"]),
@@ -337,9 +385,9 @@ public final class ExerciseClassifier {
         // Shoulders
         MuscleRule(keywords: ["lateral raise", "side raise", "lat raise", "side lateral"], primary: ["shoulders"], secondary: []),
         MuscleRule(keywords: ["front raise"], primary: ["shoulders"], secondary: []),
-        MuscleRule(keywords: ["rear delt", "reverse fly", "reverse flye", "face pull", "rear lateral"], primary: ["shoulders"], secondary: ["upper back", "traps"]),
+        MuscleRule(keywords: ["rear delt", "reverse fly", "reverse flye", "face pull", "facepull", "rear lateral"], primary: ["shoulders"], secondary: ["upper back", "traps"]),
         MuscleRule(keywords: ["overhead press", "shoulder press", "military press", "arnold press", "ohp", "push press"], primary: ["shoulders"], secondary: ["triceps"]),
-        MuscleRule(keywords: ["upright row"], primary: ["shoulders", "traps"], secondary: []),
+        MuscleRule(keywords: ["upright row", "uprightrow"], primary: ["shoulders", "traps"], secondary: []),
         MuscleRule(keywords: ["shrug"], primary: ["traps"], secondary: []),
         // Chest
         MuscleRule(keywords: ["bench press", "chest press", "chest fly", "chest flye", "pec deck", "pec fly", "cable fly", "cable crossover", "dumbbell fly", "incline press", "decline press", "bench"], primary: ["chest"], secondary: ["triceps", "shoulders"]),
@@ -353,7 +401,7 @@ public final class ExerciseClassifier {
         MuscleRule(keywords: ["row"], primary: ["lats", "upper back"], secondary: ["biceps"]),
         // Biceps / forearms
         MuscleRule(keywords: ["hammer curl"], primary: ["biceps"], secondary: ["forearms"]),
-        MuscleRule(keywords: ["wrist curl", "reverse curl", "forearm"], primary: ["forearms"], secondary: []),
+        MuscleRule(keywords: ["reverse curl", "forearm"], primary: ["forearms"], secondary: []),
         MuscleRule(keywords: ["curl", "bicep", "biceps", "preacher"], primary: ["biceps"], secondary: ["forearms"]),
         // Core
         MuscleRule(keywords: ["crunch", "sit up", "situp", "sit-up", "plank", "leg raise", "hanging", "russian twist", "ab wheel", "abs", "oblique", "toes to bar", "mountain climber"], primary: ["abdominals"], secondary: []),

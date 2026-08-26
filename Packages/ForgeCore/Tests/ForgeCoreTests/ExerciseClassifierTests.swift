@@ -26,7 +26,15 @@ final class ExerciseClassifierTests: XCTestCase {
         XCTAssertEqual(classifier.classify(name: "Bench Press").primaryMuscles, ["chest"])
         XCTAssertEqual(classifier.classify(name: "Back Squat").primaryMuscles, ["quadriceps", "glutes"])
         XCTAssertEqual(classifier.classify(name: "Romanian Deadlift").primaryMuscles, ["hamstrings", "glutes"])
-        XCTAssertEqual(classifier.classify(name: "Cable Lateral Raise").primaryMuscles, ["shoulders"])
+        XCTAssertEqual(classifier.classify(name: "Cable Lateral Raise").primaryMuscles, ["side delts"])
+    }
+
+    func testInflectedCardioNamesDoNotFallThroughToStrengthRules() {
+        let classifier = ExerciseClassifier(seedCorpus: seedCorpus)
+
+        for name in ["Outdoor Walking", "Indoor Rowing", "Lap Swimming", "Easy Jogging"] {
+            XCTAssertTrue(classifier.classify(name: name).isCardio, "Expected cardio classification for \(name)")
+        }
     }
 
     func testCardioDetectionUsesNameAndMetricsHint() {
@@ -44,14 +52,14 @@ final class ExerciseClassifierTests: XCTestCase {
         XCTAssertLessThan(distanceOnly.confidence, ExerciseClassifier.reviewConfidenceThreshold)
     }
 
-    func testSeedFuzzyBorrowsMusclesForNonKeywordMatch() {
+    func testSeedFuzzyKeepsPrimaryButDropsUncertainSecondaryMuscles() {
         let classifier = ExerciseClassifier(seedCorpus: seedCorpus)
 
         let result = classifier.classify(name: "Cable Hip Abducton")
 
         XCTAssertEqual(result.source, .seedFuzzy)
         XCTAssertEqual(result.primaryMuscles, ["abductors"])
-        XCTAssertEqual(result.secondaryMuscles, ["glutes"])
+        XCTAssertTrue(result.secondaryMuscles.isEmpty)
     }
 
     func testFallbackStaysFlaggable() {

@@ -11,6 +11,9 @@ struct InteractiveLineTrendChart: View {
         $0.formatted(.number.precision(.fractionLength(0...1)))
     }
     var yAxisLabel: String? = nil
+    /// Use a physical lower bound for quantities that cannot be negative. Leave
+    /// nil for signed metrics such as percentage change.
+    var yDomainLowerLimit: Double? = nil
     var color: Color? = nil
     var chartAccessibilityLabel: String? = nil
     var chartAccessibilityIdentifier: String = "exercise-progress-chart"
@@ -27,6 +30,10 @@ struct InteractiveLineTrendChart: View {
 
     var body: some View {
         let lineColor = color ?? theme.accent
+        let yDomain = ChartYDomain.padded(
+            values: points.map(\.value),
+            lowerLimit: yDomainLowerLimit
+        )
 
         Chart {
                 ForEach(points) { point in
@@ -41,7 +48,8 @@ struct InteractiveLineTrendChart: View {
 
                     AreaMark(
                         x: .value("Date", point.date),
-                        y: .value(metricName, point.value)
+                        yStart: .value("Visible baseline", yDomain.lowerBound),
+                        yEnd: .value(metricName, point.value)
                     )
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(
@@ -59,8 +67,7 @@ struct InteractiveLineTrendChart: View {
                     )
                     .foregroundStyle(lineColor)
                     .symbolSize(28)
-                    .accessibilityLabel("\(metricName), \(point.date.formatted(date: .abbreviated, time: .omitted))")
-                    .accessibilityValue(valueFormatter(point.value))
+                    .accessibilityHidden(true)
                 }
 
                 if selectedDate != nil, let selectedPoint {
@@ -87,6 +94,7 @@ struct InteractiveLineTrendChart: View {
                     .accessibilityHidden(true)
                 }
         }
+        .chartYScale(domain: yDomain)
         .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                     AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
@@ -114,20 +122,44 @@ struct InteractiveLineTrendChart: View {
         }
         .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 210)
-        .accessibilityElement(children: .contain)
+        // Do not expose Swift Charts' raw canonical values alongside the
+        // localized display values. VoiceOver users inspect the same formatted
+        // points with adjustable actions instead.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(chartAccessibilityLabel ?? "\(metricName) exercise progress chart")
-        .accessibilityValue(selectedAccessibilityValue)
+        .accessibilityValue(selectedAccessibilityValue(domain: yDomain))
+        .accessibilityHint("Swipe up or down to inspect measurements")
+        .accessibilityAdjustableAction(adjustAccessibilitySelection)
         .accessibilityIdentifier(chartAccessibilityIdentifier)
         .onChange(of: points.last?.id) {
             selectedDate = nil
         }
     }
 
-    private var selectedAccessibilityValue: String {
-        guard selectedDate != nil, let selectedPoint else {
-            return "Press and hold, then slide to inspect measurements"
+    private func selectedAccessibilityValue(domain: ClosedRange<Double>) -> String {
+        let range = "Visible range \(axisValueFormatter(domain.lowerBound)) to \(axisValueFormatter(domain.upperBound))"
+        if selectedDate != nil, let selectedPoint {
+            return "\(selectedPoint.date.formatted(date: .abbreviated, time: .omitted)), "
+                + "\(valueFormatter(selectedPoint.value)). \(range)"
         }
-        return "\(selectedPoint.date.formatted(date: .abbreviated, time: .omitted)), "
-            + valueFormatter(selectedPoint.value)
+        guard let latest = points.last else { return range }
+        return "Latest \(valueFormatter(latest.value)). \(range)"
+    }
+
+    private func adjustAccessibilitySelection(_ direction: AccessibilityAdjustmentDirection) {
+        guard !points.isEmpty else { return }
+        let currentIndex = selectedPoint.flatMap { selected in
+            points.firstIndex(where: { $0.id == selected.id })
+        } ?? (points.count - 1)
+        let nextIndex: Int
+        switch direction {
+        case .increment:
+            nextIndex = min(points.count - 1, currentIndex + 1)
+        case .decrement:
+            nextIndex = max(0, currentIndex - 1)
+        @unknown default:
+            return
+        }
+        selectedDate = points[nextIndex].date
     }
 }

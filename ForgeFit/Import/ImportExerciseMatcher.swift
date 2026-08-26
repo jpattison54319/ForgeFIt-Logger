@@ -10,7 +10,7 @@ import ForgeCore
 /// `Squat Jerk`, or `Leg Press` matching `Calf Press On The Leg Press Machine`).
 /// Corrupting history that way is far worse than under-matching: an unmatched
 /// name simply becomes a correctly-named custom exercise that lands in the
-/// review queue, where the user can confirm or merge it.
+/// review queue, where the user can approve, edit, or discard it.
 ///
 /// So this matcher only auto-links on a *confident identity match*: the two names
 /// share the same core (non-equipment) tokens, order-independent, with compatible

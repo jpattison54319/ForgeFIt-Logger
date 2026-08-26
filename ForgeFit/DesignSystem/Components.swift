@@ -234,11 +234,14 @@ struct SegmentedPills<T: Hashable>: View {
                         Text(title(option))
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(isSelected ? theme.onAccent : theme.textSecondary)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 9)
-                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    // Apply the control sizing to the Button itself so its
+                    // accessibility frame matches the rendered pill, not just
+                    // the text glyphs inside it.
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier(accessibilityID?(option) ?? "")
                     .glassEffect(

@@ -1,3 +1,4 @@
+import ForgeCore
 import ForgeData
 import Foundation
 import SwiftData
@@ -18,6 +19,7 @@ struct ImportedExerciseBackfillPersistenceTests {
         let exercise = ExerciseLibraryModel(
             ownerID: ForgeFitDemo.userID,
             name: "Barbell Bench Press",
+            importBatchID: UUID(),
             importedRawName: "Barbell Bench Press"
         )
         context.insert(exercise)
@@ -55,5 +57,59 @@ struct ImportedExerciseBackfillPersistenceTests {
         #expect(try finalContext.fetch(FetchDescriptor<RoutineModel>()).contains {
             $0.name == "Pending"
         })
+    }
+
+    @Test func currentPendingImportsAreReclassifiedButManualEditsArePreserved() async throws {
+        let (container, context) = try TestStore.make()
+        let suite = "ImportedExerciseBackfillPersistenceTests.quality.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        LiveWorkoutPerformanceGate.shared.setLiveWorkoutActive(false)
+
+        let batchID = UUID()
+        let pending = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID,
+            name: "Lat Prayer",
+            primaryMuscles: ["lats", "back", "traps"],
+            secondaryMuscles: ["shoulders", "biceps", "chest", "forearms"],
+            userModified: false,
+            needsReview: true,
+            classificationConfidence: 0.8,
+            classificationSourceRaw: ClassificationSource.ai.rawValue,
+            importBatchID: batchID,
+            importedRawName: "Lat Prayer"
+        )
+        let manual = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID,
+            name: "Lean Back Abduction Machine",
+            primaryMuscles: ["abductors"],
+            secondaryMuscles: ["obliques"],
+            userModified: true,
+            needsReview: false,
+            classificationConfidence: 1,
+            classificationSourceRaw: ClassificationSource.manual.rawValue,
+            importBatchID: batchID,
+            importedRawName: "Lean Back Abduction Machine"
+        )
+        context.insert(pending)
+        context.insert(manual)
+        try context.save()
+        let pendingID = pending.id
+        let manualID = manual.id
+
+        await ImportedExerciseBackfill.runIfNeeded(in: context, defaults: defaults)
+
+        let verification = ModelContext(container)
+        let persistedPending = try #require(try verification.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.id == pendingID }
+        )).first)
+        let persistedManual = try #require(try verification.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.id == manualID }
+        )).first)
+        #expect(persistedPending.primaryMuscles == ["lats"])
+        #expect(persistedPending.secondaryMuscles.isEmpty)
+        #expect(persistedPending.classificationSource == .keyword)
+        #expect(persistedManual.secondaryMuscles == ["obliques"])
+        #expect(persistedManual.classificationSource == .manual)
     }
 }

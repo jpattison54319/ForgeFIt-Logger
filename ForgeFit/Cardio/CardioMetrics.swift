@@ -191,15 +191,15 @@ enum CardioMetrics {
     static func paceString(distanceMeters: Double?, durationSeconds: Int?, kind: CardioKind = .run, unit: DistanceUnit = Fmt.distanceUnit) -> String {
         guard let secPerKm = paceSecPerKm(distanceMeters: distanceMeters, durationSeconds: durationSeconds) else { return "—" }
         if kind.usesSplit500 {
-            let s = secPerKm / 2   // per-500m for rowing
-            return String(format: "%d:%02d /500m", Int(s) / 60, Int(s) % 60)
+            let seconds = Int((secPerKm / 2).rounded())   // per-500m for rowing
+            return String(format: "%d:%02d /500m", seconds / 60, seconds % 60)
         }
         if kind.usesFixedMeters {
-            let s = secPerKm / 10   // per-100m for swims
-            return String(format: "%d:%02d /100m", Int(s) / 60, Int(s) % 60)
+            let seconds = Int((secPerKm / 10).rounded())   // per-100m for swims
+            return String(format: "%d:%02d /100m", seconds / 60, seconds % 60)
         }
-        let secPerUnit = secPerKm * (unit.metersPerUnit / 1000)
-        return String(format: "%d:%02d %@", Int(secPerUnit) / 60, Int(secPerUnit) % 60, unit.paceSuffix)
+        let seconds = Int((secPerKm * (unit.metersPerUnit / 1000)).rounded())
+        return String(format: "%d:%02d %@", seconds / 60, seconds % 60, unit.paceSuffix)
     }
 
     static func speedKmh(distanceMeters: Double?, durationSeconds: Int?) -> Double? {

@@ -96,6 +96,7 @@ struct LineTrendChart: View {
         $0.formatted(.number.precision(.fractionLength(0...1)))
     }
     var yAxisUnitLabel: String? = nil
+    var chartAccessibilityIdentifier: String = "line-trend-chart"
 
     @Environment(\.theme) private var theme
     @State private var selectedDate: Date?
@@ -109,14 +110,20 @@ struct LineTrendChart: View {
 
     var body: some View {
         let lineColor = color ?? theme.accent
+        let yDomain = ChartYDomain.padded(values: points.map(\.value), lowerLimit: 0)
         Chart {
             ForEach(points) { point in
                 LineMark(x: .value("Date", point.date), y: .value("Value", point.value))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(lineColor)
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    .accessibilityHidden(true)
 
-                AreaMark(x: .value("Date", point.date), y: .value("Value", point.value))
+                AreaMark(
+                    x: .value("Date", point.date),
+                    yStart: .value("Visible baseline", yDomain.lowerBound),
+                    yEnd: .value("Value", point.value)
+                )
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(
                         LinearGradient(
@@ -124,13 +131,11 @@ struct LineTrendChart: View {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
+                    .accessibilityHidden(true)
                 PointMark(x: .value("Date", point.date), y: .value("Value", point.value))
                     .foregroundStyle(lineColor)
                     .symbolSize(28)
-                    .accessibilityLabel(
-                        "\(yLabel ?? "Value"), \(point.date.formatted(date: .abbreviated, time: .omitted))"
-                    )
-                    .accessibilityValue(valueFormatter(point.value))
+                    .accessibilityHidden(true)
             }
             if let selectedPoint {
                 RuleMark(x: .value("Selected date", selectedPoint.date))
@@ -148,6 +153,7 @@ struct LineTrendChart: View {
                     .accessibilityHidden(true)
             }
         }
+        .chartYScale(domain: yDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
@@ -174,6 +180,44 @@ struct LineTrendChart: View {
         }
         .pressHoldChartXSelection(value: $selectedDate)
         .frame(height: 180)
+        // Swift Charts otherwise exposes its internal numeric plot values.
+        // Those values are canonical storage units (for example seconds or
+        // kilograms), which can disagree with the user-facing formatter.
+        // Keep one trustworthy element and let VoiceOver step through the
+        // same formatted measurements with adjustable actions.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(yLabel ?? "Value") trend chart")
+        .accessibilityValue(lineChartAccessibilityValue(domain: yDomain))
+        .accessibilityHint("Swipe up or down to inspect measurements")
+        .accessibilityAdjustableAction(adjustAccessibilitySelection)
+        .accessibilityIdentifier(chartAccessibilityIdentifier)
+    }
+
+    private func lineChartAccessibilityValue(domain: ClosedRange<Double>) -> String {
+        let range = "Visible range \(axisValueFormatter(domain.lowerBound)) to \(axisValueFormatter(domain.upperBound))"
+        if selectedDate != nil, let selectedPoint {
+            return "\(selectedPoint.date.formatted(date: .abbreviated, time: .omitted)), "
+                + "\(valueFormatter(selectedPoint.value)). \(range)"
+        }
+        guard let latest = points.last else { return range }
+        return "Latest \(valueFormatter(latest.value)). \(range)"
+    }
+
+    private func adjustAccessibilitySelection(_ direction: AccessibilityAdjustmentDirection) {
+        guard !points.isEmpty else { return }
+        let currentIndex = selectedPoint.flatMap { selected in
+            points.firstIndex(where: { $0.id == selected.id })
+        } ?? (points.count - 1)
+        let nextIndex: Int
+        switch direction {
+        case .increment:
+            nextIndex = min(points.count - 1, currentIndex + 1)
+        case .decrement:
+            nextIndex = max(0, currentIndex - 1)
+        @unknown default:
+            return
+        }
+        selectedDate = points[nextIndex].date
     }
 }
 
@@ -202,6 +246,10 @@ struct HRVBaselineBandChart: View {
     }
 
     var body: some View {
+        let yDomain = ChartYDomain.padded(
+            values: points.map(\.value) + [median, lowerBound, upperBound],
+            lowerLimit: 0
+        )
         Chart {
             ForEach(points) { point in
                 AreaMark(x: .value("Date", point.date),
@@ -239,6 +287,7 @@ struct HRVBaselineBandChart: View {
                     .accessibilityHidden(true)
             }
         }
+        .chartYScale(domain: yDomain)
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))
@@ -386,23 +435,34 @@ struct HeartRateTrendChart: View {
     @Environment(\.theme) private var theme
     @State private var selectedDate: Date?
 
-    private var avg: Int {
-        guard !samples.isEmpty else { return 0 }
-        return Int((Double(samples.reduce(0) { $0 + $1.bpm }) / Double(samples.count)).rounded())
+    private var validSamples: [(date: Date, bpm: Int)] {
+        samples.filter { $0.bpm > 0 }
     }
 
     private var legendKinds: [Band.Kind] {
         Band.Kind.allCases.filter { kind in bands.contains { $0.kind == kind } }
     }
 
-    private var selectedSample: (date: Date, bpm: Int)? {
+    private func selectedSample(in samples: [(date: Date, bpm: Int)]) -> (date: Date, bpm: Int)? {
         guard let selectedDate else { return nil }
         return samples.min {
             abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
         }
     }
 
+    private func averageBPM(in samples: [(date: Date, bpm: Int)]) -> Int {
+        guard !samples.isEmpty else { return 0 }
+        return Int((Double(samples.reduce(0) { $0 + $1.bpm }) / Double(samples.count)).rounded())
+    }
+
     var body: some View {
+        let plottedSamples = validSamples
+        let average = averageBPM(in: plottedSamples)
+        let selectedSample = selectedSample(in: plottedSamples)
+        let yDomain = ChartYDomain.padded(
+            values: plottedSamples.map { Double($0.bpm) },
+            lowerLimit: 0
+        )
         VStack(alignment: .leading, spacing: 6) {
             Chart {
             // Declared first so the bands sit behind the line and area marks.
@@ -413,13 +473,17 @@ struct HeartRateTrendChart: View {
                 )
                 .foregroundStyle(color(for: band.kind).opacity(0.16))
             }
-            ForEach(Array(samples.enumerated()), id: \.offset) { _, sample in
+            ForEach(Array(plottedSamples.enumerated()), id: \.offset) { _, sample in
                 LineMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(theme.danger)
                     .lineStyle(StrokeStyle(lineWidth: 2))
 
-                AreaMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
+                AreaMark(
+                    x: .value("Time", sample.date),
+                    yStart: .value("Visible baseline", yDomain.lowerBound),
+                    yEnd: .value("BPM", Double(sample.bpm))
+                )
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(
                         LinearGradient(
@@ -429,12 +493,12 @@ struct HeartRateTrendChart: View {
                     )
                 PointMark(x: .value("Time", sample.date), y: .value("BPM", sample.bpm))
                     .foregroundStyle(theme.danger)
-                    .symbolSize(samples.count > 80 ? 8 : 18)
+                    .symbolSize(plottedSamples.count > 80 ? 8 : 18)
                     .accessibilityLabel(sample.date.formatted(date: .omitted, time: .shortened))
                     .accessibilityValue("\(sample.bpm) bpm")
             }
-            if avg > 0 {
-                RuleMark(y: .value("Average", avg))
+            if average > 0 {
+                RuleMark(y: .value("Average", average))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     .foregroundStyle(theme.textTertiary)
             }
@@ -454,6 +518,7 @@ struct HeartRateTrendChart: View {
                     .accessibilityHidden(true)
             }
             }
+            .chartYScale(domain: yDomain)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                     AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))
@@ -474,6 +539,14 @@ struct HeartRateTrendChart: View {
             }
             .pressHoldChartXSelection(value: $selectedDate)
             .frame(height: bands.isEmpty ? height : max(64, height - 20))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Heart rate trend chart")
+            .accessibilityValue(heartRateChartAccessibilityValue(
+                samples: plottedSamples,
+                average: average,
+                domain: yDomain
+            ))
+            .accessibilityIdentifier("heart-rate-trend-chart")
 
             if !legendKinds.isEmpty {
                 HStack(spacing: 12) {
@@ -491,6 +564,15 @@ struct HeartRateTrendChart: View {
             }
         }
         .frame(height: height)
+    }
+
+    private func heartRateChartAccessibilityValue(
+        samples: [(date: Date, bpm: Int)],
+        average: Int,
+        domain: ClosedRange<Double>
+    ) -> String {
+        guard !samples.isEmpty else { return "No valid heart rate samples" }
+        return "Average \(average) bpm. Visible range \(Int(domain.lowerBound.rounded())) to \(Int(domain.upperBound.rounded())) bpm. \(samples.count) samples."
     }
 
     private func color(for kind: Band.Kind) -> Color {

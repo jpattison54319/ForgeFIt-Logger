@@ -5,7 +5,7 @@ import SwiftData
 
 @MainActor
 enum ImportedExerciseBackfill {
-    static let didRunKey = "importedExerciseClassificationBackfill.v1.didRun"
+    static let didRunKey = "importedExerciseClassificationBackfill.v2.didRun"
 
     static func runIfNeeded(
         in context: ModelContext,
@@ -19,11 +19,17 @@ enum ImportedExerciseBackfill {
             predicate: #Predicate { exercise in
                 exercise.ownerID != nil
                     && exercise.deletedAt == nil
-                    && exercise.isCardio == false
+                    && exercise.importBatchID != nil
+                    && exercise.userModified == false
             }
         )
-        let candidates = ((try? context.fetch(descriptor)) ?? [])
-            .filter { $0.primaryMuscles.isEmpty }
+        let candidates: [ExerciseLibraryModel]
+        do {
+            candidates = try context.fetch(descriptor)
+        } catch {
+            // A transient store read must not permanently suppress this repair.
+            return
+        }
 
         guard !candidates.isEmpty else {
             defaults.set(true, forKey: didRunKey)
@@ -67,6 +73,14 @@ enum ImportedExerciseBackfill {
         for exercise in transactionCandidates {
             guard !Task.isCancelled,
                   LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
+            // Classification runs off-main. Re-check the live row before
+            // applying it so an approval, edit, discard, or ownership change
+            // made while that work was running always wins.
+            guard exercise.ownerID != nil,
+                  exercise.deletedAt == nil,
+                  exercise.importBatchID != nil,
+                  exercise.userModified == false,
+                  exercise.classificationSource != .manual else { continue }
             guard let classification = classifications[exercise.id] else { continue }
             exercise.primaryMuscles = classification.primaryMuscles
             exercise.secondaryMuscles = classification.secondaryMuscles

@@ -167,9 +167,9 @@ struct InsightsView: View {
                 if series.contains(where: { $0.value > 0 }) {
                     BarTrendChart(
                         points: series,
-                        valueFormatter: { metric.formatted($0) },
-                        axisValueFormatter: { metric.axisValue($0) },
-                        yAxisLabel: metric.axisLabel
+                        valueFormatter: { metric.weeklyFormatted($0) },
+                        axisValueFormatter: { metric.weeklyAxisValue($0) },
+                        yAxisLabel: metric.weeklyAxisLabel
                     )
                 } else {
                     Text("Complete a few workouts to see your trends.")
@@ -535,7 +535,8 @@ struct ExerciseDetailView: View {
                         axisValueFormatter: { value in
                             activeStrengthMetric.axisValue(value, unit: unit)
                         },
-                        yAxisLabel: activeStrengthMetric.axisLabel(unit: unit)
+                        yAxisLabel: activeStrengthMetric.axisLabel(unit: unit),
+                        yDomainLowerLimit: 0
                     )
                 } else {
                     Text("Log this exercise across multiple sessions to chart this metric.")
@@ -616,7 +617,8 @@ struct ExerciseDetailView: View {
                         axisValueFormatter: { value in
                             metric.axisValue(value, distanceUnit: Fmt.distanceUnit)
                         },
-                        yAxisLabel: metric.axisLabel(distanceUnit: Fmt.distanceUnit)
+                        yAxisLabel: metric.axisLabel(distanceUnit: Fmt.distanceUnit),
+                        yDomainLowerLimit: 0
                     )
                 } else {
                     Text(isYoga

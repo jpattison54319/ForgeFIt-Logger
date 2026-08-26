@@ -408,8 +408,8 @@ enum IntervalTargetFormatting {
     }
 
     private static func paceBound(_ secPerKm: Double, unit: DistanceUnit) -> String {
-        let secPerUnit = secPerKm * (unit.metersPerUnit / 1000)
-        return String(format: "%d:%02d", Int(secPerUnit) / 60, Int(secPerUnit) % 60)
+        let seconds = Int((secPerKm * (unit.metersPerUnit / 1000)).rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 

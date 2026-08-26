@@ -17,6 +17,10 @@ struct ConditioningRoundPaceChart: View {
     }
 
     var body: some View {
+        let yDomain = ChartYDomain.padded(
+            values: splits.map { Double($0.durationSeconds) } + [Double(averageSeconds)],
+            lowerLimit: 0
+        )
         Chart {
             RuleMark(y: .value("Average", Double(averageSeconds)))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -50,6 +54,7 @@ struct ConditioningRoundPaceChart: View {
                     }
             }
         }
+        .chartYScale(domain: yDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: min(6, splits.count))) { value in
                 AxisGridLine().foregroundStyle(theme.separator.opacity(0.35))

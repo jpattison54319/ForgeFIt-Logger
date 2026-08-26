@@ -28,7 +28,7 @@ struct RoutineDetailView: View {
     @State private var shareErrorMessage: String?
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var series: [MetricPoint] { chartRange.filtered(analytics.routineVolumeSeries(routineID: routine.id, metric: metric)) }
+    private var series: [MetricPoint] { chartRange.filtered(analytics.routineSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
     private func unresolvedAdaptiveExerciseNames(
@@ -122,6 +122,7 @@ struct RoutineDetailView: View {
             .padding(.bottom, Space.tabBarClearance)
         }
         .background(theme.background)
+        .accessibilityIdentifier("routine-detail")
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
         .sheet(item: $sharePayload) { payload in
@@ -204,9 +205,10 @@ struct RoutineDetailView: View {
                 HStack(alignment: .top) {
                     HStack(alignment: .firstTextBaseline) {
                         if let last = series.last {
-                            Text(metric == .volume ? Fmt.volume(last.value) : "\(Int(last.value)) \(metric.rawValue.lowercased())")
+                            Text(metric.routineFormatted(last.value))
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
                                 .contentTransition(.numericText())
+                                .accessibilityIdentifier("routine-progress-headline")
                             Text(last.date.formatted(.dateTime.month(.abbreviated).day()))
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.accentForeground)
                         } else {
@@ -224,9 +226,10 @@ struct RoutineDetailView: View {
                     LineTrendChart(
                         points: series,
                         yLabel: metric.rawValue,
-                        valueFormatter: { metric.formatted($0) },
-                        axisValueFormatter: { metric.axisValue($0) },
-                        yAxisUnitLabel: metric.axisLabel
+                        valueFormatter: { metric.routineFormatted($0) },
+                        axisValueFormatter: { metric.routineAxisValue($0) },
+                        yAxisUnitLabel: metric.routineAxisLabel,
+                        chartAccessibilityIdentifier: "routine-progress-chart"
                     )
                         .id(metric)
                         .transition(.opacity)
@@ -236,7 +239,12 @@ struct RoutineDetailView: View {
                         .frame(height: 80)
                 }
 
-                SegmentedPills(options: TrainingAnalytics.Metric.allCases, title: { $0.rawValue }, selection: $metric)
+                SegmentedPills(
+                    options: TrainingAnalytics.Metric.allCases,
+                    title: { $0.rawValue },
+                    selection: $metric,
+                    accessibilityID: { "routine-progress-\($0.rawValue.lowercased())" }
+                )
             }
             .animation(Motion.stateChange, value: metric)
         }

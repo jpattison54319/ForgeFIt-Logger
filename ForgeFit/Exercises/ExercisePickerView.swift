@@ -358,8 +358,10 @@ struct ExercisePickerView: View {
                                 Button(MuscleTaxonomy.displayName(entry.group)) { muscle = entry.group }
                             } else {
                                 Menu(MuscleTaxonomy.displayName(entry.group)) {
-                                    Button("All \(MuscleTaxonomy.displayName(entry.group))") { muscle = entry.group }
-                                    Divider()
+                                    if entry.allowsGroupSelection {
+                                        Button("All \(MuscleTaxonomy.displayName(entry.group))") { muscle = entry.group }
+                                        Divider()
+                                    }
                                     ForEach(entry.children, id: \.self) { child in
                                         Button(MuscleTaxonomy.displayName(child)) { muscle = child }
                                     }
@@ -871,7 +873,7 @@ struct CreateExerciseView: View {
             _modality = State(initialValue: initialModality)
             _equipment = State(initialValue: ExerciseCatalog.primaryEquipment(modality: initialModality).first ?? "body only")
             if initialModality == .yoga {
-                _primaryMuscle = State(initialValue: "hips")
+                _primaryMuscle = State(initialValue: "hip flexors")
             }
         }
         if let editing {
@@ -879,8 +881,14 @@ struct CreateExerciseView: View {
             _photoDrafts = State(initialValue: CustomExerciseMedia.shared.photoSet(for: editing.id))
             _notesDraft = State(initialValue: CustomExerciseMedia.shared.notes(for: editing.id) ?? "")
             _name = State(initialValue: editing.name)
-            _primaryMuscle = State(initialValue: editing.primaryMuscles.first ?? "chest")
-            _secondaryMuscles = State(initialValue: Set(editing.secondaryMuscles))
+            let initialPrimary = editing.primaryMuscles.first ?? "chest"
+            _primaryMuscle = State(initialValue: initialPrimary)
+            _secondaryMuscles = State(initialValue: Set(
+                ExerciseMuscleSelectionPolicy.secondaryMuscles(
+                    from: editing.secondaryMuscles,
+                    excluding: initialPrimary
+                )
+            ))
             _equipment = State(initialValue: editing.equipment ?? "barbell")
             _weightMode = State(initialValue: editing.defaultWeightMode)
             _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? ""))
@@ -1021,8 +1029,8 @@ struct CreateExerciseView: View {
                 }
                 // Landing on the yoga form with the lift default still in
                 // place: start from a stretch-shaped region instead of chest.
-                if now == .yoga, primaryMuscle == "chest" { primaryMuscle = "hips" }
-                if was == .yoga, now == .strength, primaryMuscle == "hips" { primaryMuscle = "chest" }
+                if now == .yoga, primaryMuscle == "chest" { selectPrimaryMuscle("hip flexors") }
+                if was == .yoga, now == .strength, primaryMuscle == "hip flexors" { selectPrimaryMuscle("chest") }
             }
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
@@ -1068,7 +1076,7 @@ struct CreateExerciseView: View {
     private var liftFieldsCard: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.lg) {
-                musclePickerRow("Primary muscle", selection: $primaryMuscle)
+                musclePickerRow("Primary muscle")
                 Divider().overlay(theme.separator)
                 secondaryMuscleRow
                 Divider().overlay(theme.separator)
@@ -1175,7 +1183,7 @@ struct CreateExerciseView: View {
     private var yogaFieldsCard: some View {
         Card {
             VStack(alignment: .leading, spacing: Space.lg) {
-                musclePickerRow("Primary region", selection: $primaryMuscle)
+                musclePickerRow("Primary region")
                 Divider().overlay(theme.separator)
                 secondaryMuscleRow
                 Divider().overlay(theme.separator)
@@ -1243,13 +1251,15 @@ struct CreateExerciseView: View {
                 Text("Secondary muscles").font(.bodyStrong).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Menu {
-                    ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
+                    ForEach(ExerciseCatalog.selectableMuscleHierarchy, id: \.group) { entry in
                         if entry.children.isEmpty {
                             secondaryMuscleToggle(entry.group)
                         } else {
                             Menu(MuscleTaxonomy.displayName(entry.group)) {
-                                secondaryMuscleToggle(entry.group, label: "All \(MuscleTaxonomy.displayName(entry.group))")
-                                Divider()
+                                if entry.allowsGroupSelection {
+                                    secondaryMuscleToggle(entry.group, label: "All \(MuscleTaxonomy.displayName(entry.group))")
+                                    Divider()
+                                }
                                 ForEach(entry.children, id: \.self) { child in
                                     secondaryMuscleToggle(child)
                                 }
@@ -1274,9 +1284,19 @@ struct CreateExerciseView: View {
                 }
                 .menuActionDismissBehavior(.disabled)
                 .accessibilityIdentifier("secondary-muscle-picker")
+                .accessibilityLabel("Secondary muscles")
+                .accessibilityValue(secondaryMuscles.isEmpty
+                    ? "None"
+                    : secondaryMuscles
+                        .map(MuscleTaxonomy.displayName)
+                        .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                        .joined(separator: ", "))
             }
             if !secondaryMuscles.isEmpty {
-                Text(secondaryMuscles.sorted().map(MuscleTaxonomy.displayName).joined(separator: " · "))
+                Text(secondaryMuscles
+                    .map(MuscleTaxonomy.displayName)
+                    .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                    .joined(separator: " · "))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
             }
@@ -1289,11 +1309,11 @@ struct CreateExerciseView: View {
     /// can't count itself twice.
     @ViewBuilder
     private func secondaryMuscleToggle(_ muscle: String, label: String? = nil) -> some View {
-        if MuscleTaxonomy.canonical(muscle) != MuscleTaxonomy.canonical(primaryMuscle) {
+        if !ExerciseMuscleSelectionPolicy.overlaps(muscle, primaryMuscle) {
             Button {
                 toggleSecondaryMuscle(muscle)
             } label: {
-                if secondaryMuscles.contains(muscle) {
+                if secondaryMuscles.contains(MuscleTaxonomy.canonical(muscle)) {
                     Label(label ?? MuscleTaxonomy.displayName(muscle), systemImage: "checkmark")
                 } else {
                     Text(label ?? MuscleTaxonomy.displayName(muscle))
@@ -1303,39 +1323,54 @@ struct CreateExerciseView: View {
     }
 
     private func toggleSecondaryMuscle(_ muscle: String) {
-        if secondaryMuscles.contains(muscle) {
-            secondaryMuscles.remove(muscle)
+        let canonical = MuscleTaxonomy.canonical(muscle)
+        guard !ExerciseMuscleSelectionPolicy.overlaps(canonical, primaryMuscle) else { return }
+        if secondaryMuscles.contains(canonical) {
+            secondaryMuscles.remove(canonical)
         } else {
-            secondaryMuscles.insert(muscle)
+            secondaryMuscles.insert(canonical)
         }
+    }
+
+    private func selectPrimaryMuscle(_ muscle: String) {
+        let canonical = MuscleTaxonomy.canonical(muscle)
+        primaryMuscle = canonical
+        secondaryMuscles = Set(ExerciseMuscleSelectionPolicy.secondaryMuscles(
+            from: Array(secondaryMuscles),
+            excluding: canonical
+        ))
     }
 
     /// Primary-muscle picker with drill-down: parent groups open a submenu of
     /// "All <Group>" plus their sub-muscles; standalone groups pick directly.
-    private func musclePickerRow(_ title: String, selection: Binding<String>) -> some View {
+    private func musclePickerRow(_ title: String) -> some View {
         HStack {
             Text(title).font(.bodyStrong).foregroundStyle(theme.textPrimary)
             Spacer()
             Menu {
-                ForEach(ExerciseCatalog.muscleHierarchy, id: \.group) { entry in
+                ForEach(ExerciseCatalog.selectableMuscleHierarchy, id: \.group) { entry in
                     if entry.children.isEmpty {
-                        Button(MuscleTaxonomy.displayName(entry.group)) { selection.wrappedValue = entry.group }
+                        Button(MuscleTaxonomy.displayName(entry.group)) { selectPrimaryMuscle(entry.group) }
                     } else {
                         Menu(MuscleTaxonomy.displayName(entry.group)) {
-                            Button("All \(MuscleTaxonomy.displayName(entry.group))") { selection.wrappedValue = entry.group }
-                            Divider()
+                            if entry.allowsGroupSelection {
+                                Button("All \(MuscleTaxonomy.displayName(entry.group))") { selectPrimaryMuscle(entry.group) }
+                                Divider()
+                            }
                             ForEach(entry.children, id: \.self) { child in
-                                Button(MuscleTaxonomy.displayName(child)) { selection.wrappedValue = child }
+                                Button(MuscleTaxonomy.displayName(child)) { selectPrimaryMuscle(child) }
                             }
                         }
                     }
                 }
             } label: {
-                Text(MuscleTaxonomy.displayName(selection.wrappedValue))
+                Text(MuscleTaxonomy.displayName(primaryMuscle))
                     .font(.bodyStrong).foregroundStyle(theme.accentForeground)
                     .minimumTouchTarget()
             }
             .accessibilityIdentifier("primary-muscle-picker")
+            .accessibilityLabel(title)
+            .accessibilityValue(MuscleTaxonomy.displayName(primaryMuscle))
         }
     }
 
@@ -1379,9 +1414,10 @@ struct CreateExerciseView: View {
         let draftIsYoga = modality == .yoga
         let draftKind = resolvedKind
         let draftPrimaryMuscle = primaryMuscle
-        let draftSecondaryMuscles = secondaryMuscles
-            .subtracting([primaryMuscle])
-            .sorted()
+        let draftSecondaryMuscles = ExerciseMuscleSelectionPolicy.secondaryMuscles(
+            from: Array(secondaryMuscles),
+            excluding: draftPrimaryMuscle
+        ).sorted()
         let draftEquipment = equipment
         let draftWeightMode = weightMode
         let draftPreferredUnitRaw = preferredUnit?.rawValue

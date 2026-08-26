@@ -28,9 +28,10 @@ struct YogaPoseCatalogTests {
             #expect(!pose.cues.entry.isEmpty)
             #expect(!pose.cues.hold.isEmpty)
             #expect(!pose.cues.exit.isEmpty)
-            // Every region must be a known picker group so filters find poses.
+            // Legacy region tags stay readable even though new exercises use
+            // anatomically specific picker choices.
             for muscle in pose.primaryMuscles + pose.secondaryMuscles {
-                #expect(ExerciseCatalog.muscleGroups.contains(muscle), "\(pose.slug): unknown region \(muscle)")
+                #expect(ExerciseCatalog.recognizedMuscleTags.contains(muscle), "\(pose.slug): unknown region \(muscle)")
             }
         }
     }

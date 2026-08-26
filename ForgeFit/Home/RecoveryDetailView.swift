@@ -153,6 +153,10 @@ private struct FitnessFatigueCard: View {
     }
 
     var body: some View {
+        let yDomain = ChartYDomain.padded(
+            values: points.flatMap { [$0.ctl, $0.atl] },
+            lowerLimit: 0
+        )
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 if let latest {
@@ -193,6 +197,7 @@ private struct FitnessFatigueCard: View {
                             }
                     }
                 }
+                .chartYScale(domain: yDomain)
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
                         AxisGridLine().foregroundStyle(theme.separator.opacity(0.5))

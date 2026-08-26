@@ -810,8 +810,8 @@ struct PaceEntryField: View {
     /// Display: seconds/km → m:ss in the user's unit.
     private static func text(for secondsPerKm: Double?) -> String {
         guard let secondsPerKm, secondsPerKm > 0 else { return "" }
-        let perUnit = secondsPerKm * (Fmt.distanceUnit.metersPerUnit / 1000)
-        return String(format: "%d:%02d", Int(perUnit) / 60, Int(perUnit) % 60)
+        let seconds = Int((secondsPerKm * (Fmt.distanceUnit.metersPerUnit / 1000)).rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// Parse: m:ss (or decimal minutes) in the user's unit → seconds/km.

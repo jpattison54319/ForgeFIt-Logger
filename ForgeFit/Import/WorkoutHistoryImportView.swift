@@ -463,8 +463,8 @@ struct WorkoutHistoryImportView: View {
                 summaryRow("Imported workouts", "\(result.importedWorkouts)")
                 summaryRow("Duplicates skipped", "\(result.skippedDuplicates)")
                 summaryRow("Custom exercises", "\(result.createdExercises)")
-                if result.flaggedForReview > 0 {
-                    SecondaryButton(title: "Review \(result.flaggedForReview) matched exercise\(result.flaggedForReview == 1 ? "" : "s")", systemImage: "checklist") {
+                if result.createdExercises > 0 {
+                    SecondaryButton(title: "Review \(result.createdExercises) new exercise\(result.createdExercises == 1 ? "" : "s")", systemImage: "checklist") {
                         showReviewQueue = true
                     }
                 }

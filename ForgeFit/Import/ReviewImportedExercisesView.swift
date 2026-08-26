@@ -1,13 +1,11 @@
-import ForgeCore
 import ForgeData
 import SwiftData
 import SwiftUI
 
 extension ExerciseLibraryModel {
-    /// Every exercise added by a workout-history import that the user hasn't yet
-    /// confirmed or edited — plus any legacy low-confidence guess. Confirming or
-    /// editing an exercise sets `userModified`, which drops it from this set.
-    /// Callers still filter out non-owned / soft-deleted rows.
+    /// Every exercise added by a workout-history import that the user has not
+    /// approved, edited, or discarded, plus any legacy low-confidence guess.
+    /// Callers still filter out non-owned and soft-deleted rows.
     static var pendingImportReviewPredicate: Predicate<ExerciseLibraryModel> {
         #Predicate<ExerciseLibraryModel> { exercise in
             exercise.needsReview == true
@@ -15,23 +13,13 @@ extension ExerciseLibraryModel {
         }
     }
 
-    /// Least-confident guesses first, then name. `needsReview` is flagged exactly
-    /// when confidence fell below the review threshold, so ascending confidence
-    /// naturally floats the items most in need of attention to the top. (Bool
-    /// keypaths aren't `Comparable`, so we can't sort on `needsReview` directly.)
+    /// Least-confident suggestions first, then name. Confidence is an internal
+    /// prioritization signal, not a user-facing probability or workout score.
     static var pendingImportReviewSort: [SortDescriptor<ExerciseLibraryModel>] {
         [
             SortDescriptor(\.classificationConfidence),
             SortDescriptor(\.name),
         ]
-    }
-}
-
-private enum ImportedExerciseReviewError: LocalizedError {
-    case missingExercise
-
-    var errorDescription: String? {
-        "That imported exercise is no longer available."
     }
 }
 
@@ -45,8 +33,6 @@ struct ReviewImportedExercisesView: View {
     let workouts: [WorkoutModel]
 
     @State private var editingExercise: ExerciseLibraryModel?
-    @State private var mergingExercise: ExerciseLibraryModel?
-    @State private var errorMessage: String?
 
     private var reviewItems: [ExerciseLibraryModel] {
         queriedReviewItems.filter { $0.ownerID != nil && $0.deletedAt == nil }
@@ -60,18 +46,17 @@ struct ReviewImportedExercisesView: View {
             } else {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: Space.md) {
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(theme.danger)
-                                .padding(.horizontal, Space.lg)
-                        }
+                        ImportedExerciseReviewSummaryCard(
+                            count: reviewItems.count,
+                            onApproveAll: approveAll,
+                            onDiscardAll: discardAll
+                        )
                         ForEach(reviewItems) { exercise in
                             ReviewImportedExerciseRow(
                                 exercise: exercise,
-                                onConfirm: { confirm(exercise) },
+                                onApprove: { approve(exercise) },
                                 onEdit: { editingExercise = exercise },
-                                onMerge: { mergingExercise = exercise }
+                                onDiscard: { discard(exercise) }
                             )
                         }
                     }
@@ -83,38 +68,24 @@ struct ReviewImportedExercisesView: View {
         }
         .background(theme.background)
         .toolbar(.hidden, for: .navigationBar)
+        .bottomChromeHidden(true)
         .interactiveBackSwipeEnabled()
         .sheet(item: $editingExercise) { exercise in
             CreateExerciseView(editing: exercise) { _ in }
-        }
-        .sheet(item: $mergingExercise) { source in
-            ExercisePickerView(singleSelection: true, history: workouts) { selected in
-                if let target = selected.first {
-                    merge(source, into: target)
-                }
-                mergingExercise = nil
-            }
-        }
-        .alert(
-            "Couldn't Save Changes",
-            isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
-        ) {
-            Button("OK", role: .cancel) { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "The imported exercise change wasn't saved.")
         }
     }
 
     private var header: some View {
         HStack {
-            CircleIconButton(systemImage: "chevron.left", label: "Back") { dismiss() }
+            CircleIconButton(systemImage: "chevron.left", label: "Back", action: dismiss.callAsFunction)
             Spacer()
             VStack(spacing: 1) {
-                Text("Imported Exercises")
+                Text("Review Imported Exercises")
                     .font(.rowValue)
                     .foregroundStyle(theme.textPrimary)
+                    .accessibilityIdentifier("imported-exercise-review-header")
                 if !reviewItems.isEmpty {
-                    Text("\(reviewItems.count) to review")
+                    Text("\(reviewItems.count) new exercise\(reviewItems.count == 1 ? "" : "s")")
                         .font(.tag)
                         .foregroundStyle(theme.textSecondary)
                 }
@@ -130,236 +101,42 @@ struct ReviewImportedExercisesView: View {
         VStack {
             Spacer()
             EmptyStateCard(
-                title: "All imported exercises reviewed",
-                message: "Exercises added from a workout-history import show up here to confirm or edit.",
+                title: "Exercise review complete",
+                message: "Approved exercises are in your library. Discarded exercises stay out of it, while your imported workout history remains unchanged.",
                 systemImage: "checkmark.seal"
             )
             .padding(.horizontal, Space.lg)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("imported-exercise-review-complete")
             Spacer()
         }
     }
 
-    private func confirm(_ exercise: ExerciseLibraryModel) {
-        confirm(exerciseID: exercise.id)
+    private func approve(_ exercise: ExerciseLibraryModel) {
+        apply(.approve, to: [exercise.id])
     }
 
-    private func merge(_ source: ExerciseLibraryModel, into target: ExerciseLibraryModel) {
-        merge(sourceID: source.id, targetID: target.id)
+    private func approveAll() {
+        apply(.approve, to: reviewItems.map(\.id))
     }
 
-    private func confirm(exerciseID: UUID) {
-        errorMessage = nil
+    private func discard(_ exercise: ExerciseLibraryModel) {
+        apply(.discard, to: [exercise.id])
+    }
+
+    private func discardAll() {
+        apply(.discard, to: reviewItems.map(\.id))
+    }
+
+    private func apply(_ action: ImportedExerciseReviewService.Action, to exerciseIDs: [UUID]) {
         PersistentChangeSaveCenter.shared.perform({
-            let transaction = isolatedTransactionContext()
-            guard let exercise = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
-                predicate: #Predicate { $0.id == exerciseID }
-            )).first else {
-                throw ImportedExerciseReviewError.missingExercise
-            }
-            exercise.needsReview = false
-            exercise.userModified = true
-            exercise.classificationSource = ClassificationSource.manual
-            exercise.classificationConfidence = max(
-                exercise.classificationConfidence,
-                ExerciseClassifier.reviewConfidenceThreshold
+            try ImportedExerciseReviewService.apply(
+                action,
+                to: exerciseIDs,
+                in: modelContext.container
             )
-            exercise.updatedAt = Date()
-            do {
-                try transaction.save()
-            } catch {
-                transaction.rollback()
-                throw error
-            }
         }, onSuccess: {
             BackupScheduler.shared.noteLogDataChanged()
         })
-    }
-
-    private func merge(sourceID: UUID, targetID: UUID) {
-        errorMessage = nil
-        guard sourceID != targetID else {
-            errorMessage = "Choose a different exercise to merge into."
-            return
-        }
-
-        PersistentChangeSaveCenter.shared.perform({
-            let transaction = isolatedTransactionContext()
-            guard let source = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
-                predicate: #Predicate { $0.id == sourceID }
-            )).first,
-            try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>(
-                predicate: #Predicate { $0.id == targetID }
-            )).first != nil else {
-                throw ImportedExerciseReviewError.missingExercise
-            }
-            try remapReferences(from: sourceID, to: targetID, in: transaction)
-            transaction.delete(source)
-            do {
-                try transaction.save()
-            } catch {
-                // The isolated context owns only this merge, so rollback
-                // cannot erase or commit pending edits held by another screen.
-                transaction.rollback()
-                throw error
-            }
-        }, onSuccess: {
-            BackupScheduler.shared.noteLogDataChanged()
-        })
-    }
-
-    private func remapReferences(
-        from sourceID: UUID,
-        to targetID: UUID,
-        in context: ModelContext
-    ) throws {
-        let workoutExercises = try context.fetch(FetchDescriptor<WorkoutExerciseModel>(
-            predicate: #Predicate { $0.exerciseID == sourceID }
-        ))
-        for item in workoutExercises { item.exerciseID = targetID }
-
-        let routineExercises = try context.fetch(FetchDescriptor<RoutineExerciseModel>(
-            predicate: #Predicate { $0.exerciseID == sourceID }
-        ))
-        for item in routineExercises { item.exerciseID = targetID }
-
-        let aliases = try context.fetch(FetchDescriptor<ExerciseAliasModel>(
-            predicate: #Predicate { $0.exerciseID == sourceID }
-        ))
-        for item in aliases { item.exerciseID = targetID }
-
-        let notes = try context.fetch(FetchDescriptor<UserExerciseNoteModel>(
-            predicate: #Predicate { $0.exerciseID == sourceID }
-        ))
-        for item in notes { item.exerciseID = targetID }
-    }
-
-    private func isolatedTransactionContext() -> ModelContext {
-        let context = ModelContext(modelContext.container)
-        context.autosaveEnabled = false
-        return context
-    }
-
-}
-
-private struct ReviewImportedExerciseRow: View {
-    @Environment(\.theme) private var theme
-    let exercise: ExerciseLibraryModel
-    let onConfirm: () -> Void
-    let onEdit: () -> Void
-    let onMerge: () -> Void
-
-    private var displayName: String {
-        exercise.importedRawName?.isEmpty == false ? exercise.importedRawName! : exercise.name
-    }
-
-    private var typeText: String {
-        exercise.isCardio ? "Cardio" : "Strength"
-    }
-
-    private var sourceText: String {
-        switch exercise.classificationSource {
-        case .matchedLibrary: "Matched library"
-        case .keyword: "Keyword"
-        case .seedFuzzy: "Seed fuzzy"
-        case .embedding: "Embedding"
-        case .ai: "AI"
-        case .manual: "Manual"
-        case .fallback: "Fallback"
-        case nil: "Unknown"
-        }
-    }
-
-    var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-                HStack(alignment: .top, spacing: Space.md) {
-                    Image(systemName: exercise.isCardio ? "heart.fill" : "dumbbell.fill")
-                        .font(.rowValue)
-                        .foregroundStyle(exercise.isCardio ? theme.danger : theme.accent)
-                        .frame(width: 40, height: 40)
-                        .background((exercise.isCardio ? theme.danger : theme.accent).opacity(0.14))
-                        .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayName)
-                            .font(.bodyStrong)
-                            .foregroundStyle(theme.textPrimary)
-                            .lineLimit(2)
-                        if displayName != exercise.name {
-                            Text(exercise.name)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textTertiary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: Space.sm)
-                    Tag(text: confidenceText, color: confidenceColor, background: confidenceColor.opacity(0.14))
-                }
-
-                HStack(spacing: Space.sm) {
-                    Tag(text: typeText, color: theme.secondaryAccent, background: theme.secondaryAccent.opacity(0.14))
-                    Tag(text: sourceText, color: theme.textSecondary, background: theme.surfaceElevated)
-                    if let equipment = exercise.equipment, !equipment.isEmpty {
-                        Tag(text: equipment.capitalized, color: theme.textSecondary, background: theme.surfaceElevated)
-                    }
-                }
-
-                muscleSection("Primary", muscles: exercise.primaryMuscles)
-                if !exercise.secondaryMuscles.isEmpty {
-                    muscleSection("Secondary", muscles: exercise.secondaryMuscles)
-                }
-
-                HStack(spacing: Space.sm) {
-                    Button(action: onConfirm) {
-                        Label("Confirm", systemImage: "checkmark.circle.fill")
-                            .frame(maxWidth: .infinity)
-                            .minimumTouchTarget()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(theme.accent)
-
-                    Button(action: onEdit) {
-                        Label("Edit", systemImage: "slider.horizontal.3")
-                            .frame(maxWidth: .infinity)
-                            .minimumTouchTarget()
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button(action: onMerge) {
-                        Label("Merge", systemImage: "arrow.triangle.merge")
-                            .frame(maxWidth: .infinity)
-                            .minimumTouchTarget()
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .font(.system(size: 13, weight: .semibold))
-            }
-        }
-    }
-
-    private var confidenceText: String {
-        "\(Int((exercise.classificationConfidence * 100).rounded()))%"
-    }
-
-    private var confidenceColor: Color {
-        exercise.classificationConfidence >= 0.7 ? theme.warmup : theme.danger
-    }
-
-    private func muscleSection(_ title: String, muscles: [String]) -> some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text(title)
-                .font(.tag)
-                .foregroundStyle(theme.textTertiary)
-            if muscles.isEmpty {
-                Tag(text: "No guess", color: theme.danger, background: theme.danger.opacity(0.14))
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(muscles, id: \.self) { muscle in
-                            Tag(text: muscle.capitalized, color: theme.textPrimary, background: theme.surfaceElevated)
-                        }
-                    }
-                }
-            }
-        }
     }
 }

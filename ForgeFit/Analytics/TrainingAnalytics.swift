@@ -107,7 +107,7 @@ nonisolated struct TrainingAnalytics {
         var id: String { rawValue }
 
         @MainActor
-        var axisLabel: String {
+        var weeklyAxisLabel: String {
             switch self {
             case .duration: "Time (hours)"
             case .volume: "Volume (\(Fmt.unit.shortSuffix))"
@@ -116,7 +116,7 @@ nonisolated struct TrainingAnalytics {
         }
 
         @MainActor
-        func axisValue(_ value: Double) -> String {
+        func weeklyAxisValue(_ value: Double) -> String {
             switch self {
             case .duration, .reps:
                 value.formatted(.number.precision(.fractionLength(0...1)))
@@ -127,14 +127,56 @@ nonisolated struct TrainingAnalytics {
         }
 
         @MainActor
-        func formatted(_ value: Double) -> String {
+        func weeklyFormatted(_ value: Double) -> String {
             switch self {
             case .duration:
-                "\(value.formatted(.number.precision(.fractionLength(0...1)))) hours"
+                let number = value.formatted(.number.precision(.fractionLength(0...1)))
+                return "\(number) \(abs(value - 1) < 0.000_001 ? "hour" : "hours")"
             case .volume:
-                Fmt.volume(value)
+                return Fmt.volume(value)
             case .reps:
-                "\(Int(value.rounded())) reps"
+                let count = Int(value.rounded())
+                return "\(count) \(count == 1 ? "rep" : "reps")"
+            }
+        }
+
+        @MainActor
+        var routineAxisLabel: String {
+            switch self {
+            case .duration: "Time (min)"
+            case .volume: "Volume (\(Fmt.unit.shortSuffix))"
+            case .reps: "Reps"
+            }
+        }
+
+        @MainActor
+        func routineAxisValue(_ value: Double) -> String {
+            switch self {
+            case .duration:
+                (value / 60).formatted(.number.precision(.fractionLength(0...1)))
+            case .volume:
+                Fmt.unit.displayValue(fromKilograms: value)
+                    .formatted(.number.precision(.fractionLength(0...1)))
+            case .reps:
+                value.formatted(.number.precision(.fractionLength(0...1)))
+            }
+        }
+
+        @MainActor
+        func routineFormatted(_ value: Double) -> String {
+            switch self {
+            case .duration:
+                let seconds = max(0, Int(value.rounded()))
+                if seconds < 60 || seconds >= 3_600 {
+                    return Fmt.durationShort(seconds)
+                }
+                let minutes = Double(seconds) / 60
+                return "\(minutes.formatted(.number.precision(.fractionLength(0...1)))) min"
+            case .volume:
+                return Fmt.volume(value)
+            case .reps:
+                let count = Int(value.rounded())
+                return "\(count) \(count == 1 ? "rep" : "reps")"
             }
         }
     }
@@ -290,8 +332,10 @@ nonisolated struct TrainingAnalytics {
         return points
     }
 
-    /// Volume-over-time for a routine (matches the routine-detail chart).
-    func routineVolumeSeries(routineID: UUID, metric: Metric) -> [MetricPoint] {
+    /// One point per completed workout linked to the routine. Duration remains
+    /// in canonical seconds; the routine presentation contract owns conversion
+    /// to minutes so the numeric value can never be mistaken for weekly hours.
+    func routineSeries(routineID: UUID, metric: Metric) -> [MetricPoint] {
         completed
             .filter { $0.routineID == routineID }
             .sorted { $0.startedAt < $1.startedAt }
@@ -300,7 +344,7 @@ nonisolated struct TrainingAnalytics {
                 let value: Double = switch metric {
                 case .volume: s.volume
                 case .reps: Double(s.reps)
-                case .duration: Double(s.durationSeconds) / 60
+                case .duration: Double(s.durationSeconds)
                 }
                 return MetricPoint(date: workout.startedAt, value: value)
             }

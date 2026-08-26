@@ -86,6 +86,8 @@ struct CardioModalityContractTests {
         #expect(CardioMetrics.paceString(distanceMeters: 2000, durationSeconds: 480, kind: .row) == "2:00 /500m")
         // Swim branch unchanged: 1000 m in 20:00 → 2:00 /100 m.
         #expect(CardioMetrics.paceString(distanceMeters: 1000, durationSeconds: 1200, kind: .swim) == "2:00 /100m")
+        // Exact pace presentation rounds to the same second as chart axes.
+        #expect(CardioMetrics.paceString(distanceMeters: 1000, durationSeconds: 301, kind: .run, unit: .km) == "5:01 /km")
     }
 
     @Test func rowingSplitHeadlinePrefersDerivedOverStoredAndNeverGuesses() {

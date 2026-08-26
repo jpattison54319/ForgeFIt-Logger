@@ -231,10 +231,10 @@ struct ProfileView: View {
                         .background(theme.danger.opacity(0.14))
                         .clipShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Review \(reviewCount) imported exercise\(reviewCount == 1 ? "" : "s")")
+                        Text("Review \(reviewCount) new imported exercise\(reviewCount == 1 ? "" : "s")")
                             .font(.bodyStrong)
                             .foregroundStyle(theme.textPrimary)
-                        Text("Confirm the muscle guesses, edit details, or merge duplicates.")
+                        Text("Approve suggested details, correct one, or discard it from your library.")
                             .font(.system(size: 13))
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -247,6 +247,7 @@ struct ProfileView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("profile-imported-exercise-review")
     }
 
     private var reviewCount: Int {

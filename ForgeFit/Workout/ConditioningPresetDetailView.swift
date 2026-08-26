@@ -274,6 +274,7 @@ struct ConditioningPresetDetailView: View {
                                 ConditioningPresetStats.axisValue(value, metric: metric, section: section)
                             },
                             yAxisLabel: ConditioningPresetStats.axisLabel(metric, for: section),
+                            yDomainLowerLimit: metric == .secondHalfChange ? nil : 0,
                             color: theme.warmup,
                             chartAccessibilityLabel: "\(title) \(ConditioningPresetStats.title(metric, for: section)) progress chart",
                             chartAccessibilityIdentifier: "conditioning-preset-progress-chart"

@@ -109,11 +109,14 @@ nonisolated enum CardioExerciseStats {
             switch self {
             case .pace:
                 let secPerUnit = value * (distanceUnit.metersPerUnit / 1000)
-                return String(format: "%d:%02d %@", Int(secPerUnit) / 60, Int(secPerUnit) % 60, distanceUnit.paceSuffix)
+                let seconds = Int(secPerUnit.rounded())
+                return String(format: "%d:%02d %@", seconds / 60, seconds % 60, distanceUnit.paceSuffix)
             case .split500:
-                return String(format: "%d:%02d /500m", Int(value) / 60, Int(value) % 60)
+                let seconds = Int(value.rounded())
+                return String(format: "%d:%02d /500m", seconds / 60, seconds % 60)
             case .swimPace100:
-                return String(format: "%d:%02d /100m", Int(value) / 60, Int(value) % 60)
+                let seconds = Int(value.rounded())
+                return String(format: "%d:%02d /100m", seconds / 60, seconds % 60)
             case .speed:
                 let converted = distanceUnit == .km ? value : value / (DistanceUnit.mi.metersPerUnit / 1000)
                 return "\(converted.formatted(.number.precision(.fractionLength(1)))) \(distanceUnit.speedSuffix)"
@@ -128,7 +131,7 @@ nonisolated enum CardioExerciseStats {
             case .strokeRate:
                 return "\(Int(value.rounded())) spm"
             case .elevationGain:
-                return Fmt.distance(value, unit: distanceUnit)
+                return "\(Int(value.rounded()).formatted()) m"
             case .floors:
                 return "\(Int(value)) floors"
             case .jumps:
@@ -157,7 +160,9 @@ nonisolated enum CardioExerciseStats {
                 return Int(value.rounded()).formatted()
             case .aerobicEfficiency:
                 return value.formatted(.number.precision(.fractionLength(0...2)))
-            case .elevationGain, .distance:
+            case .elevationGain:
+                return Int(value.rounded()).formatted()
+            case .distance:
                 return distanceUnit.distance(fromMeters: value)
                     .formatted(.number.precision(.fractionLength(0...1)))
             }
@@ -174,7 +179,7 @@ nonisolated enum CardioExerciseStats {
             case .aerobicEfficiency: "Efficiency (m/min/bpm)"
             case .cadence: "Cadence (rpm)"
             case .strokeRate: "Stroke rate (spm)"
-            case .elevationGain: "Elevation (\(distanceUnit.abbreviation))"
+            case .elevationGain: "Elevation (m)"
             case .floors: "Floors"
             case .jumps: "Jumps"
             case .distance: "Distance (\(distanceUnit.abbreviation))"

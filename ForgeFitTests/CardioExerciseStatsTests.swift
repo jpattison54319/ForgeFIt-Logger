@@ -75,6 +75,14 @@ struct CardioExerciseStatsTests {
 
     // MARK: - Trend selection
 
+    @Test func trendPresentationKeepsCanonicalUnitsAndRoundingAligned() {
+        #expect(CardioExerciseStats.TrendMetric.pace.format(300.6, distanceUnit: .km) == "5:01 /km")
+        #expect(CardioExerciseStats.TrendMetric.pace.axisValue(300.6, distanceUnit: .km) == "5:01")
+        #expect(CardioExerciseStats.TrendMetric.elevationGain.format(123.6, distanceUnit: .mi) == "124 m")
+        #expect(CardioExerciseStats.TrendMetric.elevationGain.axisValue(123.6, distanceUnit: .mi) == "124")
+        #expect(CardioExerciseStats.TrendMetric.elevationGain.axisLabel(distanceUnit: .mi) == "Elevation (m)")
+    }
+
     @Test func runTrendsPaceAndFallsBackToDuration() {
         let paced = [
             workout(daysAgo: 2, exerciseID: exerciseID) { self.runSession(rowID: $0, meters: 5000, seconds: 1500, daysAgo: 2) },

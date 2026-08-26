@@ -334,6 +334,10 @@ struct InsightMetricCatalogTests {
         #expect(InsightValueFormat.axisString(rowPace, kind: .pace, modality: "row") == "2:00")
         #expect(InsightValueFormat.axisUnitLabel(kind: .pace, modality: "row") == "min/500m")
         #expect(InsightValueFormat.string(rowPace, kind: .pace, modality: "row") == "2:00/500m")
+
+        #expect(InsightValueFormat.axisString(123.6, kind: .elevationMeters) == "124")
+        #expect(InsightValueFormat.axisUnitLabel(kind: .elevationMeters) == "m")
+        #expect(InsightValueFormat.string(123.6, kind: .elevationMeters) == "124 m")
     }
 
     @Test func mixedRelationshipPopulationCopyNamesItsAsymmetricZeroPolicy() {
