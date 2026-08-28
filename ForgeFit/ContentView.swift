@@ -140,6 +140,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(ForgeFitIntentNavigator.self) private var intentNavigator
     @EnvironmentObject private var themeManager: ThemeManager
     @Query(sort: \ExerciseLibraryModel.name) private var exercises: [ExerciseLibraryModel]
     @Query(sort: \UserExerciseNoteModel.updatedAt, order: .reverse) private var setupNotes: [UserExerciseNoteModel]
@@ -153,6 +154,7 @@ struct ContentView: View {
     @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse) private var microcycleTrackings: [MicrocycleTrackingModel]
     @Query(sort: \MicrocycleWindowModel.startsAt, order: .reverse) private var microcycleWindows: [MicrocycleWindowModel]
     @Query(sort: \IntervalPresetModel.updatedAt, order: .reverse) private var conditioningPresetRecords: [IntervalPresetModel]
+    @Query(sort: \YogaFlowModel.position) private var yogaFlows: [YogaFlowModel]
 
     @State private var appState = AppState()
     @State private var social = SocialService.make()
@@ -197,6 +199,7 @@ struct ContentView: View {
     @State private var onboardingPlanImport: PendingPlanImport?
     @State private var planImportErrorMessage: String?
     @State private var onboardingPlanImportErrorMessage: String?
+    @State private var externalWorkoutChoiceMessage: String?
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
     @State private var didFinishLaunchTasks = false
@@ -229,6 +232,13 @@ struct ContentView: View {
 
     private var activeWorkout: WorkoutModel? {
         activeWorkouts.first
+    }
+
+    /// CloudKit may temporarily materialize several physical rows for one
+    /// logical routine ID. Raw rows stay visible to maintenance/versioning;
+    /// every user-facing consumer receives exactly one graph-aware row.
+    private var logicalRoutines: [RoutineModel] {
+        RoutineDeduplicator.canonicalRoutines(routines)
     }
 
     private var experimentScheduleRevision: [String] {
@@ -297,6 +307,19 @@ struct ContentView: View {
         conditioningPresetRecords.map {
             "\($0.id.uuidString)|\($0.name)|\($0.updatedAt.timeIntervalSince1970)|\($0.deletedAt?.timeIntervalSince1970 ?? 0)"
         }.joined(separator: ";")
+    }
+
+    private var workoutIntentCatalogRevision: String {
+        let liveRoutines = logicalRoutines.filter { $0.deletedAt == nil && $0.archivedAt == nil }
+        let liveExercises = exercises.filter { $0.deletedAt == nil }
+        let liveYogaFlows = yogaFlows.filter { $0.deletedAt == nil }
+        let livePresets = conditioningPresetRecords.filter { $0.deletedAt == nil }
+        return [
+            "\(liveRoutines.count):\(liveRoutines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
+            "\(liveExercises.count):\(liveExercises.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
+            "\(liveYogaFlows.count):\(liveYogaFlows.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
+            "\(livePresets.count):\(livePresets.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
+        ].joined(separator: "|")
     }
 
     private var todayCheckinTags: [String] {
@@ -405,13 +428,12 @@ struct ContentView: View {
                         Text(onboardingPlanImportErrorMessage ?? "")
                     }
             }
-            .confirmationDialog(
+            .alert(
                 "You have a workout in progress",
-                isPresented: $showReplaceWorkoutConfirm,
-                titleVisibility: .visible
+                isPresented: $showReplaceWorkoutConfirm
             ) {
                 Button("Discard Current & Start New", role: .destructive) {
-                    if let activeWorkout {
+                    if let activeWorkout = activeWorkoutForPresentation() {
                         discardThenRunPendingStart(activeWorkout)
                     } else {
                         runPendingStart()
@@ -419,6 +441,7 @@ struct ContentView: View {
                 }
                 Button("Keep Current Workout", role: .cancel) {
                     appState.pendingWorkoutStart = nil
+                    presentLoggerWhenActiveWorkoutIsReady()
                 }
             } message: {
                 Text("Starting a new workout will discard the active one and its logged sets.")
@@ -439,6 +462,17 @@ struct ContentView: View {
             } message: {
                 Text("All logged sets from this session will be lost.")
             }
+            .alert(
+                "Choose a workout",
+                isPresented: Binding(
+                    get: { externalWorkoutChoiceMessage != nil },
+                    set: { if !$0 { externalWorkoutChoiceMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(externalWorkoutChoiceMessage ?? "Choose a workout to continue.")
+            }
     }
 
     var body: some View {
@@ -448,6 +482,14 @@ struct ContentView: View {
     private var shellLifecycleHandlers: some View {
         shellWorkoutHandlers
             .task { await runLaunchTasksIfNeeded() }
+            .task(id: workoutIntentCatalogRevision) {
+                await ForgeFitIntentSurfacePublisher.publish(
+                    routines: logicalRoutines,
+                    exercises: exercises,
+                    yogaFlows: yogaFlows,
+                    conditioningPresetRecords: conditioningPresetRecords
+                )
+            }
             .onReceive(NotificationCenter.default.publisher(for: .forgeFitAccountResetDidComplete)) { _ in
                 handleAccountReset()
             }
@@ -466,6 +508,9 @@ struct ContentView: View {
             }
             .onChange(of: microcycleEvaluationRevision) {
                 reconcileMicrocycleLifecycle()
+            }
+            .onChange(of: intentNavigator.pendingRequest?.id) {
+                consumePendingAppIntentNavigation()
             }
             .onChange(of: scenePhase) { _, phase in handleScenePhaseChange(phase) }
             .onOpenURL { url in handleDeepLink(url) }
@@ -612,7 +657,7 @@ struct ContentView: View {
     /// readiness boundary before it can be driven.
     private var appShell: some View {
         Group {
-            if isAutomationLaunch && !didFinishLaunchTasks {
+            if isAutomationLaunch && !automationLaunchIsReady {
                 launchPreparationView
             } else {
                 readyAppShell
@@ -718,7 +763,7 @@ struct ContentView: View {
     /// so taps left of the trigger fall through to the tab screens.
     private var quickActionsBubbleRow: some View {
         QuickActionsBubble(
-            routines: routines,
+            routines: logicalRoutines,
             exercises: exercises,
             setupNotes: setupNotes,
             collapseSignal: quickActionsCollapseSignal,
@@ -771,9 +816,9 @@ struct ContentView: View {
         ZStack {
             switch tab {
             case .home:
-                HomeView(workouts: workouts, routines: routines, exercises: exercises, setupNotes: setupNotes)
+                HomeView(workouts: workouts, routines: logicalRoutines, exercises: exercises, setupNotes: setupNotes)
             case .workout:
-                WorkoutHomeView(routines: routines, workouts: workouts, exercises: exercises, setupNotes: setupNotes)
+                WorkoutHomeView(routines: logicalRoutines, workouts: workouts, exercises: exercises, setupNotes: setupNotes)
             case .insights:
                 InsightsView(workouts: workouts, exercises: exercises)
             case .profile:
@@ -829,7 +874,7 @@ struct ContentView: View {
 
     private func handleStartRequestChange(_ _: Int) {
         guard appState.pendingWorkoutStart != nil else { return }
-        if activeWorkout == nil {
+        if activeWorkoutForPresentation() == nil {
             runPendingStart()
         } else {
             showReplaceWorkoutConfirm = true
@@ -1063,6 +1108,10 @@ struct ContentView: View {
     ///   forgefit://readiness        → Home (readiness leads the screen)
     ///   forgefit://insights         → Insights tab
     ///   forgefit://start/<routine>  → start that routine, open the logger
+    ///   forgefit://start-choice?id= → start an App Intent workout choice
+    ///   forgefit://start-next       → tracked microcycle's next routine
+    ///   forgefit://routine/<id>     → open a routine detail
+    ///   forgefit://exercise/<id>    → open an exercise detail
     private func handleDeepLink(_ url: URL) {
         if url.pathExtension.lowercased() == "forgefitplan" {
             receivePlanFile(url)
@@ -1110,7 +1159,9 @@ struct ContentView: View {
         case "start":
             let routineID = url.pathComponents.dropFirst().first.flatMap(UUID.init)
             if let routineID,
-               let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }) {
+               let routine = logicalRoutines.first(where: {
+                   $0.id == routineID && $0.isAvailableForWorkoutStart(exercises: exercises)
+               }) {
                 appState.requestStart {
                     _ = WorkoutFactory.start(
                         routine: routine,
@@ -1123,8 +1174,186 @@ struct ContentView: View {
             } else {
                 appState.selectedTab = .workout
             }
+        case "start-choice":
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let choiceID = components.queryItems?.first(where: { $0.name == "id" })?.value else {
+                requireExternalWorkoutChoice("That workout link is incomplete. Choose a workout to continue.")
+                return
+            }
+            requestExternalWorkoutStart(choiceID: choiceID)
+        case "start-next":
+            switch TrackedMicrocycleNextResolver.resolve(
+                trackings: microcycleTrackings,
+                windows: microcycleWindows,
+                routines: logicalRoutines,
+                alternations: routineAlternations,
+                workouts: workouts
+            ) {
+            case .routine(let id, _):
+                requestExternalWorkoutStart(
+                    choiceID: WorkoutChoiceTarget.routine(id).identifier
+                )
+            case .chooseWorkout(let message):
+                requireExternalWorkoutChoice(message)
+            }
+        case "choose-workout":
+            requireExternalWorkoutChoice("Choose the workout you want to start.")
+        case "routine":
+            guard let routineID = url.pathComponents.dropFirst().first.flatMap(UUID.init),
+                  logicalRoutines.contains(where: {
+                      $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil
+                  }) else {
+                appState.selectedTab = .workout
+                return
+            }
+            appState.pendingRoutineDetailID = routineID
+            appState.selectedTab = .workout
+        case "exercise":
+            guard let exerciseID = url.pathComponents.dropFirst().first.flatMap(UUID.init),
+                  exercises.contains(where: { $0.id == exerciseID && $0.deletedAt == nil }) else {
+                appState.openProfile(.exercises)
+                return
+            }
+            appState.openProfile(.exercise(exerciseID))
         default:   // "readiness" and anything unrecognized
             appState.selectedTab = .home
+        }
+    }
+
+    private func requireExternalWorkoutChoice(_ message: String) {
+        appState.selectedTab = .workout
+        externalWorkoutChoiceMessage = message
+    }
+
+    private func requestExternalWorkoutStart(choiceID: String) {
+        guard let target = WorkoutChoiceTarget(identifier: choiceID) else {
+            requireExternalWorkoutChoice("That workout is no longer available. Choose another workout.")
+            return
+        }
+
+        if target == .next {
+            switch TrackedMicrocycleNextResolver.resolve(
+                trackings: microcycleTrackings,
+                windows: microcycleWindows,
+                routines: logicalRoutines,
+                alternations: routineAlternations,
+                workouts: workouts
+            ) {
+            case .routine(let id, _):
+                requestExternalWorkoutStart(
+                    choiceID: WorkoutChoiceTarget.routine(id).identifier
+                )
+            case .chooseWorkout(let message):
+                requireExternalWorkoutChoice(message)
+            }
+            return
+        }
+
+        let start: (() -> Void)? = switch target {
+        case .next:
+            nil
+        case .empty:
+            {
+                _ = WorkoutFactory.startEmpty(
+                    in: modelContext,
+                    onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                )
+            }
+        case .routine(let id):
+            logicalRoutines.first(where: {
+                $0.id == id && $0.isAvailableForWorkoutStart(exercises: exercises)
+            }).map { routine in
+                {
+                    _ = WorkoutFactory.start(
+                        routine: routine,
+                        exercises: exercises,
+                        setupNotes: setupNotes,
+                        in: modelContext,
+                        applyProgression: false,
+                        onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                    )
+                }
+            }
+        case .cardio(let raw):
+            CardioModality(rawValue: raw).map { modality in
+                {
+                    _ = WorkoutFactory.startCardio(
+                        modality,
+                        exercises: exercises,
+                        in: modelContext,
+                        onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                    )
+                }
+            }
+        case .yogaBuiltIn(let slug):
+            YogaFlowCatalog.flow(forSlug: slug).map { seed in
+                {
+                    _ = WorkoutFactory.startYoga(
+                        flow: YogaFlowCatalog.plan(for: seed),
+                        named: seed.name,
+                        exercises: exercises,
+                        in: modelContext,
+                        onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                    )
+                }
+            }
+        case .yogaSaved(let id):
+            yogaFlows.first(where: {
+                $0.id == id && $0.deletedAt == nil && $0.plan?.hasSteps == true
+            }).flatMap { flow in
+                flow.plan.map { plan in
+                    {
+                        _ = WorkoutFactory.startYoga(
+                            flow: plan,
+                            named: flow.name,
+                            exercises: exercises,
+                            in: modelContext,
+                            onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                        )
+                    }
+                }
+            }
+        case .conditioningBuiltIn(let raw):
+            ConditioningPreset(rawValue: raw).flatMap { preset in
+                conditioningStart(
+                    selection: .builtIn(preset),
+                    title: preset.title
+                )
+            }
+        case .conditioningSaved(let id):
+            ConditioningPresetStore.savedPresets(from: conditioningPresetRecords)
+                .first(where: {
+                    guard case .saved(let savedID, _, _) = $0 else { return false }
+                    return savedID == id
+                })
+                .flatMap { conditioningStart(selection: $0, title: $0.title) }
+        }
+
+        guard let start else {
+            requireExternalWorkoutChoice("That workout is no longer available. Choose another workout.")
+            return
+        }
+        appState.requestStart(start)
+    }
+
+    private func conditioningStart(
+        selection: ConditioningPresetSelection,
+        title: String
+    ) -> (() -> Void)? {
+        guard let section = selection.resolvedSection(in: exercises),
+              !section.movements.isEmpty else { return nil }
+        let availableExerciseIDs = Set(exercises.lazy.filter { $0.deletedAt == nil }.map(\.id))
+        guard section.movements.allSatisfy({ availableExerciseIDs.contains($0.exerciseID) }) else {
+            return nil
+        }
+        let plan = ConditioningPlan(sections: [section])
+        return {
+            _ = WorkoutFactory.startConditioning(
+                plan: plan,
+                named: title,
+                in: modelContext,
+                onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+            )
         }
     }
 
@@ -1184,6 +1413,7 @@ struct ContentView: View {
             NotificationScheduler.shared.cancelYogaCueSchedule()
         }
         if phase == .active {
+            consumePendingAppIntentNavigation()
             UserDefaults.standard.set(Date(), forKey: "lastActiveDate")
             reconcileLiveRuntimeOwnership()
             BackupScheduler.shared.resumeAfterForeground()
@@ -1458,6 +1688,10 @@ struct ContentView: View {
         // Links queued while onboarding was up and dismissed before launch
         // finished are only safe to route now.
         replayPendingDeepLinks()
+        #if DEBUG
+        routeAppIntentLaunchFixtureIfNeeded()
+        #endif
+        consumePendingAppIntentNavigation()
 
         if scenePhase == .active, activeWorkout == nil {
             scheduleForegroundMaintenance()
@@ -1468,8 +1702,45 @@ struct ContentView: View {
         }
     }
 
+    #if DEBUG
+    /// Acceptance seam for submitting the exact typed navigation request that
+    /// production App Intents submit after the reset/seed work is observable.
+    private func routeAppIntentLaunchFixtureIfNeeded() {
+        guard let rawURL = ForgeFitLaunchArguments.value(for: "appIntentURL"),
+              let url = URL(string: rawURL),
+              let destination = ForgeFitIntentDestination(internalDeepLink: url) else { return }
+        intentNavigator.navigate(to: destination)
+    }
+
+    #endif
+
+    /// App Intents foreground the app before `perform()` updates the shared
+    /// navigator. Keep requests pending until launch setup is complete, then
+    /// feed them through the same validated routes as every other app surface.
+    @MainActor
+    private func consumePendingAppIntentNavigation() {
+        guard didFinishLaunchTasks,
+              scenePhase == .active,
+              let request = intentNavigator.takePendingRequest() else { return }
+
+        switch request.destination {
+        case .chooseWorkout(let message):
+            requireExternalWorkoutChoice(message)
+        case .resumeWorkout:
+            presentLoggerWhenActiveWorkoutIsReady()
+        default:
+            guard let url = request.destination.internalDeepLink else { return }
+            handleDeepLink(url)
+        }
+    }
+
     private func launchTasks() async {
         let forcedReset = ProcessInfo.processInfo.arguments.contains("--reset-store")
+        #if DEBUG
+        let requiresAppIntentWorkoutFixtureSeed = ForgeFitAppIntentWorkoutUITestFixture.isRequested
+        #else
+        let requiresAppIntentWorkoutFixtureSeed = false
+        #endif
         #if DEBUG
         let preserveSleepDemoOverride = ProcessInfo.processInfo.arguments.contains("--preserve-sleep-override-demo")
         // UI automation needs the flagged night before any launch migration or
@@ -1532,7 +1803,7 @@ struct ContentView: View {
         // still expose a pre-reset active row for one run-loop turn, but that
         // row must not put launch seeding behind the live-workout performance
         // gate or make the new scenario inherit the old logger state.
-        if forcedReset {
+        if forcedReset || requiresAppIntentWorkoutFixtureSeed {
             setLiveWorkoutPerformancePriority(false)
         } else {
             setLiveWorkoutPerformancePriority(activeWorkout != nil)
@@ -1551,7 +1822,7 @@ struct ContentView: View {
                 BLEHeartRateService.shared.reconnectIfRemembered()
             }
         }
-        if forcedReset || performanceGate.allowsNonWorkoutWork {
+        if forcedReset || requiresAppIntentWorkoutFixtureSeed || performanceGate.allowsNonWorkoutWork {
             await seedLaunchData()
         } else {
             pendingDeferredLaunchMaintenance = true
@@ -1608,7 +1879,7 @@ struct ContentView: View {
             appState.selectedTab = tab
         }
         if shouldAutoStartRoutine,
-           activeWorkout == nil,
+           (forcedReset || activeWorkoutForPresentation() == nil),
            let routine = launchRoutineForAutoStart() {
             let launchExercises = (try? modelContext.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? exercises
             let launchSetupNotes = (try? modelContext.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? setupNotes
@@ -1780,7 +2051,9 @@ struct ContentView: View {
     #endif
 
     private func launchRoutineForAutoStart() -> RoutineModel? {
-        let launchRoutines = (try? modelContext.fetch(FetchDescriptor<RoutineModel>())) ?? routines
+        let launchRoutines = RoutineDeduplicator.canonicalRoutines(
+            (try? modelContext.fetch(FetchDescriptor<RoutineModel>())) ?? routines
+        )
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-block-prefill-history"),
            let starter = launchRoutines.first(where: {
@@ -1831,12 +2104,21 @@ struct ContentView: View {
 
     private func presentLoggerWhenActiveWorkoutIsReady() {
         Task { @MainActor in
-            for _ in 0..<15 {
-                if activeWorkoutForPresentation() != nil {
+            // A cold-launch request can commit before the scene is active or
+            // during the update that swaps the launch barrier for the real
+            // shell. Present only once both lifecycle conditions are true;
+            // SwiftUI can otherwise retain the Boolean without ever mounting
+            // the full-screen cover, leaving only the Resume bar visible.
+            for _ in 0..<30 {
+                guard !Task.isCancelled else { return }
+                if didFinishLaunchTasks,
+                   scenePhase == .active,
+                   activeWorkoutForPresentation() != nil {
+                    await Task.yield()
                     appState.showingLogger = true
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(200))
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
     }
@@ -1990,6 +2272,9 @@ struct ContentView: View {
             if ProcessInfo.processInfo.arguments.contains("--seed-microcycle-tracking") {
                 try MicrocycleTrackingUITestFixture.seed(in: modelContext)
             }
+            if ForgeFitAppIntentWorkoutUITestFixture.isRequested {
+                try ForgeFitAppIntentWorkoutUITestFixture.seed(in: modelContext)
+            }
             if ProcessInfo.processInfo.arguments.contains(CustomExerciseMediaUITestFixture.launchArgument) {
                 try CustomExerciseMediaUITestFixture.seed(in: modelContext)
             }
@@ -2018,6 +2303,11 @@ struct ContentView: View {
                 UserDefaults.standard.set(LaunchSeedPolicy.currentVersion, forKey: LaunchSeedPolicy.defaultsKey)
             }
         } catch {
+            #if DEBUG
+            if ForgeFitAppIntentWorkoutUITestFixture.isRequested {
+                fatalError("App Intent workout acceptance fixture seed failed: \(error)")
+            }
+            #endif
             assertionFailure("Launch data seed failed: \(error)")
         }
     }
@@ -2200,10 +2490,20 @@ struct ContentView: View {
     }
 
     private var isAutomationLaunch: Bool {
-        ProcessInfo.processInfo.arguments.contains("--reset-store")
+        let arguments = ProcessInfo.processInfo.arguments
+        #if DEBUG
+        if ForgeFitAppIntentWorkoutUITestFixture.isRequested {
+            return true
+        }
+        #endif
+        return arguments.contains("--reset-store")
             || requestedInitialTab != nil
             || UserDefaults.standard.bool(forKey: "autoStartRoutine")
-            || ProcessInfo.processInfo.arguments.contains("--auto-start-routine")
+            || arguments.contains("--auto-start-routine")
+    }
+
+    private var automationLaunchIsReady: Bool {
+        didFinishLaunchTasks
     }
 
     private var shouldSeedStarterContent: Bool {
@@ -2334,6 +2634,7 @@ private struct LiveHeartRateObserver: View {
 
 #Preview {
     ContentView()
+        .environment(ForgeFitIntentNavigator())
         .environmentObject(ThemeManager())
         .modelContainer(for: ForgeDataSchema.models, inMemory: true)
 }

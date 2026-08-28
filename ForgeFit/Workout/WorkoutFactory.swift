@@ -113,6 +113,7 @@ enum WorkoutFactory {
         in context: ModelContext,
         saveCenter: PersistentChangeSaveCenter? = nil,
         save: @escaping SaveOperation = { try $0.save() },
+        applyProgression: Bool = true,
         prepare: @escaping @MainActor (WorkoutModel, ModelContext) -> Void = { _, _ in },
         onCommit: @escaping @MainActor (WorkoutModel) -> Void
     ) -> WorkoutModel? {
@@ -310,17 +311,20 @@ enum WorkoutFactory {
         }
         persistenceContext.insert(workout)
         // Progression: advance pending targets from each exercise's last
-        // session and record the explained suggestions. Single choke point —
-        // Home, coach's version, quick starts, and watch starts all land here.
+        // session and record the explained suggestions. Interactive in-app
+        // starts opt in by default. App Intents deliberately opt out so a
+        // hands-free launch never changes the routine the user selected.
         // A weekly review's accepted progression holds (Coach's Corner) ride
         // along here too, so a held exercise starts held no matter which
         // entry point started the workout — and Corner's progression preview
         // reads the identical overrides, so preview always matches start.
-        let holds = CoachWeeklyReview.activeProgressionHolds(in: persistenceContext)
-        ProgressionPlanner.apply(
-            to: workout, routine: routine, exercises: exercises, in: persistenceContext,
-            heldExerciseIDs: holds.ids, holdReasons: holds.reasons
-        )
+        if applyProgression {
+            let holds = CoachWeeklyReview.activeProgressionHolds(in: persistenceContext)
+            ProgressionPlanner.apply(
+                to: workout, routine: routine, exercises: exercises, in: persistenceContext,
+                heldExerciseIDs: holds.ids, holdReasons: holds.reasons
+            )
+        }
         prepare(workout, persistenceContext)
         return commit(
             workout,
@@ -426,6 +430,49 @@ enum WorkoutFactory {
             title: title,
             startedAt: startedAt,
             sourceDevice: "iphone-yoga",
+            cardioSessions: [session],
+            blocks: [block]
+        )
+        persistenceContext.insert(workout)
+        return commit(
+            workout,
+            from: persistenceContext,
+            into: context,
+            saveCenter: saveCenter ?? .shared,
+            save: save,
+            onCommit: onCommit
+        )
+    }
+
+    /// Quick-start one frozen conditioning prescription without creating or
+    /// mutating a routine. App Intents use this path so the launched workout
+    /// is exactly the preset the user selected.
+    @discardableResult
+    static func startConditioning(
+        plan: ConditioningPlan,
+        named title: String,
+        in context: ModelContext,
+        saveCenter: PersistentChangeSaveCenter? = nil,
+        save: @escaping SaveOperation = { try $0.save() },
+        onCommit: @escaping @MainActor (WorkoutModel) -> Void
+    ) -> WorkoutModel? {
+        guard !plan.isEmpty else { return nil }
+        let persistenceContext = ModelContext(context.container)
+        persistenceContext.autosaveEnabled = false
+        let startedAt = Date()
+        let block = WorkoutBlockModel(
+            userID: ForgeFitDemo.userID,
+            kind: .conditioning,
+            position: 0,
+            planSnapshotJSON: plan.encodedJSON(),
+            progressJSON: ConditioningProgress().encodedJSON()
+        )
+        let session = makeBlockSession(for: block, workoutStartedAt: startedAt)
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: title,
+            startedAt: startedAt,
+            sourceDevice: "iphone-conditioning",
             cardioSessions: [session],
             blocks: [block]
         )

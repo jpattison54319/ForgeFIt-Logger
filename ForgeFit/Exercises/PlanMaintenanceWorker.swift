@@ -7,7 +7,9 @@ import SwiftData
 /// later CloudKit row-count changes schedule the same worker without touching
 /// the version stamp.
 enum PlanMaintenancePolicy {
-    static let currentVersion = 1
+    /// v2 re-audits routines with graph-aware survivor selection. v1 ranked
+    /// parent `updatedAt`, which organization changes also touch.
+    static let currentVersion = 2
     static let defaultsKey = "planMaintenance.dedupVersion"
 
     static func needsLaunchAudit(storedVersion: Int) -> Bool {

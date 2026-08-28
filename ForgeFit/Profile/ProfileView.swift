@@ -134,6 +134,12 @@ struct ProfileView: View {
                     if let w = workouts.first(where: { $0.id == id }) {
                         WorkoutDetailView(workout: w, exercises: exercises, history: workouts)
                     }
+                case .exercise(let id):
+                    ExerciseDetailView(
+                        exerciseID: id,
+                        workouts: workouts,
+                        exercises: exercises
+                    )
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -420,6 +426,7 @@ private struct ProfileEditSheet: View {
 enum ProfileRoute: Hashable {
     case statistics, exercises, importedExerciseReview, measures, calendar, history, wrapped, microcycles, community
     case workout(UUID)
+    case exercise(UUID)
 }
 
 private struct DashboardTileLabel: View {

@@ -699,7 +699,8 @@ enum MicrocycleTrackingService {
         routines: [RoutineModel],
         alternations: [RoutineAlternationModel]
     ) -> [MicrocycleRoutineSnapshot] {
-        let liveRoutines = routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }
+        let liveRoutines = RoutineDeduplicator.canonicalRoutines(routines)
+            .filter { $0.deletedAt == nil && $0.archivedAt == nil }
         let byID = Dictionary(liveRoutines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var pairByOwnerID: [UUID: RoutineModel] = [:]
         var claimedRoutineIDs: Set<UUID> = []

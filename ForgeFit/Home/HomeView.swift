@@ -717,7 +717,9 @@ struct HomeView: View {
     }
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }.sorted { $0.position < $1.position }
+        RoutineDeduplicator.canonicalRoutines(routines)
+            .filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }
+            .sorted { $0.position < $1.position }
     }
 
     private func microcycleNeedsAttentionCard(

@@ -26,7 +26,8 @@ struct ArchiveInventory {
 
         archivedFolders = byID.values.filter { $0.archivedAt != nil }
             .sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
-        archivedRoutines = routines.filter { $0.deletedAt == nil && $0.archivedAt != nil }
+        archivedRoutines = RoutineDeduplicator.canonicalRoutines(routines)
+            .filter { $0.deletedAt == nil && $0.archivedAt != nil }
             .sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
 
         rootFolders = archivedFolders.filter { folder in

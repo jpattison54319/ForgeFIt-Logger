@@ -4,6 +4,7 @@ import SwiftUI
 /// changed workout. Both outcomes save the workout; only the first also
 /// carries the structural changes into future uses of the saved routine.
 struct RoutineUpdateSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
 
     let prompt: RoutineUpdatePrompt
@@ -14,12 +15,23 @@ struct RoutineUpdateSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xxl) {
                 VStack(alignment: .leading, spacing: Space.xl) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.title2.bold())
-                        .foregroundStyle(theme.accentForeground)
-                        .frame(width: 52, height: 52)
-                        .background(theme.accentSoft, in: Circle())
-                        .accessibilityHidden(true)
+                    HStack(alignment: .center) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.title2.bold())
+                            .foregroundStyle(theme.accentForeground)
+                            .frame(width: 52, height: 52)
+                            .background(theme.accentSoft, in: Circle())
+                            .accessibilityHidden(true)
+
+                        Spacer()
+
+                        CircleIconButton(
+                            systemImage: "xmark",
+                            label: "Go back to workout summary",
+                            action: dismiss.callAsFunction
+                        )
+                        .accessibilityIdentifier("dismiss-routine-update-sheet-button")
+                    }
 
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text("Update saved routine?")
@@ -74,6 +86,5 @@ struct RoutineUpdateSheet: View {
         .presentationBackground(theme.background)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .interactiveDismissDisabled()
     }
 }

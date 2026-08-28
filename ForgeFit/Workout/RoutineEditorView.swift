@@ -111,30 +111,20 @@ struct RoutineEditorView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { flushPendingSave() }
         }
-        .confirmationDialog("Unsaved changes", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
-            Button("Save Changes") {
+        .confirmationDialog("Keep this new routine?", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Keep Routine") {
                 saveNow(onCommit: dismiss.callAsFunction)
             }
-            Button("Discard Changes", role: .destructive) {
+            Button("Discard New Routine", role: .destructive) {
                 // A queued debounced save must not fire after the restore and
-                // persist the very edits being thrown away.
+                // revive the new routine after its tombstone commits.
                 deferredSaveTask?.cancel()
                 deferredSaveTask = nil
-                if isNew {
-                    // The routine never existed before this editor opened —
-                    // discarding means it shouldn't exist at all.
-                    discardNewRoutine()
-                } else {
-                    entrySnapshot?.restore(
-                        onto: routine,
-                        in: modelContext,
-                        onCommit: dismiss.callAsFunction
-                    )
-                }
+                discardNewRoutine()
             }
             Button("Keep Editing", role: .cancel) {}
         } message: {
-            Text("You've made changes to this routine.")
+            Text("Your edits are saved automatically. Discarding removes the new routine.")
         }
         .sheet(isPresented: $showPicker) {
             ExercisePickerView(
@@ -287,7 +277,7 @@ struct RoutineEditorView: View {
         // reveal older targets.
         deferredSaveTask?.cancel()
         deferredSaveTask = nil
-        modelContext.saveUserChanges()
+        saveNow()
         appState.requestStart {
             _ = WorkoutFactory.startEstimatedOneRepMaxAssessment(
                 exercise: exercise,
@@ -377,16 +367,20 @@ struct RoutineEditorView: View {
         .padding(.bottom, Space.sm)
     }
 
-    /// Back offers to save or discard when the routine changed — it no
-    /// longer silently saves, so Save actually means something.
+    /// Existing routines autosave, so Back commits and leaves. Offering to
+    /// restore the editor-entry snapshot here was unsafe: the debounce and
+    /// child editors may already have durably saved those changes, turning
+    /// "Discard" into a rollback of previously committed routine data.
     private func requestDismiss() {
-        if let entrySnapshot, entrySnapshot != RoutineSnapshot(of: routine) {
+        if isNew,
+           let entrySnapshot,
+           entrySnapshot != RoutineSnapshot(of: routine) {
             showDiscardConfirm = true
         } else if isNew {
             // Untouched placeholder — silently clean it up.
             discardNewRoutine()
         } else {
-            dismiss()
+            saveNow(onCommit: dismiss.callAsFunction)
         }
     }
 
@@ -587,7 +581,7 @@ struct RoutineEditorView: View {
             routine.exercises.removeAll { removedIDs.contains($0.id) }
         }
         for (index, item) in orderedItems.enumerated() { item.position = index }
-        routine.updatedAt = .now
+        markAuthoredGraphUpdated()
         modelContext.saveUserChanges()
     }
 
@@ -600,7 +594,7 @@ struct RoutineEditorView: View {
     /// only the store write is deferred. Durability is unchanged: Save
     /// buttons, dismissal, and app-background all flush synchronously.
     private func save() {
-        routine.updatedAt = Date()
+        markAuthoredGraphUpdated()
         scheduleSave()
     }
 
@@ -629,8 +623,17 @@ struct RoutineEditorView: View {
         deferredSaveTask?.cancel()
         deferredSaveTask = nil
         RoutineStructure.normalize(routine)
-        routine.updatedAt = Date()
+        markAuthoredGraphUpdated()
         return modelContext.saveUserChanges(onSuccess: onCommit)
+    }
+
+    /// `RoutineModel.updatedAt` is also used by organization flows. Stamp the
+    /// authored children as the independent content clock used by duplicate
+    /// reconciliation, including rename, removal, and whole-routine reorder.
+    private func markAuthoredGraphUpdated(at now: Date = .now) {
+        routine.updatedAt = now
+        for exercise in routine.exercises { exercise.updatedAt = now }
+        for block in routine.blocks { block.updatedAt = now }
     }
 
     /// A brand-new routine the user backs out of is junk — soft-delete it

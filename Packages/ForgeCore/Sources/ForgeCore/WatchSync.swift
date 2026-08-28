@@ -11,6 +11,7 @@ import Foundation
 public enum WatchWire {
     public static let contextKey = "forgefit.context"
     public static let commandKey = "forgefit.command"
+    public static let immediateStartResultKey = "forgefit.immediateStartResult"
     /// Watch → phone "always latest" heart-rate channel. Carried through
     /// `updateApplicationContext` (not `sendMessage`/`transferUserInfo`) so a
     /// fresh reading is never dropped just because the watch display is off —
@@ -694,6 +695,9 @@ public enum WatchCommand: Codable, Sendable {
     // watch → phone
     case startRoutine(routineID: UUID)
     case startEmpty
+    /// App-Intent-only launch request. The Watch sends this through the
+    /// immediate reply channel and never through queued user info.
+    case startNextTrackedWorkout
     case toggleSet(setID: UUID, completed: Bool)
     /// Edit a set's load/reps from the wrist. `weightKg` is in kilograms
     /// (the data-layer unit); nil fields are left unchanged. `partialReps` is

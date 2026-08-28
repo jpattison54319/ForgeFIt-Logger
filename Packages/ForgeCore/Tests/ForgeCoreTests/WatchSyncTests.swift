@@ -177,6 +177,10 @@ struct WatchSyncTests {
             guard case .startEmpty = $0 else { return false }
             return true
         }
+        try expectCommand(.startNextTrackedWorkout) {
+            guard case .startNextTrackedWorkout = $0 else { return false }
+            return true
+        }
         try expectCommand(.toggleSet(setID: setID, completed: true)) {
             guard case .toggleSet(let decodedID, let completed) = $0 else { return false }
             return decodedID == setID && completed

@@ -43,6 +43,33 @@ struct SetHRRecoveryTests {
         #expect(points.first?.recoveryBPM == 48)
     }
 
+    @Test func finalSetOmitsRecoveryWhenWorkoutEndsBeforeSixtySeconds() {
+        let samples: [(date: Date, bpm: Int)] = [
+            sample(100, 158), sample(105, 148),
+        ]
+        let sets = [(id: setA, completedAt: base.addingTimeInterval(100))]
+
+        let point = SetHRRecovery.analyze(samples: samples, sets: sets).first
+
+        #expect(point?.peakHR == 158)
+        #expect(point?.recoveryBPM == nil)
+    }
+
+    @Test func recoveryRequiresAHeartRateSampleAtSixtySeconds() {
+        let sets = [(id: setA, completedAt: base.addingTimeInterval(100))]
+        let justShort = SetHRRecovery.analyze(
+            samples: [sample(100, 158), sample(159.999, 120)],
+            sets: sets
+        ).first
+        let exactlySixty = SetHRRecovery.analyze(
+            samples: [sample(100, 158), sample(160, 118)],
+            sets: sets
+        ).first
+
+        #expect(justShort?.recoveryBPM == nil)
+        #expect(exactlySixty?.recoveryBPM == 40)
+    }
+
     @Test func setWithoutNearbyHRIsSkipped() {
         let samples: [(date: Date, bpm: Int)] = [sample(500, 140), sample(560, 120)]
         let sets = [(id: setA, completedAt: base.addingTimeInterval(100))]

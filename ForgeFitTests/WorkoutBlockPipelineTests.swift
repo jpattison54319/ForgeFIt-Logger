@@ -133,4 +133,55 @@ struct WorkoutBlockPipelineTests {
         #expect(workout.exercises.map(\.exerciseID) == [bench.id])
         #expect(OrderedWorkoutItem.ordered(in: workout).count == 3)
     }
+
+    @Test func conditioningQuickStartFreezesOneExecutableBlock() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let exerciseID = UUID()
+        let plan = conditioningPlan(exerciseID: exerciseID)
+
+        let committedWorkout = WorkoutFactory.startConditioning(
+            plan: plan,
+            named: "Ten-Minute Finisher",
+            in: context,
+            onCommit: { _ in }
+        )
+        let workout = try #require(committedWorkout)
+
+        #expect(workout.title == "Ten-Minute Finisher")
+        #expect(workout.sourceDevice == "iphone-conditioning")
+        #expect(workout.exercises.isEmpty)
+        let block = try #require(workout.blocks.first)
+        #expect(workout.blocks.count == 1)
+        #expect(block.kind == .conditioning)
+        #expect(ConditioningPlan.decode(from: block.planSnapshotJSON) == plan)
+        #expect(ConditioningProgress.decode(from: block.progressJSON)?.status == .ready)
+        let session = try #require(workout.cardioSessions.first)
+        #expect(workout.cardioSessions.count == 1)
+        #expect(session.isConditioningSession)
+        #expect(session.workoutBlockID == block.id)
+
+        let verification = ModelContext(container)
+        let workoutID = workout.id
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        #expect(ConditioningPlan.decode(from: persisted.blocks.first?.planSnapshotJSON) == plan)
+        #expect(persisted.cardioSessions.first?.workoutBlockID == persisted.blocks.first?.id)
+    }
+
+    @Test func conditioningQuickStartRejectsAnEmptyPlan() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+
+        let committedWorkout = WorkoutFactory.startConditioning(
+            plan: ConditioningPlan(sections: []),
+            named: "Empty",
+            in: context,
+            onCommit: { _ in }
+        )
+
+        #expect(committedWorkout == nil)
+        #expect(try context.fetch(FetchDescriptor<WorkoutModel>()).isEmpty)
+    }
 }

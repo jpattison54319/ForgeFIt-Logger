@@ -6,5 +6,8 @@ struct ForgeFitWidgetsBundle: WidgetBundle {
     var body: some Widget {
         ForgeFitLauncherWidget()
         WorkoutLiveActivity()
+        ForgeFitStartWorkoutControl()
+        ForgeFitStartNextWorkoutControl()
+        ForgeFitResumeWorkoutControl()
     }
 }

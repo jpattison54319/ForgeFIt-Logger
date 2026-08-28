@@ -8,8 +8,8 @@ struct SetRecoveryPoint: Equatable {
     /// HR usually peaks a beat after the set finishes).
     let peakHR: Int
     /// How many bpm the HR fell during the rest that followed, before the next
-    /// set's effort. `nil` when there's no rest window to measure (e.g. the HR
-    /// series ends right after the set). Larger = faster recovery.
+    /// set's effort. `nil` until at least 60 seconds after set completion has
+    /// actually been observed in that recovery window. Larger = faster recovery.
     let recoveryBPM: Int?
 }
 
@@ -21,6 +21,7 @@ struct SetRecoveryPoint: Equatable {
 /// for lifting intensity (a heavy triple can read lower than a light set of 20),
     /// but how far HR drops during rest is useful strength-session recovery context.
 enum SetHRRecovery {
+    private static let minimumObservation: TimeInterval = 60
 
     /// - Parameters:
     ///   - samples: per-sample HR series for the whole workout window, any order.
@@ -54,16 +55,19 @@ enum SetHRRecovery {
             }
 
             // Rest window runs from the peak to the next set's completion (or a
-            // fixed window for the last set). The min over that span is the rest
-            // trough — how far HR came down before the next effort.
+            // fixed window for the last set). A window limit alone is not proof
+            // that recovery was observed: finishing the workout immediately can
+            // leave only a few seconds of samples. Require an actual sample at
+            // least 60 seconds after set completion before reporting the trough.
             let restEnd: Date = index + 1 < ordered.count
                 ? ordered[index + 1].completedAt
                 : peak.date.addingTimeInterval(lastSetWindow)
+            let recoverySamples = series.filter { $0.date > peak.date && $0.date <= restEnd }
+            let minimumObservationDate = t.addingTimeInterval(Self.minimumObservation)
             let recovery: Int?
             if restEnd > peak.date,
-               let trough = series
-                   .filter({ $0.date > peak.date && $0.date <= restEnd })
-                   .min(by: { $0.bpm < $1.bpm }) {
+               recoverySamples.contains(where: { $0.date >= minimumObservationDate }),
+               let trough = recoverySamples.min(by: { $0.bpm < $1.bpm }) {
                 recovery = max(0, peak.bpm - trough.bpm)
             } else {
                 recovery = nil

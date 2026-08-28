@@ -71,7 +71,9 @@ struct WorkoutHomeView: View {
     private var ungroupedCollapsed = false
 
     private var activeRoutines: [RoutineModel] {
-        routines.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted {
+        RoutineDeduplicator.canonicalRoutines(routines)
+            .filter { $0.deletedAt == nil && $0.archivedAt == nil }
+            .sorted {
             if $0.position != $1.position { return $0.position < $1.position }
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString

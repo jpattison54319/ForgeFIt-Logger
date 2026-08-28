@@ -8,22 +8,20 @@ import SwiftData
 /// `PlanStoreSplitMigration` copies routines and folders into `plan.store`
 /// preserving their `id`, but CloudKit re-merges pre-split records back on top
 /// of the migrated copies. CloudKit cannot enforce a unique constraint on `id`,
-/// so the same logical entity can appear as several SwiftData rows. The rest of
-/// the app tolerates this with "first wins" folds, but the rows still accumulate.
+/// so the same logical entity can appear as several SwiftData rows. Historically
+/// some callers tolerated this with "first wins" folds, which could expose the
+/// wrong physical row and still allowed the duplicates to accumulate.
 ///
 /// This runs on the app's private plan-maintenance context and keeps a single
-/// deterministic survivor per `id`, hard-deleting the rest. The cascade
-/// `@Relationship(deleteRule: .cascade)` on `RoutineModel.exercises` and
-/// `RoutineExerciseModel.sets` ensures child rows collapse automatically — no
-/// separate child dedupe pass is needed. Folders nest via `parentID` (a UUID
-/// reference, not a `@Relationship`), so collapsing a parent folder leaves the
-/// child's `parentID` still pointing to the surviving parent's `id`.
+/// deterministic survivor per `id`, hard-deleting the rest. Routine survivor
+/// selection is graph-aware: an exercise/set/block edit must beat a later
+/// folder move, because deleting the authored graph would cascade-delete the
+/// user's current exercises and sets. Organization fields are reconciled onto
+/// that survivor separately before the duplicate graph is removed.
 ///
-/// Survivor selection depends only on CloudKit-synced attributes
-/// (`deletedAt`, `updatedAt`, `createdAt`), so two devices running the cleanup
-/// concurrently converge on the same survivor instead of racing to delete each
-/// other's copy. A soft-deleted row (`deletedAt != nil`) wins over a live one so
-/// the tombstone propagates and the user's deletion intent is preserved.
+/// All ranking inputs are CloudKit-synced, so devices converge on the same
+/// survivor. A tombstone wins only when its deletion happened after the newest
+/// authored graph; an old CloudKit tombstone must not erase a later edit.
 public enum RoutineDeduplicator {
 
     public struct Summary: Equatable, Sendable {
@@ -39,10 +37,8 @@ public enum RoutineDeduplicator {
     /// deterministic survivor each. Saves only when something was deleted.
     @discardableResult
     public static func removeDuplicates(in context: ModelContext) throws -> Summary {
-        let routinesDeleted = try collapse(
+        let routinesDeleted = try collapseRoutines(
             try context.fetch(FetchDescriptor<RoutineModel>()),
-            id: { $0.id },
-            prefers: routinePrefers,
             in: context
         )
         let foldersDeleted = try collapse(
@@ -60,6 +56,56 @@ public enum RoutineDeduplicator {
             try context.save()
         }
         return summary
+    }
+
+    /// Returns one deterministic physical row for each logical routine ID.
+    /// UI and editing surfaces use this immediately while the background
+    /// maintenance context removes the redundant CloudKit rows.
+    public static func canonicalRoutines(_ rows: [RoutineModel]) -> [RoutineModel] {
+        var groups: [UUID: [RoutineModel]] = [:]
+        var orderedIDs: [UUID] = []
+        for row in rows {
+            if groups[row.id] == nil { orderedIDs.append(row.id) }
+            groups[row.id, default: []].append(row)
+        }
+        return orderedIDs.compactMap { id in
+            groups[id]?.reduce(nil as RoutineModel?) { incumbent, candidate in
+                guard let incumbent else { return candidate }
+                return routinePrefers(candidate, over: incumbent) ? candidate : incumbent
+            }
+        }
+    }
+
+    private static func collapseRoutines(
+        _ rows: [RoutineModel],
+        in context: ModelContext
+    ) throws -> Int {
+        let groups = Dictionary(grouping: rows, by: \RoutineModel.id)
+        var deleted = 0
+
+        for group in groups.values where group.count > 1 {
+            try Task.checkCancellation()
+            guard let survivor = canonicalRoutines(group).first else { continue }
+
+            // Folder placement and archive state are organization, not routine
+            // authorship. Preserve the latest live organization operation on
+            // the freshest authored graph instead of using it to pick a graph.
+            if survivor.deletedAt == nil,
+               let organization = group
+                .filter({ $0.deletedAt == nil })
+                .max(by: organizationIsOlder) {
+                survivor.folder = organization.folder
+                survivor.folderID = organization.folderID
+                survivor.position = organization.position
+                survivor.archivedAt = organization.archivedAt
+            }
+
+            for row in group where row !== survivor {
+                context.delete(row)
+                deleted += 1
+            }
+        }
+        return deleted
     }
 
     private static func collapse<Model: PersistentModel>(
@@ -92,20 +138,40 @@ public enum RoutineDeduplicator {
         return doomed.count
     }
 
-    /// A soft-deleted routine (`deletedAt != nil`) wins over a live one so the
-    /// tombstone propagates. Among same soft-delete status: most recently
-    /// updated, then most recently created. A fully-tied pair falls back to a
-    /// stable per-object order so exactly one row survives.
+    /// Authored graph time ranks ahead of the parent row's metadata timestamp.
+    /// Routine organization also touches the parent timestamp, so reversing
+    /// those signals can select a stale graph and cascade-delete the edited one.
     private static func routinePrefers(
         _ a: RoutineModel,
         over b: RoutineModel
     ) -> Bool {
+        let aAuthoredAt = authoredGraphUpdatedAt(a)
+        let bAuthoredAt = authoredGraphUpdatedAt(b)
+        let aIntentAt = a.deletedAt ?? aAuthoredAt
+        let bIntentAt = b.deletedAt ?? bAuthoredAt
+        if aIntentAt != bIntentAt { return aIntentAt > bIntentAt }
         if (a.deletedAt == nil) != (b.deletedAt == nil) {
             return a.deletedAt != nil
         }
+        if aAuthoredAt != bAuthoredAt { return aAuthoredAt > bAuthoredAt }
         if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
         if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
         return stableOrder(a, b)
+    }
+
+    /// Child authoring timestamps are the durable content clock already present
+    /// in the CloudKit schema. Empty routines fall back to their parent clock.
+    private static func authoredGraphUpdatedAt(_ routine: RoutineModel) -> Date {
+        let latestExercise = routine.exercises.map(\.updatedAt).max()
+        let latestBlock = routine.blocks.map(\.updatedAt).max()
+        return [latestExercise, latestBlock].compactMap { $0 }.max()
+            ?? routine.updatedAt
+    }
+
+    private static func organizationIsOlder(_ a: RoutineModel, _ b: RoutineModel) -> Bool {
+        if a.updatedAt != b.updatedAt { return a.updatedAt < b.updatedAt }
+        if a.createdAt != b.createdAt { return a.createdAt < b.createdAt }
+        return !stableOrder(a, b)
     }
 
     /// Same survivor logic as `routinePrefers`: soft-deleted wins over live,

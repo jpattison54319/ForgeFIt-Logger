@@ -236,10 +236,10 @@ final class WatchLink: NSObject {
         } else if let routineSummaryCache {
             routineSummaries = routineSummaryCache
         } else {
-            let routines = (try? context.fetch(FetchDescriptor<RoutineModel>(
+            let routines = RoutineDeduplicator.canonicalRoutines((try? context.fetch(FetchDescriptor<RoutineModel>(
                 predicate: #Predicate { $0.deletedAt == nil && $0.archivedAt == nil },
                 sortBy: [SortDescriptor(\.position)]
-            ))) ?? []
+            ))) ?? [])
             let alternations = (try? context.fetch(FetchDescriptor<RoutineAlternationModel>(
                 predicate: #Predicate { $0.deletedAt == nil },
                 sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
@@ -505,6 +505,86 @@ final class WatchLink: NSObject {
 
     // MARK: - Handle (watch → phone)
 
+    /// Immediate, acknowledged start path used by the Watch App Intent. It is
+    /// deliberately separate from queued Watch commands: an unreachable phone
+    /// produces no mutation now and no surprise mutation later.
+    func handleImmediateStart(_ command: WatchCommand) -> WatchImmediateStartResult {
+        guard let context = modelContext else {
+            return .unavailable(message: "Open ForgeFit on your iPhone, then try again.")
+        }
+        var activeDescriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        activeDescriptor.fetchLimit = 1
+        if let active = try? context.fetch(activeDescriptor).first {
+            return .activeWorkout(title: active.title ?? "A workout")
+        }
+
+        switch command {
+        case .startEmpty:
+            let committed = WorkoutFactory.startEmpty(
+                in: context,
+                onCommit: { [weak self] workout in
+                    self?.beginSession(for: workout, in: context)
+                }
+            )
+            return committed == nil
+                ? .unavailable(message: "ForgeFit couldn't save the new workout.")
+                : .started(title: "Workout")
+
+        case .startRoutine(let routineID):
+            return startRoutineImmediately(routineID, in: context)
+
+        case .startNextTrackedWorkout:
+            let resolution = TrackedMicrocycleNextResolver.resolve(
+                trackings: (try? context.fetch(FetchDescriptor<MicrocycleTrackingModel>())) ?? [],
+                windows: (try? context.fetch(FetchDescriptor<MicrocycleWindowModel>())) ?? [],
+                routines: (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? [],
+                alternations: (try? context.fetch(FetchDescriptor<RoutineAlternationModel>())) ?? [],
+                workouts: (try? context.fetch(FetchDescriptor<WorkoutModel>())) ?? []
+            )
+            switch resolution {
+            case .routine(let id, _):
+                return startRoutineImmediately(id, in: context)
+            case .chooseWorkout(let message):
+                return .chooseWorkout(message: message)
+            }
+
+        default:
+            return .unavailable(message: "That command can't start a workout.")
+        }
+    }
+
+    private func startRoutineImmediately(
+        _ routineID: UUID,
+        in context: ModelContext
+    ) -> WatchImmediateStartResult {
+        let routines = RoutineDeduplicator.canonicalRoutines(
+            (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
+        )
+        let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+        guard let routine = routines.first(where: {
+            $0.id == routineID && $0.isAvailableForWorkoutStart(exercises: exercises)
+        }) else {
+            return .chooseWorkout(message: "The next routine is no longer available. Choose a workout on iPhone.")
+        }
+        let setupNotes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
+        let committed = WorkoutFactory.start(
+            routine: routine,
+            exercises: exercises,
+            setupNotes: setupNotes,
+            in: context,
+            applyProgression: false,
+            onCommit: { [weak self] workout in
+                self?.beginSession(for: workout, in: context)
+            }
+        )
+        return committed == nil
+            ? .unavailable(message: "ForgeFit couldn't save \(routine.name).")
+            : .started(title: routine.name)
+    }
+
     /// Internal so focused tests can exercise the real Watch command →
     /// SwiftData persistence path without routing through WCSession.
     func handle(_ command: WatchCommand) {
@@ -532,7 +612,9 @@ final class WatchLink: NSObject {
             guard active == nil else { publishState(policy: .immediate); return }
             let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
             let setupNotes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
-            let routines = (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
+            let routines = RoutineDeduplicator.canonicalRoutines(
+                (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
+            )
             guard let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
             WorkoutFactory.start(
                 routine: routine,
@@ -552,6 +634,13 @@ final class WatchLink: NSObject {
                     self?.beginSession(for: workout, in: context)
                 }
             )
+
+        case .startNextTrackedWorkout:
+            // This command is valid only through the acknowledged
+            // `didReceiveMessage(...replyHandler:)` lane. Never honor it from
+            // the one-way message or queued user-info delegates, otherwise a
+            // disconnected Watch intent could start a stale workout later.
+            publishState(policy: .immediate)
 
         case .toggleSet(let setID, let completed):
             guard let set = fetchSet(setID, in: context) else { return }
@@ -1350,6 +1439,28 @@ extension WatchLink: WCSessionDelegate {
         guard let data = message[WatchWire.commandKey] as? Data,
               let command = WatchWire.decode(WatchCommand.self, from: data) else { return }
         Task { @MainActor in self.handle(command) }
+    }
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        guard let data = message[WatchWire.commandKey] as? Data,
+              let command = WatchWire.decode(WatchCommand.self, from: data) else {
+            let result = WatchImmediateStartResult.unavailable(
+                message: "ForgeFit couldn't read that workout request."
+            )
+            replyHandler([
+                WatchWire.immediateStartResultKey: WatchWire.encode(result) ?? Data()
+            ])
+            return
+        }
+        Task { @MainActor in
+            let result = self.handleImmediateStart(command)
+            replyHandler([
+                WatchWire.immediateStartResultKey: WatchWire.encode(result) ?? Data()
+            ])
+        }
     }
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         guard let data = userInfo[WatchWire.commandKey] as? Data,

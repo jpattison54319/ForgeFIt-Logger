@@ -288,6 +288,52 @@ struct AdaptiveLoadTests {
         #expect(orderedSets.last?.rir == 1)
     }
 
+    @Test func appIntentRoutineStartKeepsAuthoredFixedTargets() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let exercise = machineExercise()
+        let target = RoutineSetModel(
+            userID: userID,
+            targetRepsLow: 7,
+            targetRepsHigh: 9,
+            targetWeight: 31.5
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Intent Strength",
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: exercise.id,
+                sets: [target]
+            )]
+        )
+        context.insert(exercise)
+        context.insert(routine)
+        try context.save()
+
+        let workout = try #require(WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            in: context,
+            applyProgression: false,
+            onCommit: { _ in }
+        ))
+        let set = try #require(workout.exercises.first?.sets.first)
+
+        #expect(set.reps == 7)
+        #expect(set.weight == 31.5)
+        #expect(set.sourceRoutineSetID == target.id)
+
+        let verification = ModelContext(container)
+        let workoutID = workout.id
+        let persisted = try #require(verification.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == workoutID }
+        )).first)
+        let persistedSet = try #require(persisted.exercises.first?.sets.first)
+        #expect(persistedSet.reps == 7)
+        #expect(persistedSet.weight == 31.5)
+    }
+
     private func machineExercise() -> ExerciseLibraryModel {
         ExerciseLibraryModel(
             name: "Machine Press",

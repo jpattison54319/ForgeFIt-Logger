@@ -1,0 +1,159 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Start an empty workout in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Start an empty workout in ${applicationName}",
+              "Start a blank workout in ${applicationName}",
+              "Begin an empty workout with ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Start my next workout in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Start my next workout in ${applicationName}",
+              "Start the next tracked workout in ${applicationName}",
+              "Begin my next workout with ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Open ${target} in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Open ${target} in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Resume my ${applicationName} workout" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Resume my ${applicationName} workout",
+              "Open my active workout in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Show ${target} in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Show ${target} in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Start ${workoutStyle} in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Start ${workoutStyle} in ${applicationName}",
+              "Start ${workoutStyle} with ${applicationName}",
+              "Start my ${workoutStyle} workout in ${applicationName}",
+              "Start my ${workoutStyle} workout on ${applicationName}",
+              "Start my ${workoutStyle} routine in ${applicationName}",
+              "Start my routine ${workoutStyle} in ${applicationName}",
+              "Begin ${workoutStyle} in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "What's next in my ${applicationName} workout" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "What's next in my ${applicationName} workout",
+              "What is my current set in ${applicationName}",
+              "How is my ${applicationName} workout going",
+              "Get my active workout status in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "${action} my current set in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${action} my current set in ${applicationName}",
+              "Complete ${targetSet} in ${applicationName}",
+              "Log my current set in ${applicationName}",
+              "Mark my current set complete in ${applicationName}",
+              "Update my last set in ${applicationName}",
+              "Reopen my last set in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "${action} my rest timer in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${action} my rest timer in ${applicationName}",
+              "How much rest time is left in ${applicationName}",
+              "Check my rest timer in ${applicationName}"
+            ]
+          }
+        }
+      }
+    },
+    "Finish my workout in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Finish my workout in ${applicationName}",
+              "End my active workout in ${applicationName}",
+              "Save and finish my workout in ${applicationName}"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

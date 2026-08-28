@@ -26,7 +26,9 @@ enum RoutineOrganizerPersistence {
         routines: [RoutineModel],
         now: Date = .now
     ) throws {
-        guard Set(folders.map(\.id)) == Set(draft.allFolderIDs),
+        guard Set(folders.map(\.id)).count == folders.count,
+              Set(routines.map(\.id)).count == routines.count,
+              Set(folders.map(\.id)) == Set(draft.allFolderIDs),
               Set(routines.map(\.id)) == Set(draft.allRoutineIDs) else {
             throw PersistenceError.libraryChanged
         }

@@ -27,6 +27,7 @@ struct SettingsView: View {
                 )
                 SettingsAppearanceSection()
                 SettingsAppSection()
+                SettingsSiriSection()
                 SettingsHealthSection(
                     showHistoryImporter: $showHistoryImporter
                 )

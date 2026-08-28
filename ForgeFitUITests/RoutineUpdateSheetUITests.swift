@@ -68,13 +68,35 @@ final class RoutineUpdateSheetUITests: XCTestCase {
 
         let updateAndSave = app.buttons["update-routine-and-save-workout-button"].firstMatch
         let saveOnly = app.buttons["save-workout-only-button"].firstMatch
+        let dismissSheet = app.buttons["dismiss-routine-update-sheet-button"].firstMatch
         XCTAssertTrue(updateAndSave.exists && updateAndSave.isHittable)
         XCTAssertTrue(saveOnly.exists && saveOnly.isHittable)
+        XCTAssertTrue(dismissSheet.exists && dismissSheet.isHittable)
 
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Routine update decision sheet"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        acceptanceExpect(
+            ["save-workout-button"],
+            visibleLabels: ["Workout complete"],
+            invariants: ["Dragging the routine decision down returns to the unsaved workout summary."]
+        )
+        app.acceptanceSwipeDown(velocity: .fast)
+        XCTAssertTrue(
+            app.buttons["save-workout-button"].firstMatch.waitForExistence(timeout: 5),
+            "Dismissing the routine decision should return to the post-workout summary without saving."
+        )
+        XCTAssertFalse(app.staticTexts["Update saved routine?"].exists)
+
+        acceptanceExpect(
+            ["update-routine-and-save-workout-button", "save-workout-only-button"],
+            visibleLabels: ["Update saved routine?", "1 set added"],
+            invariants: ["The routine decision can be reopened after returning to the workout summary."]
+        )
+        tapWhenReady(app.buttons["save-workout-button"].firstMatch)
+        XCTAssertTrue(app.staticTexts["Update saved routine?"].waitForExistence(timeout: 5))
 
         acceptanceExpect(
             ["quick-action-cardio-run", "quick-action-bodyweight", "quick-action-empty"],

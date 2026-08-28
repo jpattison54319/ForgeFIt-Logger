@@ -2032,7 +2032,8 @@ private struct PostWorkoutSummaryView: View {
 
     private func fetchRoutine(id: UUID) -> RoutineModel? {
         let descriptor = FetchDescriptor<RoutineModel>(predicate: #Predicate { $0.id == id })
-        return try? modelContext.fetch(descriptor).first
+        guard let rows = try? modelContext.fetch(descriptor) else { return nil }
+        return RoutineDeduplicator.canonicalRoutines(rows).first
     }
 
     private func summaryRow(_ icon: String, _ title: String, _ detail: String) -> some View {

@@ -40,16 +40,16 @@ final class RoutineDeduplicatorTests: XCTestCase {
         _ = container
     }
 
-    func testSoftDeletedWinsOverLive() throws {
+    func testNewerSoftDeleteWinsOverStaleLiveGraph() throws {
         let (container, context) = try makeContainer()
         let id = UUID()
         let uid = UUID()
 
         let live = RoutineModel(id: id, userID: uid, name: "Leg Day")
-        live.updatedAt = date(5000)
+        live.updatedAt = date(1000)
         let tombstone = RoutineModel(id: id, userID: uid, name: "Leg Day")
-        tombstone.updatedAt = date(1000)
-        tombstone.deletedAt = date(2000)
+        tombstone.updatedAt = date(5000)
+        tombstone.deletedAt = date(5000)
         context.insert(live)
         context.insert(tombstone)
         try context.save()
@@ -61,6 +61,102 @@ final class RoutineDeduplicatorTests: XCTestCase {
         XCTAssertEqual(survivors.count, 1)
         XCTAssertNotNil(survivors.first?.deletedAt)
         _ = container
+    }
+
+    func testNewerAuthoredGraphBeatsOldTombstone() throws {
+        let (container, context) = try makeContainer()
+        let id = UUID()
+        let uid = UUID()
+
+        let editedExercise = RoutineExerciseModel(
+            userID: uid,
+            exerciseID: UUID(),
+            updatedAt: date(5000),
+            sets: [RoutineSetModel(userID: uid, targetRepsLow: 12)]
+        )
+        let live = RoutineModel(
+            id: id,
+            userID: uid,
+            name: "Leg Day",
+            updatedAt: date(5000),
+            exercises: [editedExercise]
+        )
+        let tombstone = RoutineModel(id: id, userID: uid, name: "Leg Day")
+        tombstone.updatedAt = date(2000)
+        tombstone.deletedAt = date(2000)
+        context.insert(live)
+        context.insert(tombstone)
+        try context.save()
+
+        let summary = try RoutineDeduplicator.removeDuplicates(in: context)
+
+        XCTAssertEqual(summary.duplicateRoutinesDeleted, 1)
+        let survivors = try context.fetch(FetchDescriptor<RoutineModel>())
+        XCTAssertEqual(survivors.count, 1)
+        XCTAssertNil(survivors.first?.deletedAt)
+        XCTAssertEqual(survivors.first?.exercises.first?.sets.first?.targetRepsLow, 12)
+        _ = container
+    }
+
+    func testAuthoredGraphSurvivesLaterFolderMoveAndKeepsMovedPlacement() throws {
+        let (container, context) = try makeContainer()
+        let id = UUID()
+        let uid = UUID()
+        let originalFolderID = UUID()
+        let movedFolderID = UUID()
+
+        let staleExercise = RoutineExerciseModel(
+            userID: uid,
+            exerciseID: UUID(),
+            updatedAt: date(1000),
+            sets: [RoutineSetModel(userID: uid, targetRepsLow: 8)]
+        )
+        let movedStaleGraph = RoutineModel(
+            id: id,
+            userID: uid,
+            name: "Upper",
+            folderID: movedFolderID,
+            position: 3,
+            updatedAt: date(9000),
+            exercises: [staleExercise]
+        )
+
+        let replacementExerciseID = UUID()
+        let editedExercise = RoutineExerciseModel(
+            userID: uid,
+            exerciseID: replacementExerciseID,
+            updatedAt: date(5000),
+            sets: [RoutineSetModel(userID: uid, targetRepsLow: 12, targetRepsHigh: 15)]
+        )
+        let editedGraph = RoutineModel(
+            id: id,
+            userID: uid,
+            name: "Upper",
+            folderID: originalFolderID,
+            position: 0,
+            updatedAt: date(5000),
+            exercises: [editedExercise]
+        )
+        context.insert(movedStaleGraph)
+        context.insert(editedGraph)
+        try context.save()
+
+        let immediate = RoutineDeduplicator.canonicalRoutines([movedStaleGraph, editedGraph])
+        XCTAssertEqual(immediate.count, 1)
+        XCTAssertTrue(immediate.first === editedGraph)
+
+        let summary = try RoutineDeduplicator.removeDuplicates(in: context)
+        XCTAssertEqual(summary.duplicateRoutinesDeleted, 1)
+
+        let verificationContext = ModelContext(container)
+        let persisted = try verificationContext.fetch(FetchDescriptor<RoutineModel>())
+        XCTAssertEqual(persisted.count, 1)
+        XCTAssertEqual(persisted.first?.folderID, movedFolderID)
+        XCTAssertEqual(persisted.first?.position, 3)
+        XCTAssertEqual(persisted.first?.exercises.count, 1)
+        XCTAssertEqual(persisted.first?.exercises.first?.exerciseID, replacementExerciseID)
+        XCTAssertEqual(persisted.first?.exercises.first?.sets.first?.targetRepsLow, 12)
+        XCTAssertEqual(persisted.first?.exercises.first?.sets.first?.targetRepsHigh, 15)
     }
 
     func testCascadeLeavesOneExerciseAndSetUnderSurvivor() throws {

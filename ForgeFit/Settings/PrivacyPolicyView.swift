@@ -11,7 +11,7 @@ struct PrivacyPolicyView: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Last updated: August 11, 2026")
+                    Text("Last updated: August 27, 2026")
                         .font(.system(size: 12)).foregroundStyle(theme.textTertiary)
                     Text("ForgeFit is built local-first: your training data belongs to you. If you are signed into iCloud, ForgeFit automatically syncs your training plan through your private CloudKit database and automatically backs up a sanitized copy of your workout history to your iCloud Drive.")
                         .font(.system(size: 14)).foregroundStyle(theme.textPrimary)
@@ -37,6 +37,9 @@ struct PrivacyPolicyView: View {
 
                 section("Apple Watch",
                         "If you use the ForgeFit watch app, workout data syncs directly between your watch and iPhone using Apple's encrypted device-to-device channel (WatchConnectivity). It does not pass through any server.")
+
+                section("Siri, Shortcuts & Spotlight",
+                        "ForgeFit exposes a limited catalog of startable workout choices through Apple's App Intents and Spotlight APIs so system features such as Siri, Shortcuts, Spotlight, the Action Button, and Control Center can find and open them. A catalog item contains its name, category, icon name, and a stable identifier. It never contains workout history, Health data, notes, or exercise targets.\n\nWhen you request a workout through Siri, the system can send ForgeFit structured workout-name text or a selected workout identifier; ForgeFit does not receive Siri audio or a complete voice transcript. ForgeFit uses that structured value to start the matching saved routine, cardio session, yoga flow, conditioning preset, empty workout, or next tracked routine from data already on your device.\n\nDuring an active workout, ForgeFit resolves the current set directly from its local database. Siri or Shortcuts can pass the selected set identifier and values you provide—such as reps, load and unit, RPE or RIR, rest action, and whole-session exertion—and ForgeFit returns confirmation or status text that can include the workout name, exercise name, set label, and those values. ForgeFit does not add active-workout values, workout history, Health data, or notes to Spotlight, its App Group diagnostic, intent donations, or logs. Set changes and finished workouts are saved through the same local workout pipeline as changes made inside the app.\n\nFor troubleshooting, ForgeFit stores only the latest structured workout-name lookup, up to five matching routine names, the selected identifier, result, and time in its local App Group. Active-workout commands are not stored there. A later start lookup replaces the previous one. You can inspect or clear it in Settings → Siri & Shortcuts, and Settings → Reset all app data also removes it.")
 
                 section("Bluetooth heart-rate monitors",
                         "If you pair a Bluetooth heart-rate monitor, its readings are used live during your workout and stored with the session on your device, like any other workout metric. The pairing is remembered only on that device.")

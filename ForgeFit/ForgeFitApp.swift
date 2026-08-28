@@ -1,3 +1,5 @@
+import AppIntents
+import ForgeCore
 import ForgeData
 import SwiftUI
 import SwiftData
@@ -8,6 +10,7 @@ struct ForgeFitApp: App {
     @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var themeManager = ThemeManager()
     @State private var persistenceState: PersistenceLaunchState
+    @State private var intentNavigator: ForgeFitIntentNavigator
 
     private var activeTheme: AppTheme {
         .active(
@@ -22,6 +25,14 @@ struct ForgeFitApp: App {
     }
 
     init() {
+        let intentNavigator = ForgeFitIntentNavigator()
+        _intentNavigator = State(initialValue: intentNavigator)
+        AppDependencyManager.shared.add(dependency: intentNavigator)
+        // Register the modern App Shortcuts during app initialization, as
+        // required by App Intents. The catalog publisher refreshes dynamic
+        // workout parameters again whenever saved workout choices change.
+        ForgeFitShortcuts.updateAppShortcutParameters()
+
         // Generous shared URL cache so exercise illustrations survive offline
         // gym sessions once they've been seen.
         URLCache.shared = URLCache(
@@ -68,6 +79,12 @@ struct ForgeFitApp: App {
         // call again, and the scene still calls it on every foreground.
         if let container = launchState.container {
             ReadinessDelivery.shared.configure(container: container)
+            AppDependencyManager.shared.add(
+                dependency: ForgeFitIntentRepository(container: container)
+            )
+            AppDependencyManager.shared.add(
+                dependency: ForgeFitActiveWorkoutIntentService(container: container)
+            )
         }
     }
 
@@ -83,17 +100,29 @@ struct ForgeFitApp: App {
                         // Inactive arrives before iOS can suspend or replace
                         // the process during an over-install.
                         .onChange(of: scenePhase) { _, phase in
-                            guard phase != .active,
-                                  container.mainContext.hasChanges else { return }
-                            container.mainContext.saveUserChanges()
+                            if phase != .active,
+                               container.mainContext.hasChanges {
+                                container.mainContext.saveUserChanges()
+                            }
                         }
                 case let .blocked(failure):
                     PersistenceRecoveryView(failure: failure) {
-                        persistenceState = PersistenceBootstrap.makeContainer()
+                        let recoveredState = PersistenceBootstrap.makeContainer()
+                        persistenceState = recoveredState
+                        if let container = recoveredState.container {
+                            ReadinessDelivery.shared.configure(container: container)
+                            AppDependencyManager.shared.add(
+                                dependency: ForgeFitIntentRepository(container: container)
+                            )
+                            AppDependencyManager.shared.add(
+                                dependency: ForgeFitActiveWorkoutIntentService(container: container)
+                            )
+                        }
                     }
                 }
             }
             .environmentObject(themeManager)
+            .environment(intentNavigator)
             // Install the user's selection above the entire scene. This keeps
             // every descendant presentation (including sheets hosted outside
             // a view's local modifier chain) on the same resolved family.

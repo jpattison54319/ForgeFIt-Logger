@@ -284,6 +284,49 @@ final class WatchStore: NSObject {
         WKInterfaceDevice.current().play(.start)
     }
 
+    /// App Intents must never queue a delayed workout start. This path uses
+    /// only WCSession's live request/reply channel and fails immediately when
+    /// the paired iPhone is not reachable.
+    func requestImmediateStart(_ command: WatchCommand) async -> WatchImmediateStartResult {
+        guard WCSession.isSupported(),
+              WCSession.default.activationState == .activated,
+              WCSession.default.isReachable else {
+            return .unavailable(
+                message: "Your iPhone must be reachable to start a ForgeFit workout from Apple Watch."
+            )
+        }
+        switch command {
+        case .startEmpty, .startNextTrackedWorkout:
+            break
+        default:
+            return .unavailable(message: "That workout start isn't available from Siri on Apple Watch.")
+        }
+        return await sendImmediateStart(command)
+    }
+
+    private func sendImmediateStart(_ command: WatchCommand) async -> WatchImmediateStartResult {
+        guard let data = WatchWire.encode(command) else {
+            return .unavailable(message: "ForgeFit couldn't prepare that workout request.")
+        }
+        let payload = [WatchWire.commandKey: data]
+        return await withCheckedContinuation { continuation in
+            WCSession.default.sendMessage(payload) { reply in
+                guard let data = reply[WatchWire.immediateStartResultKey] as? Data,
+                      let result = WatchWire.decode(WatchImmediateStartResult.self, from: data) else {
+                    continuation.resume(returning: .unavailable(
+                        message: "ForgeFit on iPhone didn't confirm the workout start."
+                    ))
+                    return
+                }
+                continuation.resume(returning: result)
+            } errorHandler: { _ in
+                continuation.resume(returning: .unavailable(
+                    message: "Your iPhone must be reachable to start a ForgeFit workout from Apple Watch."
+                ))
+            }
+        }
+    }
+
     /// Optimistically flips the set locally so the row responds instantly;
     /// the phone's next snapshot confirms it.
     func toggleSet(_ set: WatchSetSnapshot, in exercise: WatchExerciseSnapshot) {

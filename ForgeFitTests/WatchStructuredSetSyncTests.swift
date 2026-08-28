@@ -11,6 +11,112 @@ struct WatchStructuredSetSyncTests {
 
     private let userID = ForgeFitDemo.userID
 
+    @Test func queuedNextTrackedWorkoutCommandIsIgnored() throws {
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        let now = Date()
+        let exercise = ExerciseLibraryModel(name: "Queued Guard Exercise")
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Queued Guard Routine",
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: exercise.id
+            )]
+        )
+        let tracking = MicrocycleTrackingModel(
+            userID: userID,
+            folderID: UUID(),
+            folderName: "Queued Guard",
+            anchorDate: now.addingTimeInterval(-60),
+            durationDays: 7,
+            timeZoneIdentifier: "UTC",
+            stateRaw: "active",
+            createdAt: now,
+            updatedAt: now
+        )
+        let window = MicrocycleWindowModel(
+            userID: userID,
+            trackingID: tracking.id,
+            folderID: tracking.folderID,
+            folderName: tracking.folderName,
+            index: 0,
+            startsAt: now.addingTimeInterval(-60),
+            endsAt: now.addingTimeInterval(7 * 24 * 60 * 60),
+            timeZoneIdentifier: "UTC",
+            routines: [MicrocycleRoutineSnapshot(
+                id: routine.id,
+                name: routine.name,
+                position: 0
+            )],
+            createdAt: now,
+            updatedAt: now
+        )
+        context.insert(exercise)
+        context.insert(routine)
+        context.insert(tracking)
+        context.insert(window)
+        try context.save()
+
+        let link = WatchLink()
+        link.configure(context: context)
+        link.handle(.startNextTrackedWorkout)
+
+        let verificationContext = ModelContext(container)
+        let activeWorkouts = try verificationContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil }
+        ))
+        #expect(activeWorkouts.isEmpty)
+    }
+
+    @Test func routineStartUsesFreshestAuthoredGraphForDuplicateID() throws {
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        let id = UUID()
+        let staleExercise = ExerciseLibraryModel(name: "Stale Exercise")
+        let editedExercise = ExerciseLibraryModel(name: "Edited Exercise")
+        let staleGraph = RoutineModel(
+            id: id,
+            userID: userID,
+            name: "Stale Routine",
+            updatedAt: Date(timeIntervalSince1970: 900),
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: staleExercise.id,
+                updatedAt: Date(timeIntervalSince1970: 100)
+            )]
+        )
+        let editedGraph = RoutineModel(
+            id: id,
+            userID: userID,
+            name: "Edited Routine",
+            updatedAt: Date(timeIntervalSince1970: 500),
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: editedExercise.id,
+                updatedAt: Date(timeIntervalSince1970: 500)
+            )]
+        )
+        context.insert(staleExercise)
+        context.insert(editedExercise)
+        context.insert(staleGraph)
+        context.insert(editedGraph)
+        try context.save()
+
+        let link = WatchLink()
+        link.configure(context: context)
+        link.handle(.startRoutine(routineID: id))
+
+        let verificationContext = ModelContext(container)
+        let workouts = try verificationContext.fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil }
+        ))
+        let workout = try #require(workouts.first)
+        #expect(workouts.count == 1)
+        #expect(workout.title == "Edited Routine")
+        #expect(workout.exercises.map(\.exerciseID) == [editedExercise.id])
+    }
+
     @Test func myoCommandsPersistActivationMiniSetsAndDerivedVolume() throws {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)

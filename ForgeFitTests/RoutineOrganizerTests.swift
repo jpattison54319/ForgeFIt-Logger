@@ -7,6 +7,57 @@ import Testing
 @MainActor
 @Suite("Routine organizer")
 struct RoutineOrganizerTests {
+    @Test("Duplicate physical rows become one authored routine in the draft")
+    func canonicalizesDuplicateRoutineIDsBeforeOrganizing() throws {
+        let id = UUID()
+        let staleExercise = RoutineExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        let stale = RoutineModel(
+            id: id,
+            userID: ForgeFitDemo.userID,
+            name: "Stale",
+            updatedAt: Date(timeIntervalSince1970: 90),
+            exercises: [staleExercise]
+        )
+        let editedExercise = RoutineExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            updatedAt: Date(timeIntervalSince1970: 50)
+        )
+        let edited = RoutineModel(
+            id: id,
+            userID: ForgeFitDemo.userID,
+            name: "Edited",
+            updatedAt: Date(timeIntervalSince1970: 50),
+            exercises: [editedExercise]
+        )
+
+        let draft = RoutineOrganizerDraft(folders: [], routines: [stale, edited])
+
+        #expect(draft.allRoutineIDs == [id])
+        let item = try #require(draft.routines(in: .ungrouped).first)
+        #expect(item.name == "Edited")
+    }
+
+    @Test("Persistence rejects duplicate logical rows instead of trapping")
+    func persistenceRejectsDuplicateRoutineIDs() {
+        let id = UUID()
+        let first = RoutineModel(id: id, userID: ForgeFitDemo.userID, name: "First")
+        let second = RoutineModel(id: id, userID: ForgeFitDemo.userID, name: "Second")
+        let draft = RoutineOrganizerDraft(folders: [], routines: [first, second])
+
+        #expect(throws: RoutineOrganizerPersistence.PersistenceError.self) {
+            try RoutineOrganizerPersistence.apply(
+                draft,
+                folders: [],
+                routines: [first, second]
+            )
+        }
+    }
+
     @Test("Several draft moves leave models untouched until one apply")
     func stagesThenAppliesSeveralMoves() throws {
         let firstFolder = folder("First", position: 0)

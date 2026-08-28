@@ -62,6 +62,7 @@ enum AccountResetService {
         // left with nothing.
         CustomExerciseMedia.shared.deleteEverything()
         clearAppDefaults()
+        await WorkoutIntentDiagnosticStore.shared.clear()
         // `clearLiveSurfaces` published to the Watch while the health stores
         // were still populated. Publish again now they are empty, so the wrist
         // is not left holding the readiness the reset just removed.
@@ -186,6 +187,7 @@ enum AccountResetService {
         // snapshot `cancelLiveRuntime` wrote; now that idle publishes preserve
         // a same-day score, the reset has to say so itself.
         ReadinessSurfacePublisher.clear()
+        WorkoutChoiceCatalogStore.clear()
         ForgeThemePreferenceStore.reset()
         Fmt.unit = .lb
         Fmt.distanceUnit = .km

@@ -65,6 +65,7 @@ final class RoutineOrganizerDraft {
         routines: [RoutineModel],
         alternationStates: [RoutineAlternationService.State] = []
     ) {
+        let routines = RoutineDeduplicator.canonicalRoutines(routines)
         let sortedFolders = folders.sorted(by: Self.folderSort)
         let roots = sortedFolders.filter { $0.parentID == nil }.map(\.id)
         var children: [UUID: [UUID]] = [:]
