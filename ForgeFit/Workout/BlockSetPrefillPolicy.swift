@@ -12,11 +12,31 @@ enum BlockSetPrefillPolicy {
         preservesEnteredWeight: Bool,
         preservesEnteredReps: Bool
     ) {
+        apply(
+            to: set,
+            visibleWeight: visibleWeight,
+            visibleReps: visibleReps,
+            previousWeight: previousBlock?.modeWeight,
+            previousReps: previousBlock?.reps,
+            preservesEnteredWeight: preservesEnteredWeight,
+            preservesEnteredReps: preservesEnteredReps
+        )
+    }
+
+    static func apply(
+        to set: SetModel,
+        visibleWeight: Double?,
+        visibleReps: Int?,
+        previousWeight: Double?,
+        previousReps: Int?,
+        preservesEnteredWeight: Bool,
+        preservesEnteredReps: Bool
+    ) {
         if !preservesEnteredWeight {
-            set.setModeWeight(previousBlock?.modeWeight ?? visibleWeight)
+            set.setModeWeight(previousWeight ?? visibleWeight)
         }
         if !preservesEnteredReps {
-            set.reps = previousBlock?.reps ?? visibleReps
+            set.reps = previousReps ?? visibleReps
         }
         set.recomputeDerivedMetrics()
     }

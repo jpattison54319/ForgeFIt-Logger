@@ -23,6 +23,106 @@ enum WeightModeBackfill {
     static let convertKey = "weightModeBackfilled.v1"
     typealias SaveOperation = @MainActor (ModelContext) throws -> Void
 
+    private nonisolated struct RefreshReceipt: Sendable {
+        let workoutIDs: [UUID]
+        let setIDs: [UUID]
+    }
+
+    static func convertIfNeededCooperatively(
+        in sourceContext: ModelContext,
+        defaults: UserDefaults = .standard
+    ) async {
+        guard LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork,
+              !defaults.bool(forKey: convertKey) else { return }
+
+        let container = sourceContext.container
+        let task = Task.detached(priority: .utility) {
+            try convertPersisted(in: container)
+        }
+        do {
+            let receipt = try await withTaskCancellationHandler(
+                operation: { try await task.value },
+                onCancel: { task.cancel() }
+            )
+            guard !Task.isCancelled,
+                  LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
+            refresh(receipt, in: sourceContext)
+            defaults.set(true, forKey: convertKey)
+        } catch {
+            // Leave the completion stamp clear so a later idle window retries.
+        }
+    }
+
+    private nonisolated static func convertPersisted(
+        in container: ModelContainer
+    ) throws -> RefreshReceipt {
+        let transaction = ModelContext(container)
+        transaction.autosaveEnabled = false
+        do {
+            try Task.checkCancellation()
+            let exercises = try transaction.fetch(FetchDescriptor<ExerciseLibraryModel>())
+            let modeByExerciseID: [UUID: WeightMode] = exercises.reduce(into: [:]) { dict, exercise in
+                guard exercise.defaultWeightMode != .external else { return }
+                dict[exercise.id] = exercise.defaultWeightMode
+            }
+            guard !modeByExerciseID.isEmpty else {
+                return RefreshReceipt(workoutIDs: [], setIDs: [])
+            }
+
+            let workouts = try transaction.fetch(FetchDescriptor<WorkoutModel>())
+            var touchedWorkoutIDs = Set<UUID>()
+            var touchedSetIDs = Set<UUID>()
+            for workout in workouts where workout.deletedAt == nil {
+                try Task.checkCancellation()
+                var changed = false
+                for workoutExercise in workout.exercises {
+                    guard let mode = modeByExerciseID[workoutExercise.exerciseID] else { continue }
+                    for set in workoutExercise.sets where set.weightMode == .external {
+                        try Task.checkCancellation()
+                        let value = set.weight
+                        set.weightMode = mode
+                        if set.modeWeight == nil, let value {
+                            set.weight = nil
+                            set.setModeWeight(value)
+                        }
+                        changed = true
+                        touchedSetIDs.insert(set.id)
+                    }
+                }
+                if changed {
+                    workout.recomputeTotalVolume()
+                    touchedWorkoutIDs.insert(workout.id)
+                }
+            }
+            try Task.checkCancellation()
+            if transaction.hasChanges {
+                try transaction.save()
+            }
+            return RefreshReceipt(
+                workoutIDs: Array(touchedWorkoutIDs),
+                setIDs: Array(touchedSetIDs)
+            )
+        } catch {
+            transaction.rollback()
+            throw error
+        }
+    }
+
+    private static func refresh(_ receipt: RefreshReceipt, in context: ModelContext) {
+        if !receipt.setIDs.isEmpty {
+            let ids = receipt.setIDs
+            _ = try? context.fetch(FetchDescriptor<SetModel>(
+                predicate: #Predicate { ids.contains($0.id) }
+            ))
+        }
+        if !receipt.workoutIDs.isEmpty {
+            let ids = receipt.workoutIDs
+            _ = try? context.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { ids.contains($0.id) }
+            ))
+        }
+    }
+
     static func convertIfNeeded(
         in sourceContext: ModelContext,
         save: SaveOperation = { try $0.save() }

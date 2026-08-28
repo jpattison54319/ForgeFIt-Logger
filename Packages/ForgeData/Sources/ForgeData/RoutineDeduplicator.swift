@@ -76,6 +76,24 @@ public enum RoutineDeduplicator {
         }
     }
 
+    /// Returns the same deterministic logical-folder survivors used by the
+    /// maintenance pass. UI callers must canonicalize before filtering live
+    /// rows so a redelivered tombstone cannot briefly resurrect stale content.
+    public static func canonicalFolders(_ rows: [RoutineFolderModel]) -> [RoutineFolderModel] {
+        var groups: [UUID: [RoutineFolderModel]] = [:]
+        var orderedIDs: [UUID] = []
+        for row in rows {
+            if groups[row.id] == nil { orderedIDs.append(row.id) }
+            groups[row.id, default: []].append(row)
+        }
+        return orderedIDs.compactMap { id in
+            groups[id]?.reduce(nil as RoutineFolderModel?) { incumbent, candidate in
+                guard let incumbent else { return candidate }
+                return folderPrefers(candidate, over: incumbent) ? candidate : incumbent
+            }
+        }
+    }
+
     private static func collapseRoutines(
         _ rows: [RoutineModel],
         in context: ModelContext

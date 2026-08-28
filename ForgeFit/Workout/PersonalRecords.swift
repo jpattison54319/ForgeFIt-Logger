@@ -40,7 +40,7 @@ enum RecordKind: String, CaseIterable {
 
 /// The best prior values for one exercise — the bar a set must clear to earn
 /// an award.
-nonisolated struct ExerciseRecordBaseline {
+nonisolated struct ExerciseRecordBaseline: Equatable, Sendable {
     var maxLoad: Double = 0
     var maxSetVolume: Double = 0
     var max1RM: Double = 0

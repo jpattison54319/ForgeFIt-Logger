@@ -254,6 +254,7 @@ struct ConditioningSectionEditor: View {
     @Binding var section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
     let workouts: [WorkoutModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
     let onChange: () -> Void
     let onApplyPreset: (ConditioningPresetSelection) -> Void
     let onAddMovement: () -> Void
@@ -471,7 +472,11 @@ struct ConditioningSectionEditor: View {
         .background(theme.surfaceHighlight)
         .clipShape(.rect(cornerRadius: Radius.control))
         .sheet(isPresented: $showPresetManager) {
-            ConditioningPresetManagerView(workouts: workouts, exercises: exercises)
+            ConditioningPresetManagerView(
+                workouts: workouts,
+                exercises: exercises,
+                historySnapshot: historySnapshot
+            )
         }
         .alert("Couldn't Save Preset", isPresented: $showStoreError) {
         } message: {

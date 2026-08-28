@@ -1,4 +1,6 @@
+import ForgeData
 import Foundation
+import SwiftData
 import Testing
 @testable import ForgeFit
 
@@ -53,6 +55,186 @@ private actor CancellableHealthMetricsLoader: HealthMetricsLoading {
 
 @MainActor
 struct StartupPerformanceTests {
+    @Test
+    func deferredLaunchMigrationsWaitForReadinessAndAnIdleForeground() {
+        #expect(DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: true,
+            launchTasksFinished: true,
+            allowsNonWorkoutWork: true,
+            sceneIsActive: true,
+            hasScheduledTask: false
+        ))
+        #expect(!DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: true,
+            launchTasksFinished: false,
+            allowsNonWorkoutWork: true,
+            sceneIsActive: true,
+            hasScheduledTask: false
+        ))
+        #expect(!DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: true,
+            launchTasksFinished: true,
+            allowsNonWorkoutWork: false,
+            sceneIsActive: true,
+            hasScheduledTask: false
+        ))
+        #expect(!DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: true,
+            launchTasksFinished: true,
+            allowsNonWorkoutWork: true,
+            sceneIsActive: false,
+            hasScheduledTask: false
+        ))
+        #expect(!DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: true,
+            launchTasksFinished: true,
+            allowsNonWorkoutWork: true,
+            sceneIsActive: true,
+            hasScheduledTask: true
+        ))
+    }
+
+    @Test
+    func catalogDependentMaintenanceWaitsForAPendingSeedToSucceed() {
+        #expect(DeferredLaunchMaintenancePolicy.canRunCatalogDependentMaintenance(
+            seedWasPending: false,
+            seedSucceeded: false
+        ))
+        #expect(!DeferredLaunchMaintenancePolicy.canRunCatalogDependentMaintenance(
+            seedWasPending: true,
+            seedSucceeded: false
+        ))
+        #expect(DeferredLaunchMaintenancePolicy.canRunCatalogDependentMaintenance(
+            seedWasPending: true,
+            seedSucceeded: true
+        ))
+    }
+
+    @Test
+    func launchLoggerWaitsForTheReadyForegroundShellAndActiveRow() {
+        #expect(LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: true,
+            presentationHostMounted: true,
+            sceneIsActive: true,
+            onboardingPresented: false,
+            hasActiveWorkout: true
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: false,
+            presentationHostMounted: true,
+            sceneIsActive: true,
+            onboardingPresented: false,
+            hasActiveWorkout: true
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: true,
+            presentationHostMounted: true,
+            sceneIsActive: false,
+            onboardingPresented: false,
+            hasActiveWorkout: true
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: true,
+            presentationHostMounted: true,
+            sceneIsActive: true,
+            onboardingPresented: false,
+            hasActiveWorkout: false
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: false,
+            launchTasksFinished: true,
+            presentationHostMounted: true,
+            sceneIsActive: true,
+            onboardingPresented: false,
+            hasActiveWorkout: true
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: true,
+            presentationHostMounted: true,
+            sceneIsActive: true,
+            onboardingPresented: true,
+            hasActiveWorkout: true
+        ))
+        #expect(!LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: true,
+            launchTasksFinished: true,
+            presentationHostMounted: false,
+            sceneIsActive: true,
+            onboardingPresented: false,
+            hasActiveWorkout: true
+        ))
+    }
+
+    @Test
+    func staleRemovedWorkoutCannotCancelNewAutoStartPresentation() {
+        let oldWorkoutID = UUID()
+        let newWorkoutID = UUID()
+
+        #expect(!LaunchLoggerPresentationPolicy.shouldClearPendingPresentation(
+            pendingWorkoutID: newWorkoutID,
+            removedWorkoutID: oldWorkoutID
+        ))
+        #expect(LaunchLoggerPresentationPolicy.shouldClearPendingPresentation(
+            pendingWorkoutID: newWorkoutID,
+            removedWorkoutID: newWorkoutID
+        ))
+        #expect(LaunchLoggerPresentationPolicy.shouldClearPendingPresentation(
+            pendingWorkoutID: nil,
+            removedWorkoutID: oldWorkoutID
+        ))
+    }
+
+    @Test @MainActor
+    func targetedLoggerResolutionIgnoresAStaleQueryCandidate() throws {
+        let container = try TestStore.makeContainer()
+        let mainContext = ModelContext(container)
+        mainContext.autosaveEnabled = false
+        let oldWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Old active workout",
+            startedAt: .now.addingTimeInterval(-600)
+        )
+        mainContext.insert(oldWorkout)
+        try mainContext.save()
+
+        let replacementContext = ModelContext(container)
+        replacementContext.autosaveEnabled = false
+        let oldID = oldWorkout.id
+        var oldDescriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == oldID }
+        )
+        oldDescriptor.fetchLimit = 1
+        if let durableOld = try replacementContext.fetch(oldDescriptor).first {
+            replacementContext.delete(durableOld)
+        }
+        let newWorkout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "New active workout",
+            startedAt: .now
+        )
+        replacementContext.insert(newWorkout)
+        try replacementContext.save()
+
+        let resolved = LaunchLoggerWorkoutResolver.resolve(
+            preferredID: newWorkout.id,
+            queryCandidate: oldWorkout,
+            in: mainContext
+        )
+        #expect(resolved?.id == newWorkout.id)
+
+        let missing = LaunchLoggerWorkoutResolver.resolve(
+            preferredID: UUID(),
+            queryCandidate: oldWorkout,
+            in: mainContext
+        )
+        #expect(missing == nil)
+    }
+
     @Test
     func overlappingHealthRefreshesShareOneWorkerLoad() async {
         let loader = CountingHealthMetricsLoader()

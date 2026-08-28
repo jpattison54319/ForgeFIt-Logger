@@ -1,6 +1,58 @@
 import ForgeCore
 import ForgeData
 import Foundation
+import SwiftData
+
+/// Performs the routine editor's history-wide baseline scan in a context that
+/// is created and consumed off MainActor. Persistent models never cross the
+/// boundary; only the immutable UUID-to-value projection returns.
+nonisolated struct AdaptiveLoadBaselineWorker: Sendable {
+    let modelContainer: ModelContainer
+
+    func calculate() async throws -> [UUID: Double] {
+        let container = modelContainer
+        let task = Task.detached(priority: .utility) {
+            let context = ModelContext(container)
+            let workouts = try context.fetch(FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil }
+            ))
+            try Task.checkCancellation()
+
+            var best: [UUID: Double] = [:]
+            for workout in workouts {
+                for workoutExercise in workout.exercises {
+                    for set in workoutExercise.sets
+                    where set.completedAt != nil && set.setType.countsAsWorkingVolume {
+                        guard let estimate = set.estimated1RM,
+                              estimate.isFinite, estimate > 0 else { continue }
+                        best[workoutExercise.exerciseID] = max(
+                            best[workoutExercise.exerciseID] ?? 0,
+                            estimate
+                        )
+                    }
+                }
+                try Task.checkCancellation()
+            }
+            return best
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    #if DEBUG
+    func isExecutingOnMainThreadForTesting() async -> Bool {
+        let container = modelContainer
+        return await Task.detached(priority: .utility) {
+            _ = ModelContext(container)
+            return Self.currentThreadIsMain()
+        }.value
+    }
+
+    private static func currentThreadIsMain() -> Bool { Thread.isMainThread }
+    #endif
+}
 
 /// A workout-start snapshot of one adaptive routine load. The lower end is
 /// the conservative prefill; the full range remains visible and editable.

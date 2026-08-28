@@ -276,6 +276,7 @@ struct WorkoutCalendarView: View {
     private var selectedDaySection: some View {
         let items = (workoutsByDay[selectedDay] ?? []).sorted { $0.startedAt < $1.startedAt }
         let selectedRestDay = restDay(on: selectedDay)
+        let exerciseCatalogRevision = HomePerformanceRevision.exerciseCatalog(exercises)
         SectionHeader(selectedDay.formatted(.dateTime.weekday(.wide).month(.wide).day()))
         RecoveryDaySummaryCard(
             snapshot: RecoverySnapshotStore.shared.snapshot(for: selectedDay),
@@ -332,7 +333,11 @@ struct WorkoutCalendarView: View {
         } else {
             ForEach(items) { workout in
                 NavigationLink(value: workout.id) {
-                    WorkoutFeedRow(workout: workout, analytics: analytics)
+                    WorkoutFeedRow(
+                        workout: workout,
+                        analytics: analytics,
+                        exerciseCatalogRevision: exerciseCatalogRevision
+                    )
                 }
                 .buttonStyle(.plain)
             }

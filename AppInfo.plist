@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Opt in to the display's adaptive ProMotion range. SwiftUI still lets
+	     iOS choose the actual refresh rate for power, thermals, and content. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<!-- No encryption beyond what iOS itself provides (HTTPS/CloudKit), so the
 	     export-compliance question is answered here instead of on every upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>

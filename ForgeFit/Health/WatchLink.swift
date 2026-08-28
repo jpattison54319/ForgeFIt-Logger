@@ -643,7 +643,15 @@ final class WatchLink: NSObject {
             publishState(policy: .immediate)
 
         case .toggleSet(let setID, let completed):
-            guard let set = fetchSet(setID, in: context) else { return }
+            guard let active,
+                  let set = fetchSet(
+                    setID,
+                    ownedByActiveWorkoutID: active.id,
+                    in: context
+                  ) else {
+                publishState(policy: .immediate)
+                return
+            }
             guard !completed || !set.requiresConcreteRepsBeforeCompletion else {
                 publishState(policy: .immediate)
                 return
@@ -651,7 +659,6 @@ final class WatchLink: NSObject {
             set.completedAt = completed ? Date() : nil
             if completed { HealthMetricsStore.shared.fillBodyweight(set) }
             set.recomputeDerivedMetrics()
-            active?.recomputeTotalVolume()
             let completedExercise = completed ? set.workoutExercise : nil
             context.saveUserChanges { [weak self] in
                 if let self, let workoutExercise = completedExercise {
@@ -661,7 +668,15 @@ final class WatchLink: NSObject {
             }
 
         case .updateSet(let setID, let weightKg, let reps, let partialReps):
-            guard let set = fetchSet(setID, in: context) else { return }
+            guard let active,
+                  let set = fetchSet(
+                    setID,
+                    ownedByActiveWorkoutID: active.id,
+                    in: context
+                  ) else {
+                publishState(policy: .immediate)
+                return
+            }
             // Same mode routing as the phone's set row — a wrist edit on an
             // assisted/added set must land in that mode's field, not `weight`.
             if let weightKg { set.setModeWeight(weightKg) }
@@ -673,13 +688,21 @@ final class WatchLink: NSObject {
                 set.partialReps = partialReps
             }
             set.recomputeDerivedMetrics()
-            active?.recomputeTotalVolume()
             context.saveUserChanges { [weak self] in
                 self?.publishState(policy: .immediate)
             }
 
         case .updateStructuredSet(let setID, let update):
-            guard let set = fetchSet(setID, in: context), set.setType.isBlockType else { return }
+            guard let active,
+                  let set = fetchSet(
+                    setID,
+                    ownedByActiveWorkoutID: active.id,
+                    in: context
+                  ),
+                  set.setType.isBlockType else {
+                publishState(policy: .immediate)
+                return
+            }
             let previous = WatchStructuredSetProgress(
                 activationReps: set.setType == .cluster ? nil : set.reps,
                 miniReps: set.miniReps,
@@ -699,7 +722,6 @@ final class WatchLink: NSObject {
                 set.side2Reps = update.progress.side2ActivationReps
             }
             set.recomputeDerivedMetrics()
-            active?.recomputeTotalVolume()
 
             let restExercise = structuredEventWasLogged(update, previous: previous)
                 ? set.workoutExercise
@@ -716,10 +738,20 @@ final class WatchLink: NSObject {
             }
 
         case .startSetTimer(let setID, let durationSeconds, let endsAt):
-            guard let set = fetchSet(setID, in: context), set.setType == .amrap else { return }
+            guard let active,
+                  let set = fetchSet(
+                    setID,
+                    ownedByActiveWorkoutID: active.id,
+                    in: context
+                  ),
+                  set.setType == .amrap else {
+                publishState(policy: .immediate)
+                return
+            }
             let duration = max(1, durationSeconds)
             let durationBeforeStart = set.durationSeconds
             let setID = set.id
+            let activeWorkoutID = active.id
             let remaining = max(0, Int(endsAt.timeIntervalSinceNow.rounded(.up)))
             PersistentChangeSaveCenter.shared.perform({ [weak self] in
                 set.durationSeconds = duration
@@ -731,6 +763,16 @@ final class WatchLink: NSObject {
                     throw error
                 }
             }, onSuccess: { [weak self] in
+                guard let self else { return }
+                guard let context = self.modelContext,
+                      fetchSet(
+                        setID,
+                        ownedByActiveWorkoutID: activeWorkoutID,
+                        in: context
+                      ) != nil else {
+                    publishState(policy: .immediate)
+                    return
+                }
                 if remaining > 0 {
                     let startedAt = endsAt.addingTimeInterval(-TimeInterval(duration))
                     RestTimerController.shared.start(
@@ -742,8 +784,15 @@ final class WatchLink: NSObject {
                         onComplete: { [weak self] _ in
                             let elapsed = max(1, min(duration, Int(Date.now.timeIntervalSince(startedAt))))
                             guard let self,
-                                  let context = self.modelContext,
-                                  let set = self.fetchSet(setID, in: context) else { return }
+                                  let context = self.modelContext else { return }
+                            guard let set = self.fetchSet(
+                                setID,
+                                ownedByActiveWorkoutID: activeWorkoutID,
+                                in: context
+                            ) else {
+                                self.publishState(policy: .immediate)
+                                return
+                            }
                             set.durationSeconds = elapsed
                             context.saveUserChanges {
                                 self.publishState(policy: .immediate)
@@ -751,11 +800,20 @@ final class WatchLink: NSObject {
                         }
                     )
                 }
-                self?.publishState(policy: .immediate)
+                publishState(policy: .immediate)
             })
 
         case .stopSetTimer(let setID, let elapsedSeconds):
-            guard let set = fetchSet(setID, in: context), set.setType == .amrap else { return }
+            guard let active,
+                  let set = fetchSet(
+                    setID,
+                    ownedByActiveWorkoutID: active.id,
+                    in: context
+                  ),
+                  set.setType == .amrap else {
+                publishState(policy: .immediate)
+                return
+            }
             let durationBeforeStop = set.durationSeconds
             let elapsed = max(1, elapsedSeconds)
             PersistentChangeSaveCenter.shared.perform({ [weak self] in
@@ -1310,10 +1368,28 @@ final class WatchLink: NSObject {
         }
     }
 
-    private func fetchSet(_ id: UUID, in context: ModelContext) -> SetModel? {
+    private func fetchSet(
+        _ id: UUID,
+        ownedByActiveWorkoutID workoutID: UUID,
+        in context: ModelContext
+    ) -> SetModel? {
         var d = FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == id })
         d.fetchLimit = 1
-        return try? context.fetch(d).first
+        guard let set = try? context.fetch(d).first,
+              set.workoutExercise?.workout?.id == workoutID else { return nil }
+
+        // Re-query the terminal fields instead of trusting a relationship
+        // object retained by the long-lived Watch context. A finish may have
+        // committed in an isolated context while a queued WatchConnectivity
+        // packet was waiting for delivery.
+        var activeDescriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate {
+                $0.id == workoutID && $0.endedAt == nil && $0.deletedAt == nil
+            }
+        )
+        activeDescriptor.fetchLimit = 1
+        guard (try? context.fetch(activeDescriptor).first) != nil else { return nil }
+        return set
     }
 
     private func exercise(

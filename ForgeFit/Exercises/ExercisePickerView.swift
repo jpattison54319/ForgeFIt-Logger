@@ -35,6 +35,10 @@ struct ExercisePickerView: View {
     var context: [ExerciseLibraryModel] = []
     /// Completed workouts, for ranking by the user's most-used exercises.
     var history: [WorkoutModel] = []
+    /// Exact value-only usage projection for callers that deliberately avoid
+    /// retaining a full workout graph (notably the live logger). Legacy callers
+    /// may continue to supply `history`; this snapshot wins when present.
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
     /// Lets replacement reuse the familiar picker without presenting itself
     /// as an add flow.
     var navigationTitle = "Add Exercise"
@@ -66,6 +70,8 @@ struct ExercisePickerView: View {
     @State private var showConditioningBuilder = false
     @State private var showYogaBuilder = false
     @State private var detailExercise: ExerciseLibraryModel?
+    @State private var boundedDrillInHistory: [WorkoutModel] = []
+    @State private var isDrillInHistoryLoading = false
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var suggestedMemo = Memo<String, [ExerciseLibraryModel]>()
     /// Keyed by filter state only (NOT the query): the filtered base list and
@@ -91,6 +97,7 @@ struct ExercisePickerView: View {
     }
 
     private var historyFingerprint: String {
+        if let historySnapshot { return historySnapshot.fingerprint }
         var completed = 0
         var latest = Date.distantPast
         for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
@@ -195,13 +202,20 @@ struct ExercisePickerView: View {
                     from: base.map(swapCandidate(for:)),
                     excluding: excludedIDs,
                     equipmentFilter: replacementEquipmentFilter,
-                    usageByID: ExerciseSwapUsageBuilder.profiles(from: history)
+                    usageByID: historySnapshot?.swapUsageProfiles
+                        ?? ExerciseSwapUsageBuilder.profiles(from: history)
                 ).compactMap { byID[$0.candidate.id] }
             }
 
-            var usage: [UUID: Int] = [:]
-            for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
-                for we in workout.exercises { usage[we.exerciseID, default: 0] += 1 }
+            let usage: [UUID: Int]
+            if let historySnapshot {
+                usage = historySnapshot.occurrenceCountByExerciseID
+            } else {
+                var derived: [UUID: Int] = [:]
+                for workout in history where workout.endedAt != nil && workout.deletedAt == nil {
+                    for we in workout.exercises { derived[we.exerciseID, default: 0] += 1 }
+                }
+                usage = derived
             }
             var muscleScore: [String: Double] = [:]
             for ex in context {
@@ -296,12 +310,14 @@ struct ExercisePickerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: nil,
                     exercises: exercises,
-                    workouts: history,
+                    workouts: resolvedDrillInHistory,
+                    historySnapshot: historySnapshot,
                     onSave: { json in
                         onAddConditioningBlock?(json)
                         dismiss()
                     }
                 )
+                .task { await ensureBoundedDrillInHistoryLoaded() }
             }
             .sheet(isPresented: $showYogaBuilder) {
                 YogaFlowBuilderView(planJSON: nil, onSave: { json in
@@ -312,7 +328,12 @@ struct ExercisePickerView: View {
             }
             .fullScreenCover(item: $detailExercise) { exercise in
                 NavigationStack {
-                    ExerciseDetailView(exerciseID: exercise.id, workouts: history, exercises: exercises)
+                    ExercisePickerHistoryDetailDestination(
+                        exercise: exercise,
+                        exercises: exercises,
+                        seedHistory: history,
+                        loadsPersistedHistory: historySnapshot != nil
+                    )
                 }
             }
             .onAppear {
@@ -640,6 +661,31 @@ struct ExercisePickerView: View {
         }
     }
 
+    private static let drillInHistoryLimit = 160
+
+    private var resolvedDrillInHistory: [WorkoutModel] {
+        history.isEmpty ? boundedDrillInHistory : history
+    }
+
+    /// Conditioning preset/history screens still use model-backed APIs. Keep
+    /// that compatibility read bounded and behind the explicit drill-in; the
+    /// picker list and its suggestions remain entirely value-backed.
+    private func ensureBoundedDrillInHistoryLoaded() async {
+        guard history.isEmpty,
+              boundedDrillInHistory.isEmpty,
+              !isDrillInHistoryLoading else { return }
+        isDrillInHistoryLoading = true
+        defer { isDrillInHistoryLoading = false }
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+        var descriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = Self.drillInHistoryLimit
+        boundedDrillInHistory = (try? modelContext.fetch(descriptor)) ?? []
+    }
+
     private func commit(_ list: [ExerciseLibraryModel]) {
         // The library can hold duplicate rows for one exercise id (CloudKit
         // sync / re-seed races — same condition the display list dedupes
@@ -648,6 +694,75 @@ struct ExercisePickerView: View {
         var seen = Set<UUID>()
         onAdd(list.filter { seen.insert($0.id).inserted })
         dismiss()
+    }
+}
+
+/// Exact per-exercise drill-in for picker/swap callers that carry only the
+/// immutable usage projection. The expensive all-history relationship scan
+/// runs in `LiveWorkoutHistoryWorker`; MainActor fetches only the workout IDs
+/// that can contribute to this exercise's charts, records, and history rows.
+struct ExercisePickerHistoryDetailDestination: View {
+    @Environment(\.modelContext) private var modelContext
+
+    let exercise: ExerciseLibraryModel
+    let exercises: [ExerciseLibraryModel]
+    var seedHistory: [WorkoutModel] = []
+    var loadsPersistedHistory = false
+
+    @State private var loadedHistory: [WorkoutModel] = []
+
+    static func completedHistoryDescriptor(
+        for workoutIDs: [UUID]
+    ) -> FetchDescriptor<WorkoutModel> {
+        FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate {
+                workoutIDs.contains($0.id)
+                    && $0.endedAt != nil
+                    && $0.deletedAt == nil
+            },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+    }
+
+    private var resolvedHistory: [WorkoutModel] {
+        var byID = Dictionary(
+            seedHistory.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for workout in loadedHistory where byID[workout.id] == nil {
+            byID[workout.id] = workout
+        }
+        return byID.values.sorted { $0.startedAt > $1.startedAt }
+    }
+
+    var body: some View {
+        ExerciseDetailView(
+            exerciseID: exercise.id,
+            workouts: resolvedHistory,
+            exercises: exercises
+        )
+        .task(id: exercise.id) {
+            guard loadsPersistedHistory else { return }
+            let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
+            guard let ids = try? await worker.completedWorkoutIDs(containing: exercise.id),
+                  !Task.isCancelled else { return }
+            guard !ids.isEmpty else {
+                loadedHistory = []
+                return
+            }
+            var rows: [WorkoutModel] = []
+            let batchSize = 160
+            for start in stride(from: 0, to: ids.count, by: batchSize) {
+                let end = min(start + batchSize, ids.count)
+                let batchIDs = Array(ids[start..<end])
+                rows.append(contentsOf: (try? modelContext.fetch(
+                    Self.completedHistoryDescriptor(for: batchIDs)
+                )) ?? [])
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+            }
+            loadedHistory = rows.sorted { $0.startedAt > $1.startedAt }
+        }
     }
 }
 

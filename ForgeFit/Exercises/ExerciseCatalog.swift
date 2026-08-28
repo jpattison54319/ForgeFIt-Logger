@@ -11,7 +11,7 @@ import UIKit
 
 /// One row of the bundled `exercises.json` (derived from the open-source
 /// free-exercise-db). Illustrations are loaded remotely from the same project.
-struct SeedExercise: Decodable {
+nonisolated struct SeedExercise: Decodable, Sendable {
     let slug: String
     let name: String
     let force: String?
@@ -122,17 +122,50 @@ enum ExerciseCatalog {
 
     static func load() -> [SeedExercise] {
         if let cached { return cached }
-        guard let url = Bundle.main.url(forResource: "exercises", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([SeedExercise].self, from: data) else {
-            cached = []
-            return []
-        }
+        let decoded = decodeBundledSeeds()
         cached = decoded
         return decoded
     }
 
-    private static func weightMode(equipment: String?, name: String) -> WeightMode {
+    /// Bundle I/O and decoding are pure work and safe to perform away from the
+    /// main actor during first launch. Keep the cache itself main-actor owned.
+    private nonisolated static func decodeBundledSeeds() -> [SeedExercise] {
+        guard let url = Bundle.main.url(forResource: "exercises", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([SeedExercise].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    /// Pure classifier corpus used by detached import maintenance. Decoding and
+    /// muscle refinement stay off MainActor; callers that already own the
+    /// cached seed values can use the overload to avoid duplicate bundle I/O.
+    nonisolated static func classificationSeedCorpusForWorker() -> [ExerciseInfo] {
+        classificationSeedCorpus(from: decodeBundledSeeds())
+    }
+
+    nonisolated static func classificationSeedCorpus(
+        from seeds: [SeedExercise]
+    ) -> [ExerciseInfo] {
+        seeds.map { seed in
+            let refined = MuscleRefinement.refine(
+                name: seed.name,
+                primaryMuscles: seed.primaryMuscles,
+                secondaryMuscles: seed.secondaryMuscles
+            )
+            return ExerciseInfo(
+                id: deterministicID(for: seed.slug),
+                name: seed.name,
+                movementPattern: seed.force,
+                primaryMuscles: refined.primary,
+                secondaryMuscles: refined.secondary,
+                equipment: seed.equipment
+            )
+        }
+    }
+
+    private nonisolated static func weightMode(equipment: String?, name: String) -> WeightMode {
         let n = name.lowercased()
         if n.contains("assisted") { return .bodyweightAssisted }
         switch equipment {
@@ -147,68 +180,167 @@ enum ExerciseCatalog {
         let seeds = load()
         guard !seeds.isEmpty else { return }
 
-        let existing = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
+        // A failed read is not an empty catalog. Propagate the error so we do
+        // not manufacture duplicate logical IDs after a transient store fault.
+        let existing = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
         let existingByID = Dictionary(
             existing.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
 
+        let changed = seeds.count {
+            upsert($0, existingByID: existingByID, into: context)
+        }
+        if persist, changed > 0 { try context.save() }
+    }
+
+    /// First-install variant that keeps the exact same single-save semantics
+    /// while confining the ~900-row fetch/upsert/save transaction to an
+    /// isolated SwiftData context. Only immutable seed values cross actors.
+    /// `persist: false` retains caller-context semantics for focused tests and
+    /// tools, using bounded yields because those unsaved models cannot move.
+    @MainActor
+    static func seedCooperatively(
+        into context: ModelContext,
+        persist: Bool = true,
+        batchSize: Int = 12
+    ) async throws {
+        let seeds: [SeedExercise]
+        if let cached {
+            seeds = cached
+        } else {
+            let decoded = await Task.detached(priority: .userInitiated) {
+                decodeBundledSeeds()
+            }.value
+            cached = decoded
+            seeds = decoded
+        }
+        guard !seeds.isEmpty else { return }
+
+        if persist {
+            let container = context.container
+            let task = Task.detached(priority: .utility) {
+                try seedPersisted(seeds, in: container)
+            }
+            try await withTaskCancellationHandler(
+                operation: { try await task.value },
+                onCancel: { task.cancel() }
+            )
+            await Task.yield()
+            return
+        }
+
+        try Task.checkCancellation()
+        await Task.yield()
+        let existing = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let existingByID = Dictionary(
+            existing.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        await Task.yield()
+        let boundedBatchSize = max(1, batchSize)
+        var changed = 0
+        for (index, seed) in seeds.enumerated() {
+            if upsert(seed, existingByID: existingByID, into: context) {
+                changed += 1
+            }
+            if (index + 1).isMultiple(of: boundedBatchSize) {
+                try Task.checkCancellation()
+                await Task.yield()
+            }
+        }
+        _ = changed
+    }
+
+    private nonisolated static func seedPersisted(
+        _ seeds: [SeedExercise],
+        in container: ModelContainer
+    ) throws {
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let existing = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let existingByID = Dictionary(
+            existing.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var changed = 0
         for seed in seeds {
-            let id = deterministicID(for: seed.slug)
-            let isCardio = seed.category == "cardio"
-            let kind = CardioKind.infer(name: seed.name, equipment: seed.equipment)
-            // Cardio exercises get proper muscles-worked from their modality,
-            // including the cardiovascular system, and are updated on reseed.
-            // Lifts get broad shoulders/chest tags refined into taxonomy
-            // sub-muscles from the name (side delts, upper chest, ...).
-            let refined = MuscleRefinement.refine(
-                name: seed.name,
-                primaryMuscles: seed.primaryMuscles,
-                secondaryMuscles: seed.secondaryMuscles)
-            let primary = isCardio ? kind.musclesWorked : refined.primary
-            let model = existingByID[id] ?? ExerciseLibraryModel(id: id, name: seed.name)
-            var modelChanged = false
-
-            if existingByID[id] == nil {
-                context.insert(model)
-                modelChanged = true
-            } else if model.userModified {
-                continue
-            }
-
-            func set<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<ExerciseLibraryModel, Value>, _ value: Value) {
-                guard model[keyPath: keyPath] != value else { return }
-                model[keyPath: keyPath] = value
-                modelChanged = true
-            }
-
-            set(\.ownerID, nil)
-            set(\.name, seed.name)
-            set(\.movementPattern, isCardio ? "cardio" : seed.force)
-            set(\.primaryMuscles, primary)
-            set(\.secondaryMuscles, isCardio ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" } : refined.secondary)
-            set(\.equipment, seed.equipment)
-            set(\.isUnilateral, false)
-            let desiredWeightMode = isCardio ? WeightMode.bodyweight : weightMode(equipment: seed.equipment, name: seed.name)
-            if model.defaultWeightMode != desiredWeightMode {
-                model.defaultWeightMode = desiredWeightMode
-                modelChanged = true
-            }
-            set(\.difficulty, seed.level)
-            set(\.isCardio, isCardio)
-            set(\.mediaSlug, seed.image)
-            set(\.category, seed.category)
-            set(\.force, seed.force)
-            set(\.mechanic, seed.mechanic)
-            set(\.instructions, seed.instructions ?? [])
-
-            if modelChanged {
-                model.updatedAt = Date()
+            try Task.checkCancellation()
+            if upsert(seed, existingByID: existingByID, into: context) {
                 changed += 1
             }
         }
-        if persist, changed > 0 { try context.save() }
+        if changed > 0 { try context.save() }
+    }
+
+    private nonisolated static func upsert(
+        _ seed: SeedExercise,
+        existingByID: [UUID: ExerciseLibraryModel],
+        into context: ModelContext
+    ) -> Bool {
+        let id = deterministicID(for: seed.slug)
+        let isCardio = seed.category == "cardio"
+        let kind = CardioKind.infer(name: seed.name, equipment: seed.equipment)
+        // Cardio exercises get proper muscles-worked from their modality,
+        // including the cardiovascular system, and are updated on reseed.
+        // Lifts get broad shoulders/chest tags refined into taxonomy
+        // sub-muscles from the name (side delts, upper chest, ...).
+        let refined = MuscleRefinement.refine(
+            name: seed.name,
+            primaryMuscles: seed.primaryMuscles,
+            secondaryMuscles: seed.secondaryMuscles
+        )
+        let primary = isCardio ? kind.musclesWorked : refined.primary
+        let model = existingByID[id] ?? ExerciseLibraryModel(id: id, name: seed.name)
+        var modelChanged = false
+
+        if existingByID[id] == nil {
+            context.insert(model)
+            modelChanged = true
+        } else if model.userModified {
+            return false
+        }
+
+        func set<Value: Equatable>(
+            _ keyPath: ReferenceWritableKeyPath<ExerciseLibraryModel, Value>,
+            _ value: Value
+        ) {
+            guard model[keyPath: keyPath] != value else { return }
+            model[keyPath: keyPath] = value
+            modelChanged = true
+        }
+
+        set(\.ownerID, nil)
+        set(\.name, seed.name)
+        set(\.movementPattern, isCardio ? "cardio" : seed.force)
+        set(\.primaryMuscles, primary)
+        set(
+            \.secondaryMuscles,
+            isCardio
+                ? seed.secondaryMuscles.filter { $0 != "cardiorespiratory" }
+                : refined.secondary
+        )
+        set(\.equipment, seed.equipment)
+        set(\.isUnilateral, false)
+        let desiredWeightMode = isCardio
+            ? WeightMode.bodyweight
+            : weightMode(equipment: seed.equipment, name: seed.name)
+        if model.defaultWeightMode != desiredWeightMode {
+            model.defaultWeightMode = desiredWeightMode
+            modelChanged = true
+        }
+        set(\.difficulty, seed.level)
+        set(\.isCardio, isCardio)
+        set(\.mediaSlug, seed.image)
+        set(\.category, seed.category)
+        set(\.force, seed.force)
+        set(\.mechanic, seed.mechanic)
+        set(\.instructions, seed.instructions ?? [])
+
+        if modelChanged {
+            model.updatedAt = Date()
+        }
+        return modelChanged
     }
 
     // MARK: - Muscle picker taxonomy

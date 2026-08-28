@@ -10,7 +10,7 @@ import SwiftData
 enum AppRefresh {
     static func run(in context: ModelContext) async {
         guard LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
-        await ImportedExerciseBackfill.runIfNeeded(in: context)
+        await ImportedExerciseBackfill.runCooperativelyIfNeeded(in: context)
         guard !Task.isCancelled,
               LiveWorkoutPerformanceGate.shared.allowsNonWorkoutWork else { return }
         await HealthWorkoutImporter.shared.importRecent(in: context.container)

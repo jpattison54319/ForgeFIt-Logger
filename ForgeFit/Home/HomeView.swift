@@ -1,3 +1,5 @@
+import Combine
+import CoreData
 import ForgeCore
 import ForgeData
 import SwiftData
@@ -8,6 +10,12 @@ import UniformTypeIdentifiers
 /// signal that most reduces "what should I do today?" cognitive load), then
 /// this week's training at a glance, quick starts, and recent activity.
 struct HomeView: View {
+    private typealias SuggestedRoutine = (
+        routine: RoutineModel,
+        reason: String,
+        alternatingWith: String?
+    )
+
     @Environment(\.tabRootRequestID) private var tabRootRequestID
     @Environment(\.modelContext) private var modelContext
     @Environment(AppState.self) private var appState
@@ -15,7 +23,6 @@ struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var healthMetrics = HealthMetricsStore.shared
-    @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var navigationPath = NavigationPath()
     @State private var showSettings = false
     // Coach surfaces remain implemented and testable, but are intentionally
@@ -76,6 +83,7 @@ struct HomeView: View {
     let routines: [RoutineModel]
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
+    let isRenderActive: Bool
 
     // Recovery reports are full-history passes — memoized so the always-alive
     // tab doesn't recompute them on every unrelated re-render.
@@ -98,11 +106,19 @@ struct HomeView: View {
     @State private var checkinCommitTask: Task<Void, Never>?
     @State private var pendingCheckinID = UUID()
     @State private var dashboardAnalytics: HomeAnalyticsResult?
-    @State private var dashboardAnalyticsKey: String?
+    @State private var dashboardAnalyticsKey: HomePerformanceRevision.AnalyticsKey?
     @State private var dashboardIsComputing = false
     @State private var dashboardMaintenanceTask: Task<Void, Never>?
-    @State private var targetRecoveryMemo = Memo<String, RoutineDoseContext>()
-    @State private var weekMemo = Memo<Int, HomeWeekMetrics.Summary>()
+    @State private var targetRecoveryMemo = Memo<HomePerformanceRevision.CoachDoseKey, RoutineDoseContext>()
+    @State private var weekMemo = Memo<HomePerformanceRevision.WeekKey, HomeWeekMetrics.Summary>()
+    @State private var weekDaysMemo = Memo<HomePerformanceRevision.WeekKey, [TrainingWeekSupport.Day]>()
+    @State private var suggestionMemo = Memo<HomePerformanceRevision.SuggestionKey, SuggestedRoutine?>()
+    @State private var quickStartMemo = Memo<HomePerformanceRevision.QuickStartKey, [HomeQuickStartAction]>()
+    @State private var renderRevisionController = RenderPerformanceRevisionController()
+
+    private var renderRevisions: RenderPerformanceRevisions {
+        renderRevisionController.revisions(forActiveSurface: isRenderActive)
+    }
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
     private var todayCheckin: DailyCheckinModel? {
@@ -125,20 +141,28 @@ struct HomeView: View {
         trendRecovery: nil
     ).report()
 
-    private var analyticsRequestKey: String {
-        "\(AnalyticsFingerprint.withHealth(workouts))|"
-            + "\(healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0)|"
-            + "\(healthMetrics.metricsRevision)|"
-            + todayCheckinTags.joined(separator: ",")
+    private var analyticsRequestKey: HomePerformanceRevision.AnalyticsKey {
+        HomePerformanceRevision.AnalyticsKey(
+            historyRevision: renderRevisions.historyAnalytics,
+            exerciseRevision: renderRevisions.exerciseCatalog,
+            workoutCount: workouts.count,
+            exerciseCount: exercises.count,
+            healthRefresh: healthMetrics.lastRefreshed?.timeIntervalSinceReferenceDate ?? 0,
+            healthMetricsRevision: healthMetrics.metricsRevision,
+            checkinTags: todayCheckinTags.joined(separator: ","),
+            day: Calendar.current.startOfDay(for: .now)
+        )
     }
 
-    private var pausesForLiveWorkout: Bool {
-        performanceGate.isLiveWorkoutActive
-            || workouts.contains { $0.endedAt == nil && $0.deletedAt == nil }
+    private var pausesForInactiveSurface: Bool {
+        !isRenderActive
     }
 
-    private var analyticsTaskKey: String {
-        "\(analyticsRequestKey)|live:\(pausesForLiveWorkout)"
+    private var analyticsTaskKey: HomePerformanceRevision.AnalyticsTaskKey {
+        HomePerformanceRevision.AnalyticsTaskKey(
+            request: analyticsRequestKey,
+            liveWorkoutActive: pausesForInactiveSurface
+        )
     }
 
     private var todayAnalytics: HomeAnalyticsResult? {
@@ -176,7 +200,13 @@ struct HomeView: View {
     }
 
     private var recentCompleted: [WorkoutModel] {
-        workouts.filter { $0.endedAt != nil && $0.deletedAt == nil }.prefix(4).map { $0 }
+        var recent: [WorkoutModel] = []
+        recent.reserveCapacity(4)
+        for workout in workouts where workout.endedAt != nil && workout.deletedAt == nil {
+            recent.append(workout)
+            if recent.count == 4 { break }
+        }
+        return recent
     }
 
     private var activeExperiment: ExperimentModel? {
@@ -273,12 +303,14 @@ struct HomeView: View {
             readinessCoverage: report.displayScore == nil ? nil : report.dataCoverage)
     }
 
-    private func refreshDashboardAnalytics(for key: String) async {
+    private func refreshDashboardAnalytics(
+        for key: HomePerformanceRevision.AnalyticsKey
+    ) async {
         // Before the first Health query, a workouts-only strain value can look
         // real and overwrite today's valid cache. Keep the same launch gate,
         // but do no score work on MainActor while waiting.
         guard healthMetrics.lastRefreshed != nil,
-              !pausesForLiveWorkout else { return }
+              !pausesForInactiveSurface else { return }
 
         dashboardMaintenanceTask?.cancel()
         dashboardMaintenanceTask = nil
@@ -301,7 +333,7 @@ struct HomeView: View {
         do {
             let result = try await worker.calculateCurrent(input)
             guard !Task.isCancelled,
-                  !pausesForLiveWorkout,
+                  !pausesForInactiveSurface,
                   key == analyticsRequestKey else { return }
 
             dashboardAnalytics = result
@@ -330,7 +362,7 @@ struct HomeView: View {
         worker: HomeAnalyticsWorker,
         input: HomeAnalyticsInput
     ) {
-        guard !pausesForLiveWorkout else { return }
+        guard !pausesForInactiveSurface else { return }
         let snapshotStore = RecoverySnapshotStore.shared
         let backfillEligible = workouts.contains {
             $0.endedAt != nil && $0.deletedAt == nil
@@ -345,7 +377,7 @@ struct HomeView: View {
             do {
                 if shouldBackfill {
                     let snapshots = try await worker.calculateBackfill(input)
-                    guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+                    guard !Task.isCancelled, !pausesForInactiveSurface else { return }
                     snapshotStore.mergeBackfill(snapshots)
                 }
                 if !bodyweight.isEmpty {
@@ -355,7 +387,7 @@ struct HomeView: View {
                 // Maintenance is retryable on the next refresh. Visible scores
                 // have already published and remain fully interactive.
             }
-            guard !Task.isCancelled, !pausesForLiveWorkout else { return }
+            guard !Task.isCancelled, !pausesForInactiveSurface else { return }
             dashboardMaintenanceTask = nil
         }
     }
@@ -385,19 +417,39 @@ struct HomeView: View {
     /// What the app thinks you'll want to train next — see
     /// `NextRoutineSuggestion` for the drilldown logic (microcycle → mesocycle
     /// → best guess).
-    private var suggestion: (routine: RoutineModel, reason: String, alternatingWith: String?)? {
-        guard let result = NextRoutineSuggestion.suggest(
-            routines: routines,
-            completedWorkouts: workouts,
-            alternations: alternations,
-            activeMicrocycleFolderID: UUID(uuidString: activeMicrocycleFolderRaw),
-            activeMesocycleFolderID: UUID(uuidString: activeMesocycleFolderRaw),
-            mesocycleSubtree: mesocycleSubtree(rootID:)
-        ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
-        return (routine, result.reason, result.alternatingWith)
+    private var suggestion: SuggestedRoutine? {
+        if !isRenderActive, let cached = suggestionMemo.cachedValue { return cached }
+        let now = Date()
+        let key = HomePerformanceRevision.suggestion(
+            persistenceRevision: renderRevisions.homeSuggestion,
+            routineCount: routines.count,
+            workoutCount: workouts.count,
+            alternationCount: alternations.count,
+            folderCount: allFolders.count,
+            activeMicrocycle: activeMicrocycleFolderRaw,
+            activeMesocycle: activeMesocycleFolderRaw,
+            now: now
+        )
+        return suggestionMemo(key) {
+            guard let result = NextRoutineSuggestion.suggest(
+                routines: routines,
+                completedWorkouts: workouts,
+                alternations: alternations,
+                activeMicrocycleFolderID: UUID(uuidString: activeMicrocycleFolderRaw),
+                activeMesocycleFolderID: UUID(uuidString: activeMesocycleFolderRaw),
+                mesocycleSubtree: mesocycleSubtree(rootID:),
+                now: now
+            ), let routine = routines.first(where: { $0.id == result.routineID }) else { return nil }
+            return (routine, result.reason, result.alternatingWith)
+        }
     }
 
     var body: some View {
+        let recentCompleted = self.recentCompleted
+        let exerciseCatalogRevision = renderRevisions.exerciseCatalog
+        // Resolve the semantic key and recommendation once for this render.
+        // Child builders and sheet closures reuse this immutable projection.
+        let suggestion = self.suggestion
         NavigationStack(path: $navigationPath) {
             ScreenScaffold(
                 greeting,
@@ -408,14 +460,14 @@ struct HomeView: View {
                         .accessibilityIdentifier("home-calendar")
                 }
             ) {
-                VStack(alignment: .leading, spacing: Space.lg) {
+                LazyVStack(alignment: .leading, spacing: Space.lg) {
                     // Gated with the coach dose review it exists to launch:
                     // the card's whole content is "a lighter first session is
                     // the fastest way back" plus a button that starts one. With
                     // no modified dose to offer there is nothing left to say
                     // that Up next doesn't already say.
                     if FeatureFlags.coachDoseReview, welcomeBackGapDays >= 7, !trainedToday {
-                        welcomeBackCard
+                        welcomeBackCard(suggestion: suggestion)
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     }
 
@@ -424,7 +476,7 @@ struct HomeView: View {
                     // training leads and the dashboard collapses to one row
                     // that says what's missing and offers to fix it.
                     if !showsRecoveryDashboard {
-                        trainingSurface
+                        trainingSurface(suggestion: suggestion)
                         connectHealthPrompt
                             .dismissesQuickStartEdit(isEditing: quickStartEditing, dismiss: dismissQuickStartEdit)
                     } else {
@@ -527,7 +579,7 @@ struct HomeView: View {
                     }
 
                     if showsRecoveryDashboard {
-                        trainingSurface
+                        trainingSurface(suggestion: suggestion)
                     }
 
                     if !recentCompleted.isEmpty {
@@ -547,7 +599,11 @@ struct HomeView: View {
                         }
                         ForEach(recentCompleted) { workout in
                             NavigationLink(value: workout) {
-                                WorkoutFeedRow(workout: workout, analytics: analytics)
+                                WorkoutFeedRow(
+                                    workout: workout,
+                                    analytics: analytics,
+                                    exerciseCatalogRevision: exerciseCatalogRevision
+                                )
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("home-workout-\(workout.title ?? "Workout")")
@@ -559,7 +615,10 @@ struct HomeView: View {
                 // Crossfades the suggestion ↔ explore-prompt swap (each carries
                 // `.transition(.opacity)`); scoped by key so it only fires when
                 // the branch actually flips.
-                .animation(Motion.stateChange, value: suggestion == nil)
+                .animation(
+                    Motion.stateChange,
+                    value: FeatureFlags.homeSuggestedWorkout ? suggestion?.routine.id : nil
+                )
                 .background {
                     if quickStartEditing {
                         Color.black.opacity(0.001)
@@ -589,6 +648,7 @@ struct HomeView: View {
                     routine: routine,
                     exercises: exercises,
                     setupNotes: setupNotes,
+                    history: workouts,
                     isNew: routine.id == newlyCreatedRoutineID,
                     onNewRoutineDiscarded: {
                         removeQuickStartAction(.routine(routine.id))
@@ -608,7 +668,7 @@ struct HomeView: View {
             // every history-wide score pass then runs on HomeAnalyticsWorker's
             // detached context. SwiftUI receives only the finished projection.
             .task(id: analyticsTaskKey) {
-                guard !pausesForLiveWorkout else {
+                guard !pausesForInactiveSurface else {
                     dashboardMaintenanceTask?.cancel()
                     dashboardMaintenanceTask = nil
                     dashboardIsComputing = false
@@ -630,7 +690,9 @@ struct HomeView: View {
                     suggestion: suggestion.map { (routine: $0.routine, reason: $0.reason) }
                 )
             }
-            .sheet(isPresented: $showCoachChat) { coachChatSheet }
+            .sheet(isPresented: $showCoachChat) {
+                coachChatSheet(suggestion: suggestion)
+            }
             .sheet(item: $reviewRequest) { request in
                 CoachAdjustmentReviewView(
                     plan: request.plan,
@@ -713,6 +775,35 @@ struct HomeView: View {
             }
         }
         .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: ModelContext.didSave,
+                object: modelContext
+            )
+        ) { notification in
+            let invalidation = RenderPerformanceInvalidationPolicy.invalidation(
+                from: notification,
+                matching: modelContext.container
+            )
+            renderRevisionController.receive(
+                invalidation,
+                source: .mainContextSave,
+                surfaceIsActive: isRenderActive
+            )
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            renderRevisionController.receive(
+                RenderPerformanceInvalidationPolicy.remoteStoreInvalidation,
+                source: .remoteStoreChange,
+                surfaceIsActive: isRenderActive
+            )
+        }
+        .onChange(of: isRenderActive, initial: true) { _, isActive in
+            renderRevisionController.setSurfaceActive(isActive)
+        }
         .interactiveBackSwipeEnabled()
     }
 
@@ -814,7 +905,7 @@ struct HomeView: View {
     /// Rendered near the top when the recovery dashboard is suppressed, in its
     /// usual place below the week card otherwise.
     @ViewBuilder
-    private var trainingSurface: some View {
+    private func trainingSurface(suggestion: SuggestedRoutine?) -> some View {
         SectionHeader("Quick start") {
             quickStartEditButton
         }
@@ -978,19 +1069,26 @@ struct HomeView: View {
     }
 
     private var weekCard: some View {
-        let now = Date()
-        let week = weekMemo(HomeWeekMetrics.fingerprint(
-            workouts: workouts,
-            exercises: exercises,
-            containing: now
-        )) {
-            HomeWeekMetrics.summary(
-                workouts: workouts,
-                exercises: exercises,
-                containing: now
-            )
-        }
-        let days = TrainingWeekSupport.days(workouts: workouts, containing: now)
+        let now = Date.now
+        let key = HomePerformanceRevision.week(
+            historyRevision: renderRevisions.historyAnalytics,
+            exerciseRevision: renderRevisions.exerciseCatalog,
+            workoutCount: workouts.count,
+            exerciseCount: exercises.count,
+            now: now
+        )
+        let week = (!isRenderActive ? weekMemo.cachedValue : nil)
+            ?? weekMemo(key) {
+                HomeWeekMetrics.summary(
+                    workouts: workouts,
+                    exercises: exercises,
+                    containing: now
+                )
+            }
+        let days = (!isRenderActive ? weekDaysMemo.cachedValue : nil)
+            ?? weekDaysMemo(key) {
+                TrainingWeekSupport.days(workouts: workouts, containing: now)
+            }
         return Card {
             VStack(alignment: .leading, spacing: Space.lg) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.md) {
@@ -1037,7 +1135,7 @@ struct HomeView: View {
     /// mistake is treating their return like a fresh start or shaming the
     /// gap. One card: acknowledge, offer a deliberately lighter first
     /// session (coach's reduce-volume dose), get out of the way.
-    private var welcomeBackCard: some View {
+    private func welcomeBackCard(suggestion: SuggestedRoutine?) -> some View {
         Card(fill: theme.accentSoft) {
             VStack(alignment: .leading, spacing: Space.md) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -1179,7 +1277,8 @@ struct HomeView: View {
     /// daily coach dose so advice can still turn into a one-tap start — the
     /// saved routine is never modified (`CoachAdjustments.apply` mutates only
     /// the freshly started workout).
-    @ViewBuilder private var coachChatSheet: some View {
+    @ViewBuilder
+    private func coachChatSheet(suggestion: SuggestedRoutine?) -> some View {
         let context = AICoachContext.build(
             workouts: workouts, routines: routines, exercises: exercises,
             recovery: recovery,
@@ -1231,14 +1330,21 @@ struct HomeView: View {
         for routine: RoutineModel
     ) -> (plan: CoachAdjustments.Plan, sourceLabel: String, isLocalized: Bool, affectedMuscles: String)? {
         guard FeatureFlags.coachDoseReview else { return nil }
-        let doseContext = targetRecoveryMemo("\(AnalyticsFingerprint.withHealth(workouts))|\(todayCheckinTags.joined(separator: ","))|\(dashboardAnalyticsKey ?? "pending")|\(routine.id)|\(routine.updatedAt.timeIntervalSince1970)") {
-            RoutineDoseContext.make(
-                routine: routine,
-                workouts: workouts,
-                exercises: exercises,
-                recovery: recovery
-            )
-        }
+        let key = HomePerformanceRevision.CoachDoseKey(
+            request: analyticsRequestKey,
+            renderedRequest: dashboardAnalyticsKey,
+            routineID: routine.id,
+            routineUpdatedAt: routine.updatedAt
+        )
+        let doseContext = (!isRenderActive ? targetRecoveryMemo.cachedValue : nil)
+            ?? targetRecoveryMemo(key) {
+                RoutineDoseContext.make(
+                    routine: routine,
+                    workouts: workouts,
+                    exercises: exercises,
+                    recovery: recovery
+                )
+            }
         let globalCoachPlan = CoachAdjustments.plan(for: recovery.action)
         let localCoachPlan = recovery.action == .trainAsPlanned
             ? CoachAdjustments.localizedPlan(for: doseContext)
@@ -1447,13 +1553,24 @@ struct HomeView: View {
         .accessibilityIdentifier("home-quick-start-edit")
     }
 
+    private var quickStartKey: HomePerformanceRevision.QuickStartKey {
+        HomePerformanceRevision.quickStart(
+            json: quickStartActionsJSON,
+            persistenceRevision: renderRevisions.homeQuickStart,
+            routineCount: routines.count
+        )
+    }
+
     private var quickStartActions: [HomeQuickStartAction] {
-        let actions = HomeQuickStartAction.resolvedList(from: quickStartActionsJSON)
-        return actions.filter { action in
-            switch action.kind {
-            case .cardio: true
-            case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }
-            case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
+        if !isRenderActive, let cached = quickStartMemo.cachedValue { return cached }
+        return quickStartMemo(quickStartKey) {
+            let actions = HomeQuickStartAction.resolvedList(from: quickStartActionsJSON)
+            return actions.filter { action in
+                switch action.kind {
+                case .cardio: true
+                case .routine(let id): routines.contains { $0.id == id && $0.deletedAt == nil && $0.archivedAt == nil }
+                case .yoga(let slug): YogaFlowCatalog.flow(forSlug: slug) != nil
+                }
             }
         }
     }
@@ -2022,13 +2139,43 @@ struct WorkoutFeedRow: View {
     @Environment(\.theme) private var theme
     @Environment(\.scenePhase) private var scenePhase
     @State private var finalizationClockRevision = 0
+    @State private var presentationMemo = Memo<Int, FeedPresentation>()
     let workout: WorkoutModel
     let analytics: TrainingAnalytics
+    let exerciseCatalogRevision: Int
+
+    init(
+        workout: WorkoutModel,
+        analytics: TrainingAnalytics,
+        exerciseCatalogRevision: Int
+    ) {
+        self.workout = workout
+        self.analytics = analytics
+        self.exerciseCatalogRevision = exerciseCatalogRevision
+    }
+
+    private struct FeedPresentation {
+        let systemImage: String
+        let facts: [WorkoutOverviewPresentation.Fact]
+    }
 
     var body: some View {
         let _ = finalizationClockRevision
-        let s = analytics.summary(for: workout)
-        let shape = WorkoutShareShape.of(workout: workout, summary: s)
+        let presentation = presentationMemo(HomePerformanceRevision.workoutFeed(
+            workout: workout,
+            exerciseCatalogRevision: exerciseCatalogRevision,
+            weightUnit: Fmt.unit,
+            distanceUnit: Fmt.distanceUnit
+        )) {
+            let summary = analytics.summary(for: workout)
+            let shape = WorkoutShareShape.of(workout: workout, summary: summary)
+            let facts = WorkoutOverviewPresentation.make(
+                workout: workout,
+                exercises: analytics.exercises,
+                durationSeconds: summary.durationSeconds
+            ).facts
+            return FeedPresentation(systemImage: shape.systemImage, facts: facts)
+        }
         let isFinalizing = WorkoutFinalizationPresentation.shouldShowOnSavedCard(
             for: workout,
             now: Date(),
@@ -2039,11 +2186,7 @@ struct WorkoutFeedRow: View {
         let finalizationExpiration = isFinalizing
             ? WorkoutFinalizationPresentation.savedCardExpiration(endedAt: workout.endedAt)
             : nil
-        let facts = WorkoutOverviewPresentation.make(
-            workout: workout,
-            exercises: analytics.exercises,
-            durationSeconds: s.durationSeconds
-        ).facts.map { fact in
+        let facts = presentation.facts.map { fact in
             isFinalizing && fact.label == "Status"
                 ? WorkoutOverviewPresentation.Fact(label: fact.label, value: "Finalizing")
                 : fact
@@ -2051,7 +2194,7 @@ struct WorkoutFeedRow: View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack {
-                    Image(systemName: shape.systemImage)
+                    Image(systemName: presentation.systemImage)
                         .foregroundStyle(theme.accentForeground)
                         .frame(width: 34, height: 34)
                         .background(theme.surfaceElevated).clipShape(Circle())

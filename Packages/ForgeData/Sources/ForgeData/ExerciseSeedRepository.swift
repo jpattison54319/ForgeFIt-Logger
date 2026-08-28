@@ -10,6 +10,49 @@ public enum ExerciseSeedRepository {
         in context: ModelContext,
         persist: Bool = true
     ) throws {
+        try stageGlobalLibrary(snapshot, in: context)
+
+        if persist, context.hasChanges {
+            try context.save()
+        }
+    }
+
+    /// Launch-safe variant of ``seedGlobalLibrary(_:in:persist:)``. A catalog
+    /// version upgrade can encounter the user's full exercise library, so even
+    /// this small built-in snapshot must not fetch or reconcile on MainActor.
+    /// The worker owns a fresh context; only the immutable snapshot and the
+    /// container cross the isolation boundary.
+    public static func seedGlobalLibraryCooperatively(
+        _ snapshot: ExerciseLibrarySnapshot = GlobalExerciseLibrary.snapshot,
+        in context: ModelContext
+    ) async throws {
+        try Task.checkCancellation()
+        let container = context.container
+        let task = Task.detached(priority: .utility) {
+            let transaction = ModelContext(container)
+            transaction.autosaveEnabled = false
+            do {
+                try Task.checkCancellation()
+                try stageGlobalLibrary(snapshot, in: transaction)
+                try Task.checkCancellation()
+                if transaction.hasChanges {
+                    try transaction.save()
+                }
+            } catch {
+                transaction.rollback()
+                throw error
+            }
+        }
+        try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    private nonisolated static func stageGlobalLibrary(
+        _ snapshot: ExerciseLibrarySnapshot,
+        in context: ModelContext
+    ) throws {
         let existingExercises = Dictionary(
             try context.fetch(FetchDescriptor<ExerciseLibraryModel>()).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -20,6 +63,7 @@ public enum ExerciseSeedRepository {
         )
 
         for exercise in snapshot.exercises {
+            try Task.checkCancellation()
             let existing = existingExercises[exercise.id]
             let model = existing ?? ExerciseLibraryModel(id: exercise.id, name: exercise.name)
             var modelChanged = false
@@ -69,6 +113,7 @@ public enum ExerciseSeedRepository {
         }
 
         for alias in snapshot.aliases {
+            try Task.checkCancellation()
             let existing = existingAliases[alias.id]
             let model = existing ?? ExerciseAliasModel(id: alias.id, exerciseID: alias.exerciseID, alias: alias.alias)
             if existing == nil {
@@ -79,13 +124,9 @@ public enum ExerciseSeedRepository {
             if model.ownerID != alias.ownerID { model.ownerID = alias.ownerID }
             if model.alias != alias.alias { model.alias = alias.alias }
         }
-
-        if persist, context.hasChanges {
-            try context.save()
-        }
     }
 
-    private static func normalizedCardioMuscles(_ muscles: [String]) -> [String] {
+    private nonisolated static func normalizedCardioMuscles(_ muscles: [String]) -> [String] {
         let normalized = muscles.map { $0 == "cardiorespiratory" ? "cardiovascular" : $0 }
         return ["cardiovascular"] + normalized.filter { $0 != "cardiovascular" }
     }

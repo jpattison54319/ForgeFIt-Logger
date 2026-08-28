@@ -132,6 +132,52 @@ struct YogaPoseCatalogTests {
         _ = container
     }
 
+    @Test func cooperativeSeedAndPruneIsDurableAndIdempotent() async throws {
+        let (container, callerContext) = try TestStore.make()
+        callerContext.autosaveEnabled = false
+
+        let setupContext = ModelContext(container)
+        setupContext.autosaveEnabled = false
+        let deprecatedSlug = "cooperative-deprecated-pose"
+        let deprecatedID = YogaPoseCatalog.id(forSlug: deprecatedSlug)
+        let deprecated = ExerciseLibraryModel(id: deprecatedID, name: "Deprecated Pose")
+        deprecated.mediaSlug = "yoga/\(deprecatedSlug)"
+        setupContext.insert(deprecated)
+        setupContext.insert(ExerciseAliasModel(
+            id: ExerciseCatalog.deterministicID(for: "yoga-alias/\(deprecatedSlug)"),
+            exerciseID: deprecatedID,
+            alias: "Deprecated Alias"
+        ))
+        try setupContext.save()
+
+        try await YogaPoseCatalog.seedAndPruneCooperatively(into: callerContext)
+
+        let firstVerification = ModelContext(container)
+        let firstRows = try firstVerification.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let firstAliases = try firstVerification.fetch(FetchDescriptor<ExerciseAliasModel>())
+        #expect(firstRows.count == YogaPoseCatalog.load().count + 1)
+        #expect(firstAliases.count == YogaPoseCatalog.load().count)
+        #expect(!firstRows.contains { $0.id == deprecatedID })
+        #expect(!firstAliases.contains { $0.exerciseID == deprecatedID })
+        #expect(!callerContext.hasChanges)
+        let firstUpdatedAt = Dictionary(
+            firstRows.map { ($0.id, $0.updatedAt) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        try await YogaPoseCatalog.seedAndPruneCooperatively(into: callerContext)
+
+        let secondVerification = ModelContext(container)
+        let secondRows = try secondVerification.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let secondAliases = try secondVerification.fetch(FetchDescriptor<ExerciseAliasModel>())
+        #expect(secondRows.count == firstRows.count)
+        #expect(secondAliases.count == firstAliases.count)
+        for row in secondRows {
+            #expect(row.updatedAt == firstUpdatedAt[row.id], "\(row.name) was dirtied by a no-op reseed")
+        }
+        #expect(!callerContext.hasChanges)
+    }
+
     @Test func failedSeedSavePropagatesAndLeavesNoCatalogRows() throws {
         enum ExpectedFailure: Error { case save }
 

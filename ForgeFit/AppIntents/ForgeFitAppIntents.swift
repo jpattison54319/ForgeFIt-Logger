@@ -104,13 +104,68 @@ enum ForgeFitIntentCatalog {
         yogaFlows: [YogaFlowModel],
         conditioningPresetRecords: [IntervalPresetModel]
     ) -> [WorkoutChoiceRecord] {
+        let availableExerciseIDs = Set(
+            exercises.lazy.filter { $0.deletedAt == nil }.map(\.id)
+        )
+        let snapshot = WorkoutIntentCatalogSnapshot(
+            revision: 0,
+            routines: RoutineDeduplicator.canonicalRoutines(routines).map {
+                .init(
+                    id: $0.id,
+                    name: $0.name,
+                    deletedAt: $0.deletedAt,
+                    archivedAt: $0.archivedAt,
+                    isAvailableForWorkoutStart: WorkoutIntentAvailability.routine(
+                        $0,
+                        availableExerciseIDs: availableExerciseIDs
+                    )
+                )
+            },
+            exercises: exercises.map {
+                .init(
+                    id: $0.id,
+                    name: $0.name,
+                    deletedAt: $0.deletedAt,
+                    primaryMuscle: $0.primaryMuscles.first,
+                    equipment: $0.equipment
+                )
+            },
+            yogaFlows: yogaFlows.map {
+                .init(
+                    id: $0.id,
+                    name: $0.name,
+                    deletedAt: $0.deletedAt,
+                    hasSteps: $0.plan?.hasSteps == true
+                )
+            },
+            conditioningPresetRecords: conditioningPresetRecords.map {
+                .init(
+                    id: $0.id,
+                    name: $0.name,
+                    planJSON: $0.planJSON,
+                    deletedAt: $0.deletedAt
+                )
+            },
+            availableExerciseIDs: availableExerciseIDs,
+            availableExerciseNames: Set(
+                exercises.lazy
+                    .filter { $0.deletedAt == nil }
+                    .map { $0.name.lowercased() }
+            )
+        )
+        return workoutChoices(snapshot: snapshot)
+    }
+
+    static func workoutChoices(
+        snapshot: WorkoutIntentCatalogSnapshot
+    ) -> [WorkoutChoiceRecord] {
         var records = [
             WorkoutChoiceRecord.nextIntentChoice,
             WorkoutChoiceRecord.emptyIntentChoice,
         ]
 
-        records += RoutineDeduplicator.canonicalRoutines(routines)
-            .filter { $0.isAvailableForWorkoutStart(exercises: exercises) }
+        records += snapshot.routines
+            .filter(\.isAvailableForWorkoutStart)
             .sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
@@ -140,8 +195,8 @@ enum ForgeFitIntentCatalog {
                 systemImageName: $0.style.systemImage
             )
         }
-        records += yogaFlows
-            .filter { $0.deletedAt == nil && $0.plan?.hasSteps == true }
+        records += snapshot.yogaFlows
+            .filter { $0.deletedAt == nil && $0.hasSteps }
             .sorted {
                 $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
@@ -154,12 +209,31 @@ enum ForgeFitIntentCatalog {
                 )
             }
 
-        let visibleBuiltIns = ConditioningPresetStore.visibleBuiltIns(
-            from: conditioningPresetRecords
-        )
+        var savedPresets: [ConditioningPresetSelection] = []
+        var hiddenBuiltInIDs = Set<String>()
+        for record in snapshot.conditioningPresetRecords where record.deletedAt == nil {
+            guard let storedPreset = StoredConditioningPreset.decode(from: record.planJSON) else {
+                continue
+            }
+            switch storedPreset {
+            case .deletedBuiltIn(let id):
+                hiddenBuiltInIDs.insert(id)
+            case .section(let section):
+                let trimmedName = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                savedPresets.append(.saved(
+                    id: record.id,
+                    name: trimmedName.isEmpty ? section.name : trimmedName,
+                    section: section
+                ))
+            }
+        }
+        let visibleBuiltIns = ConditioningPreset.allCases.filter {
+            !hiddenBuiltInIDs.contains($0.id)
+        }
         records += visibleBuiltIns.compactMap { preset in
-            let selection = ConditioningPresetSelection.builtIn(preset)
-            guard selection.resolvedSection(in: exercises) != nil else { return nil }
+            guard preset.movements.allSatisfy({
+                snapshot.availableExerciseNames.contains($0.catalogName.lowercased())
+            }) else { return nil }
             return WorkoutChoiceRecord(
                 id: WorkoutChoiceTarget.conditioningBuiltIn(preset.id).identifier,
                 title: preset.title,
@@ -167,12 +241,13 @@ enum ForgeFitIntentCatalog {
                 systemImageName: "figure.cross.training"
             )
         }
-        records += ConditioningPresetStore.savedPresets(from: conditioningPresetRecords)
+        records += savedPresets
             .compactMap { selection -> WorkoutChoiceRecord? in
                 guard case .saved(let id, let name, let section) = selection else { return nil }
-                let availableIDs = Set(exercises.lazy.filter { $0.deletedAt == nil }.map(\.id))
-                guard !section.movements.isEmpty,
-                      section.movements.allSatisfy({ availableIDs.contains($0.exerciseID) }) else {
+                guard WorkoutIntentAvailability.savedPreset(
+                    section,
+                    availableExerciseIDs: snapshot.availableExerciseIDs
+                ) else {
                     return nil
                 }
                 return WorkoutChoiceRecord(
@@ -661,18 +736,8 @@ enum ForgeFitIntentSurfacePublisher {
         name: "ForgeFit_WorkoutChoices"
     )
 
-    static func publish(
-        routines: [RoutineModel],
-        exercises: [ExerciseLibraryModel],
-        yogaFlows: [YogaFlowModel],
-        conditioningPresetRecords: [IntervalPresetModel]
-    ) async {
-        let choices = ForgeFitIntentCatalog.workoutChoices(
-            routines: routines,
-            exercises: exercises,
-            yogaFlows: yogaFlows,
-            conditioningPresetRecords: conditioningPresetRecords
-        )
+    static func publish(snapshot: WorkoutIntentCatalogSnapshot) async {
+        let choices = ForgeFitIntentCatalog.workoutChoices(snapshot: snapshot)
         WorkoutChoiceCatalogStore.save(choices)
         StartForgeFitWorkoutIntent.invalidateSuggestedWorkouts()
         ForgeFitShortcuts.updateAppShortcutParameters()
@@ -688,16 +753,16 @@ enum ForgeFitIntentSurfacePublisher {
             // unavailable; indexing only improves system discoverability.
         }
 
-        let searchableRoutines = routines
+        let searchableRoutines = snapshot.routines
             .filter { $0.deletedAt == nil && $0.archivedAt == nil }
             .map { ForgeFitRoutineEntity(id: $0.id, name: $0.name) }
-        let searchableExercises = exercises
+        let searchableExercises = snapshot.exercises
             .filter { $0.deletedAt == nil }
             .map {
                 ForgeFitExerciseEntity(
                     id: $0.id,
                     name: $0.name,
-                    detail: [$0.primaryMuscles.first?.capitalized, $0.equipment?.capitalized]
+                    detail: [$0.primaryMuscle?.capitalized, $0.equipment?.capitalized]
                         .compactMap { $0 }
                         .joined(separator: " · ")
                 )

@@ -12,6 +12,8 @@ struct InsightsView: View {
     @Environment(\.theme) private var theme
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    let isRenderActive: Bool
+    let renderID: UUID
     /// Local rollout flag for the Insights Builder (registered in
     /// AppPreferenceKeys.localOnly); defaults ON for the founder's build.
     @AppStorage("insightsBuilderEnabled") private var insightsBuilderEnabled = true
@@ -26,10 +28,12 @@ struct InsightsView: View {
     @State private var recordsMemo = Memo<String, [TrainingAnalytics.ExerciseRecord]>()
     @State private var seriesMemo = Memo<String, [MetricPoint]>()
     @State private var weekMemo = Memo<String, TrainingAnalytics.WeekTotals>()
+    @State private var fingerprintMemo = Memo<UUID, String>()
 
     var body: some View {
         let analytics = TrainingAnalytics(workouts: workouts, exercises: exercises)
-        let fingerprint = AnalyticsFingerprint.of(workouts)
+        let fingerprint = (!isRenderActive ? fingerprintMemo.cachedValue : nil)
+            ?? fingerprintMemo(renderID) { AnalyticsFingerprint.of(workouts) }
         let muscleRows = muscleMemo(fingerprint) { analytics.weeklyMuscleVolume() }
         let records = recordsMemo(fingerprint) { analytics.records() }
 

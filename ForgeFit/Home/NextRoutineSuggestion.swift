@@ -82,7 +82,9 @@ enum NextRoutineSuggestion {
             if let lastTime = completed.first(where: { workout in
                 workout.routineID.map(next.memberIDs.contains) == true
             })?.startedAt {
-                reason += " · last done \(lastTime.formatted(.relative(presentation: .named)))"
+                let formatter = RelativeDateTimeFormatter()
+                formatter.dateTimeStyle = .named
+                reason += " · last done \(formatter.localizedString(for: lastTime, relativeTo: now))"
             }
             return Result(
                 routineID: next.routine.id,

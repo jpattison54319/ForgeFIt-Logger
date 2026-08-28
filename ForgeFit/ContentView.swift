@@ -26,21 +26,26 @@ final class AppState {
     var startRequestID = 0
     var pendingWorkoutStart: (() -> Void)?
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) {
         // UI automation can request any app tab, including destinations that
         // are not user-selectable as the persisted default launch tab. Apply
         // that request before the first render so the automation barrier and
         // the eventual seeded screen agree on the same route.
-        if let raw = ForgeFitLaunchArguments.value(for: "initialTab")
-            ?? defaults.string(forKey: "initialTab"),
+        if let raw = ForgeFitLaunchArguments.value(for: "initialTab", arguments: arguments),
            let requestedTab = AppTab(rawValue: raw) {
             selectedTab = requestedTab
-        } else if ProcessInfo.processInfo.arguments.contains("--reset-store") {
+        } else if arguments.contains("--reset-store") {
             // A reset is an explicit automation/debug fixture boundary. Do
             // not carry a tab selected by the previous scenario into the
             // newly seeded account; a caller can still override this with
             // -initialTab when a journey starts deeper in the shell.
             selectedTab = .home
+        } else if let raw = defaults.string(forKey: "initialTab"),
+                  let requestedTab = AppTab(rawValue: raw) {
+            selectedTab = requestedTab
         } else {
             selectedTab = DefaultLaunchTab.load(from: defaults).appTab
         }
@@ -127,12 +132,201 @@ enum LiveWorkoutLifecyclePolicy {
     }
 }
 
+/// Pure scheduling gate for migrations that are safe to run after the first
+/// interactive frame but must pause for a live workout or backgrounding.
+enum DeferredLaunchMaintenancePolicy {
+    static func shouldSchedule(
+        isPending: Bool,
+        launchTasksFinished: Bool,
+        allowsNonWorkoutWork: Bool,
+        sceneIsActive: Bool,
+        hasScheduledTask: Bool
+    ) -> Bool {
+        isPending
+            && launchTasksFinished
+            && allowsNonWorkoutWork
+            && sceneIsActive
+            && !hasScheduledTask
+    }
+
+    /// Catalog-dependent migrations must never mark themselves complete from
+    /// an empty or partially upgraded exercise library. A pending launch seed
+    /// is therefore a hard dependency: only its successful retry opens the
+    /// maintenance lane. When no seed is pending, the already-versioned
+    /// catalog remains valid input.
+    static func canRunCatalogDependentMaintenance(
+        seedWasPending: Bool,
+        seedSucceeded: Bool
+    ) -> Bool {
+        !seedWasPending || seedSucceeded
+    }
+}
+
+/// Cold-start workout fixtures (and the opt-in auto-start preference) can
+/// create an active row before SwiftUI replaces the automation launch barrier.
+/// Keep presentation as explicit pending state until the real shell and active
+/// scene are both observable; setting a sheet Boolean against the barrier can
+/// otherwise leave only the mini logger bar visible.
+enum LaunchLoggerPresentationPolicy {
+    static func shouldPresent(
+        isPending: Bool,
+        launchTasksFinished: Bool,
+        presentationHostMounted: Bool,
+        sceneIsActive: Bool,
+        onboardingPresented: Bool,
+        hasActiveWorkout: Bool
+    ) -> Bool {
+        isPending
+            && launchTasksFinished
+            && presentationHostMounted
+            && sceneIsActive
+            && !onboardingPresented
+            && hasActiveWorkout
+    }
+
+    /// A reset can deliver removal of the previous active row after a new
+    /// auto-start transaction has already requested presentation. Only the
+    /// workout that owns the pending request may cancel it; an untargeted
+    /// Watch/deep-link request keeps the conservative legacy behavior.
+    static func shouldClearPendingPresentation(
+        pendingWorkoutID: UUID?,
+        removedWorkoutID: UUID?
+    ) -> Bool {
+        pendingWorkoutID == nil || pendingWorkoutID == removedWorkoutID
+    }
+}
+
+/// Resolves the workout that a logger presentation request owns. A targeted
+/// request always goes back to durable state by UUID and never falls through to
+/// an older `@Query` generation left over from a reset or private-context save.
+@MainActor
+enum LaunchLoggerWorkoutResolver {
+    static func resolve(
+        preferredID: UUID?,
+        queryCandidate: WorkoutModel?,
+        in context: ModelContext
+    ) -> WorkoutModel? {
+        if let preferredID {
+            var preferredDescriptor = FetchDescriptor<WorkoutModel>(
+                predicate: #Predicate {
+                    $0.id == preferredID && $0.endedAt == nil && $0.deletedAt == nil
+                }
+            )
+            preferredDescriptor.fetchLimit = 1
+            return try? context.fetch(preferredDescriptor).first
+        }
+        if let queryCandidate { return queryCandidate }
+        var latestDescriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\WorkoutModel.startedAt, order: .reverse)]
+        )
+        latestDescriptor.fetchLimit = 1
+        return try? context.fetch(latestDescriptor).first
+    }
+}
+
 private struct ExperimentWorkoutPrompt: Identifiable {
     var id: UUID { workout.id }
     let experiment: ExperimentModel
     let workout: WorkoutModel
     let trackers: [ExperimentTrackerModel]
     let entries: [ExperimentEntryModel]
+}
+
+/// Shallow semantic key for completed/deleted workout changes that can affect
+/// tracked-microcycle lifecycle. This deliberately lives outside ContentView's
+/// query graph: the observer below owns the terminal-history fetch and only
+/// wakes the shell when one of the fields used by lifecycle resolution changes.
+@MainActor
+enum TerminalWorkoutLifecycleRevision {
+    static func make(_ workouts: [WorkoutModel]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(workouts.count)
+        for workout in workouts {
+            hasher.combine(workout.id)
+            hasher.combine(workout.routineID)
+            hasher.combine(workout.startedAt)
+            hasher.combine(workout.endedAt)
+            hasher.combine(workout.updatedAt)
+            hasher.combine(workout.deletedAt)
+        }
+        return hasher.finalize()
+    }
+}
+
+/// Keeps terminal-history invalidation out of ContentView. The initial value is
+/// only recorded because launch already performs the first reconcile; later
+/// semantic changes emit one cheap token to the shell.
+private struct TerminalWorkoutLifecycleObserver: View, Equatable {
+    @Query(
+        filter: #Predicate<WorkoutModel> { $0.endedAt != nil || $0.deletedAt != nil },
+        sort: \WorkoutModel.updatedAt,
+        order: .reverse
+    ) private var terminalWorkouts: [WorkoutModel]
+    @State private var observedInitialRevision = false
+    let onChange: @MainActor () -> Void
+
+    private var revision: Int {
+        TerminalWorkoutLifecycleRevision.make(terminalWorkouts)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .task(id: revision) {
+                guard observedInitialRevision else {
+                    observedInitialRevision = true
+                    return
+                }
+                onChange()
+            }
+    }
+
+    static func == (_: Self, _: Self) -> Bool { true }
+}
+
+/// Retains a visited tab's SwiftUI identity while preventing parent query
+/// publications from reinstalling new inputs into an invisible tab. Dynamic
+/// properties owned by descendants can still publish independently, so each
+/// expensive resident screen also receives `isRenderActive` and coalesces its
+/// own persistence-driven projections until it is visible again.
+private struct ResidentTabSurface<Content: View>: View, Equatable {
+    let tab: AppTab
+    let selectedTab: AppTab
+    let isSuspended: Bool
+    let activeRenderID: UUID
+    let content: () -> Content
+
+    init(
+        tab: AppTab,
+        selectedTab: AppTab,
+        isSuspended: Bool,
+        activeRenderID: UUID,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.tab = tab
+        self.selectedTab = selectedTab
+        self.isSuspended = isSuspended
+        self.activeRenderID = activeRenderID
+        self.content = content
+    }
+
+    private var isActivelyRendering: Bool {
+        selectedTab == tab && !isSuspended
+    }
+
+    var body: some View { content() }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.tab == rhs.tab else { return false }
+        // Hidden/suspended surfaces keep their existing tree and @State even
+        // when the root queries publish newer arrays behind them.
+        if !lhs.isActivelyRendering, !rhs.isActivelyRendering { return true }
+        return lhs.selectedTab == rhs.selectedTab
+            && lhs.isSuspended == rhs.isSuspended
+            && lhs.activeRenderID == rhs.activeRenderID
+    }
 }
 
 struct ContentView: View {
@@ -147,8 +341,8 @@ struct ContentView: View {
     @Query(sort: \RoutineModel.position) private var routines: [RoutineModel]
     @Query(sort: \RoutineFolderModel.position) private var routineFolders: [RoutineFolderModel]
     @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse) private var routineAlternations: [RoutineAlternationModel]
-    @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var workouts: [WorkoutModel]
     @Query(filter: #Predicate<WorkoutModel> { $0.endedAt == nil && $0.deletedAt == nil }, sort: \WorkoutModel.startedAt, order: .reverse) private var activeWorkouts: [WorkoutModel]
+    @Query(filter: #Predicate<WorkoutModel> { $0.endedAt != nil && $0.deletedAt == nil }, sort: \WorkoutModel.startedAt, order: .reverse) private var completedWorkouts: [WorkoutModel]
     @Query(sort: \DailyCheckinModel.updatedAt, order: .reverse) private var checkins: [DailyCheckinModel]
     @Query(sort: \ExperimentModel.startedAt, order: .reverse) private var experiments: [ExperimentModel]
     @Query(sort: \MicrocycleTrackingModel.updatedAt, order: .reverse) private var microcycleTrackings: [MicrocycleTrackingModel]
@@ -158,9 +352,6 @@ struct ContentView: View {
 
     @State private var appState = AppState()
     @State private var social = SocialService.make()
-    @State private var restTimer = RestTimerController.shared
-    @State private var intervalHub = IntervalRunnerHub.shared
-    @State private var yogaHub = YogaFlowRunnerHub.shared
     @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showReplaceWorkoutConfirm = false
     @State private var workoutPendingDiscard: WorkoutModel?
@@ -182,6 +373,7 @@ struct ContentView: View {
     /// half-initialized shell (see `replayPendingDeepLinks`).
     @State private var pendingDeepLinks = PendingDeepLinkQueue()
     @State private var workoutCountReactionTask: Task<Void, Never>?
+    @State private var terminalWorkoutLifecycleRevision = 0
     @State private var readinessStampTask: Task<Void, Never>?
     @State private var liveSurfaceUpdateTask: Task<Void, Never>?
     @State private var structuralLiveSurfaceUpdateTask: Task<Void, Never>?
@@ -190,6 +382,7 @@ struct ContentView: View {
     @State private var pendingPlanMaintenanceVersionStamp = false
     @State private var foregroundMaintenanceTask: Task<Void, Never>?
     @State private var deferredLaunchMaintenanceTask: Task<Void, Never>?
+    @State private var pendingDeferredLaunchSeed = false
     @State private var pendingDeferredLaunchMaintenance = false
     @State private var experimentNotificationScheduleTask: Task<Void, Never>?
     @State private var experimentEndTask: Task<Void, Never>?
@@ -203,6 +396,10 @@ struct ContentView: View {
     @State private var lastLiveActivityHRPushAt = Date.distantPast
     @State private var didStartLaunchTasks = false
     @State private var didFinishLaunchTasks = false
+    @State private var readyShellPresentationHostMounted = false
+    @State private var pendingLaunchLoggerPresentation = false
+    @State private var pendingLaunchLoggerWorkoutID: UUID?
+    @State private var presentedLoggerWorkoutID: UUID?
     // Tabs that have been visited at least once. They stay mounted behind the
     // current tab (keep-resident) so their @State-held Memo caches survive —
     // switching back is instant instead of re-running full-history analytics in
@@ -258,11 +455,9 @@ struct ContentView: View {
         let latestRoutine = liveRoutines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         let liveAlternations = routineAlternations.filter { $0.deletedAt == nil }
         let latestAlternation = liveAlternations.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
-        let terminalWorkouts = workouts.filter { $0.endedAt != nil || $0.deletedAt != nil }
-        let latestWorkout = terminalWorkouts.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0
         return "\(liveTrackings.count)|\(latestTracking)|\(microcycleWindows.count)|"
             + "\(liveFolders.count)|\(latestFolder)|\(liveRoutines.count)|\(latestRoutine)|"
-            + "\(liveAlternations.count)|\(latestAlternation)|\(terminalWorkouts.count)|\(latestWorkout)"
+            + "\(liveAlternations.count)|\(latestAlternation)|\(terminalWorkoutLifecycleRevision)"
     }
 
     /// The single source of truth for the app's appearance: combines the
@@ -282,7 +477,7 @@ struct ContentView: View {
     /// Count of live completed workouts — changes when one is finished or
     /// deleted, so the widget and watch react immediately.
     private var completedWorkoutCount: Int {
-        workouts.count { $0.endedAt != nil && $0.deletedAt == nil }
+        completedWorkouts.count
     }
 
     private var routineListVersion: String {
@@ -307,19 +502,6 @@ struct ContentView: View {
         conditioningPresetRecords.map {
             "\($0.id.uuidString)|\($0.name)|\($0.updatedAt.timeIntervalSince1970)|\($0.deletedAt?.timeIntervalSince1970 ?? 0)"
         }.joined(separator: ";")
-    }
-
-    private var workoutIntentCatalogRevision: String {
-        let liveRoutines = logicalRoutines.filter { $0.deletedAt == nil && $0.archivedAt == nil }
-        let liveExercises = exercises.filter { $0.deletedAt == nil }
-        let liveYogaFlows = yogaFlows.filter { $0.deletedAt == nil }
-        let livePresets = conditioningPresetRecords.filter { $0.deletedAt == nil }
-        return [
-            "\(liveRoutines.count):\(liveRoutines.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
-            "\(liveExercises.count):\(liveExercises.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
-            "\(liveYogaFlows.count):\(liveYogaFlows.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
-            "\(livePresets.count):\(livePresets.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate ?? 0)",
-        ].joined(separator: "|")
     }
 
     private var todayCheckinTags: [String] {
@@ -361,7 +543,9 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $appState.showingLogger) {
                 Group {
-                    if let activeWorkout = activeWorkoutForPresentation() {
+                    if let activeWorkout = activeWorkoutForPresentation(
+                        preferredID: presentedLoggerWorkoutID
+                    ) {
                         // No `injectedHistory:` — the logger snapshots history itself,
                         // so the per-save re-fetch of `workouts` never hands the
                         // logger a new array identity mid-session.
@@ -482,14 +666,37 @@ struct ContentView: View {
     private var shellLifecycleHandlers: some View {
         shellWorkoutHandlers
             .task { await runLaunchTasksIfNeeded() }
-            .task(id: workoutIntentCatalogRevision) {
-                await ForgeFitIntentSurfacePublisher.publish(
-                    routines: logicalRoutines,
-                    exercises: exercises,
-                    yogaFlows: yogaFlows,
-                    conditioningPresetRecords: conditioningPresetRecords
-                )
+            .task(id: launchLoggerPresentationRevision) {
+                await presentPendingLaunchLoggerIfReady()
             }
+            // Save-triggered private-context snapshots keep the ~900-row
+            // intent/search fingerprint out of ContentView's render path.
+            .background(WorkoutIntentCatalogObserver().equatable())
+            .background(
+                TerminalWorkoutLifecycleObserver {
+                    terminalWorkoutLifecycleRevision &+= 1
+                }
+                .equatable()
+            )
+            .background(
+                LiveRuntimeStateObserver(
+                    onRestTimerChange: handleRestTimerChange,
+                    onIntervalStepChange: {
+                        WatchLink.shared.publishState()
+                        WorkoutActivityController.shared.update(
+                            workout: activeWorkout,
+                            exercises: exercises
+                        )
+                    },
+                    onYogaStateChange: {
+                        WatchLink.shared.publishState()
+                        WorkoutActivityController.shared.update(
+                            workout: activeWorkout,
+                            exercises: exercises
+                        )
+                    }
+                )
+            )
             .onReceive(NotificationCenter.default.publisher(for: .forgeFitAccountResetDidComplete)) { _ in
                 handleAccountReset()
             }
@@ -522,6 +729,9 @@ struct ContentView: View {
                 handleActiveWorkoutChange(oldID: oldID, newID: newID)
             }
             .onChange(of: appState.showingLogger) { _, isPresented in
+                if !isPresented {
+                    presentedLoggerWorkoutID = nil
+                }
                 if !isPresented, let activeWorkout {
                     scheduleReadinessStamp(for: activeWorkout, delayMilliseconds: 100)
                 }
@@ -626,21 +836,6 @@ struct ContentView: View {
                 reconcileConditioningPresetHistory()
             }
             .onChange(of: todayCheckinTags) { _, _ in handleTodayCheckinChange() }
-            .onChange(of: restTimer.endsAt) { _, endsAt in handleRestTimerChange(endsAt) }
-            // Interval step transitions repaint the watch + Live Activity.
-            .onChange(of: intervalHub.runner?.stepEndsAt) {
-                WatchLink.shared.publishState()
-                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
-            }
-            // Yoga pose transitions (and pause/resume) do the same.
-            .onChange(of: yogaHub.runner?.stepEndsAt) {
-                WatchLink.shared.publishState()
-                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
-            }
-            .onChange(of: yogaHub.runner?.isPaused) {
-                WatchLink.shared.publishState()
-                WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
-            }
             // HR observation lives in a zero-sized child view: reading
             // LiveMetricsHub.liveMetrics here would register the Observation
             // dependency on ContentView itself and re-render the whole app
@@ -712,7 +907,10 @@ struct ContentView: View {
                         MiniWorkoutBar(
                             workout: activeWorkout,
                             exercises: exercises,
-                            onExpand: { appState.showingLogger = true },
+                            onExpand: {
+                                presentedLoggerWorkoutID = activeWorkout.id
+                                appState.showingLogger = true
+                            },
                             onDiscard: { workoutPendingDiscard = activeWorkout }
                         )
                         .padding(.horizontal, Space.lg)
@@ -735,6 +933,8 @@ struct ContentView: View {
             }
         }
         .animation(reduceMotion ? Motion.reduced : Motion.stateChange, value: bottomChromeHidden)
+        .onAppear { readyShellPresentationHostMounted = true }
+        .onDisappear { readyShellPresentationHostMounted = false }
     }
 
     private var bottomChromeHidden: Bool {
@@ -793,12 +993,30 @@ struct ContentView: View {
     // cold launch still builds only Home.
     @ViewBuilder
     private var tabScreens: some View {
+        // Changes on every root evaluation. The visible tab therefore remains
+        // fully reactive; only invisible tab subtrees take the Equatable fast
+        // path. A UUID is value-only and avoids maintaining another global
+        // revision whose own construction would scan the user history.
+        let activeRenderID = UUID()
         ZStack {
             ForEach(AppTab.allCases) { tab in
                 if appState.selectedTab == tab || mountedTabs.contains(tab) {
-                    tabContent(for: tab)
-                        .environment(\.tabRootRequestID, tabRootRequestIDs[tab, default: 0])
-                        .environment(\.tabScrollTopRequestID, tabScrollTopRequestIDs[tab, default: 0])
+                    ResidentTabSurface(
+                        tab: tab,
+                        selectedTab: appState.selectedTab,
+                        isSuspended: appState.showingLogger,
+                        activeRenderID: activeRenderID
+                    ) {
+                        tabContent(
+                            for: tab,
+                            isRenderActive: appState.selectedTab == tab
+                                && !appState.showingLogger,
+                            renderID: activeRenderID
+                        )
+                            .environment(\.tabRootRequestID, tabRootRequestIDs[tab, default: 0])
+                            .environment(\.tabScrollTopRequestID, tabScrollTopRequestIDs[tab, default: 0])
+                    }
+                        .equatable()
                         .opacity(appState.selectedTab == tab ? 1 : 0)
                         .allowsHitTesting(appState.selectedTab == tab)
                         .accessibilityHidden(appState.selectedTab != tab)
@@ -812,17 +1030,43 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func tabContent(for tab: AppTab) -> some View {
+    private func tabContent(
+        for tab: AppTab,
+        isRenderActive: Bool,
+        renderID: UUID
+    ) -> some View {
         ZStack {
             switch tab {
             case .home:
-                HomeView(workouts: workouts, routines: logicalRoutines, exercises: exercises, setupNotes: setupNotes)
+                HomeView(
+                    workouts: completedWorkouts,
+                    routines: logicalRoutines,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    isRenderActive: isRenderActive
+                )
             case .workout:
-                WorkoutHomeView(routines: logicalRoutines, workouts: workouts, exercises: exercises, setupNotes: setupNotes)
+                WorkoutHomeView(
+                    routines: logicalRoutines,
+                    workouts: completedWorkouts,
+                    exercises: exercises,
+                    setupNotes: setupNotes,
+                    isRenderActive: isRenderActive
+                )
             case .insights:
-                InsightsView(workouts: workouts, exercises: exercises)
+                InsightsView(
+                    workouts: completedWorkouts,
+                    exercises: exercises,
+                    isRenderActive: isRenderActive,
+                    renderID: renderID
+                )
             case .profile:
-                ProfileView(workouts: workouts, exercises: exercises)
+                ProfileView(
+                    workouts: completedWorkouts,
+                    exercises: exercises,
+                    isRenderActive: isRenderActive,
+                    renderID: renderID
+                )
             }
         }
     }
@@ -837,9 +1081,13 @@ struct ContentView: View {
             tabScrollTopRequestIDs[tab, default: 0] &+= 1
             return
         }
-        withAnimation(.bouncy(duration: 0.42, extraBounce: 0.06)) {
-            appState.selectedTab = tab
-        }
+        // Selection mounts (or reveals) an entire keep-resident screen. A
+        // root animation transaction made both full-screen trees participate
+        // in the tab-bar bounce, including the destination's first mount.
+        // The bar owns its small matched-geometry animation locally; screen
+        // visibility changes synchronously so navigation never spends a frame
+        // compositing two animated dashboards.
+        appState.selectedTab = tab
     }
 
     private func handleOnboardingPresentationChange(_ isPresented: Bool) {
@@ -959,10 +1207,8 @@ struct ContentView: View {
     /// presenting a stale check-in during launch.
     private func makeExperimentWorkoutPrompt(now: Date = .now) -> ExperimentWorkoutPrompt? {
         let recentCutoff = now.addingTimeInterval(-10 * 60)
-        let completedCandidates = workouts.filter {
-            $0.deletedAt == nil
-                && $0.endedAt != nil
-                && ($0.endedAt ?? Date.distantPast) >= recentCutoff
+        let completedCandidates = completedWorkouts.filter {
+            ($0.endedAt ?? Date.distantPast) >= recentCutoff
         }
         guard let workout = completedCandidates.max(by: {
             ($0.endedAt ?? Date.distantPast) < ($1.endedAt ?? Date.distantPast)
@@ -1129,7 +1375,7 @@ struct ContentView: View {
         switch url.host?.lowercased() {
         case "workout":
             if activeWorkoutForPresentation() != nil {
-                appState.showingLogger = true
+                presentLoggerWhenActiveWorkoutIsReady()
             } else {
                 appState.selectedTab = .workout
             }
@@ -1168,7 +1414,7 @@ struct ContentView: View {
                         exercises: exercises,
                         setupNotes: setupNotes,
                         in: modelContext,
-                        onCommit: { _ in appState.showingLogger = true }
+                        onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
                     )
                 }
             } else {
@@ -1187,7 +1433,7 @@ struct ContentView: View {
                 windows: microcycleWindows,
                 routines: logicalRoutines,
                 alternations: routineAlternations,
-                workouts: workouts
+                workouts: completedWorkouts
             ) {
             case .routine(let id, _):
                 requestExternalWorkoutStart(
@@ -1237,7 +1483,7 @@ struct ContentView: View {
                 windows: microcycleWindows,
                 routines: logicalRoutines,
                 alternations: routineAlternations,
-                workouts: workouts
+                workouts: completedWorkouts
             ) {
             case .routine(let id, _):
                 requestExternalWorkoutStart(
@@ -1407,7 +1653,7 @@ struct ContentView: View {
         // Guided yoga backstop: iOS suspends the app soon after backgrounding
         // (the runner's in-process timers stop), so hand the remaining pose
         // schedule to the notification center — and take it back on return.
-        if phase == .background, let runner = yogaHub.runner {
+        if phase == .background, let runner = YogaFlowRunnerHub.shared.runner {
             NotificationScheduler.shared.scheduleYogaCueSchedule(runner.upcomingTransitions())
         } else if phase == .active {
             NotificationScheduler.shared.cancelYogaCueSchedule()
@@ -1550,6 +1796,13 @@ struct ContentView: View {
         if newID == nil {
             // Backstop for externally removed workouts. Normal finish/discard
             // paths already send their more specific terminal command.
+            if LaunchLoggerPresentationPolicy.shouldClearPendingPresentation(
+                pendingWorkoutID: pendingLaunchLoggerWorkoutID,
+                removedWorkoutID: oldID
+            ) {
+                pendingLaunchLoggerPresentation = false
+                pendingLaunchLoggerWorkoutID = nil
+            }
             WatchLink.shared.sendCommand(.workoutFinished)
             readinessStampTask?.cancel()
             liveSurfaceUpdateTask?.cancel()
@@ -1574,7 +1827,7 @@ struct ContentView: View {
         }
         updateWidgetSnapshot()
         guard let newID, oldID != newID,
-              let workout = workouts.first(where: { $0.id == newID }) else { return }
+              let workout = activeWorkouts.first(where: { $0.id == newID }) else { return }
         if workout.readinessAtStart == nil {
             scheduleReadinessStamp(for: workout, delayMilliseconds: 600)
         }
@@ -1589,7 +1842,7 @@ struct ContentView: View {
         do {
             let updatedWorkouts = try ConditioningPresetHistoryReconciler.reconcile(
                 records: conditioningPresetRecords,
-                workouts: workouts,
+                workouts: completedWorkouts,
                 exercises: exercises,
                 context: modelContext
             )
@@ -1694,11 +1947,14 @@ struct ContentView: View {
         consumePendingAppIntentNavigation()
 
         if scenePhase == .active, activeWorkout == nil {
+            scheduleDeferredLaunchMaintenanceIfNeeded()
             scheduleForegroundMaintenance()
         }
 
-        if shouldAutoStartRoutine {
-            presentLoggerWhenActiveWorkoutIsReady()
+        if shouldAutoStartRoutine, !pendingLaunchLoggerPresentation {
+            presentLoggerWhenActiveWorkoutIsReady(
+                workoutID: activeWorkoutForPresentation()?.id
+            )
         }
     }
 
@@ -1810,8 +2066,15 @@ struct ContentView: View {
         }
         WatchLink.shared.configure(context: modelContext)
         WatchLink.shared.activate()
-        WatchLink.shared.onWorkoutStartedFromWatch = { appState.showingLogger = true }
-        WatchLink.shared.onWorkoutFinishedFromWatch = { appState.showingLogger = false }
+        WatchLink.shared.onWorkoutStartedFromWatch = {
+            presentLoggerWhenActiveWorkoutIsReady()
+        }
+        WatchLink.shared.onWorkoutFinishedFromWatch = {
+            pendingLaunchLoggerPresentation = false
+            pendingLaunchLoggerWorkoutID = nil
+            presentedLoggerWorkoutID = nil
+            appState.showingLogger = false
+        }
         // Relaunching into an active session (app was killed mid-workout):
         // resume BLE aggregation so a paired heart-rate monitor keeps
         // filling avg/max/time-in-zone. onChange won't fire for a workout
@@ -1823,8 +2086,12 @@ struct ContentView: View {
             }
         }
         if forcedReset || requiresAppIntentWorkoutFixtureSeed || performanceGate.allowsNonWorkoutWork {
-            await seedLaunchData()
+            if !(await seedLaunchData()) {
+                pendingDeferredLaunchSeed = true
+                pendingDeferredLaunchMaintenance = true
+            }
         } else {
+            pendingDeferredLaunchSeed = true
             pendingDeferredLaunchMaintenance = true
         }
         #if DEBUG
@@ -1839,17 +2106,20 @@ struct ContentView: View {
             seedCurrentWeekDemo()
         }
         #endif
-        if performanceGate.allowsNonWorkoutWork {
-            await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
-            if performanceGate.allowsNonWorkoutWork {
-                SetTypeRetirementBackfill.run(in: modelContext)
-                WeightModeBackfill.convertIfNeeded(in: modelContext)
-            } else {
-                pendingDeferredLaunchMaintenance = true
-            }
-        } else {
-            pendingDeferredLaunchMaintenance = true
+        // These repairs can traverse imported exercises, complete workout
+        // graphs, and routine sets. Their legacy values remain readable, so a
+        // normal launch defers the scans until after the first interactive
+        // frame and cancels them whenever a workout starts.
+        pendingDeferredLaunchMaintenance = true
+        #if DEBUG
+        // Review automation expects its seeded classifications to be final
+        // before the launch-readiness barrier. Preserve that explicit fixture
+        // contract; production launches always use the delayed lane.
+        if ProcessInfo.processInfo.arguments.contains(ImportedExerciseReviewUITestFixture.launchArgument),
+           performanceGate.allowsNonWorkoutWork {
+            await ImportedExerciseBackfill.runCooperativelyIfNeeded(in: modelContext)
         }
+        #endif
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--seed-wrapped-demo") {
             WrappedDemoSeed.run(in: modelContext)
@@ -1888,7 +2158,9 @@ struct ContentView: View {
                 exercises: launchExercises,
                 setupNotes: launchSetupNotes,
                 in: modelContext,
-                onCommit: { _ in presentLoggerWhenActiveWorkoutIsReady() }
+                onCommit: { workout in
+                    presentLoggerWhenActiveWorkoutIsReady(workoutID: workout.id)
+                }
             )
         }
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
@@ -1908,34 +2180,47 @@ struct ContentView: View {
         WorkoutActivityController.shared.update(workout: activeWorkout, exercises: exercises)
     }
 
-    /// Cold-launch migrations are idempotent but can be expensive. If the app
-    /// was restored directly into a workout, run them once after the terminal
-    /// transition and a short interaction-free grace period.
+    /// Cold-launch migrations are idempotent but can be expensive. Run them
+    /// after the first interactive frame and a short grace period; if the app
+    /// restored directly into a workout, wait for its terminal transition.
     private func scheduleDeferredLaunchMaintenanceIfNeeded() {
-        guard pendingDeferredLaunchMaintenance,
-              performanceGate.allowsNonWorkoutWork,
-              scenePhase == .active,
-              deferredLaunchMaintenanceTask == nil else { return }
+        guard DeferredLaunchMaintenancePolicy.shouldSchedule(
+            isPending: pendingDeferredLaunchMaintenance,
+            launchTasksFinished: didFinishLaunchTasks,
+            allowsNonWorkoutWork: performanceGate.allowsNonWorkoutWork,
+            sceneIsActive: scenePhase == .active,
+            hasScheduledTask: deferredLaunchMaintenanceTask != nil
+        ) else { return }
 
         deferredLaunchMaintenanceTask = Task { @MainActor in
+            defer { deferredLaunchMaintenanceTask = nil }
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled,
                   performanceGate.allowsNonWorkoutWork else { return }
-            await seedLaunchData()
+            let seedWasPending = pendingDeferredLaunchSeed
+            let seedSucceeded = seedWasPending ? await seedLaunchData() : true
+            guard DeferredLaunchMaintenancePolicy.canRunCatalogDependentMaintenance(
+                seedWasPending: seedWasPending,
+                seedSucceeded: seedSucceeded
+            ),
+            !Task.isCancelled,
+            performanceGate.allowsNonWorkoutWork else { return }
+            pendingDeferredLaunchSeed = false
+            await ImportedExerciseBackfill.runCooperativelyIfNeeded(in: modelContext)
             guard !Task.isCancelled,
                   performanceGate.allowsNonWorkoutWork else { return }
-            await ImportedExerciseBackfill.runIfNeeded(in: modelContext)
+            await SetTypeRetirementBackfill.runCooperatively(in: modelContext)
             guard !Task.isCancelled,
                   performanceGate.allowsNonWorkoutWork else { return }
-            SetTypeRetirementBackfill.run(in: modelContext)
-            WeightModeBackfill.convertIfNeeded(in: modelContext)
+            await WeightModeBackfill.convertIfNeededCooperatively(in: modelContext)
+            guard !Task.isCancelled,
+                  performanceGate.allowsNonWorkoutWork else { return }
             CyclePreferenceMigration.migrate()
             guard !Task.isCancelled,
                   performanceGate.allowsNonWorkoutWork else { return }
             reconcileExperimentLifecycle()
             reconcileMicrocycleLifecycle()
             pendingDeferredLaunchMaintenance = false
-            deferredLaunchMaintenanceTask = nil
         }
     }
 
@@ -2081,10 +2366,12 @@ struct ContentView: View {
     }
 
     private var requestedInitialTab: AppTab? {
-        if let raw = ForgeFitLaunchArguments.value(for: "initialTab"),
+        let arguments = ProcessInfo.processInfo.arguments
+        if let raw = ForgeFitLaunchArguments.value(for: "initialTab", arguments: arguments),
            let tab = AppTab(rawValue: raw) {
             return tab
         }
+        if arguments.contains("--reset-store") { return nil }
         if let raw = UserDefaults.standard.string(forKey: "initialTab"),
            let tab = AppTab(rawValue: raw) {
             return tab
@@ -2092,34 +2379,68 @@ struct ContentView: View {
         return nil
     }
 
-    private func activeWorkoutForPresentation() -> WorkoutModel? {
-        if let activeWorkout { return activeWorkout }
-        var descriptor = FetchDescriptor<WorkoutModel>(
-            predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+    private func activeWorkoutForPresentation(preferredID: UUID? = nil) -> WorkoutModel? {
+        LaunchLoggerWorkoutResolver.resolve(
+            preferredID: preferredID,
+            queryCandidate: activeWorkout,
+            in: modelContext
         )
-        descriptor.fetchLimit = 1
-        return try? modelContext.fetch(descriptor).first
     }
 
-    private func presentLoggerWhenActiveWorkoutIsReady() {
-        Task { @MainActor in
-            // A cold-launch request can commit before the scene is active or
-            // during the update that swaps the launch barrier for the real
-            // shell. Present only once both lifecycle conditions are true;
-            // SwiftUI can otherwise retain the Boolean without ever mounting
-            // the full-screen cover, leaving only the Resume bar visible.
-            for _ in 0..<30 {
-                guard !Task.isCancelled else { return }
-                if didFinishLaunchTasks,
-                   scenePhase == .active,
-                   activeWorkoutForPresentation() != nil {
-                    await Task.yield()
-                    appState.showingLogger = true
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
+    private var launchLoggerPresentationRevision: String {
+        "\(pendingLaunchLoggerPresentation)|\(didFinishLaunchTasks)|"
+            + "\(readyShellPresentationHostMounted)|\(scenePhase == .active)|"
+            + "\(isOnboardingCoverPresented)|"
+            + "\(pendingLaunchLoggerWorkoutID?.uuidString ?? "any")|"
+            + "\(activeWorkout?.id.uuidString ?? "none")"
+    }
+
+    @MainActor
+    private func presentPendingLaunchLoggerIfReady() async {
+        let readyWorkout = activeWorkoutForPresentation(
+            preferredID: pendingLaunchLoggerWorkoutID
+        )
+        guard LaunchLoggerPresentationPolicy.shouldPresent(
+            isPending: pendingLaunchLoggerPresentation,
+            launchTasksFinished: didFinishLaunchTasks,
+            presentationHostMounted: readyShellPresentationHostMounted,
+            sceneIsActive: scenePhase == .active,
+            onboardingPresented: isOnboardingCoverPresented,
+            hasActiveWorkout: readyWorkout != nil
+        ) else { return }
+
+        // Let the ready shell and its presentation host commit before asking
+        // UIKit to host the cover. A bare yield can resume in the same SwiftUI
+        // update transaction on iOS 26: the Boolean then becomes true, but no
+        // cover is installed and only the mini logger remains. One short frame-
+        // bounded settle keeps launch, Watch, and deep-link starts on the same
+        // deterministic path without putting seed work back on the render pass.
+        try? await Task.sleep(for: .milliseconds(50))
+        guard !Task.isCancelled,
+              let readyWorkout = activeWorkoutForPresentation(
+                preferredID: pendingLaunchLoggerWorkoutID
+              ),
+              LaunchLoggerPresentationPolicy.shouldPresent(
+                isPending: pendingLaunchLoggerPresentation,
+                launchTasksFinished: didFinishLaunchTasks,
+                presentationHostMounted: readyShellPresentationHostMounted,
+                sceneIsActive: scenePhase == .active,
+                onboardingPresented: isOnboardingCoverPresented,
+                hasActiveWorkout: true
+              ) else { return }
+        presentedLoggerWorkoutID = readyWorkout.id
+        pendingLaunchLoggerPresentation = false
+        pendingLaunchLoggerWorkoutID = nil
+        appState.showingLogger = true
+    }
+
+    private func presentLoggerWhenActiveWorkoutIsReady(workoutID: UUID? = nil) {
+        // One pending bit survives launch-barrier replacement, onboarding,
+        // backgrounding, and a private-context workout commit. The keyed task
+        // above presents only after every prerequisite is observable.
+        pendingLaunchLoggerPresentation = true
+        if workoutID != nil || pendingLaunchLoggerWorkoutID == nil {
+            pendingLaunchLoggerWorkoutID = workoutID
         }
     }
 
@@ -2196,7 +2517,7 @@ struct ContentView: View {
     // MARK: - Launch data seeding
 
     @MainActor
-    private func seedLaunchData() async {
+    private func seedLaunchData() async -> Bool {
         do {
             let forcedReset = ProcessInfo.processInfo.arguments.contains("--reset-store")
             if forcedReset {
@@ -2208,19 +2529,22 @@ struct ContentView: View {
             // the single biggest time-to-interactive cost. `fetchCount` is a
             // cheap store-side COUNT.
             let storedVersion = UserDefaults.standard.integer(forKey: LaunchSeedPolicy.defaultsKey)
-            let libraryCount = (try? modelContext.fetchCount(FetchDescriptor<ExerciseLibraryModel>())) ?? 0
+            // A failed read is not proof of an empty catalog. Propagate it so
+            // this launch neither creates duplicate logical IDs nor stamps a
+            // seed version that did not complete; the next launch retries.
+            let libraryCount = try modelContext.fetchCount(FetchDescriptor<ExerciseLibraryModel>())
             let needsSeed = LaunchSeedPolicy.shouldSeed(
                 storedVersion: storedVersion,
                 libraryCount: libraryCount,
                 forcedReset: forcedReset
             )
             if needsSeed {
-                try ExerciseSeedRepository.seedGlobalLibrary(in: modelContext)
-                try ExerciseCatalog.seed(into: modelContext)
-                try YogaPoseCatalog.seed(into: modelContext)
-                // Drop yoga poses trimmed from the catalog (e.g. poses awaiting
-                // real artwork) so users only ever see fully-illustrated poses.
-                try YogaPoseCatalog.pruneUnavailablePoses(into: modelContext)
+                try await ExerciseSeedRepository.seedGlobalLibraryCooperatively(in: modelContext)
+                try await ExerciseCatalog.seedCooperatively(into: modelContext)
+                // Seed current yoga poses and drop trimmed rows in one isolated,
+                // durable transaction so catalog upgrades never scan the full
+                // exercise library on MainActor.
+                try await YogaPoseCatalog.seedAndPruneCooperatively(into: modelContext)
             }
             // CloudKit duplicate cleanup is intentionally not performed here.
             // It scans the full ~900-row plan store on a private worker after
@@ -2302,6 +2626,7 @@ struct ContentView: View {
             if needsSeed {
                 UserDefaults.standard.set(LaunchSeedPolicy.currentVersion, forKey: LaunchSeedPolicy.defaultsKey)
             }
+            return true
         } catch {
             #if DEBUG
             if ForgeFitAppIntentWorkoutUITestFixture.isRequested {
@@ -2309,6 +2634,7 @@ struct ContentView: View {
             }
             #endif
             assertionFailure("Launch data seed failed: \(error)")
+            return false
         }
     }
 
@@ -2547,6 +2873,9 @@ struct ContentView: View {
         microcycleTransitionTask = nil
         appState.selectedTab = .home
         appState.showingLogger = false
+        pendingLaunchLoggerPresentation = false
+        pendingLaunchLoggerWorkoutID = nil
+        presentedLoggerWorkoutID = nil
         appState.pendingRoutineDetailID = nil
         pendingPlanImport = nil
         onboardingPlanImport = nil
@@ -2628,6 +2957,36 @@ private struct LiveHeartRateObserver: View {
             .frame(width: 0, height: 0)
             .onChange(of: hub.liveMetrics?.heartRate) { _, heartRate in
                 onChange(heartRate)
+            }
+    }
+}
+
+/// Rest/interval/yoga state changes are frequent while a logger is visible.
+/// Observe them in this zero-sized leaf so starting a rest timer or advancing a
+/// step does not re-evaluate ContentView's plan, lifecycle, and tab inputs.
+private struct LiveRuntimeStateObserver: View {
+    var restTimer = RestTimerController.shared
+    var intervalHub = IntervalRunnerHub.shared
+    var yogaHub = YogaFlowRunnerHub.shared
+    let onRestTimerChange: (Date?) -> Void
+    let onIntervalStepChange: () -> Void
+    let onYogaStateChange: () -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onChange(of: restTimer.endsAt) { _, endsAt in
+                onRestTimerChange(endsAt)
+            }
+            .onChange(of: intervalHub.runner?.stepEndsAt) {
+                onIntervalStepChange()
+            }
+            .onChange(of: yogaHub.runner?.stepEndsAt) {
+                onYogaStateChange()
+            }
+            .onChange(of: yogaHub.runner?.isPaused) {
+                onYogaStateChange()
             }
     }
 }

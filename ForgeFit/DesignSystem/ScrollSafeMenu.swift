@@ -91,7 +91,7 @@ private struct MenuButtonOverlay: UIViewRepresentable {
     let primaryAction: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(primaryAction: primaryAction)
+        Coordinator(sections: sections, primaryAction: primaryAction)
     }
 
     func makeUIView(context: Context) -> UIButton {
@@ -106,34 +106,46 @@ private struct MenuButtonOverlay: UIViewRepresentable {
             action: #selector(Coordinator.performPrimaryAction),
             for: .primaryActionTriggered
         )
-        button.menu = builtMenu
+        button.menu = context.coordinator.menu
         return button
     }
 
     func updateUIView(_ button: UIButton, context: Context) {
-        // Rebuild every update: checkmark state (current set type, picked
-        // rest) must track the model.
-        context.coordinator.primaryAction = primaryAction
+        // SwiftUI can update a set row on every local draft character. Keep
+        // those updates allocation-light; the uncached deferred element builds
+        // actions from this latest snapshot only when the menu is presented.
+        context.coordinator.update(sections: sections, primaryAction: primaryAction)
         button.showsMenuAsPrimaryAction = primaryAction == nil
-        button.menu = builtMenu
     }
 
     final class Coordinator: NSObject {
-        var primaryAction: (() -> Void)?
+        private var sections: [[ScrollSafeMenuItem]]
+        private var primaryAction: (() -> Void)?
 
-        init(primaryAction: (() -> Void)?) {
+        lazy var menu = UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                guard let self else {
+                    completion([])
+                    return
+                }
+                completion(self.sections.map { section in
+                    UIMenu(options: .displayInline, children: section.map(\.uiElement))
+                })
+            },
+        ])
+
+        init(sections: [[ScrollSafeMenuItem]], primaryAction: (() -> Void)?) {
+            self.sections = sections
+            self.primaryAction = primaryAction
+        }
+
+        func update(sections: [[ScrollSafeMenuItem]], primaryAction: (() -> Void)?) {
+            self.sections = sections
             self.primaryAction = primaryAction
         }
 
         @objc func performPrimaryAction() {
             primaryAction?()
         }
-    }
-
-    private var builtMenu: UIMenu {
-        let groups = sections.map { section in
-            UIMenu(options: .displayInline, children: section.map(\.uiElement))
-        }
-        return UIMenu(children: groups)
     }
 }

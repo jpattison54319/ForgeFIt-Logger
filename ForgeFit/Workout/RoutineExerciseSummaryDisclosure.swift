@@ -10,7 +10,7 @@ struct RoutineExerciseSummaryDisclosure: View {
 
     let routineName: String
     let items: [OrderedRoutineItem]
-    let exercises: [ExerciseLibraryModel]
+    let exerciseNameByID: [UUID: String]
     let isExpanded: Bool
     let onToggle: () -> Void
 
@@ -28,17 +28,10 @@ struct RoutineExerciseSummaryDisclosure: View {
         return nil
     }
 
-    private var visibleItems: ArraySlice<OrderedRoutineItem> {
-        guard !isExpanded, let thirdExerciseIndex else { return items[...] }
-        return items.prefix(through: thirdExerciseIndex)
-    }
-
-    private var fadedItemID: UUID? {
-        guard !isExpanded, let thirdExerciseIndex else { return nil }
-        return items[thirdExerciseIndex].id
-    }
-
     var body: some View {
+        let thirdExerciseIndex = self.thirdExerciseIndex
+        let visibleItems = visibleItems(through: thirdExerciseIndex)
+        let fadedItemID = fadedItemID(at: thirdExerciseIndex)
         VStack(alignment: .leading, spacing: 3) {
             ForEach(visibleItems) { item in
                 itemRow(item)
@@ -103,10 +96,20 @@ struct RoutineExerciseSummaryDisclosure: View {
         }
     }
 
+    private func visibleItems(through thirdExerciseIndex: Int?) -> ArraySlice<OrderedRoutineItem> {
+        guard !isExpanded, let thirdExerciseIndex else { return items[...] }
+        return items.prefix(through: thirdExerciseIndex)
+    }
+
+    private func fadedItemID(at thirdExerciseIndex: Int?) -> UUID? {
+        guard !isExpanded, let thirdExerciseIndex else { return nil }
+        return items[thirdExerciseIndex].id
+    }
+
     private func itemName(_ item: OrderedRoutineItem) -> String {
         switch item {
         case .exercise(let exercise):
-            exercises.first { $0.id == exercise.exerciseID }?.name ?? "Exercise"
+            exerciseNameByID[exercise.exerciseID] ?? "Exercise"
         case .block(let block):
             RoutineBlockPresentation.title(for: block)
         }

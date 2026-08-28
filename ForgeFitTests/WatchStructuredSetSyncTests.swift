@@ -120,6 +120,7 @@ struct WatchStructuredSetSyncTests {
     @Test func myoCommandsPersistActivationMiniSetsAndDerivedVolume() throws {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)
+        let originalWorkoutUpdatedAt = Date(timeIntervalSince1970: 1_000)
         let setID = UUID()
         let set = SetModel(
             id: setID,
@@ -133,7 +134,13 @@ struct WatchStructuredSetSyncTests {
             microRestSeconds: 30,
             sets: [set]
         )
-        context.insert(WorkoutModel(userID: userID, title: "Watch Myo", exercises: [exercise]))
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Watch Myo",
+            updatedAt: originalWorkoutUpdatedAt,
+            exercises: [exercise]
+        )
+        context.insert(workout)
         try context.save()
 
         let timer = RestTimerController.shared
@@ -177,6 +184,8 @@ struct WatchStructuredSetSyncTests {
 
         #expect(set.miniReps == [4, 3])
         #expect(set.totalVolume == 950)
+        #expect(workout.totalVolume == nil)
+        #expect(workout.updatedAt == originalWorkoutUpdatedAt)
 
         let verificationContext = ModelContext(container)
         let descriptor = FetchDescriptor<SetModel>(
@@ -186,6 +195,68 @@ struct WatchStructuredSetSyncTests {
         #expect(persisted.reps == 12)
         #expect(persisted.miniReps == [4, 3])
         #expect(persisted.totalVolume == 950)
+        let workoutID = workout.id
+        let persistedWorkout = try #require(try verificationContext.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persistedWorkout.totalVolume == nil)
+        #expect(persistedWorkout.updatedAt == originalWorkoutUpdatedAt)
+    }
+
+    @Test func watchSetUpdateAndCompletionKeepTheActiveParentStable() throws {
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let originalWorkoutUpdatedAt = Date(timeIntervalSince1970: 2_000)
+        let set = SetModel(
+            userID: userID,
+            setType: .working,
+            weight: 40
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Watch strength",
+            updatedAt: originalWorkoutUpdatedAt,
+            exercises: [WorkoutExerciseModel(
+                userID: userID,
+                exerciseID: UUID(),
+                sets: [set]
+            )]
+        )
+        context.insert(workout)
+        try context.save()
+
+        let timer = RestTimerController.shared
+        timer.skip()
+        defer {
+            timer.skip()
+            timer.onStateChange = nil
+        }
+        let link = WatchLink()
+        link.configure(context: context)
+        link.handle(.updateSet(
+            setID: set.id,
+            weightKg: 50,
+            reps: 10,
+            partialReps: nil
+        ))
+        link.handle(.toggleSet(setID: set.id, completed: true))
+
+        #expect(set.modeWeight == 50)
+        #expect(set.reps == 10)
+        #expect(set.completedAt != nil)
+        #expect(set.totalVolume == 500)
+        #expect(workout.totalVolume == nil)
+        #expect(workout.updatedAt == originalWorkoutUpdatedAt)
+
+        let workoutID = workout.id
+        let verificationContext = ModelContext(container)
+        let persisted = try #require(try verificationContext.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persisted.exercises.first?.sets.first?.totalVolume == 500)
+        #expect(persisted.totalVolume == nil)
+        #expect(persisted.updatedAt == originalWorkoutUpdatedAt)
     }
 
     @Test func amrapCommandsPersistTheSelectedAndElapsedWindow() throws {
@@ -230,6 +301,122 @@ struct WatchStructuredSetSyncTests {
         )
         let persisted = try #require(try verificationContext.fetch(descriptor).first)
         #expect(persisted.durationSeconds == 37)
+    }
+
+    @Test func staleSetAndTimerCommandsCannotMutateACompletedWorkout() throws {
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let base = Date(timeIntervalSince1970: 7_000)
+
+        let working = SetModel(
+            userID: userID,
+            setType: .working,
+            reps: 5,
+            weight: 20
+        )
+        let structured = SetModel(
+            userID: userID,
+            setType: .myoRep,
+            reps: 8,
+            weight: 30
+        )
+        let amrap = SetModel(
+            userID: userID,
+            setType: .amrap,
+            durationSeconds: 12
+        )
+        let historical = WorkoutModel(
+            userID: userID,
+            title: "Already finished",
+            startedAt: base,
+            endedAt: base.addingTimeInterval(300),
+            exercises: [WorkoutExerciseModel(
+                userID: userID,
+                exerciseID: UUID(),
+                sets: [working, structured, amrap]
+            )]
+        )
+        let active = WorkoutModel(
+            userID: userID,
+            title: "Current workout",
+            startedAt: base.addingTimeInterval(600),
+            exercises: [WorkoutExerciseModel(
+                userID: userID,
+                exerciseID: UUID(),
+                sets: [SetModel(userID: userID, setType: .working)]
+            )]
+        )
+        context.insert(historical)
+        context.insert(active)
+        try context.save()
+
+        let timer = RestTimerController.shared
+        timer.skip()
+        defer {
+            timer.skip()
+            timer.onStateChange = nil
+        }
+        let link = WatchLink()
+        link.configure(context: context)
+
+        link.handle(.updateSet(
+            setID: working.id,
+            weightKg: 99,
+            reps: 99,
+            partialReps: nil
+        ))
+        link.handle(.toggleSet(setID: working.id, completed: true))
+        link.handle(.updateStructuredSet(
+            setID: structured.id,
+            update: WatchStructuredSetUpdate(
+                progress: WatchStructuredSetProgress(
+                    activationReps: 12,
+                    miniReps: [4]
+                ),
+                event: .miniSet,
+                side: 1,
+                occurredAt: base.addingTimeInterval(700),
+                weightKg: 50
+            )
+        ))
+        link.handle(.startSetTimer(
+            setID: amrap.id,
+            durationSeconds: 60,
+            endsAt: .now.addingTimeInterval(60)
+        ))
+        link.handle(.stopSetTimer(setID: amrap.id, elapsedSeconds: 37))
+
+        #expect(working.modeWeight == 20)
+        #expect(working.reps == 5)
+        #expect(working.completedAt == nil)
+        #expect(structured.modeWeight == 30)
+        #expect(structured.reps == 8)
+        #expect(structured.miniReps.isEmpty)
+        #expect(amrap.durationSeconds == 12)
+        #expect(timer.ownerID != structured.id)
+        #expect(timer.ownerID != amrap.id)
+
+        let workingID = working.id
+        let structuredID = structured.id
+        let amrapID = amrap.id
+        let verificationContext = ModelContext(container)
+        let persistedWorking = try #require(try verificationContext.fetch(
+            FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == workingID })
+        ).first)
+        let persistedStructured = try #require(try verificationContext.fetch(
+            FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == structuredID })
+        ).first)
+        let persistedAMRAP = try #require(try verificationContext.fetch(
+            FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == amrapID })
+        ).first)
+        #expect(persistedWorking.modeWeight == 20)
+        #expect(persistedWorking.reps == 5)
+        #expect(persistedWorking.completedAt == nil)
+        #expect(persistedStructured.modeWeight == 30)
+        #expect(persistedStructured.reps == 8)
+        #expect(persistedStructured.miniReps.isEmpty)
+        #expect(persistedAMRAP.durationSeconds == 12)
     }
 
     @Test func conditioningBlockStartAndCompletionCommitAsWholeEvents() throws {

@@ -6,6 +6,11 @@ import SwiftUI
 /// Hevy-style routine detail: header, Start button, a progress chart with a
 /// Volume / Reps / Duration toggle, and the exercise list with target sets.
 struct RoutineDetailView: View {
+    private struct LoadedAnalytics {
+        let key: String
+        let snapshot: RoutineDetailAnalyticsSnapshot
+    }
+
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -26,19 +31,21 @@ struct RoutineDetailView: View {
     @State private var editing = false
     @State private var sharePayload: ShareImagePayload?
     @State private var shareErrorMessage: String?
+    @State private var loadedAnalytics: LoadedAnalytics?
+    @State private var failedAnalyticsKey: String?
+    @State private var referenceLookupMemo = Memo<Int, RoutineEditorReferenceLookup>()
 
-    private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var series: [MetricPoint] { chartRange.filtered(analytics.routineSeries(routineID: routine.id, metric: metric)) }
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
     private func unresolvedAdaptiveExerciseNames(
-        baselines: [UUID: Double]
+        baselines: [UUID: Double],
+        exerciseByID: [UUID: ExerciseLibraryModel]
     ) -> [String] {
         routine.exercises.compactMap { routineExercise in
             guard routineExercise.sets.contains(where: {
                 $0.loadPrescriptionMode == .percentEstimatedOneRepMax
             }) else { return nil }
-            let exercise = exercises.first { $0.id == routineExercise.exerciseID }
+            let exercise = exerciseByID[routineExercise.exerciseID]
             let hasIncompletePercentage = routineExercise.sets.contains {
                 $0.loadPrescriptionMode == .percentEstimatedOneRepMax
                     && $0.estimatedOneRepMaxPrescription == nil
@@ -51,26 +58,37 @@ struct RoutineDetailView: View {
             return exercise?.name ?? "Exercise"
         }
     }
-    private var resolvedSetupNotes: [UserExerciseNoteModel] {
-        Array(Dictionary(
-            (storedSetupNotes + setupNotes)
-                .filter { ExerciseNotePolicy.authoredText($0.note) != nil }
-                .map { ($0.id, $0) },
-            uniquingKeysWith: { first, second in
-                first.updatedAt >= second.updatedAt ? first : second
-            }
-        ).values)
-    }
-
-    private func setupNote(for exerciseID: UUID) -> UserExerciseNoteModel? {
-        resolvedSetupNotes
-            .filter { $0.exerciseID == exerciseID && $0.userID == ForgeFitDemo.userID }
-            .max { $0.updatedAt < $1.updatedAt }
+    private var referenceLookup: RoutineEditorReferenceLookup {
+        let notes = storedSetupNotes + setupNotes
+        return referenceLookupMemo(
+            RoutineEditorReferenceLookup.revision(
+                exercises: exercises,
+                setupNotes: notes
+            )
+        ) {
+            RoutineEditorReferenceLookup.make(
+                exercises: exercises,
+                setupNotes: notes
+            )
+        }
     }
 
     var body: some View {
-        let baselines = AdaptiveLoadResolver.bestEstimatedOneRepMaxByExercise(workouts: workouts)
-        let unresolvedNames = unresolvedAdaptiveExerciseNames(baselines: baselines)
+        let analyticsKey = "\(AnalyticsFingerprint.of(workouts))|\(routine.id)"
+        let currentAnalytics = loadedAnalytics?.key == analyticsKey
+            ? loadedAnalytics?.snapshot
+            : nil
+        let baselines = currentAnalytics?.baselines ?? [:]
+        let rawSeries = currentAnalytics?.series(for: metric) ?? []
+        let series = chartRange.filtered(rawSeries)
+        let referenceLookup = self.referenceLookup
+        let orderedItems = self.orderedItems
+        let unresolvedNames = currentAnalytics == nil
+            ? []
+            : unresolvedAdaptiveExerciseNames(
+                baselines: baselines,
+                exerciseByID: referenceLookup.exerciseByID
+            )
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.xl) {
                 header
@@ -87,7 +105,10 @@ struct RoutineDetailView: View {
                 PrimaryButton(title: "Start Routine") { start() }
                     .disabled(orderedItems.isEmpty)
 
-                chartSection
+                chartSection(
+                    series: series,
+                    isLoading: currentAnalytics == nil && failedAnalyticsKey != analyticsKey
+                )
 
                 HStack {
                     Text("Workout").font(.sectionTitle).foregroundStyle(theme.textPrimary)
@@ -108,8 +129,8 @@ struct RoutineDetailView: View {
                         case .exercise(let routineExercise):
                             RoutineExerciseSummary(
                                 routineExercise: routineExercise,
-                                exercise: exercises.first { $0.id == routineExercise.exerciseID },
-                                setupNote: setupNote(for: routineExercise.exerciseID),
+                                exercise: referenceLookup.exerciseByID[routineExercise.exerciseID],
+                                setupNote: referenceLookup.setupNoteByExerciseID[routineExercise.exerciseID],
                                 bestEstimatedOneRepMaxKg: baselines[routineExercise.exerciseID]
                             )
                         case .block(let block):
@@ -125,6 +146,23 @@ struct RoutineDetailView: View {
         .accessibilityIdentifier("routine-detail")
         .toolbar(.hidden, for: .navigationBar)
         .interactiveBackSwipeEnabled()
+        .task(id: analyticsKey) {
+            failedAnalyticsKey = nil
+            let container = modelContext.container
+            do {
+                let snapshot = try await RoutineDetailAnalyticsWorker(
+                    modelContainer: container
+                ).calculate(routineID: routine.id)
+                guard !Task.isCancelled else { return }
+                loadedAnalytics = LoadedAnalytics(key: analyticsKey, snapshot: snapshot)
+            } catch is CancellationError {
+                return
+            } catch {
+                // History remains usable while a transient worker failure
+                // retries on the next semantic revision.
+                failedAnalyticsKey = analyticsKey
+            }
+        }
         .sheet(item: $sharePayload) { payload in
             ShareSheet(items: payload.items)
         }
@@ -138,7 +176,12 @@ struct RoutineDetailView: View {
             Text(shareErrorMessage ?? "")
         }
         .navigationDestination(isPresented: $editing) {
-            RoutineEditorView(routine: routine, exercises: exercises, setupNotes: resolvedSetupNotes)
+            RoutineEditorView(
+                routine: routine,
+                exercises: exercises,
+                setupNotes: Array(referenceLookup.setupNoteByExerciseID.values),
+                history: workouts
+            )
         }
         .navigationDestination(for: UUID.self) { exerciseID in
             ExerciseDetailView(exerciseID: exerciseID, workouts: workouts, exercises: exercises)
@@ -199,12 +242,18 @@ struct RoutineDetailView: View {
         .accessibilityIdentifier("adaptive-load-start-warning")
     }
 
-    private var chartSection: some View {
+    private func chartSection(series: [MetricPoint], isLoading: Bool) -> some View {
         Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .top) {
                     HStack(alignment: .firstTextBaseline) {
-                        if let last = series.last {
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading history")
+                                .font(.cardTitle)
+                                .foregroundStyle(theme.textSecondary)
+                        } else if let last = series.last {
                             Text(metric.routineFormatted(last.value))
                                 .font(.metricValue).foregroundStyle(theme.textPrimary)
                                 .contentTransition(.numericText())
@@ -219,7 +268,11 @@ struct RoutineDetailView: View {
                     TimeChartRangePicker(selection: $chartRange)
                 }
 
-                if series.count >= 2 {
+                if isLoading {
+                    Color.clear
+                        .frame(height: 80)
+                        .accessibilityHidden(true)
+                } else if series.count >= 2 {
                     // `.id(metric)` swaps the chart identity per metric so the
                     // change reads as a crossfade, not a path morph between
                     // unrelated series.
@@ -255,7 +308,7 @@ struct RoutineDetailView: View {
             _ = WorkoutFactory.start(
                 routine: routine,
                 exercises: exercises,
-                setupNotes: resolvedSetupNotes,
+                setupNotes: Array(referenceLookup.setupNoteByExerciseID.values),
                 in: modelContext,
                 onCommit: { _ in appState.showingLogger = true }
             )

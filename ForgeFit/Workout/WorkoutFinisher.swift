@@ -249,9 +249,8 @@ enum WorkoutFinisher {
                 guard let routineID = workout.routineID else {
                     return "This workout is no longer linked to a routine. The workout is still active."
                 }
-                guard let routine = try? transaction.fetch(FetchDescriptor<RoutineModel>(
-                    predicate: #Predicate { $0.id == routineID && $0.deletedAt == nil }
-                )).first else {
+                guard let routine = canonicalRoutine(id: routineID, in: transaction),
+                      routine.deletedAt == nil else {
                     return "The routine could not be found, so it was not updated. The workout is still active."
                 }
                 let plan = RoutineChangeSync.detect(workout: workout, routine: routine)
@@ -293,9 +292,8 @@ enum WorkoutFinisher {
             if let callerWorkout = try? callerContext.fetch(FetchDescriptor<WorkoutModel>(
                 predicate: #Predicate { $0.id == workoutID }
             )).first,
-               let callerRoutine = try? callerContext.fetch(FetchDescriptor<RoutineModel>(
-                   predicate: #Predicate { $0.id == routineID && $0.deletedAt == nil }
-               )).first {
+               let callerRoutine = canonicalRoutine(id: routineID, in: callerContext),
+               callerRoutine.deletedAt == nil {
                 // The isolated context is durable truth. Mirror the same accepted
                 // deterministic plan into the long-lived context only after that
                 // save succeeds, so current UI state cannot remain stale and a
@@ -310,6 +308,21 @@ enum WorkoutFinisher {
             }
         }
         return nil
+    }
+
+    /// CloudKit can temporarily surface more than one physical row for one
+    /// logical routine ID. Select the graph-aware survivor before checking
+    /// its tombstone; filtering first would resurrect an older live duplicate
+    /// and let a terminal Save overwrite a newer deletion.
+    @MainActor
+    private static func canonicalRoutine(
+        id routineID: UUID,
+        in context: ModelContext
+    ) -> RoutineModel? {
+        let rows = (try? context.fetch(FetchDescriptor<RoutineModel>(
+            predicate: #Predicate { $0.id == routineID }
+        ))) ?? []
+        return RoutineDeduplicator.canonicalRoutines(rows).first
     }
 
     /// Mirrors terminal identity from an isolated transaction back into the
@@ -407,6 +420,11 @@ enum WorkoutFinisher {
         guard hasSubstance(workout) else {
             return discard(workout, in: context)
         }
+        // Soft-deleted cardio rows are historical tombstones, not part of
+        // this terminal transaction. Keep one live projection for every
+        // mutation and HealthKit-derived field so a deleted segment cannot
+        // be auto-completed or leak distance, energy, modality, or effort.
+        let liveCardioSessions = workout.cardioSessions.filter { $0.deletedAt == nil }
 
         // SwiftData's `rollback()` restores the store transaction, but model
         // references already held by SwiftUI can retain their just-mutated
@@ -431,7 +449,7 @@ enum WorkoutFinisher {
         let blockStateBeforeFinish = workout.blocks.map {
             (model: $0, resultJSON: $0.resultJSON, updatedAt: $0.updatedAt)
         }
-        let sessionStateBeforeFinish = workout.cardioSessions.map {
+        let sessionStateBeforeFinish = liveCardioSessions.map {
             (
                 model: $0,
                 endedAt: $0.endedAt,
@@ -519,7 +537,7 @@ enum WorkoutFinisher {
         // finishes the surrounding workout. Preserve its completed-round
         // score before the shared cardio session loop closes its timing window.
         for block in workout.blocks where block.kind == .conditioning {
-            guard workout.cardioSessions.contains(where: {
+            guard liveCardioSessions.contains(where: {
                 $0.workoutBlockID == block.id
                     && $0.workoutExerciseID == nil
                     && $0.liveStartedAt != nil
@@ -534,7 +552,7 @@ enum WorkoutFinisher {
         // 1. Auto-complete running cardio/yoga segments and finalize manual
         // yoga logs. Cardio keeps the old "only if live" behavior; yoga also
         // supports pre-start manual duration/style entry.
-        for session in workout.cardioSessions where session.endedAt == nil {
+        for session in liveCardioSessions where session.endedAt == nil {
             if session.isYogaSession {
                 let workoutExercise = session.workoutExerciseID.flatMap { workoutExercisesByID[$0] }
                 let exercise = exercise(for: workoutExercise, in: context)
@@ -633,6 +651,12 @@ enum WorkoutFinisher {
         }
         workout.endedAt = now
         workout.recomputeTotalVolume()
+        // Completion is the single active-parent invalidation boundary. Live
+        // set edits deliberately leave this clock untouched so the root
+        // active-workout query does not republish behind the logger. Stamp
+        // every terminal workout even when it earns no XP (notes-only and
+        // short cardio sessions are still valid history).
+        workout.updatedAt = now
         XPService.stageXPIfNeeded(for: workout, in: context, now: now)
         // Terminal save: if this fails, NOTHING committed (rollback undid
         // endedAt/XP/cardio completions) — the workout is still live, so skip
@@ -663,20 +687,31 @@ enum WorkoutFinisher {
             || UserDefaults.standard.bool(forKey: "healthWriteEnabled")
         if writeEnabled && !watchSavedToHealth {
             let energy = workout.activeEnergyKcal
-                ?? workout.cardioSessions.compactMap { $0.activeEnergyKcal }.reduce(0, +).nonZero
-            let distance = workout.cardioSessions.compactMap { $0.distanceMeters }.reduce(0, +).nonZero
+                ?? liveCardioSessions.compactMap { $0.activeEnergyKcal }.reduce(0, +).nonZero
+            let distance = liveCardioSessions.compactMap { $0.distanceMeters }.reduce(0, +).nonZero
             // The activity type comes from the first *real* cardio session;
             // a session-only workout that is all yoga writes as `.yoga`.
-            let cardioKind = workout.cardioSessions.first {
+            let cardioKind = liveCardioSessions.first {
                 !$0.isWorkoutBlockSession && !$0.isYogaSession && !$0.isConditioningSession
             }
                 .map { CardioKind.from(modality: $0.modality) }
-            let visibleExercises = workout.exercises.filter { $0.generatedByWorkoutBlockID == nil }
+            let liveSessionExerciseIDs = Set(liveCardioSessions.compactMap(\.workoutExerciseID))
+            let deletedOnlySessionExerciseIDs = Set(
+                workout.cardioSessions.lazy
+                    .filter { $0.deletedAt != nil }
+                    .compactMap(\.workoutExerciseID)
+            ).subtracting(liveSessionExerciseIDs)
+            let visibleExercises = workout.exercises.filter {
+                $0.generatedByWorkoutBlockID == nil
+                    && !(deletedOnlySessionExerciseIDs.contains($0.id) && $0.sets.isEmpty)
+            }
             let pureSessions = !visibleExercises.isEmpty
-                && visibleExercises.allSatisfy { we in workout.cardioSessions.contains { $0.workoutExerciseID == we.id } }
+                && visibleExercises.allSatisfy { workoutExercise in
+                    liveCardioSessions.contains { $0.workoutExerciseID == workoutExercise.id }
+                }
                 && workout.blocks.isEmpty
             let completedBlockKinds = workout.blocks.compactMap { block in
-                workout.cardioSessions.contains { $0.workoutBlockID == block.id && $0.endedAt != nil }
+                liveCardioSessions.contains { $0.workoutBlockID == block.id && $0.endedAt != nil }
                     ? block.kind
                     : nil
             }
@@ -686,13 +721,13 @@ enum WorkoutFinisher {
             let pureConditioningBlocks = visibleExercises.isEmpty
                 && !completedBlockKinds.isEmpty
                 && completedBlockKinds.allSatisfy { $0 == .conditioning }
-            let pureYoga = (pureSessions && workout.cardioSessions.allSatisfy(\.isYogaSession)) || pureYogaBlocks
+            let pureYoga = (pureSessions && liveCardioSessions.allSatisfy(\.isYogaSession)) || pureYogaBlocks
             // A genuine whole-session rating is the preferred HealthKit
             // effort. Older workouts fall back to their directly logged
             // cardio/set ratings, never to an inferred default.
             let effortScore: Double? = {
                 if let sessionRPE = workout.wholeSessionRPE { return sessionRPE }
-                var values = workout.cardioSessions.compactMap { $0.effort.map(Double.init) }
+                var values = liveCardioSessions.compactMap { $0.effort.map(Double.init) }
                 let rpes = workout.exercises.flatMap(\.sets)
                     .filter { $0.completedAt != nil }
                     .compactMap(\.rpe)

@@ -19,7 +19,11 @@ struct MicrocycleHistoryWorkoutCard: View {
             }
 
             NavigationLink(value: record.workout.id) {
-                WorkoutFeedRow(workout: record.workout, analytics: analytics)
+                WorkoutFeedRow(
+                    workout: record.workout,
+                    analytics: analytics,
+                    exerciseCatalogRevision: HomePerformanceRevision.exerciseCatalog(analytics.exercises)
+                )
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("microcycle-history-workout-\(record.workout.id.uuidString)")

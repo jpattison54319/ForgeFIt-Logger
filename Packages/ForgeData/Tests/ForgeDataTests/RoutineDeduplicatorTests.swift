@@ -291,6 +291,27 @@ final class RoutineDeduplicatorTests: XCTestCase {
         _ = container
     }
 
+    func testCanonicalFoldersUsesMaintenanceWinnerIndependentOfInputOrder() throws {
+        let (container, context) = try makeContainer()
+        let id = UUID()
+        let uid = UUID()
+        let first = RoutineFolderModel(id: id, userID: uid, name: "First")
+        let second = RoutineFolderModel(id: id, userID: uid, name: "Second")
+        first.createdAt = date(1000)
+        first.updatedAt = date(2000)
+        second.createdAt = date(1000)
+        second.updatedAt = date(2000)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let forward = try XCTUnwrap(RoutineDeduplicator.canonicalFolders([first, second]).first)
+        let reversed = try XCTUnwrap(RoutineDeduplicator.canonicalFolders([second, first]).first)
+
+        XCTAssertEqual(forward.persistentModelID, reversed.persistentModelID)
+        _ = container
+    }
+
     func testNestedFolderParentIDStaysValidAfterDedup() throws {
         let (container, context) = try makeContainer()
         let uid = UUID()

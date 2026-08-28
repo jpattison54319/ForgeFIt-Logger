@@ -260,6 +260,123 @@ struct UserEditPersistenceTests {
         #expect(persisted.intervalPlanJSON == "{\"mode\":\"zone\",\"zone\":2}")
     }
 
+    @Test func workoutBlockEditAdvancesParentClockAndRollsItBackWithAFailedTransaction() async throws {
+        enum ExpectedFailure: Error { case firstAttempt }
+
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let originalDate = Date(timeIntervalSince1970: 1_000)
+        let authoredDate = Date(timeIntervalSince1970: 2_000)
+        let block = WorkoutBlockModel(
+            userID: ForgeFitDemo.userID,
+            kind: .conditioning,
+            planSnapshotJSON: "old-plan",
+            updatedAt: originalDate
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            endedAt: originalDate.addingTimeInterval(60),
+            updatedAt: originalDate,
+            blocks: [block]
+        )
+        context.insert(workout)
+        try context.save()
+
+        let center = PersistentChangeSaveCenter()
+        var attempts = 0
+        let initiallyApplied = WorkoutBlockPlanPersistence.apply(
+            "new-plan",
+            to: block,
+            parentWorkout: workout,
+            session: nil,
+            generatedExercise: nil,
+            in: context,
+            now: authoredDate,
+            saveCenter: center,
+            save: { saveContext in
+                attempts += 1
+                if attempts == 1 { throw ExpectedFailure.firstAttempt }
+                try saveContext.save()
+            }
+        )
+
+        #expect(!initiallyApplied)
+        #expect(block.planSnapshotJSON == "old-plan")
+        #expect(block.updatedAt == originalDate)
+        #expect(workout.updatedAt == originalDate)
+
+        // A failed structural mutation must not ride along with an unrelated
+        // save, and its retained retry must advance the block and parent clock
+        // together so shallow analytics fingerprints cannot stay unchanged.
+        try context.save()
+        let workoutID = workout.id
+        var verificationContext = ModelContext(container)
+        var persistedWorkout = try #require(verificationContext.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persistedWorkout.updatedAt == originalDate)
+        #expect(persistedWorkout.blocks.first?.planSnapshotJSON == "old-plan")
+
+        center.retry()
+        try await Task.sleep(for: .milliseconds(20))
+
+        verificationContext = ModelContext(container)
+        persistedWorkout = try #require(verificationContext.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(attempts == 2)
+        #expect(persistedWorkout.updatedAt == authoredDate)
+        #expect(persistedWorkout.blocks.first?.updatedAt == authoredDate)
+        #expect(persistedWorkout.blocks.first?.planSnapshotJSON == "new-plan")
+    }
+
+    @Test func completedHistoricalNestedReorderAdvancesTheShallowFingerprintAfterReload() throws {
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let originalDate = Date(timeIntervalSince1970: 3_000)
+        let authoredDate = Date(timeIntervalSince1970: 4_000)
+        let first = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            position: 0
+        )
+        let second = WorkoutExerciseModel(
+            userID: ForgeFitDemo.userID,
+            exerciseID: UUID(),
+            position: 1
+        )
+        let workout = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            startedAt: originalDate,
+            endedAt: originalDate.addingTimeInterval(60),
+            updatedAt: originalDate,
+            exercises: [first, second]
+        )
+        context.insert(workout)
+        try context.save()
+        let priorFingerprint = AnalyticsFingerprint.of([workout])
+
+        first.position = 1
+        second.position = 0
+        WorkoutMutationContract.stampParentForNestedMutation(workout, at: authoredDate)
+        #expect(context.saveUserChanges())
+
+        let workoutID = workout.id
+        let verificationContext = ModelContext(container)
+        verificationContext.autosaveEnabled = false
+        let persisted = try #require(verificationContext.fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        let positions = Dictionary(
+            uniqueKeysWithValues: persisted.exercises.map { ($0.id, $0.position) }
+        )
+        #expect(persisted.endedAt != nil)
+        #expect(persisted.updatedAt == authoredDate)
+        #expect(positions[first.id] == 1)
+        #expect(positions[second.id] == 0)
+        #expect(AnalyticsFingerprint.of([persisted]) != priorFingerprint)
+    }
+
     @Test func failedWorkoutStartLeaksNoActiveRowAndRetryCommitsExactlyOne() async throws {
         enum ExpectedFailure: Error { case firstAttempt }
 

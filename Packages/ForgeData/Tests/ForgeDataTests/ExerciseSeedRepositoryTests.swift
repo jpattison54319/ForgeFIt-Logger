@@ -24,6 +24,36 @@ final class ExerciseSeedRepositoryTests: XCTestCase {
         XCTAssertTrue(aliases.contains { $0.id == GlobalExerciseLibrary.rdlAliasID && $0.alias == "RDL" })
     }
 
+    func testCooperativeGlobalExerciseSeedIsDurableAndIdempotent() async throws {
+        let schema = Schema(ForgeDataSchema.models)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let callerContext = ModelContext(container)
+        callerContext.autosaveEnabled = false
+
+        try await ExerciseSeedRepository.seedGlobalLibraryCooperatively(in: callerContext)
+
+        let firstVerification = ModelContext(container)
+        let firstExercises = try firstVerification.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        let firstAliases = try firstVerification.fetch(FetchDescriptor<ExerciseAliasModel>())
+        XCTAssertEqual(firstExercises.count, GlobalExerciseLibrary.snapshot.exercises.count)
+        XCTAssertEqual(firstAliases.count, GlobalExerciseLibrary.snapshot.aliases.count)
+        XCTAssertFalse(callerContext.hasChanges)
+
+        try await ExerciseSeedRepository.seedGlobalLibraryCooperatively(in: callerContext)
+
+        let secondVerification = ModelContext(container)
+        XCTAssertEqual(
+            try secondVerification.fetchCount(FetchDescriptor<ExerciseLibraryModel>()),
+            firstExercises.count
+        )
+        XCTAssertEqual(
+            try secondVerification.fetchCount(FetchDescriptor<ExerciseAliasModel>()),
+            firstAliases.count
+        )
+        XCTAssertFalse(callerContext.hasChanges)
+    }
+
     func testGlobalCardioExercisesAreTaggedAndUseCardiovascularMuscles() throws {
         let schema = Schema(ForgeDataSchema.models)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)

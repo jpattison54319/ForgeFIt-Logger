@@ -1,3 +1,5 @@
+import Combine
+import CoreData
 import ForgeCore
 import ForgeData
 import SwiftData
@@ -20,11 +22,21 @@ struct WorkoutHomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var performanceGate = LiveWorkoutPerformanceGate.shared
+    @State private var librarySnapshotMemo = Memo<RoutineLibraryPerformanceKey, RoutineLibraryPerformanceSnapshot>()
+    @State private var exerciseNameMemo = Memo<RenderPerformanceCollectionKey, [UUID: String]>()
+    @State private var archiveInventoryMemo = Memo<RenderPerformanceCollectionKey, ArchiveInventory>()
+    @State private var cardPresentationMemo = MemoTable<UUID, RoutineLibraryCardPresentation>()
+    @State private var renderRevisionController = RenderPerformanceRevisionController()
 
     let routines: [RoutineModel]
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
+    let isRenderActive: Bool
+
+    private var renderRevisions: RenderPerformanceRevisions {
+        renderRevisionController.revisions(forActiveSurface: isRenderActive)
+    }
 
     @Query(sort: \RoutineFolderModel.position) private var allFolders: [RoutineFolderModel]
     @Query(sort: \RoutineAlternationModel.updatedAt, order: .reverse)
@@ -70,65 +82,36 @@ struct WorkoutHomeView: View {
     @AppStorage(AppPreferenceKeys.workoutUngroupedCollapsedKey)
     private var ungroupedCollapsed = false
 
-    private var activeRoutines: [RoutineModel] {
-        RoutineDeduplicator.canonicalRoutines(routines)
-            .filter { $0.deletedAt == nil && $0.archivedAt == nil }
-            .sorted {
-            if $0.position != $1.position { return $0.position < $1.position }
-            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
-            return $0.id.uuidString < $1.id.uuidString
-        }
-    }
-    private var folders: [RoutineFolderModel] {
-        // CloudKit can deliver a pre-split record after launch cleanup. Keep
-        // the hierarchy stable immediately while the reactive persistence
-        // cleanup removes the extra physical row in the background.
-        var byID: [UUID: RoutineFolderModel] = [:]
-        for folder in allFolders {
-            guard folder.deletedAt == nil, folder.archivedAt == nil else { continue }
-            if let incumbent = byID[folder.id], incumbent.updatedAt >= folder.updatedAt {
-                continue
-            }
-            byID[folder.id] = folder
-        }
-        return byID.values.sorted {
-            if $0.position != $1.position { return $0.position < $1.position }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-    }
-    private var topLevelFolders: [RoutineFolderModel] {
-        folders.filter { $0.parentID == nil }
-    }
-    private func childFolders(of folder: RoutineFolderModel) -> [RoutineFolderModel] {
-        folders.filter { $0.parentID == folder.id }
-    }
-    private var ungrouped: [RoutineModel] {
-        activeRoutines.filter { $0.folderID == nil }
-    }
-    private func routines(in folder: RoutineFolderModel) -> [RoutineModel] {
-        activeRoutines.filter { $0.folderID == folder.id }
-    }
-    private func alternationState(for routine: RoutineModel) -> RoutineAlternationService.State? {
-        RoutineAlternationService.state(
-            containing: routine.id,
-            alternations: alternations,
-            routines: activeRoutines,
-            workouts: workouts
+    private var librarySnapshot: RoutineLibraryPerformanceSnapshot {
+        if !isRenderActive, let cached = librarySnapshotMemo.cachedValue { return cached }
+        let key = RoutineLibraryPerformanceKey(
+            persistenceRevision: renderRevisions.routineLibrary,
+            routineCount: routines.count,
+            folderCount: allFolders.count,
+            alternationCount: alternations.count,
+            workoutCount: workouts.count
         )
-    }
-    private var canOrganizeLibrary: Bool {
-        RoutineOrganizerDraft(
-            folders: folders,
-            routines: activeRoutines,
-            alternationStates: RoutineAlternationService.states(
+        return librarySnapshotMemo(key) {
+            RoutineLibraryPerformanceSnapshot.make(
+                routines: routines,
+                folders: allFolders,
                 alternations: alternations,
-                routines: activeRoutines,
-                workouts: workouts
+                workouts: workouts,
+                generation: key.generation
             )
-        ).canOrganize
+        }
     }
     private var activeTracking: MicrocycleTrackingModel? {
         MicrocycleTrackingService.activeTracking(microcycleTrackings)
+    }
+    private var exerciseNameByID: [UUID: String] {
+        if !isRenderActive, let cached = exerciseNameMemo.cachedValue { return cached }
+        return exerciseNameMemo(RenderPerformanceCollectionKey(
+            revision: renderRevisions.exerciseCatalog,
+            primaryCount: exercises.count
+        )) {
+            RoutineLibraryExerciseLookup.namesByID(exercises)
+        }
     }
 
     private func isActiveMesocycle(_ folder: RoutineFolderModel) -> Bool {
@@ -145,8 +128,11 @@ struct WorkoutHomeView: View {
         }
     }
 
-    private func activateMicrocycleWithTrackingOffer(_ folder: RoutineFolderModel) {
-        let offer = activationOfferContent(for: folder)
+    private func activateMicrocycleWithTrackingOffer(
+        _ folder: RoutineFolderModel,
+        library: RoutineLibraryPerformanceSnapshot
+    ) {
+        let offer = activationOfferContent(for: folder, library: library)
         setActiveMicrocycle(folder)
         guard offer.shouldOffer else { return }
         activationOfferFolder = folder
@@ -163,16 +149,20 @@ struct WorkoutHomeView: View {
         )
     }
 
-    private func activationOfferMessage(for folder: RoutineFolderModel) -> String {
-        activationOfferContent(for: folder).message
+    private func activationOfferMessage(
+        for folder: RoutineFolderModel,
+        library: RoutineLibraryPerformanceSnapshot
+    ) -> String {
+        activationOfferContent(for: folder, library: library).message
     }
 
     private func activationOfferContent(
-        for folder: RoutineFolderModel
+        for folder: RoutineFolderModel,
+        library: RoutineLibraryPerformanceSnapshot
     ) -> MicrocycleActivationOfferContent {
         MicrocycleActivationOfferPolicy.content(
             folderID: folder.id,
-            hasRoutines: !routines(in: folder).isEmpty,
+            hasRoutines: !library.routines(in: folder).isEmpty,
             activeTracking: activeTracking
         )
     }
@@ -182,10 +172,13 @@ struct WorkoutHomeView: View {
         trackingFolder = folder
     }
 
-    private func setActiveMesocycle(_ folder: RoutineFolderModel) {
+    private func setActiveMesocycle(
+        _ folder: RoutineFolderModel,
+        library: RoutineLibraryPerformanceSnapshot
+    ) {
         activeMesocycleFolderRaw = folder.id.uuidString
         if let microcycleID = UUID(uuidString: activeMicrocycleFolderRaw),
-           !childFolders(of: folder).contains(where: { $0.id == microcycleID }) {
+           !library.childFolders(of: folder).contains(where: { $0.id == microcycleID }) {
             activeMicrocycleFolderRaw = ""
         }
     }
@@ -206,6 +199,8 @@ struct WorkoutHomeView: View {
     }
 
     var body: some View {
+        let library = librarySnapshot
+        let archiveInventory = self.archiveInventory
         NavigationStack(path: $navigationPath) {
             ScreenScaffold("Workout") {
                 SecondaryButton(title: "Start Empty Workout", systemImage: "plus") {
@@ -219,7 +214,7 @@ struct WorkoutHomeView: View {
 
                 SectionHeader("Routines") {
                     HStack(spacing: Space.lg) {
-                        if canOrganizeLibrary {
+                        if library.canOrganize {
                             Button {
                                 organizingRoutines = true
                             } label: {
@@ -250,7 +245,7 @@ struct WorkoutHomeView: View {
                         .accessibilityIdentifier("explore-routines-button")
                 }
 
-                if activeRoutines.isEmpty && folders.isEmpty {
+                if library.activeRoutines.isEmpty && library.folders.isEmpty {
                     EmptyStateCard(
                         title: "No routines yet",
                         message: "Build your first routine or organize plans in folders.",
@@ -258,14 +253,14 @@ struct WorkoutHomeView: View {
                     )
                 }
 
-                let ungroupedRows = ungrouped
+                let ungroupedRows = library.ungroupedRoutines
                 if ungroupedRows.isEmpty {
                     Color.clear
                         .frame(maxWidth: .infinity, minHeight: Space.lg)
-                } else if folders.isEmpty {
-                    VStack(spacing: Space.md) {
+                } else if library.folders.isEmpty {
+                    LazyVStack(spacing: Space.md) {
                         ForEach(ungroupedRows) { routine in
-                            routineCard(routine)
+                            routineCard(routine, library: library)
                         }
                     }
                 } else {
@@ -273,22 +268,22 @@ struct WorkoutHomeView: View {
                         isCollapsed: $ungroupedCollapsed,
                         count: ungroupedRows.count
                     ) {
-                        VStack(spacing: Space.md) {
+                        LazyVStack(spacing: Space.md) {
                             ForEach(ungroupedRows) { routine in
-                                routineCard(routine)
+                                routineCard(routine, library: library)
                             }
                         }
                     }
                 }
 
-                ForEach(topLevelFolders) { folder in
-                    folderSection(folder)
+                ForEach(library.topLevelFolders) { folder in
+                    folderSection(folder, library: library)
                 }
 
                 // Pinned below everything that's live; exists only once
                 // something is archived, so it never clutters a fresh library.
                 if archiveInventory.rootCount > 0 {
-                    archiveRow
+                    archiveRow(inventory: archiveInventory)
                 }
             }
             .navigationDestination(for: RoutineModel.self) { routine in
@@ -297,7 +292,11 @@ struct WorkoutHomeView: View {
             .navigationDestination(for: WorkoutRoute.self) { route in
                 switch route {
                 case .archive:
-                    ArchiveView(routines: routines, folders: allFolders)
+                    ArchiveView(
+                        routines: routines,
+                        folders: allFolders,
+                        inventory: archiveInventory
+                    )
                 case .microcycle(let trackingID):
                     MicrocycleDetailView(trackingID: trackingID)
                 }
@@ -307,6 +306,7 @@ struct WorkoutHomeView: View {
                     routine: routine,
                     exercises: exercises,
                     setupNotes: setupNotes,
+                    history: workouts,
                     isNew: routine.id == newlyCreatedRoutineID,
                     onNewRoutineDiscarded: {
                         if newlyCreatedRoutineID == routine.id {
@@ -390,19 +390,15 @@ struct WorkoutHomeView: View {
             }
             .sheet(isPresented: $organizingRoutines) {
                 RoutineOrganizerView(
-                    folders: folders,
-                    routines: activeRoutines,
-                    alternationStates: RoutineAlternationService.states(
-                        alternations: alternations,
-                        routines: activeRoutines,
-                        workouts: workouts
-                    )
+                    folders: library.folders,
+                    routines: library.activeRoutines,
+                    alternationStates: library.alternationStates
                 )
             }
             .sheet(item: $trackingFolder) { folder in
                 MicrocycleSetupView(
                     folder: folder,
-                    routines: routines(in: folder),
+                    routines: library.routines(in: folder),
                     replacingTrackingName: activeTracking.flatMap {
                         $0.folderID == folder.id ? nil : $0.folderName
                     }
@@ -410,7 +406,7 @@ struct WorkoutHomeView: View {
                     _ = try MicrocycleTrackingService.start(
                         folder: folder,
                         routines: routines,
-                        folders: folders,
+                        folders: library.folders,
                         startDate: startDate,
                         durationDays: durationDays,
                         in: modelContext
@@ -431,7 +427,7 @@ struct WorkoutHomeView: View {
                 RoutineAlternationSheet(
                     anchor: routine,
                     routines: routines,
-                    folders: folders,
+                    folders: library.folders,
                     alternations: alternations,
                     workouts: workouts,
                     exercises: exercises,
@@ -443,18 +439,50 @@ struct WorkoutHomeView: View {
         .onChange(of: appState.pendingRoutineDetailID, initial: true) {
             openPendingImportedRoutineIfAvailable()
         }
-        .onChange(of: activeRoutines.map(\.id)) {
-            openPendingImportedRoutineIfAvailable()
+        .onChange(of: library.activeRoutines.map(\.id)) {
+            openPendingImportedRoutineIfAvailable(in: library)
         }
-        .task(id: performanceGate.isLiveWorkoutActive) {
-            guard performanceGate.allowsNonWorkoutWork else { return }
+        .task(id: "\(performanceGate.isLiveWorkoutActive)|\(isRenderActive)") {
+            guard isRenderActive, performanceGate.allowsNonWorkoutWork else { return }
             CyclePreferenceMigration.migrate()
             _ = try? MicrocycleTrackingService.reconcileIsolated(from: modelContext)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: ModelContext.didSave,
+                object: modelContext
+            )
+        ) { notification in
+            let invalidation = RenderPerformanceInvalidationPolicy.invalidation(
+                from: notification,
+                matching: modelContext.container
+            )
+            renderRevisionController.receive(
+                invalidation,
+                source: .mainContextSave,
+                surfaceIsActive: isRenderActive
+            )
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            renderRevisionController.receive(
+                RenderPerformanceInvalidationPolicy.remoteStoreInvalidation,
+                source: .remoteStoreChange,
+                surfaceIsActive: isRenderActive
+            )
+        }
+        .onChange(of: isRenderActive, initial: true) { _, isActive in
+            renderRevisionController.setSurfaceActive(isActive)
         }
         .interactiveBackSwipeEnabled()
     }
 
-    private func openPendingImportedRoutineIfAvailable() {
+    private func openPendingImportedRoutineIfAvailable(
+        in library: RoutineLibraryPerformanceSnapshot? = nil
+    ) {
+        let activeRoutines = (library ?? librarySnapshot).activeRoutines
         guard let id = appState.pendingRoutineDetailID,
               let routine = activeRoutines.first(where: { $0.id == id }) else { return }
         navigationPath = NavigationPath()
@@ -465,10 +493,17 @@ struct WorkoutHomeView: View {
     // MARK: - Archive entry point
 
     private var archiveInventory: ArchiveInventory {
-        ArchiveInventory(routines: routines, folders: allFolders)
+        if !isRenderActive, let cached = archiveInventoryMemo.cachedValue { return cached }
+        return archiveInventoryMemo(RenderPerformanceCollectionKey(
+            revision: renderRevisions.archive,
+            primaryCount: routines.count,
+            secondaryCount: allFolders.count
+        )) {
+            ArchiveInventory(routines: routines, folders: allFolders)
+        }
     }
 
-    private var archiveRow: some View {
+    private func archiveRow(inventory: ArchiveInventory) -> some View {
         NavigationLink(value: WorkoutRoute.archive) {
             HStack(spacing: Space.md) {
                 Image(systemName: "archivebox")
@@ -478,7 +513,7 @@ struct WorkoutHomeView: View {
                     .font(.bodyStrong)
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
-                Text("\(archiveInventory.rootCount)")
+                Text("\(inventory.rootCount)")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 8)
@@ -500,10 +535,13 @@ struct WorkoutHomeView: View {
 
     // MARK: - Folder section
 
-    private func folderSection(_ folder: RoutineFolderModel) -> AnyView {
+    private func folderSection(
+        _ folder: RoutineFolderModel,
+        library: RoutineLibraryPerformanceSnapshot
+    ) -> AnyView {
         let isCollapsed = collapsed.contains(folder.id)
-        let displayedItems = routines(in: folder)
-        let children = childFolders(of: folder)
+        let displayedItems = library.routines(in: folder)
+        let children = library.childFolders(of: folder)
         // Parent folders are mesocycles; leaf folders holding routines are
         // microcycles. Routines themselves are workout sessions.
         let isActive = children.isEmpty
@@ -564,7 +602,12 @@ struct WorkoutHomeView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("routine-folder-\(folder.name)")
                     Spacer()
-                    folderMenu(folder, isActive: isActive, hasChildren: !children.isEmpty)
+                    folderMenu(
+                        folder,
+                        isActive: isActive,
+                        hasChildren: !children.isEmpty,
+                        library: library
+                    )
                 }
 
                 if let activeTracking,
@@ -647,9 +690,9 @@ struct WorkoutHomeView: View {
                         .padding(.leading, Space.lg)
                     } else {
                         if !displayedItems.isEmpty {
-                            VStack(spacing: Space.md) {
+                            LazyVStack(spacing: Space.md) {
                                 ForEach(displayedItems) { routine in
-                                    routineCard(routine)
+                                    routineCard(routine, library: library)
                                 }
                             }
                             .padding(.leading, Space.lg)
@@ -657,7 +700,7 @@ struct WorkoutHomeView: View {
                         if !children.isEmpty {
                             RoutineHierarchyRail {
                                 ForEach(children) { child in
-                                    folderSection(child)
+                                    folderSection(child, library: library)
                                 }
                             }
                         }
@@ -668,7 +711,12 @@ struct WorkoutHomeView: View {
                 )
     }
 
-    private func folderMenu(_ folder: RoutineFolderModel, isActive: Bool, hasChildren: Bool) -> some View {
+    private func folderMenu(
+        _ folder: RoutineFolderModel,
+        isActive: Bool,
+        hasChildren: Bool,
+        library: RoutineLibraryPerformanceSnapshot
+    ) -> some View {
         Menu {
             // A mesocycle and one of its microcycles can both be active: one
             // names the broader block, the other the sessions currently due.
@@ -679,7 +727,7 @@ struct WorkoutHomeView: View {
                     }
                 } else {
                     Button("Set as Active Mesocycle", systemImage: "star") {
-                        setActiveMesocycle(folder)
+                        setActiveMesocycle(folder, library: library)
                     }
                 }
             } else {
@@ -689,7 +737,7 @@ struct WorkoutHomeView: View {
                     }
                 } else {
                     Button("Set as Active Microcycle", systemImage: "star") {
-                        activateMicrocycleWithTrackingOffer(folder)
+                        activateMicrocycleWithTrackingOffer(folder, library: library)
                     }
                 }
                 if let activeTracking, activeTracking.folderID == folder.id {
@@ -720,12 +768,12 @@ struct WorkoutHomeView: View {
                     Button("Set Day Target", systemImage: "calendar.badge.plus") {
                         trackingFolder = folder
                     }
-                    .disabled(routines(in: folder).isEmpty)
+                    .disabled(library.routines(in: folder).isEmpty)
                 }
             }
             Divider()
             Button(hasChildren ? "Share Mesocycle" : "Share Microcycle", systemImage: "square.and.arrow.up") {
-                shareFolder(folder, hasChildren: hasChildren)
+                shareFolder(folder, hasChildren: hasChildren, library: library)
             }
             Button("Rename", systemImage: "pencil") { startRename(folder) }
             // A folder with subfolders holds only folders — no loose routines.
@@ -756,30 +804,34 @@ struct WorkoutHomeView: View {
             Button("Set Day Target", systemImage: "calendar.badge.plus") {
                 presentTrackingSetup(for: folder)
             }
-            .disabled(!activationOfferContent(for: folder).canSetDayTarget)
+            .disabled(!activationOfferContent(for: folder, library: library).canSetDayTarget)
             Button("Not Now", role: .cancel) {
                 activationOfferFolder = nil
             }
         } message: {
-            Text(activationOfferMessage(for: folder))
+            Text(activationOfferMessage(for: folder, library: library))
         }
     }
 
     /// Keep the readable image and lossless plan document together. A
     /// mesocycle carries its full visible microcycle subtree.
-    private func shareFolder(_ folder: RoutineFolderModel, hasChildren: Bool) {
+    private func shareFolder(
+        _ folder: RoutineFolderModel,
+        hasChildren: Bool,
+        library: RoutineLibraryPerformanceSnapshot
+    ) {
         do {
-            let microcycles = hasChildren ? childFolders(of: folder) : []
+            let microcycles = hasChildren ? library.childFolders(of: folder) : []
             let sharedRoutines = hasChildren
-                ? microcycles.flatMap { routines(in: $0) }
-                : routines(in: folder)
+                ? microcycles.flatMap { library.routines(in: $0) }
+                : library.routines(in: folder)
             let groups = hasChildren
-                ? microcycles.map { FolderShareSlotBuilder.Group(title: $0.name, routines: routines(in: $0)) }
+                ? microcycles.map { FolderShareSlotBuilder.Group(title: $0.name, routines: library.routines(in: $0)) }
                 : [FolderShareSlotBuilder.Group(title: nil, routines: sharedRoutines)]
             let sections = FolderShareSlotBuilder.sections(
                 groups,
                 alternations: alternations,
-                availableRoutines: activeRoutines
+                availableRoutines: library.activeRoutines
             )
             guard let image = FolderShareRenderer.image(
                 name: folder.name,
@@ -795,14 +847,14 @@ struct WorkoutHomeView: View {
                     folder,
                     microcycles: microcycles,
                     routines: sharedRoutines,
-                    allRoutines: activeRoutines,
+                    allRoutines: library.activeRoutines,
                     alternations: alternations,
                     exercises: exercises
                 )
                 : PlanShareService.microcycleDocument(
                     folder,
                     routines: sharedRoutines,
-                    allRoutines: activeRoutines,
+                    allRoutines: library.activeRoutines,
                     alternations: alternations,
                     exercises: exercises
                 )
@@ -813,19 +865,26 @@ struct WorkoutHomeView: View {
         }
     }
 
-    private func routineCard(_ slot: RoutineModel) -> some View {
-        let state = alternationState(for: slot)
+    private func routineCard(
+        _ slot: RoutineModel,
+        library: RoutineLibraryPerformanceSnapshot
+    ) -> some View {
+        let state = library.alternationStateByRoutineID[slot.id]
         let routine = AlternatingRoutineSlotResolver.presentedRoutine(
             for: slot,
             state: state
         )
-        let hasConfiguredAlternation = RoutineAlternationService.alternation(
-            containing: routine.id,
-            in: alternations
-        ) != nil
+        let hasConfiguredAlternation = library.configuredAlternationRoutineIDs.contains(routine.id)
+        let presentation = cardPresentationMemo.value(
+            for: routine.id,
+            generation: library.generation
+        ) {
+            RoutineLibraryCardPresentation.make(for: routine)
+        }
         return RoutineCard(
             routine: routine,
-            exercises: exercises,
+            presentation: presentation,
+            exerciseNameByID: exerciseNameByID,
             isSummaryExpanded: expandedRoutineSummaries.contains(routine.id),
             alternationState: state,
             hasConfiguredAlternation: hasConfiguredAlternation,
@@ -877,10 +936,11 @@ struct WorkoutHomeView: View {
 
     private func commitCreateFolder() {
         guard let request = pendingFolderCreation else { return }
+        let library = librarySnapshot
         let trimmed = folderNameDraft.trimmingCharacters(in: .whitespaces)
         let attempt = RoutineFolderCreationAttempt(
             name: trimmed.isEmpty ? "New Folder" : trimmed,
-            position: folders.count,
+            position: library.folders.count,
             parentID: request.parentID,
             in: modelContext
         )
@@ -924,6 +984,7 @@ struct WorkoutHomeView: View {
     /// picker saves eagerly, so it needs a durable model; a failed creation
     /// remains isolated and cannot appear in the library or autosave later.
     private func createRoutine(folderID: UUID?) {
+        let activeRoutines = librarySnapshot.activeRoutines
         let attempt = RoutineCreationAttempt(
             name: activeRoutines.isEmpty ? "Full Body A" : "New Routine",
             folderID: folderID,
@@ -952,6 +1013,7 @@ struct WorkoutHomeView: View {
     }
 
     private func duplicate(_ source: RoutineModel) {
+        let activeRoutines = librarySnapshot.activeRoutines
         let attempt = RoutineCreationAttempt(
             duplicating: source,
             position: RoutineStructure.nextRoutinePosition(in: activeRoutines, folderID: source.folderID),
@@ -1003,7 +1065,8 @@ struct WorkoutHomeView: View {
 private struct RoutineCard: View {
     @Environment(\.theme) private var theme
     let routine: RoutineModel
-    let exercises: [ExerciseLibraryModel]
+    let presentation: RoutineLibraryCardPresentation
+    let exerciseNameByID: [UUID: String]
     let isSummaryExpanded: Bool
     let alternationState: RoutineAlternationService.State?
     let hasConfiguredAlternation: Bool
@@ -1024,7 +1087,7 @@ private struct RoutineCard: View {
     private var isNext: Bool {
         alternationState?.due.id == routine.id
     }
-    private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
+    private var orderedItems: [OrderedRoutineItem] { presentation.orderedItems }
     private var hasExerciseDisclosure: Bool {
         orderedItems.filter {
             if case .exercise = $0 { return true }
@@ -1034,23 +1097,6 @@ private struct RoutineCard: View {
     private var cardBottomPadding: CGFloat {
         guard hasExerciseDisclosure else { return Space.lg }
         return isSummaryExpanded ? Space.xs : 0
-    }
-
-    private var conditioningSummary: String? {
-        let json = routine.blocks.first(where: { $0.kind == .conditioning })?.planJSON
-            ?? routine.conditioningPlanJSON
-        guard let plan = ConditioningPlan.decode(from: json),
-              let first = plan.sections.first else { return nil }
-        switch first.format {
-        case .amrap:
-            return "\(max(1, (first.durationSeconds ?? 1_200) / 60)) min AMRAP"
-        case .emom:
-            return "EMOM \(first.rounds ?? 20)"
-        case .forTime:
-            return "For Time"
-        default:
-            return first.format.title
-        }
     }
 
     var body: some View {
@@ -1134,7 +1180,7 @@ private struct RoutineCard: View {
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textTertiary)
                     } else {
-                        if routine.blocks.isEmpty, let conditioningSummary {
+                        if let conditioningSummary = presentation.conditioningSummary {
                             Label(conditioningSummary, systemImage: "stopwatch")
                                 .font(.tag)
                                 .foregroundStyle(theme.accentForeground)
@@ -1142,7 +1188,7 @@ private struct RoutineCard: View {
                         RoutineExerciseSummaryDisclosure(
                             routineName: routine.name,
                             items: orderedItems,
-                            exercises: exercises,
+                            exerciseNameByID: exerciseNameByID,
                             isExpanded: isSummaryExpanded,
                             onToggle: onToggleSummary
                         )

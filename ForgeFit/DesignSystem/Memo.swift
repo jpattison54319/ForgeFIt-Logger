@@ -13,6 +13,8 @@ final class Memo<Key: Equatable, Value> {
     private var key: Key?
     private var cached: Value?
 
+    var cachedValue: Value? { cached }
+
     func callAsFunction(_ key: Key, compute: () -> Value) -> Value {
         if let cached, self.key == key { return cached }
         let value = compute()
@@ -42,24 +44,34 @@ final class MemoTable<Key: Hashable, Value> {
 }
 
 /// Cheap change-detection key for anything derived from workout history.
-/// O(workouts) with no per-set work: completed count, newest `updatedAt`, and
-/// stored volume move whenever completed-history analytics can change.
+/// O(workouts) with no relationship walk. Every completed parent row is mixed
+/// into the key, so an edit to older history cannot hide behind a newer row's
+/// maximum timestamp. Workout mutation boundaries must stamp `updatedAt` when
+/// changing nested authored data; this keeps render-path detection shallow.
 ///
 /// IN-PROGRESS workouts contribute nothing. Every memo consumer computes over
 /// completed workouts, so starting or editing a live session must not wake the
 /// keep-resident tabs behind the logger. Finishing still invalidates.
 enum AnalyticsFingerprint {
     static func of(_ workouts: [WorkoutModel]) -> String {
+        var hasher = Hasher()
         var ended = 0
-        var latestUpdate = Date.distantPast
-        var volumeSum = 0.0
         for workout in workouts where workout.deletedAt == nil {
             guard workout.endedAt != nil else { continue }
             ended += 1
-            if workout.updatedAt > latestUpdate { latestUpdate = workout.updatedAt }
-            volumeSum += workout.totalVolume ?? 0
+            hasher.combine(workout.id)
+            hasher.combine(workout.routineID)
+            hasher.combine(workout.startedAt)
+            hasher.combine(workout.endedAt)
+            hasher.combine(workout.updatedAt)
+            hasher.combine(workout.totalVolume)
+            // Do not touch relationship counts here. On a cold SwiftData
+            // graph even `.count` can fault/materialize hundreds of child
+            // collections on the MainActor. All nested authored mutations
+            // cross a terminal save boundary that stamps this parent clock.
         }
-        return "\(ended)|\(latestUpdate.timeIntervalSince1970)|\(volumeSum)"
+        hasher.combine(ended)
+        return String(hasher.finalize())
     }
 
     /// Fingerprint that also invalidates when Apple Health recovery data

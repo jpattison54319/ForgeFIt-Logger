@@ -1785,6 +1785,46 @@ final class ForgeFitUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Saved setup note"].waitForExistence(timeout: 5))
     }
 
+    /// A focused header draft still lives outside SwiftData when Back is
+    /// tapped. The editor must commit it before deciding whether a newly
+    /// inserted placeholder is untouched and safe to delete.
+    @MainActor
+    func testFocusedNewRoutineDraftIsCommittedBeforeBackDecision() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = ["--reset-store", "-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.acceptanceLaunch()
+
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+        tapWhenReady(app.buttons["new-routine-button"].firstMatch)
+
+        let nameField = app.textFields["Routine name"].firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+        nameField.acceptanceTap()
+        nameField.typeKey("a", modifierFlags: .command)
+        nameField.acceptanceTypeText("Focused Draft")
+
+        // Do not dismiss the keyboard first. Back is the durability boundary
+        // and must commit the local-only text before comparing the new-routine
+        // entry snapshot; otherwise it silently deletes authored work.
+        tapWhenReady(app.buttons["routine-editor-back-button"].firstMatch)
+        XCTAssertTrue(
+            app.buttons["Keep Routine"].firstMatch.waitForExistence(timeout: 5),
+            "A focused local draft must count as an edited new routine."
+        )
+        tapWhenReady(app.buttons["Keep Routine"].firstMatch)
+        XCTAssertTrue(app.staticTexts["Focused Draft"].firstMatch.waitForExistence(timeout: 5))
+
+        app.acceptanceTerminate()
+        app.launchArguments = ["-didOnboard", "YES", "-weightUnitRaw", "kg"]
+        app.acceptanceLaunch()
+        tapWhenReady(app.buttons["tab-workout"].firstMatch)
+        XCTAssertTrue(
+            app.staticTexts["Focused Draft"].firstMatch.waitForExistence(timeout: 5),
+            "Keeping the draft must survive a fresh process context."
+        )
+    }
+
     /// Regression for a rename that looked correct in the live model but
     /// reverted to the last store value when an over-install killed the app.
     /// No structural edit and no explicit Save are allowed to mask the path.

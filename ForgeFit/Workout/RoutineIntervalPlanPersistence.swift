@@ -219,6 +219,7 @@ enum WorkoutBlockPlanPersistence {
     static func apply(
         _ planJSON: String,
         to block: WorkoutBlockModel,
+        parentWorkout: WorkoutModel,
         session: CardioSessionModel?,
         generatedExercise: WorkoutExerciseModel?,
         in context: ModelContext,
@@ -231,6 +232,7 @@ enum WorkoutBlockPlanPersistence {
         let previousProgressJSON = block.progressJSON
         let previousResultJSON = block.resultJSON
         let previousUpdatedAt = block.updatedAt
+        let previousParentUpdatedAt = parentWorkout.updatedAt
         let previousStyleRaw = session?.yogaStyleRaw
         let previousDuration = session?.durationSeconds
         let previousExercisePlanJSON = generatedExercise?.yogaFlowJSON
@@ -238,6 +240,14 @@ enum WorkoutBlockPlanPersistence {
         return (saveCenter ?? .shared).perform({
             block.planSnapshotJSON = planJSON
             block.updatedAt = now
+            // A completed block edit is a historical workout edit. Keep its
+            // shallow parent clock in the same transaction so analytics/query
+            // fingerprints observe equal-volume structural changes without
+            // faulting relationships. Active parents wait for Finish.
+            let didStampParent = WorkoutMutationContract.stampParentForNestedMutation(
+                parentWorkout,
+                at: now
+            )
             if block.kind == .conditioning {
                 block.progressJSON = ConditioningProgress().encodedJSON()
                 block.resultJSON = nil
@@ -253,6 +263,9 @@ enum WorkoutBlockPlanPersistence {
                 block.progressJSON = previousProgressJSON
                 block.resultJSON = previousResultJSON
                 block.updatedAt = previousUpdatedAt
+                if didStampParent {
+                    parentWorkout.updatedAt = previousParentUpdatedAt
+                }
                 session?.yogaStyleRaw = previousStyleRaw
                 session?.durationSeconds = previousDuration
                 generatedExercise?.yogaFlowJSON = previousExercisePlanJSON

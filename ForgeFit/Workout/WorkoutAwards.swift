@@ -207,6 +207,115 @@ enum WorkoutAwards {
         return tracker.awards(for: workout)
     }
 
+    /// Evaluates the current workout against a value-only history projection.
+    /// Historical decoding and relationship walks happen on the isolated live
+    /// history worker; user-facing strings remain formatted on MainActor.
+    static func modalityAwards(
+        for workout: WorkoutModel,
+        history: PostWorkoutModalityHistorySnapshot,
+        calendar: Calendar = .current
+    ) -> [WorkoutAward] {
+        var awards: [WorkoutAward] = []
+        for activity in conditioningActivities(in: workout) where activity.result.completed {
+            guard let baseline = history.conditioningBaselines[activity.key] else { continue }
+            let result = activity.result
+            if result.scoreKind == .elapsedTime,
+               let elapsed = result.elapsedSeconds,
+               elapsed > 0,
+               let prior = baseline.bestElapsedSeconds,
+               elapsed < prior {
+                awards.append(.init(
+                    id: "conditioning-\(activity.section.id)-best-time",
+                    title: activity.title,
+                    kind: .conditioningBestTime,
+                    valueText: Fmt.elapsed(elapsed)
+                ))
+            }
+            if let score = scoreMetric(result), score > 0,
+               let prior = baseline.bestScore, score > prior {
+                awards.append(.init(
+                    id: "conditioning-\(activity.section.id)-best-score",
+                    title: activity.title,
+                    kind: .conditioningBestScore,
+                    valueText: conditioningScoreValue(result)
+                ))
+            }
+            if let fastest = ConditioningPerformanceAnalysis(
+                section: activity.section,
+                result: result
+            ).fastestRoundSeconds,
+               fastest > 0,
+               let prior = baseline.fastestRoundSeconds,
+               fastest < prior {
+                awards.append(.init(
+                    id: "conditioning-\(activity.section.id)-fastest-round",
+                    title: activity.title,
+                    kind: .conditioningFastestRound,
+                    valueText: Fmt.elapsed(fastest)
+                ))
+            }
+            if result.scoreKind == .load,
+               let load = result.load,
+               load > 0,
+               let prior = baseline.bestLoad,
+               load > prior {
+                awards.append(.init(
+                    id: "conditioning-\(activity.section.id)-best-load",
+                    title: activity.title,
+                    kind: .conditioningBestLoad,
+                    valueText: Fmt.loadUnit(load)
+                ))
+            }
+        }
+
+        let yoga = yogaActivities(in: workout)
+        for activity in yoga {
+            guard let baseline = history.yogaBaselines[activity.style] else { continue }
+            if activity.durationSeconds > 0,
+               let prior = baseline.longestDurationSeconds,
+               activity.durationSeconds > prior {
+                awards.append(.init(
+                    id: "yoga-\(activity.session.id)-longest-practice",
+                    title: "\(activity.style.title) Yoga",
+                    kind: .yogaLongestPractice,
+                    valueText: Fmt.durationShort(activity.durationSeconds)
+                ))
+            }
+            if activity.poseCount > 0,
+               let prior = baseline.mostPoses,
+               activity.poseCount > prior {
+                awards.append(.init(
+                    id: "yoga-\(activity.session.id)-most-poses",
+                    title: "\(activity.style.title) Yoga",
+                    kind: .yogaMostPoses,
+                    valueText: "\(activity.poseCount) poses"
+                ))
+            }
+        }
+
+        if yoga.contains(where: { $0.durationSeconds >= 60 }) {
+            let practiceDay = calendar.startOfDay(for: workout.startedAt)
+            if !history.yogaPracticeDays.contains(practiceDay) {
+                var streak = 1
+                var cursor = practiceDay
+                while let previous = calendar.date(byAdding: .day, value: -1, to: cursor),
+                      history.yogaPracticeDays.contains(previous) {
+                    streak += 1
+                    cursor = previous
+                }
+                if streakMilestones.contains(streak) {
+                    awards.append(.init(
+                        id: "yoga-\(workout.id)-streak-\(streak)",
+                        title: "Yoga practice",
+                        kind: .yogaStreak,
+                        valueText: "\(streak) days"
+                    ))
+                }
+            }
+        }
+        return awards
+    }
+
     private static let streakMilestones: Set<Int> = [3, 7, 14, 30, 60, 100, 365]
 
     private struct ConditioningActivity {
@@ -310,6 +419,17 @@ enum WorkoutAwards {
         exercises: [ExerciseLibraryModel]
     ) -> [WorkoutAward] {
         let baselines = PersonalRecords.baselines(history: history, before: workout)
+        return strengthAwards(for: workout, baselines: baselines, exercises: exercises)
+    }
+
+    /// Strength awards from an already-materialized historical baseline. The
+    /// completion sheet uses this overload after its isolated history worker
+    /// returns, so only the just-finished workout is inspected on MainActor.
+    static func strengthAwards(
+        for workout: WorkoutModel,
+        baselines: [UUID: ExerciseRecordBaseline],
+        exercises: [ExerciseLibraryModel]
+    ) -> [WorkoutAward] {
         return workout.exercises.sorted { $0.position < $1.position }.flatMap { workoutExercise in
             let exercise = exercises.first { $0.id == workoutExercise.exerciseID }
             let unit = exercise?.effectiveWeightUnit ?? Fmt.unit

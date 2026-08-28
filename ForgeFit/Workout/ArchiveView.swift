@@ -72,6 +72,7 @@ struct ArchiveView: View {
 
     let routines: [RoutineModel]
     let folders: [RoutineFolderModel]
+    let inventory: ArchiveInventory
 
     @State private var filter: ArchiveFilter = .all
     @State private var routinePendingDelete: RoutineModel?
@@ -84,15 +85,10 @@ struct ArchiveView: View {
         case routines = "Routines"
     }
 
-    private var inventory: ArchiveInventory {
-        ArchiveInventory(routines: routines, folders: folders)
-    }
-
     /// One list, filter-dependent. "All" shows the archived UNITS; the kind
     /// filters flatten so a routine buried in an archived mesocycle is still
     /// findable under Routines.
-    private var items: [ArchiveItem] {
-        let inventory = inventory
+    private func items(in inventory: ArchiveInventory) -> [ArchiveItem] {
         switch filter {
         case .all:
             return (inventory.rootFolders.map(ArchiveItem.folder) + inventory.rootRoutines.map(ArchiveItem.routine))
@@ -107,6 +103,7 @@ struct ArchiveView: View {
     }
 
     var body: some View {
+        let items = items(in: inventory)
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: Space.lg) {
                 header
@@ -117,7 +114,7 @@ struct ArchiveView: View {
                     selection: $filter
                 )
 
-                Text(countLine)
+                Text(countLine(count: items.count))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
 
@@ -129,7 +126,7 @@ struct ArchiveView: View {
                     )
                 } else {
                     ForEach(items) { item in
-                        itemCard(item)
+                        itemCard(item, inventory: inventory)
                     }
                 }
 
@@ -181,8 +178,7 @@ struct ArchiveView: View {
         .padding(.top, Space.sm)
     }
 
-    private var countLine: String {
-        let count = items.count
+    private func countLine(count: Int) -> String {
         let noun: String
         switch filter {
         case .all: noun = count == 1 ? "archived item" : "archived items"
@@ -209,11 +205,11 @@ struct ArchiveView: View {
 
     // MARK: - Rows
 
-    private func itemCard(_ item: ArchiveItem) -> some View {
+    private func itemCard(_ item: ArchiveItem, inventory: ArchiveInventory) -> some View {
         Card(padding: Space.md) {
             VStack(alignment: .leading, spacing: Space.sm) {
                 HStack(alignment: .center, spacing: Space.md) {
-                    Image(systemName: icon(for: item))
+                    Image(systemName: icon(for: item, inventory: inventory))
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(theme.accentForeground)
                         .frame(width: 36, height: 36)
@@ -226,9 +222,9 @@ struct ArchiveView: View {
                                 .font(.bodyStrong)
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
-                            kindBadge(for: item)
+                            kindBadge(for: item, inventory: inventory)
                         }
-                        Text(subtitle(for: item))
+                        Text(subtitle(for: item, inventory: inventory))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
@@ -276,8 +272,8 @@ struct ArchiveView: View {
         .accessibilityIdentifier("archive-item-\(item.name)")
     }
 
-    private func kindBadge(for item: ArchiveItem) -> some View {
-        Text(kindLabel(for: item))
+    private func kindBadge(for item: ArchiveItem, inventory: ArchiveInventory) -> some View {
+        Text(kindLabel(for: item, inventory: inventory))
             .font(.system(size: 9, weight: .bold))
             .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 6)
@@ -286,22 +282,21 @@ struct ArchiveView: View {
             .clipShape(Capsule())
     }
 
-    private func kindLabel(for item: ArchiveItem) -> String {
+    private func kindLabel(for item: ArchiveItem, inventory: ArchiveInventory) -> String {
         switch item {
         case .folder(let folder): inventory.isMesocycle(folder) ? "MESOCYCLE" : "MICROCYCLE"
         case .routine: "ROUTINE"
         }
     }
 
-    private func icon(for item: ArchiveItem) -> String {
+    private func icon(for item: ArchiveItem, inventory: ArchiveInventory) -> String {
         switch item {
         case .folder(let folder): inventory.isMesocycle(folder) ? "star.circle" : "folder"
         case .routine: "list.bullet.rectangle"
         }
     }
 
-    private func subtitle(for item: ArchiveItem) -> String {
-        let inventory = inventory
+    private func subtitle(for item: ArchiveItem, inventory: ArchiveInventory) -> String {
         switch item {
         case .folder(let folder):
             let routineCount = inventory.archivedRoutineCount(inSubtreeOf: folder)

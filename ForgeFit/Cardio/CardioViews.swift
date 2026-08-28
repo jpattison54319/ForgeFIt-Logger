@@ -46,6 +46,8 @@ struct CardioExerciseCard: View {
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
     var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
+    var pendingDrafts: PendingDraftCoordinator? = nil
+    var onSaveRequested: (() -> Void)? = nil
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -58,8 +60,10 @@ struct CardioExerciseCard: View {
     var onReorderDragChanged: (CGFloat) -> Void = { _ in }
     var onReorderDragEnded: () -> Void = {}
     var onAccessibilityMoveBy: (Int) -> Void = { _ in }
-    /// Completed workouts, for the "Last time" line — cardio's PREVIOUS column.
-    var history: [WorkoutModel] = []
+    /// Value-only history projection for the "Last time" line. Keeping the
+    /// full workout graph out of this card prevents every body update from
+    /// filtering, sorting, and faulting historical relationships.
+    var previousSession: LivePreviousCardioSnapshot?
 
     @State private var session: CardioSessionModel?
     @State private var showManual = false
@@ -276,7 +280,9 @@ struct CardioExerciseCard: View {
                         pinnedNote: pinnedNote,
                         focusRequested: noteFocusRequested,
                         onFocusHandled: { noteFocusRequested = false },
-                        onPinnedNoteChanged: onPinnedNoteChanged
+                        onPinnedNoteChanged: onPinnedNoteChanged,
+                        pendingDrafts: pendingDrafts,
+                        onSaveRequested: onSaveRequested
                     )
                 }
                 if let session {
@@ -347,21 +353,18 @@ struct CardioExerciseCard: View {
     /// The most recent completed run of this exercise — distance, time, and
     /// avg HR to match or beat, mirroring the strength PREVIOUS column.
     private var previousSessionText: String? {
-        let currentExerciseID = workoutExercise.exerciseID
-        let prior = history
-            .filter { $0.id != workout.id && $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-        for past in prior {
-            for we in past.exercises where we.exerciseID == currentExerciseID {
-                guard let pastSession = past.cardioSessions.first(where: { $0.workoutExerciseID == we.id && $0.endedAt != nil }) else { continue }
-                var parts: [String] = []
-                if let meters = pastSession.distanceMeters, meters > 0 { parts.append(Fmt.cardioDistance(meters, kind: kind)) }
-                if let seconds = pastSession.durationSeconds, seconds > 0 { parts.append(Fmt.durationShort(seconds)) }
-                if let hr = pastSession.avgHR { parts.append("\(hr) bpm avg") }
-                if !parts.isEmpty { return parts.joined(separator: " · ") }
-            }
+        guard let previousSession else { return nil }
+        var parts: [String] = []
+        if let meters = previousSession.distanceMeters, meters > 0 {
+            parts.append(Fmt.cardioDistance(meters, kind: kind))
         }
-        return nil
+        if let seconds = previousSession.durationSeconds, seconds > 0 {
+            parts.append(Fmt.durationShort(seconds))
+        }
+        if let hr = previousSession.averageHeartRate {
+            parts.append("\(hr) bpm avg")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func previousRow(_ text: String) -> some View {
@@ -771,7 +774,7 @@ struct CardioExerciseCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                modelContext.saveUserChanges()
+                requestSave()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -861,8 +864,16 @@ struct CardioExerciseCard: View {
             session.updatedAt = Date()
         }
         workoutExercise.updatedAt = Date()
-        workout.updatedAt = Date()
-        modelContext.saveUserChanges()
+        WorkoutMutationContract.stampParentForNestedMutation(workout)
+        requestSave()
+    }
+
+    private func requestSave() {
+        if let onSaveRequested {
+            onSaveRequested()
+        } else {
+            modelContext.saveUserChanges()
+        }
     }
 }
 

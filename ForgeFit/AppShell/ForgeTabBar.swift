@@ -47,6 +47,13 @@ struct ForgeTabBar: View {
                     item(tab)
                 }
             }
+            // Keep the indicator/icon motion inside the small bar subtree.
+            // Animating selection at ContentView used to pull both full-size
+            // tab screens into the same transaction.
+            .animation(
+                reduceMotion ? Motion.reduced : .bouncy(duration: 0.42, extraBounce: 0.06),
+                value: selection
+            )
             .padding(5)
             .glassEffect(.regular.interactive(), in: Capsule())
         }

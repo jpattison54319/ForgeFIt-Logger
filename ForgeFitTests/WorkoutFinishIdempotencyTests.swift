@@ -58,6 +58,143 @@ struct WorkoutFinishIdempotencyTests {
         #expect(progress.totalXP == workout.xpAwardedAmount)
     }
 
+    @Test func isolatedFinishRecomputesDurableVolumeAfterCallerSave() throws {
+        let (container, context) = try TestStore.make()
+        let recorder = FinishRecorder()
+        let workout = substantiveLiveWorkout(in: context)
+        let editedSet = try #require(workout.exercises.first?.sets.first)
+
+        editedSet.reps = 12
+        editedSet.setModeWeight(120)
+        try context.save()
+        #expect(workout.totalVolume == nil)
+
+        let failure = WorkoutFinisher.finish(
+            workoutID: workout.id,
+            in: context,
+            effects: recorder.effects()
+        )
+
+        #expect(failure == nil)
+        let workoutID = workout.id
+        let persisted = try #require(ModelContext(container).fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persisted.totalVolume == 2_440)
+    }
+
+    @Test func xpIneligibleNotesOnlyFinishStillAdvancesTheTerminalParentClock() throws {
+        let (container, context) = try TestStore.make()
+        context.autosaveEnabled = false
+        let recorder = FinishRecorder()
+        let originalDate = Date(timeIntervalSince1970: 1_000)
+        let finishedAt = Date(timeIntervalSince1970: 2_000)
+        let workout = WorkoutModel(
+            userID: userID,
+            startedAt: originalDate,
+            notes: "Stopped during setup because my knee felt wrong",
+            avgHR: 90,
+            maxHR: 100,
+            activeEnergyKcal: 1,
+            updatedAt: originalDate
+        )
+        context.insert(workout)
+        try context.save()
+        #expect(!XPService.previewAward(for: workout, requireEnded: false).eligible)
+
+        let failure = WorkoutFinisher.finish(
+            workout,
+            in: context,
+            endedAt: finishedAt,
+            effects: recorder.effects()
+        )
+
+        #expect(failure == nil)
+        #expect(workout.endedAt == finishedAt)
+        #expect(workout.updatedAt == finishedAt)
+        #expect(workout.xpAwardedAt == nil)
+        #expect(try context.fetch(FetchDescriptor<WorkoutXPEventModel>()).isEmpty)
+
+        let workoutID = workout.id
+        let persisted = try #require(ModelContext(container).fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persisted.endedAt == finishedAt)
+        #expect(persisted.updatedAt == finishedAt)
+    }
+
+    @Test func finishExcludesTombstonedCardioFromMutationAndHealthKitDerivation() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let recorder = FinishRecorder()
+        UserDefaults.standard.set(true, forKey: "healthWriteEnabled")
+        defer { UserDefaults.standard.removeObject(forKey: "healthWriteEnabled") }
+        let startedAt = Date(timeIntervalSince1970: 8_000)
+        let finishedAt = startedAt.addingTimeInterval(600)
+
+        let liveExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID()
+        )
+        let deletedExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: UUID()
+        )
+        let liveSession = CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: liveExercise.id,
+            modality: CardioKind.row.rawValue,
+            startedAt: startedAt,
+            liveStartedAt: startedAt,
+            endedAt: finishedAt.addingTimeInterval(-60),
+            durationSeconds: 540,
+            distanceMeters: 1_000,
+            activeEnergyKcal: 60,
+            effort: 6
+        )
+        let deletedSession = CardioSessionModel(
+            userID: userID,
+            workoutExerciseID: deletedExercise.id,
+            modality: CardioKind.run.rawValue,
+            startedAt: startedAt,
+            liveStartedAt: startedAt,
+            durationSeconds: 600,
+            distanceMeters: 9_000,
+            activeEnergyKcal: 600,
+            effort: 10,
+            deletedAt: startedAt.addingTimeInterval(300)
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Cardio tombstone isolation",
+            startedAt: startedAt,
+            avgHR: 140,
+            maxHR: 165,
+            exercises: [liveExercise, deletedExercise],
+            cardioSessions: [liveSession, deletedSession]
+        )
+        context.insert(workout)
+        try context.save()
+
+        let failure = WorkoutFinisher.finish(
+            workout,
+            in: context,
+            endedAt: finishedAt,
+            effects: recorder.effects()
+        )
+
+        #expect(failure == nil)
+        #expect(deletedSession.endedAt == nil)
+        let request = try #require(recorder.healthKitRequests.first)
+        #expect(recorder.healthKitRequests.count == 1)
+        #expect(request.distanceMeters == 1_000)
+        #expect(request.energyKcal == 60)
+        #expect(request.modality == .row)
+        #expect(request.effortScore == 6)
+        #expect(request.isCardio)
+        #expect(!request.isYoga)
+    }
+
     @Test func distinctWorkoutsDispatchIndependently() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }
@@ -346,6 +483,55 @@ struct WorkoutFinishIdempotencyTests {
         #expect(persistedRoutine.name == "Still pending")
     }
 
+    @Test func routineUpdateDoesNotResurrectAnOlderLiveDuplicate() throws {
+        let (container, context) = try TestStore.make()
+        let recorder = FinishRecorder()
+        let routineID = UUID()
+        let base = Date(timeIntervalSince1970: 12_000)
+        let staleLive = RoutineModel(
+            id: routineID,
+            userID: userID,
+            name: "Stale live copy",
+            createdAt: base,
+            updatedAt: base
+        )
+        let newestTombstone = RoutineModel(
+            id: routineID,
+            userID: userID,
+            name: "Deleted copy",
+            createdAt: base,
+            updatedAt: base.addingTimeInterval(60),
+            deletedAt: base.addingTimeInterval(120)
+        )
+        let workout = substantiveLiveWorkout(in: context)
+        workout.routineID = routineID
+        context.insert(staleLive)
+        context.insert(newestTombstone)
+        try context.save()
+        let workoutID = workout.id
+
+        let failure = WorkoutFinisher.finish(
+            workoutID: workoutID,
+            in: context,
+            summaryCommit: WorkoutFinisher.SummaryCommit(
+                wholeSessionRPE: 7,
+                wholeSessionRPERatedAt: .now,
+                wholeSessionRPEProtocolVersion: "whole-session-cr10-immediate-v1",
+                updateRoutine: true
+            ),
+            effects: recorder.effects()
+        )
+
+        #expect(failure == "The routine could not be found, so it was not updated. The workout is still active.")
+        #expect(workout.endedAt == nil)
+        #expect(recorder.healthKitSaveCount == 0)
+        let persisted = try #require(ModelContext(container).fetch(
+            FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == workoutID })
+        ).first)
+        #expect(persisted.endedAt == nil)
+        #expect(persisted.wholeSessionRPE == nil)
+    }
+
     /// The reported end-of-workout path: accepting a swap/reorder must be part
     /// of the isolated terminal transaction. Failure leaves both models live
     /// and unchanged; retry commits the exact routine graph once and mirrors it
@@ -505,6 +691,7 @@ struct WorkoutFinishIdempotencyTests {
 @MainActor
 private final class FinishRecorder {
     var healthKitSaveCount = 0
+    var healthKitRequests: [WorkoutFinisher.HealthKitSaveRequest] = []
     var heartRateSaveCount = 0
     var watchSendCount = 0
     var watchPublishCount = 0
@@ -512,7 +699,10 @@ private final class FinishRecorder {
 
     func effects() -> WorkoutFinisher.FinishEffects {
         WorkoutFinisher.FinishEffects(
-            scheduleHealthKitSave: { [self] _ in healthKitSaveCount += 1 },
+            scheduleHealthKitSave: { [self] request in
+                healthKitSaveCount += 1
+                healthKitRequests.append(request)
+            },
             scheduleHeartRateSamples: { [self] _ in heartRateSaveCount += 1 },
             sendWorkoutFinishedToWatch: { [self] in watchSendCount += 1 },
             publishWatchState: { [self] in watchPublishCount += 1 },

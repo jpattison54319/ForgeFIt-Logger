@@ -71,7 +71,12 @@ enum RoutineHierarchyUITestFixture {
                     GlobalExerciseLibrary.overheadCableTricepsExtensionID,
                     GlobalExerciseLibrary.chestSupportedTBarRowID,
                     GlobalExerciseLibrary.bayesianCableCurlID,
+                    ExerciseCatalog.deterministicID(for: "Barbell_Bench_Press_-_Medium_Grip"),
+                    ExerciseCatalog.deterministicID(for: "Wide-Grip_Lat_Pulldown"),
+                    ExerciseCatalog.deterministicID(for: "Leg_Press"),
+                    ExerciseCatalog.deterministicID(for: "Seated_Side_Lateral_Raise"),
                 ],
+                targetSetCount: 4,
                 into: context
             )
             insertRoutine(
@@ -144,8 +149,10 @@ enum RoutineHierarchyUITestFixture {
         position: Int,
         exerciseIDs: [UUID] = [],
         includesTargetSet: Bool = false,
+        targetSetCount: Int? = nil,
         into context: ModelContext
     ) -> RoutineModel {
+        let setCount = max(0, targetSetCount ?? (includesTargetSet ? 1 : 0))
         let routine = RoutineModel(
             userID: ForgeFitDemo.userID,
             name: name,
@@ -156,14 +163,15 @@ enum RoutineHierarchyUITestFixture {
                     userID: ForgeFitDemo.userID,
                     exerciseID: exerciseID,
                     position: index,
-                    sets: includesTargetSet
-                        ? [RoutineSetModel(
+                    sets: (0..<setCount).map { setPosition in
+                        RoutineSetModel(
                             userID: ForgeFitDemo.userID,
-                            position: 0,
+                            position: setPosition,
                             targetRepsLow: 10,
+                            targetRepsHigh: 12,
                             targetWeight: 50
-                        )]
-                        : []
+                        )
+                    }
                 )
             }
         )

@@ -10,6 +10,7 @@ struct ConditioningPresetManagerView: View {
 
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
 
     // Keep soft-deleted rows available so visibility and restore state are
     // derived from the complete persisted history. The local ID sets below
@@ -106,6 +107,7 @@ struct ConditioningPresetManagerView: View {
                 planJSON: nil,
                 exercises: exercises,
                 workouts: workouts,
+                historySnapshot: historySnapshot,
                 navigationTitle: "New Preset",
                 allowsMultipleSections: false,
                 showsPresetActions: false,

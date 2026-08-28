@@ -4,7 +4,7 @@ import ForgeData
 import SwiftUI
 
 /// A single (date, value) sample for the trend charts.
-struct MetricPoint: Identifiable {
+nonisolated struct MetricPoint: Identifiable, Sendable {
     let id = UUID()
     let date: Date
     let value: Double

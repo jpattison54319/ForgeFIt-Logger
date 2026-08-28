@@ -17,6 +17,8 @@ struct YogaExerciseCard: View {
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
     var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
+    var pendingDrafts: PendingDraftCoordinator? = nil
+    var onSaveRequested: (() -> Void)? = nil
     var allowsLiveControls: Bool = true
     let availableSupersetGroups: [Int]
     let onAssignSuperset: (Int?) -> Void
@@ -58,7 +60,9 @@ struct YogaExerciseCard: View {
                         pinnedNote: pinnedNote,
                         focusRequested: noteFocusRequested,
                         onFocusHandled: { noteFocusRequested = false },
-                        onPinnedNoteChanged: onPinnedNoteChanged
+                        onPinnedNoteChanged: onPinnedNoteChanged,
+                        pendingDrafts: pendingDrafts,
+                        onSaveRequested: onSaveRequested
                     )
                 }
                 if let session {
@@ -391,7 +395,7 @@ struct YogaExerciseCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                modelContext.saveUserChanges()
+                requestSave()
             })
         }
         actions.append(contentsOf: SupersetUI.scrollSafeMenuItems(
@@ -516,7 +520,15 @@ struct YogaExerciseCard: View {
 
     private func persist() {
         workoutExercise.updatedAt = Date()
-        modelContext.saveUserChanges()
+        requestSave()
+    }
+
+    private func requestSave() {
+        if let onSaveRequested {
+            onSaveRequested()
+        } else {
+            modelContext.saveUserChanges()
+        }
     }
 }
 

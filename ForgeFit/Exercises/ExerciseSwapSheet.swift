@@ -12,6 +12,7 @@ struct ExerciseSwapSheet: View {
     let allExercises: [ExerciseLibraryModel]
     let inUseIDs: Set<UUID>
     let history: [WorkoutModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
     let onPick: (ExerciseLibraryModel) -> Void
 
     @State private var suggestions: [ExerciseSwapSuggester.Suggestion] = []
@@ -67,10 +68,11 @@ struct ExerciseSwapSheet: View {
                 }
             }
             .navigationDestination(item: $detailExercise) { exercise in
-                ExerciseDetailView(
-                    exerciseID: exercise.id,
-                    workouts: history,
-                    exercises: allExercises
+                ExercisePickerHistoryDetailDestination(
+                    exercise: exercise,
+                    exercises: allExercises,
+                    seedHistory: history,
+                    loadsPersistedHistory: historySnapshot != nil
                 )
             }
         }
@@ -83,6 +85,7 @@ struct ExerciseSwapSheet: View {
                 excludeYogaPoses: true,
                 context: [current],
                 history: history,
+                historySnapshot: historySnapshot,
                 navigationTitle: "Replace Exercise",
                 excludedIDs: inUseIDs.union([current.id]),
                 replacementTarget: current,
@@ -150,7 +153,8 @@ struct ExerciseSwapSheet: View {
             from: pool,
             excluding: inUseIDs,
             equipmentFilter: equipmentFilter,
-            usageByID: ExerciseSwapUsageBuilder.profiles(from: history)
+            usageByID: historySnapshot?.swapUsageProfiles
+                ?? ExerciseSwapUsageBuilder.profiles(from: history)
         )
         computed = true
     }

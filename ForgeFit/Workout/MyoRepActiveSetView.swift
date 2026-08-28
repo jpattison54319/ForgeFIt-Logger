@@ -11,7 +11,7 @@ struct MyoRepActiveSetView: View {
     /// Resolved by the logger from name AND equipment — see the editor.
     let supportsResistanceBands: Bool
     let blockNumber: Int
-    let previous: SetModel?
+    let previous: LivePreviousSetSnapshot?
     let showsWeight: Bool
     let displayUnit: WeightUnit
     let isUnilateral: Bool
@@ -55,7 +55,7 @@ struct MyoRepActiveSetView: View {
         exerciseName: String,
         supportsResistanceBands: Bool = false,
         blockNumber: Int,
-        previous: SetModel?,
+        previous: LivePreviousSetSnapshot?,
         showsWeight: Bool,
         displayUnit: WeightUnit,
         isUnilateral: Bool,
@@ -509,7 +509,7 @@ struct MyoRepActiveSetView: View {
     private static func initialActivationReps(
         side: Int,
         set: SetModel,
-        previous: SetModel?,
+        previous: LivePreviousSetSnapshot?,
         suggestedReps: Int?
     ) -> Int {
         let value = side == 2

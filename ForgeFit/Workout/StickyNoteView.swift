@@ -12,6 +12,10 @@ enum ExerciseNotePolicy {
               !trimmed.isEmpty else { return nil }
         return trimmed
     }
+
+    static func pinStateAfterToggle(currentlyPinned: Bool, draft: String?) -> Bool {
+        authoredText(draft) != nil && !currentlyPinned
+    }
 }
 
 /// A yellow sticky note attached to an exercise during a workout. The pin button
@@ -27,8 +31,15 @@ struct StickyNoteView: View {
     var focusRequested = false
     var onFocusHandled: () -> Void = {}
     var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
+    var pendingDrafts: PendingDraftCoordinator? = nil
+    /// Live strength cards inject the logger-owned coordinator. Other callers
+    /// retain the existing direct-save behavior at commit boundaries.
+    var onSaveRequested: (() -> Void)? = nil
 
     @FocusState private var focused: Bool
+    @State private var draft = ""
+    @State private var draftDirty = false
+    @State private var draftToken = UUID()
     @State private var currentPinnedNote: UserExerciseNoteModel?
     @State private var didResolvePinnedNote = false
 
@@ -64,7 +75,7 @@ struct StickyNoteView: View {
             }
 
             ZStack(alignment: .topLeading) {
-                if (workoutExercise.notes ?? "").isEmpty {
+                if draft.isEmpty {
                     Text("Write a note…")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(theme.stickyInk.opacity(0.55))
@@ -72,12 +83,10 @@ struct StickyNoteView: View {
                 }
 
                 TextField("", text: Binding(
-                    get: { workoutExercise.notes ?? "" },
+                    get: { draft },
                     set: {
-                        workoutExercise.notes = $0
-                        workoutExercise.updatedAt = .now
-                        syncPinnedIfNeeded()
-                        modelContext.saveUserChanges()
+                        draft = $0
+                        draftDirty = true
                     }
                 ), axis: .vertical)
                 .font(.system(size: 15, weight: .medium))
@@ -103,6 +112,8 @@ struct StickyNoteView: View {
         .rotationEffect(.degrees(-0.6))
         .onAppear {
             resolvePinnedNote()
+            synchronizeUntouchedDraft()
+            pendingDrafts?.register(draftToken, commit: commitDraft)
             if focusRequested {
                 focusIfRequested()
             } else {
@@ -112,15 +123,26 @@ struct StickyNoteView: View {
         .onChange(of: focusRequested) { _, requested in
             if requested { focusIfRequested() }
         }
+        .onChange(of: workoutExercise.notes) { synchronizeUntouchedDraft() }
         .onChange(of: focused) { wasFocused, isFocused in
-            if wasFocused && !isFocused { discardEmptyNoteIfNeeded() }
+            if wasFocused && !isFocused { commitDraft() }
         }
-        .onDisappear(perform: discardEmptyNoteIfNeeded)
+        .onDisappear {
+            commitDraft()
+            pendingDrafts?.unregister(draftToken)
+        }
     }
 
     private func togglePin() {
+        let shouldPin = ExerciseNotePolicy.pinStateAfterToggle(
+            currentlyPinned: workoutExercise.notePinned,
+            draft: draft
+        )
+        commitDraft()
         resolvePinnedNote()
-        workoutExercise.notePinned.toggle()
+        // Committing a newly blank draft removes the note and forces unpinned.
+        // Do not blindly toggle that forced-false value back to an empty pin.
+        workoutExercise.notePinned = shouldPin
         if workoutExercise.notePinned {
             upsertPinnedNote()
         } else {
@@ -129,7 +151,7 @@ struct StickyNoteView: View {
             onPinnedNoteChanged(nil)
         }
         workoutExercise.updatedAt = .now
-        modelContext.saveUserChanges()
+        requestSave()
     }
 
     private func syncPinnedIfNeeded() {
@@ -178,13 +200,37 @@ struct StickyNoteView: View {
 
     private func discardEmptyNoteIfNeeded() {
         guard workoutExercise.notes != nil,
-              ExerciseNotePolicy.authoredText(workoutExercise.notes) == nil else { return }
+              ExerciseNotePolicy.authoredText(draft) == nil else { return }
         remove()
+    }
+
+    private func commitDraft() {
+        guard LocalTextDraftPolicy.shouldCommit(
+            draft: draft,
+            modelText: workoutExercise.notes,
+            isDirty: draftDirty
+        ) else {
+            draftDirty = false
+            synchronizeUntouchedDraft()
+            return
+        }
+        guard ExerciseNotePolicy.authoredText(draft) != nil else {
+            draftDirty = false
+            discardEmptyNoteIfNeeded()
+            return
+        }
+        workoutExercise.notes = draft
+        draftDirty = false
+        workoutExercise.updatedAt = .now
+        syncPinnedIfNeeded()
+        requestSave()
     }
 
     private func remove() {
         resolvePinnedNote()
         focused = false
+        draft = ""
+        draftDirty = false
         workoutExercise.notes = nil
         if workoutExercise.notePinned {
             if let persistedPinnedNote { modelContext.delete(persistedPinnedNote) }
@@ -193,7 +239,23 @@ struct StickyNoteView: View {
         }
         workoutExercise.notePinned = false
         workoutExercise.updatedAt = .now
-        modelContext.saveUserChanges()
+        requestSave()
+    }
+
+    private func synchronizeUntouchedDraft() {
+        draft = LocalTextDraftPolicy.synchronizedDraft(
+            currentDraft: draft,
+            modelText: workoutExercise.notes,
+            isDirty: draftDirty
+        )
+    }
+
+    private func requestSave() {
+        if let onSaveRequested {
+            onSaveRequested()
+        } else {
+            modelContext.saveUserChanges()
+        }
     }
 }
 

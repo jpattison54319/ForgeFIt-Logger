@@ -3,6 +3,57 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
+@MainActor
+struct RoutineEditorReferenceLookup {
+    let exerciseByID: [UUID: ExerciseLibraryModel]
+    let setupNoteByExerciseID: [UUID: UserExerciseNoteModel]
+
+    static func revision(
+        exercises: [ExerciseLibraryModel],
+        setupNotes: [UserExerciseNoteModel]
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(exercises.count)
+        for exercise in exercises {
+            hasher.combine(exercise.id)
+            hasher.combine(exercise.updatedAt)
+            hasher.combine(exercise.deletedAt)
+        }
+        hasher.combine(setupNotes.count)
+        for note in setupNotes {
+            hasher.combine(note.id)
+            hasher.combine(note.userID)
+            hasher.combine(note.exerciseID)
+            hasher.combine(note.note)
+            hasher.combine(note.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    static func make(
+        exercises: [ExerciseLibraryModel],
+        setupNotes: [UserExerciseNoteModel]
+    ) -> Self {
+        let exerciseByID = Dictionary(
+            exercises.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var noteByExerciseID: [UUID: UserExerciseNoteModel] = [:]
+        for note in setupNotes
+        where note.userID == ForgeFitDemo.userID
+            && ExerciseNotePolicy.authoredText(note.note) != nil {
+            if let current = noteByExerciseID[note.exerciseID], current.updatedAt >= note.updatedAt {
+                continue
+            }
+            noteByExerciseID[note.exerciseID] = note
+        }
+        return Self(
+            exerciseByID: exerciseByID,
+            setupNoteByExerciseID: noteByExerciseID
+        )
+    }
+}
+
 /// Editing surface for a routine: rename, add/remove exercises, and tune target
 /// sets. Kept dark and card-based to match the rest of the app.
 struct RoutineEditorView: View {
@@ -14,6 +65,10 @@ struct RoutineEditorView: View {
     @Bindable var routine: RoutineModel
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
+    /// Parent-owned history is already fetched for the screen that opens this
+    /// editor. Snapshot it once instead of issuing another synchronous
+    /// SwiftData fetch underneath the editor's first interaction.
+    var history: [WorkoutModel] = []
     /// True when this routine is a just-inserted placeholder (insert-then-edit
     /// keeps the picker's eager saves working). Backing out of a new routine
     /// deletes the placeholder instead of leaving "New Routine" in the library.
@@ -28,35 +83,50 @@ struct RoutineEditorView: View {
     @State private var editBlock: RoutineBlockModel?
     @State private var entrySnapshot: RoutineSnapshot?
     @State private var showDiscardConfirm = false
+    @State private var showInvalidDraftAlert = false
     @State private var replaceTarget: RoutineExerciseModel?
     @State private var detailExerciseID: UUID?
     /// Reference-backed so per-frame finger updates invalidate only the small
     /// reorder overlay, not every editor row and target field.
     @State private var reorderSession: ExerciseReorderSession?
     @State private var keyboardVisible = false
-    /// Debounced structural-save plumbing — see `save()`.
-    @State private var deferredSaveTask: Task<Void, Never>?
-    @Query(sort: \WorkoutModel.startedAt, order: .reverse) private var allWorkouts: [WorkoutModel]
+    /// Screen-owned structural-save plumbing — see `save()`.
+    @State private var saveCoordinator = DeferredSaveCoordinator()
+    /// Child fields keep raw keyboard text here until blur or a durability
+    /// boundary. This prevents every digit from mutating a SwiftData model and
+    /// invalidating the routine graph while still guaranteeing synchronous
+    /// commit before dismissal, backgrounding, or an explicit save.
+    @State private var pendingDrafts = PendingDraftCoordinator()
+    @State private var referenceLookupMemo = Memo<Int, RoutineEditorReferenceLookup>()
+    /// Completed history is immutable for the lifetime of a routine-editing
+    /// session. A one-time snapshot prevents every editor save from
+    /// republishing a root `@Query` and rebuilding history-derived inputs.
+    @State private var historySnapshot: [WorkoutModel] = []
+    @State private var bestEstimatedOneRepMaxByExercise: [UUID: Double] = [:]
 
     private var sortedExercises: [RoutineExerciseModel] { routine.exercises.sorted { $0.position < $1.position } }
     private var orderedItems: [OrderedRoutineItem] { OrderedRoutineItem.ordered(in: routine) }
     private var supersetGroups: [Int] {
         Array(Set(routine.exercises.compactMap(\.supersetGroup))).sorted()
     }
+    private var referenceLookup: RoutineEditorReferenceLookup {
+        referenceLookupMemo(
+            RoutineEditorReferenceLookup.revision(
+                exercises: exercises,
+                setupNotes: setupNotes
+            )
+        ) {
+            RoutineEditorReferenceLookup.make(
+                exercises: exercises,
+                setupNotes: setupNotes
+            )
+        }
+    }
     /// Library entries for the routine's current exercises — the picker's
     /// suggestion context (lots of chest work → chest & push suggested first).
     private var exercisesInRoutine: [ExerciseLibraryModel] {
-        routine.exercises.compactMap { re in exercises.first { $0.id == re.exerciseID } }
-    }
-
-    private func setupNote(for exerciseID: UUID) -> UserExerciseNoteModel? {
-        setupNotes
-            .filter {
-                $0.userID == ForgeFitDemo.userID
-                    && $0.exerciseID == exerciseID
-                    && ExerciseNotePolicy.authoredText($0.note) != nil
-            }
-            .max { $0.updatedAt < $1.updatedAt }
+        let exerciseByID = referenceLookup.exerciseByID
+        return routine.exercises.compactMap { exerciseByID[$0.exerciseID] }
     }
 
     var body: some View {
@@ -98,14 +168,37 @@ struct RoutineEditorView: View {
             }
         }
         .onKeyboardVisibilityChange($keyboardVisible)
-        .interactiveBackSwipeEnabled()
+        // This screen owns drafts that can deliberately remain invalid while
+        // the user corrects them. A direct interactive pop would bypass
+        // `requestDismiss()` and silently throw that text away, so dismissal
+        // stays on the visible, validation-aware Back action.
         .onAppear {
             if entrySnapshot == nil {
-                migrateLegacyBlocksIfNeeded()
+                if RoutineLegacyBlockMigration.migrateIfNeeded(
+                    routine: routine,
+                    exercises: exercises,
+                    in: modelContext
+                ) {
+                    save()
+                }
                 entrySnapshot = RoutineSnapshot(of: routine)
             }
         }
-        .onDisappear { flushPendingSave() }
+        .task(id: routine.id) {
+            await refreshHistoryContext()
+        }
+        .onChange(of: appState.showingLogger) { wasPresented, isPresented in
+            // The estimated-1RM assessment is presented over this still-live
+            // editor. Its routine ID does not change, so refresh explicitly
+            // when that logger closes instead of leaving the new baseline
+            // stale until the editor is reopened.
+            guard wasPresented, !isPresented else { return }
+            Task { await refreshHistoryContext() }
+        }
+        .onDisappear {
+            flushPendingSave()
+            pendingDrafts.clearAll()
+        }
         // The 2s save debounce must not lose edits when the app is locked or
         // backgrounded mid-edit.
         .onChange(of: scenePhase) { _, phase in
@@ -113,38 +206,40 @@ struct RoutineEditorView: View {
         }
         .confirmationDialog("Keep this new routine?", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
             Button("Keep Routine") {
-                saveNow(onCommit: dismiss.callAsFunction)
+                saveNow(showValidationError: true, onCommit: dismiss.callAsFunction)
             }
             Button("Discard New Routine", role: .destructive) {
                 // A queued debounced save must not fire after the restore and
                 // revive the new routine after its tombstone commits.
-                deferredSaveTask?.cancel()
-                deferredSaveTask = nil
+                saveCoordinator.cancel()
                 discardNewRoutine()
             }
             Button("Keep Editing", role: .cancel) {}
         } message: {
             Text("Your edits are saved automatically. Discarding removes the new routine.")
         }
+        .alert("Check Routine Values", isPresented: $showInvalidDraftAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Enter an estimated 1RM percentage from 1 to 100, or a valid range such as 67–72, before leaving this routine.")
+        }
         .sheet(isPresented: $showPicker) {
             ExercisePickerView(
                 excludeYoga: true,
                 showsWorkoutBlocks: true,
                 context: exercisesInRoutine,
-                history: allWorkouts,
+                history: historySnapshot,
                 navigationTitle: "Add to Routine",
                 onAddConditioningBlock: { addBlock(kind: .conditioning, planJSON: $0) },
                 onAddYogaBlock: { addBlock(kind: .yoga, planJSON: $0) }
-            ) { added in
-                added.forEach(add)
-            }
+            ) { added in add(added) }
         }
         .sheet(item: $editBlock) { block in
             if block.kind == .conditioning {
                 ConditioningBlockBuilderView(
                     planJSON: block.planJSON,
                     exercises: exercises,
-                    workouts: allWorkouts,
+                    workouts: historySnapshot,
                     commit: { update(block, planJSON: $0) }
                 )
             } else {
@@ -157,12 +252,12 @@ struct RoutineEditorView: View {
         .sheet(item: $replaceTarget) { target in
             // Gym swap: lead with close substitutes for the exercise being
             // replaced; search stays one tap away inside the sheet.
-            if let currentExercise = exercises.first(where: { $0.id == target.exerciseID }) {
+            if let currentExercise = referenceLookup.exerciseByID[target.exerciseID] {
                 ExerciseSwapSheet(
                     current: currentExercise,
                     allExercises: exercises.filter { !$0.isYoga },
                     inUseIDs: Set(routine.exercises.map(\.exerciseID)),
-                    history: allWorkouts
+                    history: historySnapshot
                 ) { picked in
                     replace(target, with: picked)
                 }
@@ -171,7 +266,7 @@ struct RoutineEditorView: View {
                     singleSelection: true,
                     excludeYoga: true,
                     context: exercisesInRoutine,
-                    history: allWorkouts,
+                    history: historySnapshot,
                     navigationTitle: "Replace Exercise",
                     excludedIDs: Set(routine.exercises.map(\.exerciseID))
                 ) { picked in
@@ -185,33 +280,25 @@ struct RoutineEditorView: View {
         // in the stack's path BENEATH it — the detail view opened under the
         // editor. A chained binding-based destination stacks on top.
         .navigationDestination(item: $detailExerciseID) { exerciseID in
-            ExerciseDetailView(exerciseID: exerciseID, workouts: allWorkouts, exercises: exercises)
+            ExerciseDetailView(exerciseID: exerciseID, workouts: historySnapshot, exercises: exercises)
         }
     }
 
     private var mainScroll: some View {
-        let bestEstimatedOneRepMaxByExercise = AdaptiveLoadResolver.bestEstimatedOneRepMaxByExercise(
-            workouts: allWorkouts
-        )
+        let referenceLookup = self.referenceLookup
+        let orderedItems = self.orderedItems
+        let supersetGroups = self.supersetGroups
         return ScrollView(showsIndicators: false) {
             // Lazy, matching the live logger: a plain VStack used to build
             // every ExerciseEditRow up front regardless of scroll position,
             // so any edit anywhere in the routine (add set, type a target,
             // toggle a superset) re-diffed the entire off-screen list too.
             LazyVStack(alignment: .leading, spacing: Space.lg) {
-                Card {
-                    VStack(alignment: .leading, spacing: Space.md) {
-                        FieldLabel("Routine name")
-                        DarkTextField(text: $routine.name, placeholder: "Routine name")
-                            .onChange(of: routine.name) { _, _ in save() }
-                        FieldLabel("Notes")
-                        DarkTextField(text: Binding(
-                            get: { routine.notes ?? "" },
-                            set: { routine.notes = $0.isEmpty ? nil : $0 }
-                        ), placeholder: "Add notes", axis: .vertical)
-                            .onChange(of: routine.notes) { _, _ in save() }
-                    }
-                }
+                RoutineMetadataEditorCard(
+                    routine: routine,
+                    pendingDrafts: pendingDrafts,
+                    onChange: save
+                )
 
                 SectionHeader("Workout")
 
@@ -220,8 +307,9 @@ struct RoutineEditorView: View {
                     case .exercise(let re):
                         ExerciseEditRow(
                             routineExercise: re,
-                            exercise: exercises.first { $0.id == re.exerciseID },
-                            setupNote: setupNote(for: re.exerciseID),
+                            exercise: referenceLookup.exerciseByID[re.exerciseID],
+                            setupNote: referenceLookup.setupNoteByExerciseID[re.exerciseID],
+                            pendingDrafts: pendingDrafts,
                             bestEstimatedOneRepMaxKg: bestEstimatedOneRepMaxByExercise[re.exerciseID],
                             availableSupersetGroups: supersetGroups,
                             onShowDetail: { detailExerciseID = $0 },
@@ -230,6 +318,7 @@ struct RoutineEditorView: View {
                             onUngroupSuperset: { ungroupSuperset($0) },
                             onReplace: { replaceTarget = re },
                             onRemove: { remove(re) },
+                            onSave: save,
                             onCreateEstimatedOneRepMax: {
                                 startEstimatedOneRepMaxAssessment(for: re.exerciseID)
                             },
@@ -267,17 +356,22 @@ struct RoutineEditorView: View {
         // The target fields use number pads (no return key) — without
         // these there was no way to dismiss the keyboard at all.
         .scrollDismissesKeyboard(.interactively)
+        .onScrollPhaseChange { _, phase in
+            if phase == .idle {
+                saveCoordinator.resume()
+            } else {
+                saveCoordinator.pause()
+            }
+        }
     }
 
     private func startEstimatedOneRepMaxAssessment(for exerciseID: UUID) {
-        guard let exercise = exercises.first(where: { $0.id == exerciseID }),
+        guard let exercise = referenceLookup.exerciseByID[exerciseID],
               AdaptiveLoadResolver.supportsPercentagePrescription(exercise) else { return }
         // The assessment does not depend on the routine, but save the visible
         // authoring state before leaving this editor so returning can never
         // reveal older targets.
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
-        saveNow()
+        guard saveNow(showValidationError: true) else { return }
         appState.requestStart {
             _ = WorkoutFactory.startEstimatedOneRepMaxAssessment(
                 exercise: exercise,
@@ -285,6 +379,26 @@ struct RoutineEditorView: View {
                 onCommit: { _ in appState.showingLogger = true }
             )
         }
+    }
+
+    private func refreshHistoryContext() async {
+        // Present/restore the editor first. The history models are a stable
+        // session snapshot for pickers; the nested e1RM scan runs separately
+        // in a detached context and returns only value data.
+        await Task.yield()
+        let container = modelContext.container
+        async let baselineResult = AdaptiveLoadBaselineWorker(
+            modelContainer: container
+        ).calculate()
+        guard !Task.isCancelled else { return }
+        if historySnapshot.isEmpty {
+            historySnapshot = history
+                .filter { $0.endedAt != nil && $0.deletedAt == nil }
+                .sorted { $0.startedAt > $1.startedAt }
+        }
+        let baselines = try? await baselineResult
+        guard !Task.isCancelled else { return }
+        bestEstimatedOneRepMaxByExercise = baselines ?? [:]
     }
 
     /// One continuous gesture from a row's reorder handle. UIKit calls this
@@ -297,7 +411,7 @@ struct RoutineEditorView: View {
         }
 
         hideKeyboard()
-        let exerciseNames = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0.name) })
+        let exerciseNames = referenceLookup.exerciseByID.mapValues(\.name)
         let rows = orderedItems.map { item -> ReorderCollapseOverlay.Row in
             switch item {
             case .exercise(let exercise):
@@ -372,6 +486,13 @@ struct RoutineEditorView: View {
     /// child editors may already have durably saved those changes, turning
     /// "Discard" into a rollback of previously committed routine data.
     private func requestDismiss() {
+        // A focused set/note field may still exist only as a local draft. The
+        // snapshot decision must see it; otherwise Back can misclassify an
+        // authored new routine as the untouched placeholder and delete it.
+        guard pendingDrafts.commitAll() else {
+            showInvalidDraftAlert = true
+            return
+        }
         if isNew,
            let entrySnapshot,
            entrySnapshot != RoutineSnapshot(of: routine) {
@@ -385,7 +506,7 @@ struct RoutineEditorView: View {
     }
 
     private func saveAndDismiss() {
-        saveNow(onCommit: dismiss.callAsFunction)
+        saveNow(showValidationError: true, onCommit: dismiss.callAsFunction)
     }
 
     /// The collapse overlay (see `ReorderCollapseOverlay`): every exercise as
@@ -419,7 +540,7 @@ struct RoutineEditorView: View {
     /// rep-based targets don't translate.
     private func replace(_ target: RoutineExerciseModel, with exercise: ExerciseLibraryModel) {
         let replacedExerciseID = target.exerciseID
-        let previous = exercises.first { $0.id == target.exerciseID }
+        let previous = referenceLookup.exerciseByID[target.exerciseID]
         let wasModality = previous?.modality ?? (target.yogaFlowJSON != nil ? .yoga : .strength)
         let replacement = exercise.isYoga ? YogaPoseCatalog.sessionExercise(in: modelContext) : exercise
         target.exerciseID = replacement.id
@@ -463,19 +584,25 @@ struct RoutineEditorView: View {
         save()
     }
 
-    private func add(_ exercise: ExerciseLibraryModel) {
+    private func add(_ exercises: [ExerciseLibraryModel]) {
+        let additions = exercises.filter { !$0.isYoga }
+        guard !additions.isEmpty else { return }
         withAnimation(reduceMotion ? Motion.reduced : Motion.entrance) {
-            guard !exercise.isYoga else { return }
-            let re = RoutineExerciseModel(
-                userID: ForgeFitDemo.userID,
-                exerciseID: exercise.id,
-                position: orderedItems.count
-            )
-            modelContext.insert(re)
-            re.sets = defaultTargetSets(for: exercise)
-            routine.exercises.append(re)
-            save()
+            var nextPosition = orderedItems.count
+            for exercise in additions {
+                let re = RoutineExerciseModel(
+                    userID: ForgeFitDemo.userID,
+                    exerciseID: exercise.id,
+                    position: nextPosition
+                )
+                nextPosition += 1
+                modelContext.insert(re)
+                re.sets = defaultTargetSets(for: exercise)
+                routine.exercises.append(re)
+            }
         }
+        // One graph stamp and one persistence request for a multi-select add.
+        save()
     }
 
     private func addBlock(kind: WorkoutBlockKind, planJSON: String) {
@@ -512,6 +639,9 @@ struct RoutineEditorView: View {
 
     private func remove(_ re: RoutineExerciseModel) {
         withAnimation(reduceMotion ? Motion.reduced : Motion.stateChange) {
+            for set in re.sets {
+                pendingDrafts.unregister(set.id)
+            }
             routine.exercises.removeAll { $0.id == re.id }
             modelContext.delete(re)
             for (index, item) in orderedItems.enumerated() {
@@ -532,96 +662,42 @@ struct RoutineEditorView: View {
         }
     }
 
-    /// Converts old workout-wide conditioning and Yoga Session rows into the
-    /// first-class ordered representation before editing. Completed workouts
-    /// are deliberately untouched; this is plan-only normalization.
-    private func migrateLegacyBlocksIfNeeded() {
-        if let conditioningJSON = routine.conditioningPlanJSON {
-            if !routine.blocks.contains(where: { $0.kind == .conditioning }) {
-                let movementIDs = Set(
-                    ConditioningPlan.decode(from: conditioningJSON)?
-                        .sections.flatMap(\.movements).map(\.exerciseID) ?? []
-                )
-                let legacyRows = routine.exercises.filter { movementIDs.contains($0.exerciseID) }
-                let block = RoutineBlockModel(
-                    userID: routine.userID,
-                    kind: .conditioning,
-                    position: legacyRows.map(\.position).min() ?? routine.exercises.count,
-                    planJSON: conditioningJSON
-                )
-                modelContext.insert(block)
-                routine.blocks.append(block)
-                for exercise in legacyRows { modelContext.delete(exercise) }
-                let removedIDs = Set(legacyRows.map(\.id))
-                routine.exercises.removeAll { removedIDs.contains($0.id) }
-            }
-            routine.conditioningPlanJSON = nil
-        }
-
-        // Conditioning and Yoga could coexist in the legacy representation,
-        // so normalize both in one pass rather than making these branches
-        // mutually exclusive.
-        let yogaRows = routine.exercises.filter { row in
-            exercises.first(where: { $0.id == row.exerciseID })?.isYoga == true
-                || row.yogaFlowJSON != nil
-        }
-        for row in yogaRows {
-            let block = RoutineBlockModel(
-                userID: routine.userID,
-                kind: .yoga,
-                position: row.position,
-                planJSON: row.yogaFlowJSON
-            )
-            modelContext.insert(block)
-            routine.blocks.append(block)
-            modelContext.delete(row)
-        }
-        if !yogaRows.isEmpty {
-            let removedIDs = Set(yogaRows.map(\.id))
-            routine.exercises.removeAll { removedIDs.contains($0.id) }
-        }
-        for (index, item) in orderedItems.enumerated() { item.position = index }
-        markAuthoredGraphUpdated()
-        modelContext.saveUserChanges()
-    }
-
-    /// Debounced, matching the live logger's save discipline: a synchronous
-    /// `modelContext.save()` re-publishes this screen's own root
-    /// `allWorkouts` @Query (O(total history) on the main thread), and doing
-    /// that on every structural tap or reorder move landed exactly when the
-    /// thumb came down to scroll — eating the first pan gesture. The model
-    /// mutates in memory immediately (the UI reads models, not the store);
-    /// only the store write is deferred. Durability is unchanged: Save
-    /// buttons, dismissal, and app-background all flush synchronously.
+    /// The model mutates in memory immediately; persistence is coalesced at
+    /// the editor boundary. Rows never own or flush saves as they enter and
+    /// leave the lazy stack, so scrolling cannot turn row recycling into
+    /// synchronous SwiftData I/O.
     private func save() {
-        markAuthoredGraphUpdated()
         scheduleSave()
     }
 
     private func scheduleSave() {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            deferredSaveTask = nil
-            saveNow()
-        }
+        saveCoordinator.schedule { saveNow() }
     }
 
     /// Flush a pending debounced save right now; no-op when nothing is queued.
     private func flushPendingSave() {
-        guard deferredSaveTask != nil else { return }
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
-        saveNow()
+        guard pendingDrafts.commitAll() else {
+            // Do not let a queued task outlive the screen and run after its
+            // validation registrations have been cleared. The last valid model
+            // value remains intact; correcting the draft schedules a new save.
+            saveCoordinator.cancel()
+            return
+        }
+        saveCoordinator.flush()
     }
 
     @discardableResult
     private func saveNow(
+        showValidationError: Bool = false,
         onCommit: @escaping @MainActor () -> Void = {}
     ) -> Bool {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
+        guard pendingDrafts.commitAll() else {
+            if showValidationError {
+                showInvalidDraftAlert = true
+            }
+            return false
+        }
+        saveCoordinator.cancel()
         RoutineStructure.normalize(routine)
         markAuthoredGraphUpdated()
         return modelContext.saveUserChanges(onSuccess: onCommit)
@@ -640,8 +716,7 @@ struct RoutineEditorView: View {
     /// (matching every other routine delete, so tombstones sync cleanly) and
     /// leave the library exactly as it was before "New Routine" was tapped.
     private func discardNewRoutine() {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
+        saveCoordinator.cancel()
         let now = Date()
         routine.updatedAt = now
         routine.deletedAt = now
@@ -698,15 +773,107 @@ struct RoutineEditorView: View {
     }
 }
 
+/// Owns rapid routine-name/note drafts so each keystroke invalidates only this
+/// small card, never the editor's exercise list or reorder calculations. The
+/// screen coordinator retains the commit closure even if LazyVStack recycles
+/// the card, guaranteeing Back/background/save can materialize the latest text.
+private struct RoutineMetadataEditorCard: View {
+    @Bindable var routine: RoutineModel
+    let pendingDrafts: PendingDraftCoordinator
+    let onChange: () -> Void
+
+    @State private var nameDraft: String
+    @State private var notesDraft: String
+    @State private var nameDirty = false
+    @State private var notesDirty = false
+    private let draftToken: UUID
+
+    init(
+        routine: RoutineModel,
+        pendingDrafts: PendingDraftCoordinator,
+        onChange: @escaping () -> Void
+    ) {
+        self.routine = routine
+        self.pendingDrafts = pendingDrafts
+        self.onChange = onChange
+        draftToken = routine.id
+        _nameDraft = State(initialValue: routine.name)
+        _notesDraft = State(initialValue: routine.notes ?? "")
+    }
+
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: Space.md) {
+                FieldLabel("Routine name")
+                DarkTextField(
+                    text: Binding(
+                        get: { nameDraft },
+                        set: {
+                            nameDraft = $0
+                            nameDirty = true
+                            onChange()
+                        }
+                    ),
+                    placeholder: "Routine name"
+                )
+                FieldLabel("Notes")
+                DarkTextField(
+                    text: Binding(
+                        get: { notesDraft },
+                        set: {
+                            notesDraft = $0
+                            notesDirty = true
+                            onChange()
+                        }
+                    ),
+                    placeholder: "Add notes",
+                    axis: .vertical
+                )
+            }
+        }
+        .onAppear {
+            syncUntouchedDrafts()
+            pendingDrafts.register(draftToken, commit: commitDrafts)
+        }
+        .onDisappear {
+            // Lazy-stack recycling is not a terminal editor boundary. Move the
+            // local text into the model before unregistering this card so a
+            // fast type-then-scroll gesture cannot lose the metadata edit.
+            commitDrafts()
+            pendingDrafts.unregister(draftToken)
+        }
+        .onChange(of: routine.name) { syncUntouchedDrafts() }
+        .onChange(of: routine.notes) { syncUntouchedDrafts() }
+    }
+
+    private func syncUntouchedDrafts() {
+        if !nameDirty { nameDraft = routine.name }
+        if !notesDirty { notesDraft = routine.notes ?? "" }
+    }
+
+    private func commitDrafts() {
+        if nameDirty {
+            if routine.name != nameDraft { routine.name = nameDraft }
+            nameDirty = false
+        }
+        if notesDirty {
+            let notes = notesDraft.isEmpty ? nil : notesDraft
+            if routine.notes != notes { routine.notes = notes }
+            notesDirty = false
+        }
+        syncUntouchedDrafts()
+    }
+}
+
 // MARK: - Exercise edit row
 
 private struct ExerciseEditRow: View {
     @Environment(\.theme) private var theme
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.scenePhase) private var scenePhase
     @Bindable var routineExercise: RoutineExerciseModel
     let exercise: ExerciseLibraryModel?
     let setupNote: UserExerciseNoteModel?
+    let pendingDrafts: PendingDraftCoordinator
     let bestEstimatedOneRepMaxKg: Double?
     let availableSupersetGroups: [Int]
     let onShowDetail: (UUID) -> Void
@@ -715,6 +882,7 @@ private struct ExerciseEditRow: View {
     let onUngroupSuperset: (Int) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
+    let onSave: () -> Void
     let onCreateEstimatedOneRepMax: () -> Void
     /// Streams the finger's global Y while the reorder handle is held and
     /// dragged — the parent collapses every row around the finger with this
@@ -732,14 +900,11 @@ private struct ExerciseEditRow: View {
     @State private var createdPinnedNote: UserExerciseNoteModel?
     @State private var removedPinnedNoteIDs = Set<UUID>()
     @State private var noteEditorRequested = false
+    @State private var noteDraft = ""
+    @State private var noteDraftDirty = false
+    @State private var didInitializeNoteDraft = false
+    @State private var noteDraftToken = UUID()
     @FocusState private var noteFocused: Bool
-    /// Debounced-save plumbing for "Add Set", mirroring the live logger's
-    /// `ExerciseLogCard` (recompute()/scheduleSave()/saveNow()). A synchronous
-    /// `modelContext.save()` on every tap was the lag: a blocking SwiftData
-    /// store write (plus its CloudKit change-tracking bookkeeping) landing in
-    /// the same run loop turn as the tap, before the new row could paint.
-    @State private var deferredSaveTask: Task<Void, Never>?
-
     private var sortedSets: [RoutineSetModel] { routineExercise.sets.sorted { $0.position < $1.position } }
     private var currentProgressionRule: ProgressionRule? { ProgressionRule.decode(from: routineExercise.progressionRuleJSON) }
     private var isCardio: Bool { exercise?.isCardio == true }
@@ -764,13 +929,13 @@ private struct ExerciseEditRow: View {
         guard let setupNote, !removedPinnedNoteIDs.contains(setupNote.id) else { return nil }
         return setupNote
     }
-    private var noteText: String {
+    private var modelNoteText: String {
         ExerciseNotePolicy.authoredText(routineExercise.notes)
             ?? ExerciseNotePolicy.authoredText(pinnedNote?.note)
             ?? ""
     }
     private var showsNoteEditor: Bool {
-        noteEditorRequested || ExerciseNotePolicy.authoredText(noteText) != nil
+        noteEditorRequested || ExerciseNotePolicy.authoredText(modelNoteText) != nil
     }
 
     /// The ⋯ overflow menu for routine-time exercise actions. Progression
@@ -909,11 +1074,6 @@ private struct ExerciseEditRow: View {
                 }
             }
         }
-        .onDisappear { flushPendingSave() }
-        // Backgrounding mid-edit must not sit on a 2s debounce.
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active { flushPendingSave() }
-        }
     }
 
     private var strengthSetEditor: some View {
@@ -937,6 +1097,7 @@ private struct ExerciseEditRow: View {
                 ) {
                     SetTargetEditRow(
                         set: set,
+                        pendingDrafts: pendingDrafts,
                         workingNumber: workingNumber(upTo: index),
                         exercise: exercise,
                         displayUnit: displayUnit,
@@ -1037,8 +1198,8 @@ private struct ExerciseEditRow: View {
             }
 
             TextField("Write a note…", text: Binding(
-                get: { noteText },
-                set: updatePinnedNote
+                get: { didInitializeNoteDraft ? noteDraft : modelNoteText },
+                set: updatePinnedNoteDraft
             ), axis: .vertical)
             .font(.system(size: 15, weight: .medium))
             .foregroundStyle(theme.stickyInk)
@@ -1057,21 +1218,45 @@ private struct ExerciseEditRow: View {
                         .strokeBorder(theme.stickyInk.opacity(0.28), lineWidth: 1)
                 )
         )
-        .onChange(of: noteFocused) { wasFocused, isFocused in
-            if wasFocused, !isFocused, ExerciseNotePolicy.authoredText(noteText) == nil {
-                removePinnedNote()
+        .onAppear {
+            if !didInitializeNoteDraft {
+                noteDraft = modelNoteText
+                didInitializeNoteDraft = true
             }
+            pendingDrafts.register(noteDraftToken, commit: commitPinnedNoteDraft)
+        }
+        .onChange(of: modelNoteText) { _, newValue in
+            guard !noteDraftDirty else { return }
+            noteDraft = newValue
+        }
+        .onChange(of: noteFocused) { wasFocused, isFocused in
+            if wasFocused, !isFocused { commitPinnedNoteDraft() }
+        }
+        .onDisappear {
+            commitPinnedNoteDraft()
+            pendingDrafts.unregister(noteDraftToken)
         }
     }
 
-    private func updatePinnedNote(_ text: String) {
+    private func updatePinnedNoteDraft(_ text: String) {
+        noteDraft = text
+        noteDraftDirty = true
+        // Schedule only the screen-owned coalesced boundary. The CloudKit-
+        // backed note itself stays untouched while the user is typing.
+        save()
+    }
+
+    private func commitPinnedNoteDraft() {
+        guard noteDraftDirty else { return }
+        noteDraftDirty = false
+        let text = noteDraft
         // A routine-authored note is exercise-level planning intent. Move any
         // legacy routine-only value into the durable pinned-note store on the
-        // first edit so unpinning it during a workout truly removes it later.
+        // first committed edit so unpinning it during a workout truly removes
+        // it later.
         routineExercise.notes = nil
         guard let authored = ExerciseNotePolicy.authoredText(text) else {
-            pinnedNote?.note = text
-            save()
+            removePinnedNote()
             return
         }
 
@@ -1093,6 +1278,9 @@ private struct ExerciseEditRow: View {
     private func removePinnedNote() {
         noteFocused = false
         noteEditorRequested = false
+        noteDraft = ""
+        noteDraftDirty = false
+        didInitializeNoteDraft = true
         routineExercise.notes = nil
         if let pinnedNote {
             removedPinnedNoteIDs.insert(pinnedNote.id)
@@ -1227,9 +1415,7 @@ private struct ExerciseEditRow: View {
         routineExercise.sets.append(set)
         routineExercise.updatedAt = Date()
         routineExercise.routine?.updatedAt = Date()
-        // Debounced, not the synchronous save() every other mutation here
-        // uses — see `deferredSaveTask` above.
-        scheduleSave()
+        save()
     }
 
     /// Inserts the user's configured warm-up ramp before the first working
@@ -1280,37 +1466,6 @@ private struct ExerciseEditRow: View {
         routineExercise.sets = allSets
         renumber(allSets)
         save()
-    }
-
-    private func scheduleSave() {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = Task { @MainActor in
-            // 2s, not 350ms, for the live logger's reason: a save re-publishes
-            // the editor's root all-workouts @Query (O(total history) on the
-            // main thread), and at +350ms it landed exactly when the thumb
-            // came down to scroll after an edit — eating the first pan
-            // gesture. 2s parks it in idle time; row-exit, app-background,
-            // and the Save/dismiss paths all flush immediately.
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            deferredSaveTask = nil
-            saveNow()
-        }
-    }
-
-    /// Flush a pending debounced save right now; no-op when nothing is queued
-    /// (so row recycling during a plain scroll never triggers save/publish).
-    private func flushPendingSave() {
-        guard deferredSaveTask != nil else { return }
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
-        saveNow()
-    }
-
-    private func saveNow() {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
-        modelContext.saveUserChanges()
     }
 
     private func addDropSet(below set: RoutineSetModel, index: Int) {
@@ -1368,6 +1523,7 @@ private struct ExerciseEditRow: View {
     }
 
     private func deleteSet(_ set: RoutineSetModel) {
+        pendingDrafts.unregister(set.id)
         routineExercise.sets.removeAll { $0.id == set.id }
         modelContext.delete(set)
         renumber(sortedSets)
@@ -1382,13 +1538,10 @@ private struct ExerciseEditRow: View {
         for (index, row) in rows.enumerated() { row.position = index }
     }
 
-    /// Every row mutation routes through the debounce: the model updates in
-    /// memory instantly (that's what the UI renders); only the store write —
-    /// and its @Query republish — waits for idle time.
+    /// Every row mutation updates its local authored clock, then asks the
+    /// editor-owned coordinator for one debounced graph commit.
     private func save() {
-        routineExercise.updatedAt = Date()
-        routineExercise.routine?.updatedAt = Date()
-        scheduleSave()
+        onSave()
     }
 }
 
@@ -1397,6 +1550,7 @@ private struct ExerciseEditRow: View {
 private struct SetTargetEditRow: View {
     @Environment(\.theme) private var theme
     @Bindable var set: RoutineSetModel
+    let pendingDrafts: PendingDraftCoordinator
     let workingNumber: Int
     let exercise: ExerciseLibraryModel?
     let displayUnit: WeightUnit
@@ -1438,10 +1592,17 @@ private struct SetTargetEditRow: View {
                     OptionalRepsTargetField(
                         low: $set.targetRepsLow,
                         high: $set.targetRepsHigh,
+                        pendingDrafts: pendingDrafts,
                         onChange: onChange
                     )
                     loadField
-                    OptionalDoubleField(placeholder: "RPE", value: $set.targetRPE, width: 48, onChange: onChange)
+                    OptionalDoubleField(
+                        placeholder: "RPE",
+                        value: $set.targetRPE,
+                        width: 48,
+                        pendingDrafts: pendingDrafts,
+                        onChange: onChange
+                    )
                 }
             }
             if let resolutionCaption {
@@ -1582,9 +1743,9 @@ private struct SetTargetEditRow: View {
             unit: displayUnit,
             supportsPercentage: supportsPercentagePrescription,
             supportsResistanceBands: supportsResistanceBands,
+            pendingDrafts: pendingDrafts,
             onChange: onChange
         )
-        .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
     }
 
     private var resolutionCaption: String? {
@@ -1662,7 +1823,7 @@ private struct SetTargetEditRow: View {
             OptionalIntField(placeholder: "60", value: Binding(
                 get: { set.targetDurationSeconds },
                 set: { set.targetDurationSeconds = $0 }
-            ), onChange: onChange)
+            ), pendingDrafts: pendingDrafts, onChange: onChange)
             Text("sec")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
@@ -1707,13 +1868,32 @@ struct OptionalIntField: View {
     let placeholder: String
     @Binding var value: Int?
     var width: CGFloat? = nil
+    var pendingDrafts: PendingDraftCoordinator? = nil
     var onChange: () -> Void = {}
+    @State private var draft = ""
+    @State private var draftDirty = false
+    @State private var draftToken = UUID()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         TextField(placeholder, text: Binding(
-            get: { value.map(String.init) ?? "" },
-            set: { value = Int($0); onChange() }
+            get: {
+                pendingDrafts != nil && isFocused
+                    ? draft
+                    : value.map(String.init) ?? ""
+            },
+            set: { text in
+                guard pendingDrafts != nil else {
+                    value = Int(text)
+                    onChange()
+                    return
+                }
+                draft = text
+                draftDirty = true
+                onChange()
+            }
         ))
+        .focused($isFocused)
         .keyboardType(.numberPad)
         .font(.bodyStrong)
         .multilineTextAlignment(.center)
@@ -1722,6 +1902,28 @@ struct OptionalIntField: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear {
+            draft = value.map(String.init) ?? ""
+            pendingDrafts?.register(draftToken, commit: commitDraft)
+        }
+        .onChange(of: isFocused) { _, focused in
+            if focused, !draftDirty { draft = value.map(String.init) ?? "" }
+            if !focused { commitDraft() }
+        }
+        .onChange(of: value) { _, newValue in
+            if !isFocused, !draftDirty { draft = newValue.map(String.init) ?? "" }
+        }
+        .onDisappear {
+            commitDraft()
+            pendingDrafts?.unregister(draftToken)
+        }
+    }
+
+    private func commitDraft() {
+        guard pendingDrafts != nil, draftDirty else { return }
+        draftDirty = false
+        let parsed = Int(draft)
+        if value != parsed { value = parsed }
     }
 }
 
@@ -1774,8 +1976,11 @@ struct OptionalRepsTargetField: View {
     @Environment(\.theme) private var theme
     @Binding var low: Int?
     @Binding var high: Int?
+    var pendingDrafts: PendingDraftCoordinator? = nil
     var onChange: () -> Void = {}
     @State private var draft = ""
+    @State private var draftDirty = false
+    @State private var draftToken = UUID()
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -1783,7 +1988,12 @@ struct OptionalRepsTargetField: View {
             get: { isFocused ? draft : formattedValue },
             set: { text in
                 draft = text
-                parse(text)
+                guard pendingDrafts != nil else {
+                    apply(text)
+                    return
+                }
+                draftDirty = true
+                onChange()
             }
         ))
         .focused($isFocused)
@@ -1795,19 +2005,23 @@ struct OptionalRepsTargetField: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onAppear { draft = formattedValue }
+        .onAppear {
+            draft = formattedValue
+            pendingDrafts?.register(draftToken, commit: commitDraft)
+        }
         .onChange(of: isFocused) { _, focused in
-            if focused {
-                draft = formattedValue
-            } else {
-                draft = formattedValue
-            }
+            if focused, !draftDirty { draft = formattedValue }
+            if !focused { commitDraft() }
         }
         .onChange(of: low) { _, _ in
             if !isFocused { draft = formattedValue }
         }
         .onChange(of: high) { _, _ in
             if !isFocused { draft = formattedValue }
+        }
+        .onDisappear {
+            commitDraft()
+            pendingDrafts?.unregister(draftToken)
         }
     }
 
@@ -1816,7 +2030,13 @@ struct OptionalRepsTargetField: View {
         return low.map(String.init) ?? ""
     }
 
-    private func parse(_ text: String) {
+    private func commitDraft() {
+        guard pendingDrafts != nil, draftDirty else { return }
+        draftDirty = false
+        apply(draft)
+    }
+
+    private func apply(_ text: String) {
         let normalized = text.replacingOccurrences(of: "–", with: "-")
         let rawParts = normalized.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
         let parts = rawParts.map { String($0).trimmingCharacters(in: .whitespaces) }
@@ -1837,13 +2057,30 @@ struct OptionalDoubleField: View {
     let placeholder: String
     @Binding var value: Double?
     var width: CGFloat? = nil
+    var pendingDrafts: PendingDraftCoordinator? = nil
     var onChange: () -> Void = {}
+    @State private var draft = ""
+    @State private var draftDirty = false
+    @State private var draftToken = UUID()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         TextField(placeholder, text: Binding(
-            get: { value.map { $0.formatted(.number.precision(.fractionLength(0...1))) } ?? "" },
-            set: { value = Double($0); onChange() }
+            get: {
+                pendingDrafts != nil && isFocused ? draft : Self.text(for: value)
+            },
+            set: { text in
+                guard pendingDrafts != nil else {
+                    value = Self.parse(text)
+                    onChange()
+                    return
+                }
+                draft = text
+                draftDirty = true
+                onChange()
+            }
         ))
+        .focused($isFocused)
         .keyboardType(.decimalPad)
         .font(.bodyStrong)
         .multilineTextAlignment(.center)
@@ -1852,6 +2089,36 @@ struct OptionalDoubleField: View {
         .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear {
+            draft = Self.text(for: value)
+            pendingDrafts?.register(draftToken, commit: commitDraft)
+        }
+        .onChange(of: isFocused) { _, focused in
+            if focused, !draftDirty { draft = Self.text(for: value) }
+            if !focused { commitDraft() }
+        }
+        .onChange(of: value) { _, newValue in
+            if !isFocused, !draftDirty { draft = Self.text(for: newValue) }
+        }
+        .onDisappear {
+            commitDraft()
+            pendingDrafts?.unregister(draftToken)
+        }
+    }
+
+    private func commitDraft() {
+        guard pendingDrafts != nil, draftDirty else { return }
+        draftDirty = false
+        let parsed = Self.parse(draft)
+        if value != parsed { value = parsed }
+    }
+
+    private static func parse(_ text: String) -> Double? {
+        Double(text.replacingOccurrences(of: ",", with: "."))
+    }
+
+    private static func text(for value: Double?) -> String {
+        value?.formatted(.number.precision(.fractionLength(0...1))) ?? ""
     }
 }
 

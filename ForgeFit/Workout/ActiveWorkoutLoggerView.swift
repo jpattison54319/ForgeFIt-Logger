@@ -48,6 +48,53 @@ private struct RemovedSessionRuntime {
     let wasLive: Bool
 }
 
+/// Latest-request ownership for completion-card sharing. SwiftUI can keep an
+/// older task alive long enough to resume after cancellation, so cancellation
+/// alone is not an authorization to present its result.
+nonisolated struct PostWorkoutShareRequestGate: Sendable {
+    struct Request: Equatable, Sendable {
+        let generation: UInt64
+    }
+
+    private var generation: UInt64 = 0
+    private var activeRequest: Request?
+
+    mutating func begin() -> Request {
+        generation &+= 1
+        let request = Request(generation: generation)
+        activeRequest = request
+        return request
+    }
+
+    func shouldApply(_ request: Request) -> Bool {
+        request == activeRequest
+    }
+
+    @discardableResult
+    mutating func finish(_ request: Request) -> Bool {
+        guard request == activeRequest else { return false }
+        activeRequest = nil
+        return true
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        activeRequest = nil
+    }
+}
+
+/// Resolves a routine exactly as duplicate maintenance would, then applies the
+/// live-row requirement. Filtering tombstones before canonicalization could
+/// resurrect an older CloudKit duplicate in the post-workout update prompt.
+@MainActor
+enum PostWorkoutRoutineUpdatePolicy {
+    static func liveCanonicalRoutine(in rows: [RoutineModel]) -> RoutineModel? {
+        guard let routine = RoutineDeduplicator.canonicalRoutines(rows).first,
+              routine.deletedAt == nil else { return nil }
+        return routine
+    }
+}
+
 /// Full-screen active-workout logger with per-set type selection, dynamic
 /// columns per exercise, inline reordering, sticky notes, and add/replace/remove.
 struct ActiveWorkoutLoggerView: View {
@@ -55,13 +102,14 @@ struct ActiveWorkoutLoggerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @Bindable var workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
     /// Caller-supplied history (the historical editor passes its own). Live
-    /// sessions leave it empty and the logger snapshots history itself — a
-    /// STABLE snapshot, so ContentView's per-save @Query updates never hand
-    /// this view a new array identity and force a full subtree diff.
+    /// sessions leave it empty and use isolated value projections plus bounded
+    /// drill-in reads, so ContentView's per-save @Query updates never hand this
+    /// view a new array identity and force a full subtree diff.
     var injectedHistory: [WorkoutModel] = []
     var mode: WorkoutLoggerMode = .active
     var onMinimize: (() -> Void)? = nil
@@ -90,7 +138,15 @@ struct ActiveWorkoutLoggerView: View {
     /// record award. Computed once; history doesn't change mid-session.
     @State private var recordBaselines: [UUID: ExerciseRecordBaseline] = [:]
     @State private var liveSurfacePublishTask: Task<Void, Never>?
-    @State private var previousSetsByExerciseID: [UUID: [SetModel]] = [:]
+    /// Exactly one isolated history scan belongs to this screen. Structural
+    /// changes supersede it through `referenceRequestGate`; dismissal cancels
+    /// it so neither the task nor a stale model projection can retain/apply.
+    @State private var referenceCacheTask: Task<Void, Never>?
+    @State private var referenceRequestGate = LiveWorkoutReferenceRequestGate()
+    @State private var preparedWorkoutID: UUID?
+    @State private var previousSetsByExerciseID: [UUID: [LivePreviousSetSnapshot]] = [:]
+    @State private var previousCardioByExerciseID: [UUID: LivePreviousCardioSnapshot] = [:]
+    @State private var pickerHistory = ExercisePickerHistorySnapshot.empty
     /// Logger-local lookup snapshots. Card reconstruction is a hot path during
     /// typing/completion; it must not linearly scan the library and notes for
     /// every visible exercise.
@@ -100,17 +156,27 @@ struct ActiveWorkoutLoggerView: View {
     /// logger received at presentation. Otherwise a later cache refresh can
     /// reinsert that stale model before the parent's @Query catches up.
     @State private var removedSetupNoteExerciseIDs = Set<UUID>()
-    /// Live-session history snapshot, fetched once on appear ("history doesn't
-    /// change mid-session" is this screen's contract). Internal code reads
-    /// `history`, which resolves injected (historical edit) over snapshot.
-    @State private var snapshotHistory: [WorkoutModel] = []
-    private var history: [WorkoutModel] { injectedHistory.isEmpty ? snapshotHistory : injectedHistory }
-    @State private var liveStats = WorkoutLiveStats()
+    /// Model-backed drill-ins are deliberately bounded and loaded only after a
+    /// user opens one. Ordinary add/replace suggestions use `pickerHistory`
+    /// and never need a MainActor workout graph.
+    @State private var boundedDrillInHistory: [WorkoutModel] = []
+    @State private var isDrillInHistoryLoading = false
+    private var drillInHistory: [WorkoutModel] {
+        injectedHistory.isEmpty ? boundedDrillInHistory : injectedHistory
+    }
+    private var projectedPickerHistory: ExercisePickerHistorySnapshot? {
+        injectedHistory.isEmpty ? pickerHistory : nil
+    }
+    @State private var liveStats = LiveWorkoutMetrics()
     /// Cached modality flags — see `computeModalityFlags()`.
     @State private var isPureCardio = false
     @State private var isPureYoga = false
     @State private var inputRouter = SetInputRouter()
     @State private var quickIncrement = QuickIncrementController()
+    @State private var pendingDrafts = PendingDraftCoordinator()
+    /// One persistence boundary for every lazy strength card and live note.
+    /// Row disappearance may request a save, but only this screen can flush.
+    @State private var saveCoordinator = DeferredSaveCoordinator()
     @AppStorage(WorkoutEffortPolicy.loggingEnabledKey) private var showRPEInLogger = false
     @AppStorage("effortScaleRaw") private var effortScaleRaw = EffortScale.rpe.rawValue
     @AppStorage(WorkoutEffortPolicy.failureTrainingKey) private var failureTrainingEnabled = false
@@ -207,30 +273,30 @@ struct ActiveWorkoutLoggerView: View {
                 }
             }
         }
-        // Reference caches walk the full workout history — built after the
-        // first frame so the cover presents instantly. Rows show "—" for the
-        // previous column for a frame or two, then fill in. The snapshot fetch
-        // mirrors ContentView's old query shape (all workouts, newest first);
-        // plain fetch only — relationship prefetching crashes on these
-        // CloudKit-shaped models (see buildReferenceCaches).
+        // Reference caches walk the full workout history on an isolated
+        // SwiftData context. Rows show "—" for a frame or two, then fill in;
+        // no historical PersistentModel or relationship fault crosses back to
+        // MainActor during the logger's first interactive frames.
         .task(id: workout.id) {
+            prepareReferenceStateForCurrentWorkout()
             await Task.yield()
-            // SwiftUI can reuse the presented logger view when one workout is
-            // saved and another starts in the same app session. Refresh for
-            // every workout ID so the new session sees the just-saved history
-            // instead of inheriting the prior logger's original snapshot.
-            if injectedHistory.isEmpty {
-                snapshotHistory = (try? modelContext.fetch(FetchDescriptor<WorkoutModel>(
-                    sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
-                ))) ?? []
-            }
-            await refreshReferenceCaches()
+            guard !Task.isCancelled else { return }
+            requestReferenceCacheRefresh()
+            await referenceCacheTask?.value
+        }
+        .onDisappear {
+            cancelReferenceCacheRefresh()
+            commitPendingDraftsAndFlush()
+            pendingDrafts.clearAll()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            commitPendingDraftsAndFlush()
         }
         .sheet(isPresented: $showPostWorkoutSummary) {
             PostWorkoutSummaryView(
                 workout: workout,
                 exercises: liveExerciseLibrary,
-                history: history,
                 onSave: finishAndDismiss,
                 onCancel: { showPostWorkoutSummary = false }
             )
@@ -281,7 +347,8 @@ struct ActiveWorkoutLoggerView: View {
                 excludeYoga: true,
                 showsWorkoutBlocks: !isHistoricalEdit,
                 context: exercisesInWorkout,
-                history: history,
+                history: injectedHistory,
+                historySnapshot: projectedPickerHistory,
                 navigationTitle: "Add to Workout",
                 onAddConditioningBlock: { addBlock(kind: .conditioning, planJSON: $0) },
                 onAddYogaBlock: { addBlock(kind: .yoga, planJSON: $0) }
@@ -294,9 +361,11 @@ struct ActiveWorkoutLoggerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: block.planSnapshotJSON,
                     exercises: liveExerciseLibrary,
-                    workouts: history,
+                    workouts: drillInHistory,
+                    historySnapshot: projectedPickerHistory,
                     commit: { updateBlock(block, planJSON: $0) }
                 )
+                .task { await ensureBoundedDrillInHistoryLoaded() }
             } else {
                 YogaFlowBuilderView(planJSON: block.planSnapshotJSON, commit: { json in
                     guard let json else { return false }
@@ -313,7 +382,8 @@ struct ActiveWorkoutLoggerView: View {
                     current: currentExercise,
                     allExercises: liveExerciseLibrary,
                     inUseIDs: Set(workout.exercises.map(\.exerciseID)),
-                    history: history
+                    history: injectedHistory,
+                    historySnapshot: projectedPickerHistory
                 ) { picked in
                     replace(target, with: picked)
                 }
@@ -322,7 +392,8 @@ struct ActiveWorkoutLoggerView: View {
                     singleSelection: true,
                     excludeYogaPoses: true,
                     context: exercisesInWorkout,
-                    history: history,
+                    history: injectedHistory,
+                    historySnapshot: projectedPickerHistory,
                     navigationTitle: "Replace Exercise",
                     excludedIDs: Set(workout.exercises.map(\.exerciseID))
                 ) { picked in
@@ -332,10 +403,11 @@ struct ActiveWorkoutLoggerView: View {
         }
         .sheet(item: $detailExercise) { exercise in
             NavigationStack {
-                ExerciseDetailView(
-                    exerciseID: exercise.id,
-                    workouts: history.isEmpty ? [workout] : history,
-                    exercises: liveExerciseLibrary
+                ExercisePickerHistoryDetailDestination(
+                    exercise: exercise,
+                    exercises: liveExerciseLibrary,
+                    seedHistory: injectedHistory.isEmpty ? [workout] : injectedHistory,
+                    loadsPersistedHistory: injectedHistory.isEmpty
                 )
             }
         }
@@ -358,29 +430,46 @@ struct ActiveWorkoutLoggerView: View {
     }
 
     private var loggerScroll: some View {
-        ScrollView(showsIndicators: false) {
+        // One bounded projection per logger body. Computing either inside
+        // `exerciseCard` turns a row render into another full sort/scan,
+        // producing O(exercises² + exercises×sessions) work while scrolling.
+        let items = orderedItems
+        let availableSupersetGroups = supersetGroups
+        let yogaSessionExerciseIDs = Set(
+            workout.cardioSessions.compactMap { session in
+                session.isYogaSession ? session.workoutExerciseID : nil
+            }
+        )
+        return ScrollView(showsIndicators: false) {
             // Lazy: long workouts only build the cards on screen, and focus /
             // keystroke re-renders don't touch off-screen exercises.
             LazyVStack(alignment: .leading, spacing: Space.lg) {
                 if WorkoutNotePolicy.shouldPresentEditor(for: workout) {
-                    WorkoutNoteEditor(workout: workout)
+                    WorkoutNoteEditor(
+                        workout: workout,
+                        pendingDrafts: pendingDrafts,
+                        onSaveRequested: requestWorkoutSave
+                    )
                 } else {
                     SecondaryButton(title: "Add Workout Note", systemImage: "note.text") {
                         workout.notes = ""
-                        workout.updatedAt = .now
-                        modelContext.saveUserChanges()
+                        requestWorkoutSave()
                     }
                     .accessibilityIdentifier("add-workout-note")
                 }
-                ForEach(orderedItems, id: \.id) { item in
+                ForEach(items, id: \.id) { item in
                     switch item {
                     case .exercise(let workoutExercise):
-                        exerciseCard(for: workoutExercise)
+                        exerciseCard(
+                            for: workoutExercise,
+                            availableSupersetGroups: availableSupersetGroups,
+                            yogaSessionExerciseIDs: yogaSessionExerciseIDs
+                        )
                     case .block(let block):
                         blockCard(for: block)
                     }
                 }
-                if orderedItems.isEmpty {
+                if items.isEmpty {
                     emptyLoggerState
                 }
                 SecondaryButton(title: "Add to Workout", systemImage: "plus", action: presentExercisePicker)
@@ -389,12 +478,23 @@ struct ActiveWorkoutLoggerView: View {
             .padding(.horizontal, Space.lg)
             .padding(.top, Space.sm)
             .padding(.bottom, 40)
-            // Tapping any non-interactive spot (card chrome, labels, empty
-            // space) drops the keyboard — controls layered above win their
-            // own taps first, so buttons/fields are unaffected.
-            .onTapGesture { hideKeyboard() }
+            // Keep keyboard dismissal behind the row controls. A gesture on
+            // the stack itself also participates in descendant TextField taps
+            // on iOS 26 and can immediately clear the focus they just gained.
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { hideKeyboard() }
+            }
         }
         .scrollDismissesKeyboard(.interactively)
+        .onScrollPhaseChange { _, phase in
+            if phase == .idle {
+                saveCoordinator.resume()
+            } else {
+                saveCoordinator.pause()
+            }
+        }
     }
 
     // MARK: - Hold-to-reorder
@@ -446,9 +546,7 @@ struct ActiveWorkoutLoggerView: View {
             for (index, row) in reorderSession.rows.enumerated() {
                 itemsByID[row.id]?.position = index
             }
-            modelContext.saveUserChanges {
-                publishWorkoutChange()
-            }
+            requestWorkoutSave()
         }
         withAnimation(.snappy(duration: 0.25)) { self.reorderSession = nil }
     }
@@ -461,17 +559,19 @@ struct ActiveWorkoutLoggerView: View {
         guard target != index else { return }
         rows.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
         for (index, item) in rows.enumerated() { item.position = index }
-        modelContext.saveUserChanges {
-            publishWorkoutChange()
-        }
+        requestWorkoutSave()
     }
 
     @ViewBuilder
-    private func exerciseCard(for we: WorkoutExerciseModel) -> some View {
+    private func exerciseCard(
+        for we: WorkoutExerciseModel,
+        availableSupersetGroups: [Int],
+        yogaSessionExerciseIDs: Set<UUID>
+    ) -> some View {
         let ex = exerciseByID[we.exerciseID]
         let isYogaRow = ex?.isYoga == true
             || we.yogaFlowJSON != nil
-            || workout.cardioSessions.contains { $0.workoutExerciseID == we.id && $0.isYogaSession }
+            || yogaSessionExerciseIDs.contains(we.id)
         if isYogaRow {
             YogaExerciseCard(
                 workout: workout,
@@ -479,8 +579,10 @@ struct ActiveWorkoutLoggerView: View {
                 exercise: ex,
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
                 onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
+                pendingDrafts: pendingDrafts,
+                onSaveRequested: requestWorkoutSave,
                 allowsLiveControls: !isHistoricalEdit,
-                availableSupersetGroups: supersetGroups,
+                availableSupersetGroups: availableSupersetGroups,
                 onAssignSuperset: { assignSuperset($0, to: we) },
                 onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
                 onUngroupSuperset: { ungroupSuperset($0) },
@@ -500,8 +602,10 @@ struct ActiveWorkoutLoggerView: View {
                 exercise: ex,
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
                 onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
+                pendingDrafts: pendingDrafts,
+                onSaveRequested: requestWorkoutSave,
                 allowsLiveControls: !isHistoricalEdit,
-                availableSupersetGroups: supersetGroups,
+                availableSupersetGroups: availableSupersetGroups,
                 onAssignSuperset: { assignSuperset($0, to: we) },
                 onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
                 onUngroupSuperset: { ungroupSuperset($0) },
@@ -513,7 +617,7 @@ struct ActiveWorkoutLoggerView: View {
                 },
                 onReorderDragEnded: { reorderDragEnded() },
                 onAccessibilityMoveBy: { offset in accessibilityMoveItem(we.id, by: offset) },
-                history: history
+                previousSession: previousCardioByExerciseID[we.exerciseID]
             )
         } else {
             ExerciseLogCard(
@@ -531,13 +635,14 @@ struct ActiveWorkoutLoggerView: View {
                 showsPreviousTapHint: !isHistoricalEdit,
                 effortScale: EffortScale(rawValue: effortScaleRaw) ?? .rpe,
                 completionDate: isHistoricalEdit ? (workout.endedAt ?? workout.startedAt) : nil,
-                availableSupersetGroups: supersetGroups,
+                availableSupersetGroups: availableSupersetGroups,
                 onAssignSuperset: { assignSuperset($0, to: we) },
                 onCreateSuperset: { assignSuperset(nextSupersetGroup(), to: we) },
                 onUngroupSuperset: { ungroupSuperset($0) },
                 onCompletedSet: { set in handleCompletedSet(set, in: we) },
-                onLiveStatsChanged: refreshLiveStats,
-                onWorkoutChanged: publishWorkoutChange,
+                onLiveStatsChanged: { refreshLiveStats(changedSet: $0) },
+                onSaveRequested: requestWorkoutSave,
+                pendingDrafts: pendingDrafts,
                 onShowExerciseDetail: { exercise in detailExercise = exercise },
                 onReplace: { replaceTarget = we },
                 onRemove: { removeExercise(we) },
@@ -596,8 +701,10 @@ struct ActiveWorkoutLoggerView: View {
                     if isHistoricalEdit {
                         saveHistoricalEdit()
                     } else if let onMinimize {
+                        commitPendingDraftsAndFlush()
                         onMinimize()
                     } else {
+                        commitPendingDraftsAndFlush()
                         dismiss()
                     }
                 }
@@ -613,7 +720,10 @@ struct ActiveWorkoutLoggerView: View {
                 Button {
                     if isHistoricalEdit {
                         saveHistoricalEdit()
-                    } else if let blocker = WorkoutFinisher.conditioningTargetBlocker(in: workout) {
+                        return
+                    }
+                    guard commitPendingDrafts() else { return }
+                    if let blocker = WorkoutFinisher.conditioningTargetBlocker(in: workout) {
                         conditioningFinishMessage = blocker
                     } else if !WorkoutFinisher.hasSubstance(workout) {
                         // Nothing logged: the celebratory summary would be
@@ -659,7 +769,7 @@ struct ActiveWorkoutLoggerView: View {
     /// Cached, not computed: `statsContent` re-evaluates every second inside
     /// its TimelineView, and each purity check was an O(library) scan per
     /// tick. A workout only changes modality via add/remove/replace — all of
-    /// which run `refreshReferenceCaches()`, which recomputes these.
+    /// which request a reference-cache refresh, which recomputes these.
     private func computeModalityFlags() {
         isPureCardio = workout.blocks.isEmpty && !sortedExercises.isEmpty && sortedExercises.allSatisfy { we in
             exerciseByID[we.exerciseID]?.isCardio == true
@@ -737,20 +847,11 @@ struct ActiveWorkoutLoggerView: View {
 
     // MARK: - Data + mutations
 
-    /// Live volume/sets counters. An @Observable reference (mutated in place by
-    /// `refreshLiveStats`) so only the columns that read it re-render on a set
-    /// completion, not the whole logger. See `LiveVolumeSetsColumns`.
-    @Observable final class WorkoutLiveStats {
-        var volume: Double = 0
-        /// Effective sets (`VolumeMath.effectiveSetCount`) — fractional.
-        var completedSets: Double = 0
-    }
-
     /// Isolated reader of `liveStats`: keeping the `.volume`/`.completedSets`
     /// reads out of the root body is what stops every set completion from
     /// re-rendering all visible exercise cards.
     private struct LiveVolumeSetsColumns: View {
-        let liveStats: WorkoutLiveStats
+        let liveStats: LiveWorkoutMetrics
 
         var body: some View {
             Group {
@@ -777,12 +878,32 @@ struct ActiveWorkoutLoggerView: View {
         showAddPicker = true
     }
 
-    private struct ReferenceCaches {
-        var recordBaselines: [UUID: ExerciseRecordBaseline]
-        var previousSetsByExerciseID: [UUID: [SetModel]]
+    private static let drillInHistoryLimit = 160
+
+    private func prepareReferenceStateForCurrentWorkout() {
+        guard preparedWorkoutID != workout.id else { return }
+        cancelReferenceCacheRefresh()
+        preparedWorkoutID = workout.id
+        recordBaselines = [:]
+        previousSetsByExerciseID = [:]
+        previousCardioByExerciseID = [:]
+        pickerHistory = .empty
+        boundedDrillInHistory = []
+        isDrillInHistoryLoading = false
     }
 
-    private func refreshReferenceCaches() async {
+    private func referenceInput() -> LiveWorkoutReferenceInput {
+        LiveWorkoutReferenceInput(
+            workoutID: workout.id,
+            routineID: workout.routineID,
+            startedAt: workout.startedAt,
+            exerciseIDs: Set(workout.exercises.map(\.exerciseID))
+        )
+    }
+
+    /// Refreshes cheap screen-owned lookups synchronously, then coalesces the
+    /// relationship-heavy history projection behind one cancelable task.
+    private func requestReferenceCacheRefresh() {
         exerciseByID = LiveExerciseLibraryCache.refreshedLookup(
             library: exercises,
             retaining: exerciseByID
@@ -801,12 +922,58 @@ struct ActiveWorkoutLoggerView: View {
             }
         )
         computeModalityFlags()
-        let caches = await buildReferenceCaches()
-        guard !Task.isCancelled else { return }
-        recordBaselines = caches.recordBaselines
-        previousSetsByExerciseID = caches.previousSetsByExerciseID
         refreshProgressionSuggestions()
         refreshLiveStats()
+
+        let input = referenceInput()
+        let begin = referenceRequestGate.begin(input)
+        guard begin.startsNewWork else { return }
+        referenceCacheTask?.cancel()
+        let request = begin.request
+        let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
+        referenceCacheTask = Task { @MainActor in
+            defer {
+                if referenceRequestGate.finish(request) {
+                    referenceCacheTask = nil
+                }
+            }
+            guard let snapshot = try? await worker.referenceSnapshot(for: input),
+                  !Task.isCancelled,
+                  referenceRequestGate.shouldApply(
+                    request,
+                    currentInput: referenceInput()
+                  ) else { return }
+            recordBaselines = snapshot.recordBaselines
+            previousSetsByExerciseID = snapshot.previousSetsByExerciseID
+            previousCardioByExerciseID = snapshot.previousCardioByExerciseID
+            pickerHistory = snapshot.pickerHistory
+        }
+    }
+
+    private func cancelReferenceCacheRefresh() {
+        referenceCacheTask?.cancel()
+        referenceCacheTask = nil
+        referenceRequestGate.cancel()
+    }
+
+    /// Rare conditioning/history drill-ins still consume model-backed APIs.
+    /// Bound that compatibility bridge and start it only after the drill-in's
+    /// first frame; picker ranking and exercise detail use exact DTO/scoped
+    /// paths and never depend on this collection.
+    private func ensureBoundedDrillInHistoryLoaded() async {
+        guard injectedHistory.isEmpty,
+              boundedDrillInHistory.isEmpty,
+              !isDrillInHistoryLoading else { return }
+        isDrillInHistoryLoading = true
+        defer { isDrillInHistoryLoading = false }
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+        var descriptor = FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = Self.drillInHistoryLimit
+        boundedDrillInHistory = (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func updateSetupNote(_ note: UserExerciseNoteModel?, for exerciseID: UUID) {
@@ -834,80 +1001,6 @@ struct ActiveWorkoutLoggerView: View {
             .max { $0.updatedAt < $1.updatedAt }
     }
 
-    private func buildReferenceCaches() async -> ReferenceCaches {
-        let exerciseIDs = Set(workout.exercises.map(\.exerciseID))
-        var baselines: [UUID: ExerciseRecordBaseline] = [:]
-        var previousSets = Dictionary(exerciseIDs.map { ($0, [SetModel]()) }, uniquingKeysWith: { first, _ in first })
-        guard !exerciseIDs.isEmpty else {
-            return ReferenceCaches(recordBaselines: baselines, previousSetsByExerciseID: previousSets)
-        }
-
-        // NOTE: relationship prefetching (`relationshipKeyPathsForPrefetching`)
-        // was tried here and tripped a SwiftData internal assertion on these
-        // CloudKit-shaped models (optional relationships) — the walk relies on
-        // the time-budgeted slicing below instead, which caps each main-thread
-        // stall regardless of per-workout faulting cost.
-        let prior = sortedPriorWorkouts()
-
-        // Time-budgeted slicing: the old fixed stride (yield every 20 workouts)
-        // produced 50–200ms main-thread chunks on large histories — long enough
-        // to eat the touch-down of the user's first scroll, alternating dead
-        // and live gestures with the chunk cadence. A ~6ms budget keeps every
-        // slice inside a frame, and the 1ms sleep (unlike a bare yield)
-        // guarantees the run loop actually drains pending touch events.
-        let sliceBudget: Duration = .milliseconds(6)
-        var sliceStart = ContinuousClock.now
-        func breatheIfNeeded() async -> Bool {
-            guard sliceStart.duration(to: .now) > sliceBudget else { return true }
-            try? await Task.sleep(for: .milliseconds(1))
-            sliceStart = .now
-            return !Task.isCancelled
-        }
-
-        let routineMatches = workout.routineID.map { routineID in prior.filter { $0.routineID == routineID } } ?? []
-        let routineMatchIDs = Set(routineMatches.map(\.id))
-        let fallback = prior.filter { !routineMatchIDs.contains($0.id) }
-
-        let baselinePrior = prior.filter { $0.startedAt < workout.startedAt }
-        for past in baselinePrior {
-            for we in past.exercises where exerciseIDs.contains(we.exerciseID) {
-                var baseline = baselines[we.exerciseID] ?? ExerciseRecordBaseline()
-                for set in we.sets { baseline.absorb(set) }
-                baselines[we.exerciseID] = baseline
-            }
-            guard await breatheIfNeeded() else {
-                return ReferenceCaches(recordBaselines: baselines, previousSetsByExerciseID: previousSets)
-            }
-        }
-
-        var unresolvedTypes = Dictionary(
-            uniqueKeysWithValues: exerciseIDs.map {
-                ($0, Set(SetType.allCases.map(\.rawValue)))
-            }
-        )
-        for past in routineMatches + fallback {
-            for we in past.exercises where exerciseIDs.contains(we.exerciseID) {
-                let sets = we.sets.filter { $0.completedAt != nil }.sorted { $0.position < $1.position }
-                guard !sets.isEmpty,
-                      var unresolved = unresolvedTypes[we.exerciseID],
-                      !unresolved.isEmpty else { continue }
-                for type in SetType.allCases where unresolved.contains(type.rawValue) {
-                    let sameType = sets.filter { $0.setType == type }
-                    guard !sameType.isEmpty else { continue }
-                    previousSets[we.exerciseID, default: []].append(contentsOf: sameType)
-                    unresolved.remove(type.rawValue)
-                }
-                unresolvedTypes[we.exerciseID] = unresolved
-            }
-            if unresolvedTypes.values.allSatisfy(\.isEmpty) { break }
-            guard await breatheIfNeeded() else {
-                return ReferenceCaches(recordBaselines: baselines, previousSetsByExerciseID: previousSets)
-            }
-        }
-
-        return ReferenceCaches(recordBaselines: baselines, previousSetsByExerciseID: previousSets)
-    }
-
     private func refreshProgressionSuggestions() {
         let workoutID = workout.id
         let all = (try? modelContext.fetch(FetchDescriptor<ProgressionSuggestionModel>(
@@ -929,67 +1022,26 @@ struct ActiveWorkoutLoggerView: View {
             set.reps = nil
             set.recomputeDerivedMetrics()
         }
-        modelContext.saveUserChanges {
-            publishWorkoutChange()
-        }
+        requestWorkoutSave()
     }
 
-    private func sortedPriorWorkouts() -> [WorkoutModel] {
-        history
-            .filter { $0.id != workout.id && $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-    }
-
-    private func cachedPreviousSets(for workoutExercise: WorkoutExerciseModel) -> [SetModel] {
+    private func cachedPreviousSets(for workoutExercise: WorkoutExerciseModel) -> [LivePreviousSetSnapshot] {
         if let cached = previousSetsByExerciseID[workoutExercise.exerciseID] {
             return cached
         }
         // Before the deferred cache build lands, render "—" instead of
         // re-walking the whole history per card on the very first frame.
-        guard !previousSetsByExerciseID.isEmpty else { return [] }
-        return previousSets(for: workoutExercise.exerciseID)
-    }
-
-    private func previousSets(for exerciseID: UUID) -> [SetModel] {
-        let prior = history
-            .filter { $0.id != workout.id && $0.endedAt != nil && $0.deletedAt == nil }
-            .sorted { $0.startedAt > $1.startedAt }
-        let routineMatches = workout.routineID.map { routineID in prior.filter { $0.routineID == routineID } } ?? []
-        let fallback = prior.filter { priorWorkout in !routineMatches.contains { $0.id == priorWorkout.id } }
-        return previousSets(for: exerciseID, routineMatches: routineMatches, fallback: fallback)
-    }
-
-    private func previousSets(
-        for exerciseID: UUID,
-        routineMatches: [WorkoutModel],
-        fallback: [WorkoutModel]
-    ) -> [SetModel] {
-        var result: [SetModel] = []
-        var unresolved = Set(SetType.allCases.map(\.rawValue))
-        for p in routineMatches + fallback {
-            for we in p.exercises where we.exerciseID == exerciseID {
-                let sets = we.sets.filter { $0.completedAt != nil }.sorted { $0.position < $1.position }
-                for type in SetType.allCases where unresolved.contains(type.rawValue) {
-                    let sameType = sets.filter { $0.setType == type }
-                    guard !sameType.isEmpty else { continue }
-                    result.append(contentsOf: sameType)
-                    unresolved.remove(type.rawValue)
-                }
-            }
-            if unresolved.isEmpty { break }
-        }
-        return result
+        return []
     }
 
     /// Recompute the live counters in place — mutating the @Observable object
     /// invalidates only `LiveVolumeSetsColumns`, not the whole logger body.
-    private func refreshLiveStats() {
-        let completed = workout.exercises
-            .filter { $0.generatedByWorkoutBlockID == nil }
-            .flatMap(\.sets)
-            .filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
-        liveStats.volume = completed.reduce(0) { $0 + ($1.totalVolume ?? 0) }
-        liveStats.completedSets = completed.reduce(0) { $0 + VolumeMath.effectiveSetCount($1.domainEntry) }
+    private func refreshLiveStats(changedSet: SetModel? = nil) {
+        if let changedSet {
+            liveStats.refresh(changedSet: changedSet, in: workout)
+        } else {
+            liveStats.rebuild(from: workout)
+        }
     }
 
     private func addExercises(_ list: [ExerciseLibraryModel]) {
@@ -1045,10 +1097,8 @@ struct ActiveWorkoutLoggerView: View {
             }
         }
         refreshLiveStats()
-        modelContext.saveUserChanges {
-            publishWorkoutChange()
-        }
-        Task { await refreshReferenceCaches() }
+        requestWorkoutSave()
+        requestReferenceCacheRefresh()
     }
 
     private func addYogaSession(from selections: [ExerciseLibraryModel]) {
@@ -1109,9 +1159,7 @@ struct ActiveWorkoutLoggerView: View {
             workout.blocks.append(block)
             workout.cardioSessions.append(session)
         }
-        modelContext.saveUserChanges {
-            publishWorkoutChange()
-        }
+        requestWorkoutSave()
         computeModalityFlags()
     }
 
@@ -1122,6 +1170,7 @@ struct ActiveWorkoutLoggerView: View {
         return WorkoutBlockPlanPersistence.apply(
             planJSON,
             to: block,
+            parentWorkout: workout,
             session: session,
             generatedExercise: generatedExercise,
             in: modelContext,
@@ -1149,13 +1198,16 @@ struct ActiveWorkoutLoggerView: View {
         workout.blocks.removeAll { $0.id == block.id }
         modelContext.delete(block)
         normalizeOrderedPositions()
-        workout.recomputeTotalVolume()
-        modelContext.saveUserChanges {
-            cancelRemovedSessionRuntime(removedRuntime)
-            publishWorkoutChange()
+        if workout.endedAt != nil {
+            workout.recomputeTotalVolume()
         }
+        // Runtime state must stop as soon as its model leaves the live graph;
+        // waiting for the deferred store write would leave audio/GPS/timers
+        // running against a segment the UI already removed.
+        cancelRemovedSessionRuntime(removedRuntime)
+        requestWorkoutSave()
         computeModalityFlags()
-        Task { await refreshReferenceCaches() }
+        requestReferenceCacheRefresh()
     }
 
     private func normalizeOrderedPositions(excluding excludedID: UUID? = nil) {
@@ -1298,13 +1350,13 @@ struct ActiveWorkoutLoggerView: View {
                 target.sets = [set]
             }
         }
-        workout.recomputeTotalVolume()
-        refreshLiveStats()
-        modelContext.saveUserChanges {
-            cancelRemovedSessionRuntime(removedRuntime)
-            publishWorkoutChange()
+        if workout.endedAt != nil {
+            workout.recomputeTotalVolume()
         }
-        Task { await refreshReferenceCaches() }
+        refreshLiveStats()
+        cancelRemovedSessionRuntime(removedRuntime)
+        requestWorkoutSave()
+        requestReferenceCacheRefresh()
     }
 
     private func removeExercise(_ we: WorkoutExerciseModel) {
@@ -1314,13 +1366,14 @@ struct ActiveWorkoutLoggerView: View {
             workout.exercises.removeAll { $0.id == we.id }
             modelContext.delete(we)
             normalizeOrderedPositions()
-            workout.recomputeTotalVolume()
+            if workout.endedAt != nil {
+                workout.recomputeTotalVolume()
+            }
             refreshLiveStats()
         }
-        modelContext.saveUserChanges {
-            cancelRemovedSessionRuntime(removedRuntime)
-            publishWorkoutChange()
-        }
+        cancelRemovedSessionRuntime(removedRuntime)
+        requestWorkoutSave()
+        requestReferenceCacheRefresh()
     }
 
     private func deleteCardioSessions(for workoutExerciseID: UUID) -> [RemovedSessionRuntime] {
@@ -1358,9 +1411,7 @@ struct ActiveWorkoutLoggerView: View {
         we.supersetGroup = group
         we.updatedAt = Date()
         compactSupersetPositions()
-        modelContext.saveUserChanges {
-            WatchLink.shared.publishState()
-        }
+        requestWorkoutSave()
     }
 
     private func ungroupSuperset(_ group: Int) {
@@ -1369,9 +1420,7 @@ struct ActiveWorkoutLoggerView: View {
             exercise.updatedAt = Date()
         }
         compactSupersetPositions()
-        modelContext.saveUserChanges {
-            WatchLink.shared.publishState()
-        }
+        requestWorkoutSave()
     }
 
     private func compactSupersetPositions() {
@@ -1470,13 +1519,42 @@ struct ActiveWorkoutLoggerView: View {
         }
     }
 
+    /// Called freely by rows and note editors. Repeated requests replace one
+    /// pending operation; no caller below this screen can force synchronous
+    /// persistence during a scroll or draft render.
+    private func requestWorkoutSave() {
+        // This parent clock is the shallow analytics invalidation contract.
+        // It lets dashboard/tab fingerprints avoid faulting every completed
+        // workout relationship merely to notice a nested authored change.
+        WorkoutMutationContract.stampParentForNestedMutation(workout)
+        saveCoordinator.schedule {
+            modelContext.saveUserChanges { publishWorkoutChange() }
+        }
+    }
+
+    /// Explicitly materializes every high-frequency local draft before any
+    /// terminal policy reads the model. This avoids relying on focus-change or
+    /// child-disappearance callback order.
+    @discardableResult
+    private func commitPendingDrafts() -> Bool {
+        inputRouter.active?.onDismiss()
+        let allDraftsAreValid = pendingDrafts.commitAll()
+        hideKeyboard()
+        return allDraftsAreValid
+    }
+
+    private func commitPendingDraftsAndFlush() {
+        commitPendingDrafts()
+        saveCoordinator.flush()
+    }
+
     /// A visibility setting is a logging contract, not just layout. Clear any
     /// effort entered earlier in this live workout as soon as the user turns
     /// the column off; historical editing is intentionally unaffected.
     private func reconcileEffortVisibility() {
         guard !isHistoricalEdit, !showRPEInLogger else { return }
         guard WorkoutEffortPolicy.removeEffort(from: workout) else { return }
-        workout.updatedAt = .now
+        WorkoutMutationContract.stampParentForNestedMutation(workout)
         modelContext.saveUserChanges {
             publishWorkoutChange()
         }
@@ -1514,6 +1592,10 @@ struct ActiveWorkoutLoggerView: View {
         // otherwise a fast Finish -> Save can make that context reconcile an
         // older workout snapshot. A failed flush retains the pending changes
         // in this context and keeps the workout open for an exact retry.
+        guard commitPendingDrafts() else {
+            return "One or more set entries needs a valid value. Keep logging and correct the highlighted field before saving."
+        }
+        saveCoordinator.cancel()
         do {
             try modelContext.save()
         } catch {
@@ -1535,14 +1617,17 @@ struct ActiveWorkoutLoggerView: View {
     }
 
     private func discardWorkout() {
+        saveCoordinator.cancel()
         PersistentChangeSaveCenter.shared.performReportingFailure({
             WorkoutFinisher.discard(workoutID: workout.id, in: modelContext)
         }, onSuccess: dismiss.callAsFunction)
     }
 
     private func saveHistoricalEdit() {
+        guard commitPendingDrafts() else { return }
+        saveCoordinator.cancel()
         workout.recomputeTotalVolume()
-        workout.updatedAt = .now
+        WorkoutMutationContract.stampParentForNestedMutation(workout)
         modelContext.saveUserChanges {
             BackupScheduler.shared.noteLogDataChanged()
             dismiss()
@@ -1579,7 +1664,6 @@ private struct PostWorkoutSummaryView: View {
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
     let workout: WorkoutModel
     let exercises: [ExerciseLibraryModel]
-    let history: [WorkoutModel]
     /// Runs the finish pipeline; returns an error message when the terminal
     /// save failed (the workout is still live) so the sheet can alert instead
     /// of silently doing nothing.
@@ -1607,44 +1691,45 @@ private struct PostWorkoutSummaryView: View {
     @AppStorage("notificationPrimeShown") private var notificationPrimeShown = false
     @State private var shareImage: UIImage?
     @State private var showShareSheet = false
+    @State private var shareTask: Task<Void, Never>?
+    @State private var shareRequestGate = PostWorkoutShareRequestGate()
     @State private var sessionRPE: Int?
     @State private var sessionRPERatedAt: Date?
     @State private var finishRequestedAt = Date.now
+    @State private var summaryHistoryTask: Task<PostWorkoutHistorySnapshot, Error>?
 
-    private var completedSets: [SetModel] {
-        workout.exercises.flatMap(\.sets).filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
+    private struct SummarySnapshot {
+        var volumeDeltaText: String?
+        var awards: [WorkoutAward]
+        var trainedMuscles: [(muscle: String, sets: Double)]
+        var cardioAdaptationText: String?
+        var nextTimeEntries: [(name: String, text: String)]
+
+        static let empty = SummarySnapshot(
+            volumeDeltaText: nil,
+            awards: [],
+            trainedMuscles: [],
+            cardioAdaptationText: nil,
+            nextTimeEntries: []
+        )
     }
+
+    /// Workout/history inputs are immutable while the completion sheet is
+    /// open. Materialize every history-backed card once, after the sheet's
+    /// first frame, instead of replaying awards/fetches for reveal and RPE
+    /// state changes.
+    @State private var summarySnapshot: SummarySnapshot?
+
     private var duration: Int {
         max(0, Int(finishRequestedAt.timeIntervalSince(workout.startedAt)))
     }
-    private var volume: Double {
-        completedSets.reduce(0) { $0 + ($1.totalVolume ?? 0) }
-    }
-    private var previousComparable: WorkoutModel? {
-        history
-            .filter { $0.id != workout.id && $0.endedAt != nil && $0.deletedAt == nil }
-            .filter { prior in
-                if let routineID = workout.routineID { return prior.routineID == routineID }
-                return prior.title == workout.title
-            }
-            .sorted { $0.startedAt > $1.startedAt }
-            .first
-    }
     private var volumeDeltaText: String? {
-        guard let previousComparable else { return nil }
-        let priorVolume = HistoricalSetPresentation.workoutVolume(from: previousComparable.exercises.flatMap(\.sets))
-        let delta = volume - priorVolume
-        guard abs(delta) > 0.1 else { return "Volume matched last time" }
-        return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
+        (summarySnapshot ?? .empty).volumeDeltaText
     }
     /// Final records and milestones use one derivation path across the
     /// completion sheet, history, search, and generated share images.
     private var awardEntries: [WorkoutAward] {
-        WorkoutAwards.all(
-            for: workout,
-            history: history,
-            exercises: exercises
-        )
+        (summarySnapshot ?? .empty).awards
     }
     private var xpAward: XPService.Award {
         XPService.previewAward(for: workout, requireEnded: false)
@@ -1753,11 +1838,41 @@ private struct PostWorkoutSummaryView: View {
                 onSaveOnly: saveWorkoutOnly
             )
         }
+        .task(id: workout.id) {
+            _ = await loadSummarySnapshot()
+        }
+        .onDisappear {
+            cancelShareWork()
+            summaryHistoryTask?.cancel()
+            summaryHistoryTask = nil
+        }
     }
 
     /// The share moment belongs at the finish, not buried in history — same
     /// branded card, rendered without route maps for instant presentation.
     private func shareWorkout() {
+        shareTask?.cancel()
+        let request = shareRequestGate.begin()
+        shareTask = Task { @MainActor in
+            defer {
+                if shareRequestGate.finish(request) {
+                    shareTask = nil
+                }
+            }
+            guard let snapshot = await loadSummarySnapshot(),
+                  !Task.isCancelled,
+                  shareRequestGate.shouldApply(request) else { return }
+            renderShareImage(using: snapshot)
+        }
+    }
+
+    private func cancelShareWork() {
+        shareRequestGate.cancel()
+        shareTask?.cancel()
+        shareTask = nil
+    }
+
+    private func renderShareImage(using snapshot: SummarySnapshot) {
         shareImage = WorkoutShareRenderer.image(
             for: workout,
             exercises: exercises,
@@ -1765,7 +1880,7 @@ private struct PostWorkoutSummaryView: View {
             hrSamples: [],
             recoveryPoints: [],
             routeMaps: [:],
-            awards: awardEntries
+            awards: snapshot.awards
         )
         showShareSheet = shareImage != nil
     }
@@ -1773,10 +1888,14 @@ private struct PostWorkoutSummaryView: View {
     /// "What this trained": fractional working sets per muscle (secondaries
     /// count half) plus an honest adaptation read from measured cardio zones.
     private var trainedMuscleRows: [(muscle: String, sets: Double)] {
-        Array(TrainingAnalytics(workouts: [workout], exercises: exercises).muscleVolume(for: workout).prefix(4))
+        (summarySnapshot ?? .empty).trainedMuscles
     }
 
     private var cardioAdaptationText: String? {
+        (summarySnapshot ?? .empty).cardioAdaptationText
+    }
+
+    private func makeCardioAdaptationText() -> String? {
         var zones = [0, 0, 0, 0, 0]
         for session in workout.cardioSessions where !session.isYogaSession {
             for (index, seconds) in session.hrZoneSeconds.enumerated() where index < 5 {
@@ -1822,15 +1941,12 @@ private struct PostWorkoutSummaryView: View {
     /// Next-session preview per strength exercise, computed from what was
     /// just logged — the real targets materialize at the next routine start.
     private var nextTimeEntries: [(name: String, text: String)] {
-        var routineExerciseByID: [UUID: RoutineExerciseModel] = [:]
-        if let routineID = workout.routineID {
-            let routines = (try? modelContext.fetch(FetchDescriptor<RoutineModel>(
-                predicate: #Predicate { $0.id == routineID && $0.deletedAt == nil }
-            ))) ?? []
-            if let routine = routines.first {
-                routineExerciseByID = Dictionary(routine.exercises.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            }
-        }
+        (summarySnapshot ?? .empty).nextTimeEntries
+    }
+
+    private func makeNextTimeEntries(
+        progressionByExerciseID: [UUID: LiveRoutineProgressionSnapshot]
+    ) -> [(name: String, text: String)] {
         var entries: [(String, String)] = []
         for workoutExercise in workout.exercises.sorted(by: { $0.position < $1.position }) {
             guard let exercise = exercises.first(where: { $0.id == workoutExercise.exerciseID }),
@@ -1838,14 +1954,15 @@ private struct PostWorkoutSummaryView: View {
             let completed = workoutExercise.sets
                 .filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume && !$0.setType.isBlockType }
             guard !completed.isEmpty else { continue }
-            let routineExercise = workoutExercise.sourceRoutineExerciseID.flatMap { routineExerciseByID[$0] }
-            let rule = ProgressionRule.decode(from: routineExercise?.progressionRuleJSON) ?? .doubleProgression
+            let progression = workoutExercise.sourceRoutineExerciseID.flatMap {
+                progressionByExerciseID[$0]
+            }
+            let rule = ProgressionRule.decode(from: progression?.progressionRuleJSON) ?? .doubleProgression
             if case .off = rule { continue }
-            let targets = routineExercise?.sets ?? []
             let input = ProgressionInput(
                 lastSessionSets: completed.map { .init(weightKg: $0.modeWeight ?? $0.weight, reps: $0.reps) },
-                targetRepsLow: targets.compactMap(\.targetRepsLow).min(),
-                targetRepsHigh: targets.compactMap(\.targetRepsHigh).max(),
+                targetRepsLow: progression?.targetRepsLow,
+                targetRepsHigh: progression?.targetRepsHigh,
                 rule: rule,
                 increment: ProgressionPlanner.increment(for: exercise),
                 isBodyweight: exercise.defaultWeightMode == .bodyweight
@@ -1855,6 +1972,76 @@ private struct PostWorkoutSummaryView: View {
             }
         }
         return entries
+    }
+
+    private func loadSummarySnapshot() async -> SummarySnapshot? {
+        if let summarySnapshot { return summarySnapshot }
+        let task: Task<PostWorkoutHistorySnapshot, Error>
+        if let summaryHistoryTask {
+            task = summaryHistoryTask
+        } else {
+            let input = PostWorkoutHistoryInput(
+                workoutID: workout.id,
+                routineID: workout.routineID,
+                title: workout.title,
+                startedAt: workout.startedAt
+            )
+            let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
+            task = Task { try await worker.postWorkoutHistorySnapshot(for: input) }
+            summaryHistoryTask = task
+        }
+        do {
+            let historySnapshot = try await task.value
+            guard !Task.isCancelled else { return nil }
+            let snapshot = makeSummarySnapshot(history: historySnapshot)
+            summarySnapshot = snapshot
+            summaryHistoryTask = nil
+            return snapshot
+        } catch is CancellationError {
+            summaryHistoryTask = nil
+            return nil
+        } catch {
+            summaryHistoryTask = nil
+            guard !Task.isCancelled else { return nil }
+            let snapshot = makeSummarySnapshot(history: .empty)
+            summarySnapshot = snapshot
+            return snapshot
+        }
+    }
+
+    private func makeSummarySnapshot(
+        history historySnapshot: PostWorkoutHistorySnapshot
+    ) -> SummarySnapshot {
+        let completedSets = workout.exercises
+            .flatMap(\.sets)
+            .filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
+        let volume = completedSets.reduce(0) { $0 + ($1.totalVolume ?? 0) }
+        let volumeDeltaText: String? = historySnapshot.previousComparableVolume.map { priorVolume in
+            let delta = volume - priorVolume
+            if abs(delta) <= 0.1 { return "Volume matched last time" }
+            return "\(delta >= 0 ? "+" : "")\(Fmt.volumeFull(delta)) vs last time"
+        }
+
+        return SummarySnapshot(
+            volumeDeltaText: volumeDeltaText,
+            awards: WorkoutAwards.modalityAwards(
+                for: workout,
+                history: historySnapshot.modalityHistory
+            ) + WorkoutAwards.strengthAwards(
+                for: workout,
+                baselines: historySnapshot.recordBaselines,
+                exercises: exercises
+            ),
+            trainedMuscles: Array(
+                TrainingAnalytics(workouts: [workout], exercises: exercises)
+                    .muscleVolume(for: workout)
+                    .prefix(4)
+            ),
+            cardioAdaptationText: makeCardioAdaptationText(),
+            nextTimeEntries: makeNextTimeEntries(
+                progressionByExerciseID: historySnapshot.routineProgressionByExerciseID
+            )
+        )
     }
 
     private var nextTimeCard: some View {
@@ -2033,7 +2220,7 @@ private struct PostWorkoutSummaryView: View {
     private func fetchRoutine(id: UUID) -> RoutineModel? {
         let descriptor = FetchDescriptor<RoutineModel>(predicate: #Predicate { $0.id == id })
         guard let rows = try? modelContext.fetch(descriptor) else { return nil }
-        return RoutineDeduplicator.canonicalRoutines(rows).first
+        return PostWorkoutRoutineUpdatePolicy.liveCanonicalRoutine(in: rows)
     }
 
     private func summaryRow(_ icon: String, _ title: String, _ detail: String) -> some View {
@@ -2140,14 +2327,13 @@ private struct SetGridMetrics: DynamicProperty {
 private struct ExerciseLogCard: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
-    @Environment(\.scenePhase) private var scenePhase
     var grid = SetGridMetrics()
     @Bindable var workout: WorkoutModel
     @Bindable var workoutExercise: WorkoutExerciseModel
     let exercise: ExerciseLibraryModel?
     let pinnedNote: UserExerciseNoteModel?
     var onPinnedNoteChanged: (UserExerciseNoteModel?) -> Void = { _ in }
-    let previousSets: [SetModel]
+    let previousSets: [LivePreviousSetSnapshot]
     let recordBaseline: ExerciseRecordBaseline?
     let allowsRestTimers: Bool
     /// Whether the exercise may fold into the one-line summary. Active
@@ -2166,8 +2352,9 @@ private struct ExerciseLogCard: View {
     let onCreateSuperset: () -> Void
     let onUngroupSuperset: (Int) -> Void
     let onCompletedSet: (SetModel) -> Void
-    let onLiveStatsChanged: () -> Void
-    let onWorkoutChanged: () -> Void
+    let onLiveStatsChanged: (SetModel?) -> Void
+    let onSaveRequested: () -> Void
+    let pendingDrafts: PendingDraftCoordinator
     let onShowExerciseDetail: (ExerciseLibraryModel) -> Void
     let onReplace: () -> Void
     let onRemove: () -> Void
@@ -2183,7 +2370,6 @@ private struct ExerciseLogCard: View {
     var progression: ProgressionSuggestionModel? = nil
     var onRejectProgression: () -> Void = {}
 
-    @State private var deferredSaveTask: Task<Void, Never>?
     /// Set being plate-calculated (barbell-loaded exercises only).
     @State private var plateSet: SetModel?
     /// Myo-reps use a focused full-screen runner; the enclosing card keeps the
@@ -2254,6 +2440,7 @@ private struct ExerciseLogCard: View {
                 expandedCard
             }
         }
+        .accessibilityIdentifier("live-exercise-card-\(exercise?.name ?? workoutExercise.exerciseID.uuidString)")
         .animation(.snappy(duration: 0.28), value: isCollapsed)
         .onAppear {
             if allowsCollapse && allSetsCompleted { collapsed = true }
@@ -2453,7 +2640,9 @@ private struct ExerciseLogCard: View {
                         pinnedNote: pinnedNote,
                         focusRequested: noteFocusRequested,
                         onFocusHandled: { noteFocusRequested = false },
-                        onPinnedNoteChanged: onPinnedNoteChanged
+                        onPinnedNoteChanged: onPinnedNoteChanged,
+                        pendingDrafts: pendingDrafts,
+                        onSaveRequested: onSaveRequested
                     )
                 }
 
@@ -2641,14 +2830,6 @@ private struct ExerciseLogCard: View {
         .onAppear {
             refreshAwardsCache()
         }
-        .onDisappear {
-            flushPendingSave()
-        }
-        // The 2s save debounce must not lose edits when the app is locked or
-        // backgrounded inside the window.
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active { flushPendingSave() }
-        }
     }
 
     private var header: some View {
@@ -2742,7 +2923,7 @@ private struct ExerciseLogCard: View {
                 workoutExercise.notes = ""
                 workoutExercise.updatedAt = .now
                 noteFocusRequested = true
-                modelContext.saveUserChanges()
+                onSaveRequested()
             })
         }
         actions.append(ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) })
@@ -2975,14 +3156,14 @@ private struct ExerciseLogCard: View {
     /// sets remember working sets, and blocks remember their activation. An
     /// extra set beyond that session's count continues from the type's last
     /// set; a type with no history is an honest blank.
-    private func previousSet(for set: SetModel, at index: Int) -> SetModel? {
+    private func previousSet(for set: SetModel, at index: Int) -> LivePreviousSetSnapshot? {
         let ordinal = sortedSets.prefix(index).filter { $0.setType == set.setType }.count
         let sameType = previousSets.filter { $0.setType == set.setType }
         guard !sameType.isEmpty else { return nil }
         return ordinal < sameType.count ? sameType[ordinal] : sameType.last
     }
 
-    private func matchPrevious(_ set: SetModel, from previous: SetModel?) {
+    private func matchPrevious(_ set: SetModel, from previous: LivePreviousSetSnapshot?) {
         guard let previous else { return }
         set.weight = previous.weight
         set.addedWeight = previous.addedWeight
@@ -3031,7 +3212,7 @@ private struct ExerciseLogCard: View {
         // changing their global unit.
         exercise.preferredWeightUnit = next == Fmt.unit ? nil : next
         exercise.updatedAt = Date()
-        modelContext.saveUserChanges()
+        onSaveRequested()
     }
 
     /// Warm-up ramp: the user's configured ramp (default 40/60/80% × 10/6/3,
@@ -3235,7 +3416,8 @@ private struct ExerciseLogCard: View {
                 to: set,
                 visibleWeight: visibleWeight,
                 visibleReps: visibleReps,
-                previousBlock: previousBlock,
+                previousWeight: previousBlock?.modeWeight,
+                previousReps: previousBlock?.reps,
                 preservesEnteredWeight: preservesEnteredWeight,
                 preservesEnteredReps: preservesEnteredReps
             )
@@ -3263,16 +3445,24 @@ private struct ExerciseLogCard: View {
 
     /// Template for a block's activation: the previous block of the same type
     /// in this session, then the same ordinal from its most recent history.
-    private func blockTemplate(for set: SetModel, index: Int, in sets: [SetModel]) -> SetModel? {
+    private func blockTemplate(
+        for set: SetModel,
+        index: Int,
+        in sets: [SetModel]
+    ) -> LivePreviousSetSnapshot? {
         blockTemplate(for: set.setType, index: index, in: sets)
     }
 
-    private func blockTemplate(for type: SetType, index: Int, in sets: [SetModel]) -> SetModel? {
+    private func blockTemplate(
+        for type: SetType,
+        index: Int,
+        in sets: [SetModel]
+    ) -> LivePreviousSetSnapshot? {
         if let prior = sets.prefix(index).last(where: {
             $0.setType == type
                 && ($0.modeWeight != nil || $0.reps != nil || !$0.miniReps.isEmpty)
         }) {
-            return prior
+            return LivePreviousSetSnapshot(set: prior)
         }
         let ordinal = sets.prefix(index).count { $0.setType == type }
         let sameType = previousSets.filter { $0.setType == type }
@@ -3290,9 +3480,7 @@ private struct ExerciseLogCard: View {
 
     private func recompute(changedSet: SetModel? = nil, refreshAllAwards: Bool = true) {
         workoutExercise.updatedAt = Date()
-        if let changedSet {
-            LiveWorkoutMetrics.refresh(changedSet: changedSet, in: workout)
-        } else {
+        if changedSet == nil, workout.endedAt != nil {
             workout.recomputeTotalVolume()
         }
         if refreshAllAwards || changedSet == nil {
@@ -3307,38 +3495,8 @@ private struct ExerciseLogCard: View {
                 awardsCache[changedSet.id] = awards
             }
         }
-        onLiveStatsChanged()
-        scheduleSave()
-    }
-
-    private func scheduleSave() {
-        deferredSaveTask?.cancel()
-        deferredSaveTask = Task { @MainActor in
-            // 2s, not 350ms: a save triggers ContentView's all-workouts @Query
-            // re-fetch (O(total history) on the main thread), and at +350ms it
-            // landed exactly when the lifter's thumb came down to scroll after
-            // logging — eating the first pan gesture. 2s parks it in idle time.
-            // Durability is unchanged: card-exit, app-background, minimize, and
-            // finish all flush pending edits immediately (see onDisappear /
-            // scenePhase below; WorkoutFinisher saves on its own).
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            saveNow()
-            deferredSaveTask = nil
-        }
-    }
-
-    /// Flush a pending debounced save right now; no-op when nothing is queued
-    /// (so card recycling during a plain scroll never triggers save/publish).
-    private func flushPendingSave() {
-        guard deferredSaveTask != nil else { return }
-        deferredSaveTask?.cancel()
-        deferredSaveTask = nil
-        saveNow()
-    }
-
-    private func saveNow() {
-        modelContext.saveUserChanges { onWorkoutChanged() }
+        onLiveStatsChanged(changedSet)
+        onSaveRequested()
     }
 
     private var supportsResistanceBands: Bool {
@@ -3382,7 +3540,7 @@ private struct SetRow: View {
     /// Records this set currently holds — renders the subtle gold strip.
     var awards: [RecordKind] = []
     let previous: String
-    let previousSet: SetModel?
+    let previousSet: LivePreviousSetSnapshot?
     let isCardio: Bool
     let showWeight: Bool
     let showRPE: Bool
@@ -3426,7 +3584,7 @@ private struct SetRow: View {
         workingNumber: Int,
         awards: [RecordKind] = [],
         previous: String,
-        previousSet: SetModel?,
+        previousSet: LivePreviousSetSnapshot?,
         isCardio: Bool,
         showWeight: Bool,
         showRPE: Bool,

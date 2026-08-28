@@ -105,16 +105,23 @@ struct RoutineLoadPrescriptionField: View {
     let unit: WeightUnit
     let supportsPercentage: Bool
     var supportsResistanceBands = false
+    var pendingDrafts: PendingDraftCoordinator? = nil
     var onChange: () -> Void = {}
 
     @State private var draft = ""
     @State private var draftActive = false
+    @State private var draftDirty = false
     @State private var invalidDraft = false
     @FocusState private var focused: Bool
 
     private var isPercentage: Bool {
         self.set.loadPrescriptionMode == .percentEstimatedOneRepMax
     }
+
+    /// Stable and externally knowable so deleting the owning set can remove an
+    /// intentionally retained invalid off-screen validator before the lazy row
+    /// receives another lifecycle callback.
+    private var draftToken: UUID { self.set.id }
 
     /// An imported prescription can outlive a later exercise-mode change.
     /// Keep its selector visible so the user has an obvious route back to a
@@ -144,7 +151,20 @@ struct RoutineLoadPrescriptionField: View {
                             ? "Percentage of estimated one rep max"
                             : "Fixed load in \(unit.suffix)"
                     )
-                    .accessibilityIdentifier("routine-set-load-value-\(set.id.uuidString)")
+                    // Keep the long-standing row identifier on the actual
+                    // field. Applying it to the composite control overwrote
+                    // descendants, including the invalid-value receipt.
+                    .accessibilityIdentifier("routine-set-weight-\(set.id.uuidString)")
+
+                if invalidDraft {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(theme.danger)
+                        .fixedSize()
+                        .accessibilityLabel("Invalid percentage")
+                        .accessibilityHint("Enter 1 to 100, or a valid range")
+                        .accessibilityIdentifier("routine-set-load-invalid")
+                }
 
                 if !isPercentage {
                     Text(unit.shortSuffix)
@@ -205,16 +225,36 @@ struct RoutineLoadPrescriptionField: View {
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear {
+            pendingDrafts?.register(
+                draftToken,
+                commit: commitDraft,
+                isValid: currentDraftIsValid
+            )
+        }
         .onChange(of: focused) { _, isFocused in
             if !isFocused {
-                draftActive = false
-                invalidDraft = false
+                commitDraft()
+                // Preserve invalid text and its visible error state. Reverting
+                // to the old model value here would make a malformed draft
+                // look saved even though it was rejected.
+                draftActive = invalidDraft
             }
         }
         .onChange(of: set.loadPrescriptionModeRaw) { _, _ in
             focused = false
             draftActive = false
+            draftDirty = false
             invalidDraft = false
+        }
+        .onDisappear {
+            commitDraft()
+            // Keep an invalid off-screen row registered with the screen. A
+            // LazyVStack recycle must not turn malformed local text into a
+            // successful save of the previous model value.
+            if currentDraftIsValid() {
+                pendingDrafts?.unregister(draftToken)
+            }
         }
     }
 
@@ -225,7 +265,7 @@ struct RoutineLoadPrescriptionField: View {
     private var textBinding: Binding<String> {
         Binding(
             get: {
-                if focused && draftActive { return draft }
+                if draftActive { return draft }
                 if isPercentage {
                     return LoadPrescriptionPresentation.percentInput(set.estimatedOneRepMaxPrescription)
                 }
@@ -238,6 +278,34 @@ struct RoutineLoadPrescriptionField: View {
     private func updateText(_ text: String) {
         draft = text
         draftActive = true
+        if pendingDrafts != nil {
+            draftDirty = true
+            invalidDraft = !draftIsValid(text)
+            onChange()
+            return
+        }
+        applyDraft(text)
+    }
+
+    private func commitDraft() {
+        guard pendingDrafts != nil, draftDirty else { return }
+        if applyDraft(draft) {
+            draftDirty = false
+        }
+    }
+
+    private func currentDraftIsValid() -> Bool {
+        !draftDirty || draftIsValid(draft)
+    }
+
+    private func draftIsValid(_ text: String) -> Bool {
+        guard isPercentage else { return true }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || EstimatedOneRepMaxPrescription.parse(text) != nil
+    }
+
+    @discardableResult
+    private func applyDraft(_ text: String) -> Bool {
         if isPercentage {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
@@ -245,11 +313,11 @@ struct RoutineLoadPrescriptionField: View {
                 set.target1RMPercentHigh = nil
                 invalidDraft = false
                 onChange()
-                return
+                return true
             }
             guard let prescription = EstimatedOneRepMaxPrescription.parse(text) else {
                 invalidDraft = true
-                return
+                return false
             }
             set.target1RMPercentLow = prescription.lowPercent
             set.target1RMPercentHigh = prescription.highPercent
@@ -259,10 +327,12 @@ struct RoutineLoadPrescriptionField: View {
             invalidDraft = false
         }
         onChange()
+        return true
     }
 
     private func selectMode(_ mode: LoadPrescriptionMode) {
         guard mode == .fixed || supportsPercentage else { return }
+        commitDraft()
         set.loadPrescriptionMode = mode
         onChange()
     }
@@ -270,6 +340,7 @@ struct RoutineLoadPrescriptionField: View {
     private func selectBand(_ kilograms: Double) {
         focused = false
         draftActive = false
+        draftDirty = false
         set.targetWeight = kilograms
         onChange()
     }

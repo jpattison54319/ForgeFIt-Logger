@@ -71,7 +71,7 @@ struct SetBlockView: View {
     @Bindable var set: SetModel
     @Bindable var workoutExercise: WorkoutExerciseModel
     let blockNumber: Int
-    let previous: SetModel?
+    let previous: LivePreviousSetSnapshot?
     let showWeight: Bool
     let displayUnit: WeightUnit
     var supportsResistanceBands = false

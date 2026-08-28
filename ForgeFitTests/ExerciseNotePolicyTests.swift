@@ -12,6 +12,13 @@ struct ExerciseNotePolicyTests {
         #expect(ExerciseNotePolicy.authoredText("  Seat 4  \n") == "Seat 4")
     }
 
+    @Test func deletingFocusedTextCannotCreateAnEmptyPin() {
+        #expect(ExerciseNotePolicy.pinStateAfterToggle(currentlyPinned: true, draft: "") == false)
+        #expect(ExerciseNotePolicy.pinStateAfterToggle(currentlyPinned: false, draft: "  ") == false)
+        #expect(ExerciseNotePolicy.pinStateAfterToggle(currentlyPinned: false, draft: "Seat 4") == true)
+        #expect(ExerciseNotePolicy.pinStateAfterToggle(currentlyPinned: true, draft: "Seat 4") == false)
+    }
+
     @Test func routineStartDoesNotResurrectABlankPinnedNote() throws {
         let (container, context) = try TestStore.make()
         _ = container

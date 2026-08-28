@@ -64,6 +64,10 @@ watch destinations often fail to resolve.
   `.agents/skills/self-evident-ui/SKILL.md` completely and apply it. This is a
   required design invariant: interaction mechanics must be communicated by
   visible, familiar affordances rather than instructional copy or diagrams.
+- Before planning, editing, or reviewing any iOS performance-sensitive path,
+  read and follow `docs/ios-performance-standard.md`. Its frame-budget,
+  SwiftUI/SwiftData hot-path, cache-invalidation, save-ownership, and evidence
+  requirements are release invariants, not optional cleanup guidance.
 - New Swift files under a target's folder compile automatically
   (file-system-synchronized groups). Never edit `project.pbxproj` to add files.
 - New tests use Swift Testing (`import Testing`, `@Test`, `#expect`), not

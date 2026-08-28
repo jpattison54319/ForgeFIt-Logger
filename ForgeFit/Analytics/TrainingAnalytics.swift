@@ -100,7 +100,7 @@ nonisolated struct TrainingAnalytics {
 
     // MARK: - Weekly trend series (for bar / line charts)
 
-    enum Metric: String, CaseIterable, Identifiable {
+    enum Metric: String, CaseIterable, Identifiable, Sendable {
         case duration = "Duration"
         case volume = "Volume"
         case reps = "Reps"

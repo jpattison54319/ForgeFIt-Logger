@@ -20,7 +20,11 @@ struct MicrocycleDayWorkoutCard: View {
             }
 
             NavigationLink(value: record.workout.id) {
-                WorkoutFeedRow(workout: record.workout, analytics: analytics)
+                WorkoutFeedRow(
+                    workout: record.workout,
+                    analytics: analytics,
+                    exerciseCatalogRevision: HomePerformanceRevision.exerciseCatalog(analytics.exercises)
+                )
             }
             .buttonStyle(.plain)
 

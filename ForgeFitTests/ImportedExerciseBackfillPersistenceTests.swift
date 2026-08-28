@@ -6,8 +6,57 @@ import Testing
 @testable import ForgeFit
 
 @MainActor
+@Suite(.serialized)
 struct ImportedExerciseBackfillPersistenceTests {
     private enum InjectedFailure: Error { case save }
+
+    @Test func cooperativeBackfillCommitsInAFreshContextAndStampsOnlyAfterSuccess() async throws {
+        let (container, context) = try TestStore.make()
+        let suite = "ImportedExerciseBackfillPersistenceTests.cooperative.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        LiveWorkoutPerformanceGate.shared.setLiveWorkoutActive(false)
+
+        let exercise = ExerciseLibraryModel(
+            ownerID: ForgeFitDemo.userID,
+            name: "Lat Prayer",
+            userModified: false,
+            needsReview: true,
+            importBatchID: UUID(),
+            importedRawName: "Lat Prayer"
+        )
+        context.insert(exercise)
+        try context.save()
+        let exerciseID = exercise.id
+        let pendingRoutine = RoutineModel(userID: ForgeFitDemo.userID, name: "Unsaved caller edit")
+        context.insert(pendingRoutine)
+
+        await ImportedExerciseBackfill.runCooperativelyIfNeeded(
+            in: context,
+            defaults: defaults
+        )
+
+        #expect(defaults.bool(forKey: ImportedExerciseBackfill.didRunKey))
+        #expect(context.hasChanges)
+        var verification = ModelContext(container)
+        var persisted = try #require(try verification.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.id == exerciseID }
+        )).first)
+        #expect(persisted.primaryMuscles == ["lats"])
+        #expect(persisted.classificationSource == .keyword)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).isEmpty)
+
+        let firstUpdatedAt = persisted.updatedAt
+        await ImportedExerciseBackfill.runCooperativelyIfNeeded(
+            in: context,
+            defaults: defaults
+        )
+        verification = ModelContext(container)
+        persisted = try #require(try verification.fetch(FetchDescriptor<ExerciseLibraryModel>(
+            predicate: #Predicate { $0.id == exerciseID }
+        )).first)
+        #expect(persisted.updatedAt == firstUpdatedAt)
+    }
 
     @Test func failedSaveDoesNotStampCompletionAndLaterRunRetriesInIsolation() async throws {
         let (container, context) = try TestStore.make()

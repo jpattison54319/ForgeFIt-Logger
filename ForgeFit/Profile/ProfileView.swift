@@ -17,6 +17,8 @@ struct ProfileView: View {
     @Environment(AppState.self) private var appState
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    let isRenderActive: Bool
+    let renderID: UUID
     @Query(filter: #Predicate<UserProgressModel> { $0.deletedAt == nil }) private var progressRows: [UserProgressModel]
     @Query(filter: ExerciseLibraryModel.pendingImportReviewPredicate, sort: ExerciseLibraryModel.pendingImportReviewSort)
     private var importedExercisesNeedingReview: [ExerciseLibraryModel]
@@ -29,9 +31,14 @@ struct ProfileView: View {
     @State private var navigationPath = NavigationPath()
     @State private var completedMemo = Memo<String, [WorkoutModel]>()
     @State private var statsMemo = Memo<String, ProfileStats>()
+    @State private var fingerprintMemo = Memo<UUID, String>()
+    @State private var exerciseCatalogMemo = Memo<UUID, Int>()
 
     private var analytics: TrainingAnalytics { TrainingAnalytics(workouts: workouts, exercises: exercises) }
-    private var profileKey: String { AnalyticsFingerprint.of(workouts) }
+    private var profileKey: String {
+        if !isRenderActive, let cached = fingerprintMemo.cachedValue { return cached }
+        return fingerprintMemo(renderID) { AnalyticsFingerprint.of(workouts) }
+    }
     private var completed: [WorkoutModel] {
         completedMemo(profileKey) { analytics.completed }
     }
@@ -61,6 +68,10 @@ struct ProfileView: View {
     }
 
     var body: some View {
+        let exerciseCatalogRevision = (!isRenderActive ? exerciseCatalogMemo.cachedValue : nil)
+            ?? exerciseCatalogMemo(renderID) {
+                HomePerformanceRevision.exerciseCatalog(exercises)
+            }
         NavigationStack(path: $navigationPath) {
             ScreenScaffold("Profile", trailing: {
                 HStack(spacing: Space.sm) {
@@ -101,7 +112,11 @@ struct ProfileView: View {
                 } else {
                     ForEach(completed.prefix(10)) { workout in
                         NavigationLink(value: ProfileRoute.workout(workout.id)) {
-                            WorkoutFeedRow(workout: workout, analytics: analytics)
+                            WorkoutFeedRow(
+                                workout: workout,
+                                analytics: analytics,
+                                exerciseCatalogRevision: exerciseCatalogRevision
+                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("profile-workout-\(workout.title ?? "Workout")")

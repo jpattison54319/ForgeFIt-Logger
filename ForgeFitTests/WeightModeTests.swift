@@ -77,6 +77,63 @@ struct WeightModeTests {
         #expect(set.effectiveLoad == 72.5)
     }
 
+    @Test func cooperativeBackfillIsDurableIdempotentAndDoesNotSaveCallerEdits() async throws {
+        let (container, context) = try TestStore.make()
+        let suite = "WeightModeTests.cooperative.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        LiveWorkoutPerformanceGate.shared.setLiveWorkoutActive(false)
+
+        let exercise = ExerciseLibraryModel(name: "Assisted Pull-up")
+        exercise.defaultWeightMode = .bodyweightAssisted
+        let set = SetModel(userID: userID, position: 0, reps: 10, weight: 25)
+        set.completedAt = .now
+        set.recomputeDerivedMetrics()
+        let setID = set.id
+        let workoutExercise = WorkoutExerciseModel(
+            userID: userID,
+            exerciseID: exercise.id,
+            sets: [set]
+        )
+        let workout = WorkoutModel(
+            userID: userID,
+            title: "Historical pull-up",
+            endedAt: .now,
+            exercises: [workoutExercise]
+        )
+        context.insert(exercise)
+        context.insert(workout)
+        try context.save()
+
+        context.insert(RoutineModel(userID: userID, name: "Unsaved caller edit"))
+        await WeightModeBackfill.convertIfNeededCooperatively(
+            in: context,
+            defaults: defaults
+        )
+
+        #expect(defaults.bool(forKey: WeightModeBackfill.convertKey))
+        #expect(context.hasChanges)
+        var verification = ModelContext(container)
+        var persisted = try #require(try verification.fetch(FetchDescriptor<SetModel>(
+            predicate: #Predicate { $0.id == setID }
+        )).first)
+        #expect(persisted.weightMode == .bodyweightAssisted)
+        #expect(persisted.assistanceWeight == 25)
+        #expect(persisted.weight == nil)
+        #expect(try verification.fetch(FetchDescriptor<RoutineModel>()).isEmpty)
+
+        let firstUpdatedAt = persisted.updatedAt
+        await WeightModeBackfill.convertIfNeededCooperatively(
+            in: context,
+            defaults: defaults
+        )
+        verification = ModelContext(container)
+        persisted = try #require(try verification.fetch(FetchDescriptor<SetModel>(
+            predicate: #Predicate { $0.id == setID }
+        )).first)
+        #expect(persisted.updatedAt == firstUpdatedAt)
+    }
+
     @Test func backfillRepairsMisSeededAssistedHistory() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }

@@ -20,6 +20,7 @@ struct ConditioningBlockBuilderView: View {
 
     let exercises: [ExerciseLibraryModel]
     let workouts: [WorkoutModel]
+    let historySnapshot: ExercisePickerHistorySnapshot?
     let navigationTitle: String
     let allowsMultipleSections: Bool
     let showsPresetActions: Bool
@@ -35,6 +36,7 @@ struct ConditioningBlockBuilderView: View {
         planJSON: String?,
         exercises: [ExerciseLibraryModel],
         workouts: [WorkoutModel],
+        historySnapshot: ExercisePickerHistorySnapshot? = nil,
         navigationTitle: String = "Conditioning Block",
         allowsMultipleSections: Bool = true,
         showsPresetActions: Bool = true,
@@ -42,6 +44,7 @@ struct ConditioningBlockBuilderView: View {
     ) {
         self.exercises = exercises
         self.workouts = workouts
+        self.historySnapshot = historySnapshot
         self.navigationTitle = navigationTitle
         self.allowsMultipleSections = allowsMultipleSections
         self.showsPresetActions = showsPresetActions
@@ -57,6 +60,7 @@ struct ConditioningBlockBuilderView: View {
         planJSON: String?,
         exercises: [ExerciseLibraryModel],
         workouts: [WorkoutModel],
+        historySnapshot: ExercisePickerHistorySnapshot? = nil,
         navigationTitle: String = "Conditioning Block",
         allowsMultipleSections: Bool = true,
         showsPresetActions: Bool = true,
@@ -64,6 +68,7 @@ struct ConditioningBlockBuilderView: View {
     ) {
         self.exercises = exercises
         self.workouts = workouts
+        self.historySnapshot = historySnapshot
         self.navigationTitle = navigationTitle
         self.allowsMultipleSections = allowsMultipleSections
         self.showsPresetActions = showsPresetActions
@@ -83,6 +88,7 @@ struct ConditioningBlockBuilderView: View {
                                 section: $section,
                                 exercises: exercises,
                                 workouts: workouts,
+                                historySnapshot: historySnapshot,
                                 onChange: {},
                                 onApplyPreset: { apply($0, to: section.id) },
                                 onAddMovement: {
@@ -129,6 +135,7 @@ struct ConditioningBlockBuilderView: View {
                 excludeYoga: true,
                 context: sectionExercises,
                 history: workouts,
+                historySnapshot: historySnapshot,
                 navigationTitle: "Add Movement",
                 excludedIDs: Set(sectionExercises.map(\.id))
             ) { selected in
@@ -141,7 +148,8 @@ struct ConditioningBlockBuilderView: View {
                     current: current,
                     allExercises: exercises.filter { !$0.isYoga },
                     inUseIDs: movementExerciseIDs(in: selection.sectionID),
-                    history: workouts
+                    history: workouts,
+                    historySnapshot: historySnapshot
                 ) { replacement in
                     replace(selection, with: replacement)
                 }
