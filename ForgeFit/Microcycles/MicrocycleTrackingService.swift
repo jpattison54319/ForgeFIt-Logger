@@ -15,6 +15,7 @@ enum MicrocycleTrackingService {
         case futureStart
         case trackingInactive
         case windowUnavailable
+        case tooManyPlannedRestDays
 
         var errorDescription: String? {
             switch self {
@@ -25,9 +26,12 @@ enum MicrocycleTrackingService {
             case .futureStart: "A microcycle can start today or on a past date."
             case .trackingInactive: "This microcycle is no longer being tracked."
             case .windowUnavailable: "The current microcycle window is unavailable."
+            case .tooManyPlannedRestDays: "A microcycle can contain up to 31 planned rest days."
             }
         }
     }
+
+    static let maximumPlannedRestDays = 31
 
     @discardableResult
     static func start(
@@ -354,6 +358,103 @@ enum MicrocycleTrackingService {
         }
     }
 
+    @discardableResult
+    static func addPlannedRestDay(
+        to tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        id: UUID = UUID(),
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws -> UUID {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        return try withMutationRollback(in: context) {
+            let window = try currentWindowForMutation(tracking, in: context, now: now)
+            guard window.plannedRestDays.count < maximumPlannedRestDays else {
+                throw ServiceError.tooManyPlannedRestDays
+            }
+            window.planSnapshot = window.planSnapshot.addingRestDay(id: id)
+            window.updatedAt = now
+            tracking.updatedAt = now
+            try save(context)
+            return id
+        }
+    }
+
+    static func movePlannedRestDay(
+        id: UUID,
+        to targetIndex: Int,
+        in tracking: MicrocycleTrackingModel,
+        context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        try withMutationRollback(in: context) {
+            let window = try currentWindowForMutation(tracking, in: context, now: now)
+            let updated = window.planSnapshot.movingRestDay(id: id, to: targetIndex)
+            guard updated != window.planSnapshot else { return }
+            window.planSnapshot = updated
+            window.updatedAt = now
+            tracking.updatedAt = now
+            try save(context)
+        }
+    }
+
+    static func removePlannedRestDay(
+        id: UUID,
+        from tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        try withMutationRollback(in: context) {
+            let window = try currentWindowForMutation(tracking, in: context, now: now)
+            let updated = window.planSnapshot.removingRestDay(id: id)
+            guard updated != window.planSnapshot else { return }
+            window.planSnapshot = updated
+            window.updatedAt = now
+            tracking.updatedAt = now
+            try save(context)
+        }
+    }
+
+    @discardableResult
+    static func logPlannedRestDay(
+        id: UUID,
+        in tracking: MicrocycleTrackingModel,
+        workouts: [WorkoutModel],
+        context: ModelContext,
+        now: Date = .now,
+        save: SaveOperation = { try $0.save() }
+    ) throws -> RestDayModel {
+        guard tracking.isActive else { throw ServiceError.trackingInactive }
+        return try withMutationRollback(in: context) {
+            let window = try currentWindowForMutation(tracking, in: context, now: now)
+            guard window.plannedRestDays.contains(where: { $0.id == id }) else {
+                throw ServiceError.windowUnavailable
+            }
+            let timeZone = TimeZone(identifier: tracking.timeZoneIdentifier) ?? .current
+            let restDay = try RestDayService.log(
+                date: now,
+                workouts: workouts,
+                in: context,
+                now: now,
+                timeZone: timeZone,
+                save: { _ in }
+            )
+            window.planSnapshot = window.planSnapshot.completingRestDay(
+                id: id,
+                with: restDay.id,
+                at: restDay.date
+            )
+            window.updatedAt = now
+            tracking.updatedAt = now
+            try save(context)
+            return restDay
+        }
+    }
+
     /// Ends the interrupted window at the start of today and begins the same
     /// tracked microcycle again at Day 1. The plan, history, and repeating day
     /// target remain intact; a temporary extension on this window is retained.
@@ -401,6 +502,9 @@ enum MicrocycleTrackingService {
                 endsAt: restartedEnd,
                 timeZoneIdentifier: current.timeZoneIdentifier,
                 routines: current.routines,
+                plannedRestDays: current.planSnapshot
+                    .resettingRestDayCompletions()
+                    .plannedRestDays,
                 createdAt: now,
                 updatedAt: now
             )
@@ -650,6 +754,7 @@ enum MicrocycleTrackingService {
         let restDays: [RestDaySnapshot]
         let trackingIDs: Set<UUID>
         let windowIDs: Set<UUID>
+        let restDayIDs: Set<UUID>
 
         init(context: ModelContext) throws {
             let trackingModels = try context.fetch(FetchDescriptor<MicrocycleTrackingModel>())
@@ -660,6 +765,7 @@ enum MicrocycleTrackingService {
             restDays = try context.fetch(FetchDescriptor<RestDayModel>()).map(RestDaySnapshot.init)
             trackingIDs = Set(trackingModels.map(\.id))
             windowIDs = Set(windowModels.map(\.id))
+            restDayIDs = Set(restDays.map { $0.model.id })
         }
 
         func restore(in context: ModelContext) {
@@ -678,6 +784,11 @@ enum MicrocycleTrackingService {
                     context.delete(tracking)
                 }
             }
+            if let currentRestDays = try? context.fetch(FetchDescriptor<RestDayModel>()) {
+                for restDay in currentRestDays where !restDayIDs.contains(restDay.id) {
+                    context.delete(restDay)
+                }
+            }
         }
     }
 
@@ -692,6 +803,19 @@ enum MicrocycleTrackingService {
             snapshot.restore(in: context)
             throw error
         }
+    }
+
+    private static func currentWindowForMutation(
+        _ tracking: MicrocycleTrackingModel,
+        in context: ModelContext,
+        now: Date
+    ) throws -> MicrocycleWindowModel {
+        let windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .filter { $0.trackingID == tracking.id && $0.deletedAt == nil }
+        guard let window = currentWindow(for: tracking, windows: windows, now: now) else {
+            throw ServiceError.windowUnavailable
+        }
+        return window
     }
 
     private static func snapshots(
@@ -804,6 +928,9 @@ enum MicrocycleTrackingService {
                 endsAt: nextEnd,
                 timeZoneIdentifier: tracking.timeZoneIdentifier,
                 routines: routines,
+                plannedRestDays: previous.planSnapshot
+                    .resettingRestDayCompletions()
+                    .plannedRestDays,
                 createdAt: now,
                 updatedAt: now
             )

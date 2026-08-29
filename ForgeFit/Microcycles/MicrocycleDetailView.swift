@@ -2,12 +2,14 @@ import ForgeCore
 import ForgeData
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MicrocycleDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
     @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let trackingID: UUID
 
@@ -34,6 +36,8 @@ struct MicrocycleDetailView: View {
     @State private var opensHistoryAfterEducation = false
     @State private var actionError: String?
     @State private var selectedDay: MicrocycleDaySelection?
+    @State private var draggedRestDayID: UUID?
+    @State private var previewPlanItemIDs: [UUID] = []
 
     private var tracking: MicrocycleTrackingModel? {
         trackings.first { $0.id == trackingID && $0.deletedAt == nil }
@@ -199,9 +203,20 @@ struct MicrocycleDetailView: View {
             windows: trackingWindows,
             workouts: workouts
         )
+        let planProgress = MicrocyclePlanProgress.make(
+            window: window,
+            routineProgress: progress,
+            restDays: restDays
+        )
+        let displayedItems = displayedPlanItems(planProgress.items)
         let markersByRoutineID = MicrocycleRoutineMarker.markersByRoutineID(
             in: progress.routines.map(\.routine)
         )
+        let indexByItemID = Dictionary(
+            displayedItems.enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let canLogRestToday = !hasRestLoggedToday(for: tracking)
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(alignment: .firstTextBaseline) {
@@ -214,9 +229,9 @@ struct MicrocycleDetailView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
-                    Text("\(progress.completedCount)/\(progress.requiredCount)")
+                    Text("\(planProgress.completedCount)/\(planProgress.requiredCount)")
                         .font(.headline)
-                        .foregroundStyle(progress.isComplete ? theme.accent : theme.textPrimary)
+                        .foregroundStyle(planProgress.isComplete ? theme.accent : theme.textPrimary)
                 }
 
                 MicrocycleDayStrip(
@@ -227,15 +242,61 @@ struct MicrocycleDetailView: View {
                 )
 
                 VStack(spacing: Space.sm) {
-                    ForEach(progress.routines) { item in
-                        routineRow(
-                            item,
-                            marker: markersByRoutineID[item.routine.id] ?? "?"
-                        )
+                    ForEach(displayedItems) { item in
+                        let itemIndex = indexByItemID[item.id] ?? 0
+                        switch item {
+                        case .routine(let routine):
+                            routineRow(
+                                routine,
+                                marker: markersByRoutineID[routine.routine.id] ?? "?"
+                            )
+                            .onDrop(
+                                of: [UTType.plainText],
+                                delegate: MicrocycleRestReorderDropDelegate(
+                                    targetID: item.id,
+                                    draggedRestDayID: $draggedRestDayID,
+                                    previewItemIDs: $previewPlanItemIDs,
+                                    reduceMotion: reduceMotion,
+                                    onCommit: movePlannedRestDay
+                                )
+                            )
+                        case .restDay(let restDay):
+                            MicrocyclePlannedRestDayRow(
+                                restDay: restDay,
+                                position: itemIndex + 1,
+                                itemCount: planProgress.items.count,
+                                canMoveUp: itemIndex > 0,
+                                canMoveDown: itemIndex < planProgress.items.count - 1,
+                                canLogToday: canLogRestToday,
+                                isDragging: draggedRestDayID == restDay.id,
+                                onLogToday: { logPlannedRestDay(restDay.id) },
+                                onMoveUp: { movePlannedRestDay(restDay.id, to: itemIndex - 1) },
+                                onMoveDown: { movePlannedRestDay(restDay.id, to: itemIndex + 1) },
+                                onRemove: { removePlannedRestDay(restDay.id) },
+                                onDragStarted: {
+                                    beginDraggingRestDay(restDay.id, items: displayedItems)
+                                }
+                            )
+                            .onDrop(
+                                of: [UTType.plainText],
+                                delegate: MicrocycleRestReorderDropDelegate(
+                                    targetID: item.id,
+                                    draggedRestDayID: $draggedRestDayID,
+                                    previewItemIDs: $previewPlanItemIDs,
+                                    reduceMotion: reduceMotion,
+                                    onCommit: movePlannedRestDay
+                                )
+                            )
+                        }
                     }
                 }
 
-                SecondaryButton(title: "Log Rest Day", systemImage: "moon.zzz", action: showRestSheet)
+                MicrocycleRestActionMenu(
+                    canAddPlannedRest: window.plannedRestDays.count
+                        < MicrocycleTrackingService.maximumPlannedRestDays,
+                    onLogAdHoc: showRestSheet,
+                    onAddToRoutine: addPlannedRestDay
+                )
             }
         }
     }
@@ -307,7 +368,7 @@ struct MicrocycleDetailView: View {
             Button {
                 startRoutine(id: routine.id)
             } label: {
-                compactStartLabel(title, isAlternate: true)
+                compactAlternateStartLabel(title)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -318,9 +379,7 @@ struct MicrocycleDetailView: View {
             Button {
                 startRoutine(id: routine.id)
             } label: {
-                compactStartLabel(title, isAlternate: false)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                MicrocycleCompactPrimaryActionLabel(title: title)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Start \(routine.name)")
@@ -328,25 +387,16 @@ struct MicrocycleDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func compactStartLabel(_ title: String, isAlternate: Bool) -> some View {
-        let label = Text(title)
+    private func compactAlternateStartLabel(_ title: String) -> some View {
+        Text(title)
             .font(.footnote.bold())
             .lineLimit(1)
             .minimumScaleFactor(0.85)
             .allowsTightening(true)
             .padding(.horizontal, Space.sm)
             .padding(.vertical, Space.xs)
-
-        if isAlternate {
-            label
-                .foregroundStyle(theme.textPrimary)
-                .glassEffect(.regular.interactive(), in: Capsule())
-        } else {
-            label
-                .foregroundStyle(theme.onAccent)
-                .glassEffect(.regular.tint(theme.accent).interactive(), in: Capsule())
-        }
+            .foregroundStyle(theme.textPrimary)
+            .glassEffect(.regular.interactive(), in: Capsule())
     }
 
     private func needsAttentionCard(_ tracking: MicrocycleTrackingModel) -> some View {
@@ -404,6 +454,89 @@ struct MicrocycleDetailView: View {
 
     private func showRestSheet() {
         showingRestSheet = true
+    }
+
+    private func addPlannedRestDay() {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.addPlannedRestDay(
+                to: tracking,
+                in: modelContext
+            )
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func logPlannedRestDay(_ id: UUID) {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.logPlannedRestDay(
+                id: id,
+                in: tracking,
+                workouts: workouts,
+                context: modelContext
+            )
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func movePlannedRestDay(_ id: UUID, to targetIndex: Int) {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.movePlannedRestDay(
+                id: id,
+                to: targetIndex,
+                in: tracking,
+                context: modelContext
+            )
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func removePlannedRestDay(_ id: UUID) {
+        guard let tracking else { return }
+        do {
+            try MicrocycleTrackingService.removePlannedRestDay(
+                id: id,
+                from: tracking,
+                in: modelContext
+            )
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+
+    private func displayedPlanItems(
+        _ items: [MicrocyclePlanProgress.Item]
+    ) -> [MicrocyclePlanProgress.Item] {
+        guard draggedRestDayID != nil,
+              previewPlanItemIDs.count == items.count else { return items }
+        let itemsByID = Dictionary(
+            items.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let preview = previewPlanItemIDs.compactMap { itemsByID[$0] }
+        return preview.count == items.count ? preview : items
+    }
+
+    private func beginDraggingRestDay(
+        _ id: UUID,
+        items: [MicrocyclePlanProgress.Item]
+    ) {
+        previewPlanItemIDs = items.map(\.id)
+        draggedRestDayID = id
+    }
+
+    private func hasRestLoggedToday(for tracking: MicrocycleTrackingModel) -> Bool {
+        guard let calendar = try? MicrocycleEngine.calendar(
+            timeZoneIdentifier: tracking.timeZoneIdentifier
+        ) else { return false }
+        return RestDayService.live(restDays).contains {
+            calendar.isDate($0.date, inSameDayAs: .now)
+        }
     }
 
     private func selectDay(_ date: Date) {

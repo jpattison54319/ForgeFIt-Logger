@@ -69,8 +69,7 @@ public enum MicrocycleCSVExport {
     }
 
     private static func decodeSnapshots(_ json: String) -> [MicrocycleRoutineSnapshot] {
-        guard let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([MicrocycleRoutineSnapshot].self, from: data)) ?? []
+        MicrocycleWindowPlanSnapshot.decode(from: json).routines
     }
 
     private static func decodeAssignments(_ json: String?) -> [MicrocycleDayAssignment] {

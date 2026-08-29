@@ -44,6 +44,12 @@ enum MicrocycleTrackingUITestFixture {
             folderID: strengthFolder.id,
             position: 0
         )
+        let lower = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Lower",
+            folderID: strengthFolder.id,
+            position: 1
+        )
         let intervals = RoutineModel(
             userID: ForgeFitDemo.userID,
             name: "Intervals",
@@ -51,7 +57,11 @@ enum MicrocycleTrackingUITestFixture {
             position: 0
         )
         [strengthFolder, conditioningFolder].forEach(context.insert)
-        [upper, intervals].forEach(context.insert)
+        [upper, lower, intervals].forEach(context.insert)
+        let strengthRoutines = [
+            MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0),
+            MicrocycleRoutineSnapshot(id: lower.id, name: lower.name, position: 1),
+        ]
 
         let stoppedStart = calendar.date(byAdding: .day, value: -14, to: today)!
         let stoppedAt = calendar.date(byAdding: .hour, value: 12, to:
@@ -80,7 +90,7 @@ enum MicrocycleTrackingUITestFixture {
             startsAt: stoppedStart,
             endsAt: calendar.date(byAdding: .day, value: 7, to: stoppedStart)!,
             timeZoneIdentifier: calendar.timeZone.identifier,
-            routines: [MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0)],
+            routines: strengthRoutines,
             createdAt: stoppedStart,
             updatedAt: stoppedAt
         )
@@ -106,7 +116,7 @@ enum MicrocycleTrackingUITestFixture {
             startsAt: activeStart,
             endsAt: calendar.date(byAdding: .day, value: 7, to: activeStart)!,
             timeZoneIdentifier: calendar.timeZone.identifier,
-            routines: [MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0)],
+            routines: strengthRoutines,
             createdAt: activeStart,
             updatedAt: now
         )
@@ -119,7 +129,7 @@ enum MicrocycleTrackingUITestFixture {
             startsAt: currentStart,
             endsAt: calendar.date(byAdding: .day, value: 7, to: currentStart)!,
             timeZoneIdentifier: calendar.timeZone.identifier,
-            routines: [MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0)],
+            routines: strengthRoutines,
             createdAt: currentStart,
             updatedAt: now
         )

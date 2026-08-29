@@ -2572,6 +2572,7 @@ public final class MicrocycleWindowModel {
         endsAt: Date,
         timeZoneIdentifier: String,
         routines: [MicrocycleRoutineSnapshot],
+        plannedRestDays: [MicrocyclePlannedRestDaySnapshot] = [],
         dayAssignments: [MicrocycleDayAssignment] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -2589,23 +2590,29 @@ public final class MicrocycleWindowModel {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
-        self.routines = routines
+        planSnapshot = MicrocycleWindowPlanSnapshot(
+            routines: routines,
+            plannedRestDays: plannedRestDays
+        )
         self.dayAssignments = dayAssignments
     }
 
+    public var planSnapshot: MicrocycleWindowPlanSnapshot {
+        get { MicrocycleWindowPlanSnapshot.decode(from: routineSnapshotJSON) }
+        set { routineSnapshotJSON = newValue.encodedJSON() ?? "[]" }
+    }
+
     public var routines: [MicrocycleRoutineSnapshot] {
-        get {
-            guard let data = routineSnapshotJSON.data(using: .utf8) else { return [] }
-            return (try? JSONDecoder().decode([MicrocycleRoutineSnapshot].self, from: data)) ?? []
-        }
-        set {
-            guard let data = try? JSONEncoder().encode(newValue),
-                  let json = String(data: data, encoding: .utf8) else {
-                routineSnapshotJSON = "[]"
-                return
-            }
-            routineSnapshotJSON = json
-        }
+        get { planSnapshot.routines }
+        set { planSnapshot = planSnapshot.replacingRoutines(newValue) }
+    }
+
+    public var plannedRestDays: [MicrocyclePlannedRestDaySnapshot] {
+        planSnapshot.plannedRestDays
+    }
+
+    public var orderedPlanItems: [MicrocyclePlanItemSnapshot] {
+        planSnapshot.orderedItems
     }
 
     public var dayAssignments: [MicrocycleDayAssignment] {

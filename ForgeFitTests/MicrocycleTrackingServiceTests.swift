@@ -1021,4 +1021,174 @@ struct MicrocycleTrackingServiceTests {
         #expect(persistedRoutine.name == "Durable Name")
         #expect(routine.name == "Pending Editor Name")
     }
+
+    @Test func plannedRestOrderPersistsWithoutChangingFolderRoutineOrder() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "A B")
+        let a = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "A",
+            folderID: folder.id,
+            position: 0
+        )
+        let b = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "B",
+            folderID: folder.id,
+            position: 1
+        )
+        context.insert(folder)
+        context.insert(a)
+        context.insert(b)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [a, b],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 7,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let restID = UUID()
+
+        try MicrocycleTrackingService.addPlannedRestDay(
+            to: tracking,
+            in: context,
+            id: restID,
+            now: date(2026, 8, 2)
+        )
+        try MicrocycleTrackingService.movePlannedRestDay(
+            id: restID,
+            to: 1,
+            in: tracking,
+            context: context,
+            now: date(2026, 8, 2)
+        )
+
+        let fresh = ModelContext(container)
+        let persisted = try #require(
+            fresh.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        #expect(persisted.orderedPlanItems.map(\.id) == [a.id, restID, b.id])
+        #expect(persisted.routines.map(\.id) == [a.id, b.id])
+        #expect(persisted.plannedRestDays == [.init(id: restID, position: 1)])
+    }
+
+    @Test func rolloverAndRestartCarryPlannedRestIntoTheNextWindow() throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 2,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let restID = try MicrocycleTrackingService.addPlannedRestDay(
+            to: tracking,
+            in: context,
+            now: date(2026, 8, 1)
+        )
+
+        _ = try MicrocycleTrackingService.reconcile(
+            in: context,
+            now: date(2026, 8, 3)
+        )
+        var windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 2)
+        #expect(windows[1].plannedRestDays.map(\.id) == [restID])
+
+        try MicrocycleTrackingService.restartCurrentCycle(
+            tracking,
+            in: context,
+            now: date(2026, 8, 4)
+        )
+        windows = try context.fetch(FetchDescriptor<MicrocycleWindowModel>())
+            .sorted { $0.index < $1.index }
+        #expect(windows.count == 3)
+        #expect(windows[2].plannedRestDays.map(\.id) == [restID])
+    }
+
+    @Test func oneTapPlannedRestLoggingPersistsTheMarkerAndSlotAtomically() throws {
+        let (container, context) = try TestStore.make()
+        let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Upper")
+        let routine = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Upper",
+            folderID: folder.id
+        )
+        context.insert(folder)
+        context.insert(routine)
+        try context.save()
+        let tracking = try MicrocycleTrackingService.start(
+            folder: folder,
+            routines: [routine],
+            folders: [folder],
+            startDate: date(2026, 8, 1),
+            durationDays: 7,
+            in: context,
+            now: date(2026, 8, 1),
+            timeZone: timeZone
+        )
+        let plannedID = try MicrocycleTrackingService.addPlannedRestDay(
+            to: tracking,
+            in: context,
+            now: date(2026, 8, 2)
+        )
+
+        let rest = try MicrocycleTrackingService.logPlannedRestDay(
+            id: plannedID,
+            in: tracking,
+            workouts: [],
+            context: context,
+            now: date(2026, 8, 2)
+        )
+
+        let fresh = ModelContext(container)
+        let persistedWindow = try #require(
+            fresh.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        let persistedRest = try #require(
+            fresh.fetch(FetchDescriptor<RestDayModel>()).first
+        )
+        #expect(persistedRest.id == rest.id)
+        #expect(persistedWindow.plannedRestDays.first?.completedRestDayID == rest.id)
+
+        let secondPlannedID = try MicrocycleTrackingService.addPlannedRestDay(
+            to: tracking,
+            in: context,
+            now: date(2026, 8, 3)
+        )
+        #expect(throws: ForcedSaveFailure.self) {
+            try MicrocycleTrackingService.logPlannedRestDay(
+                id: secondPlannedID,
+                in: tracking,
+                workouts: [],
+                context: context,
+                now: date(2026, 8, 3),
+                save: { _ in throw ForcedSaveFailure.failed }
+            )
+        }
+        let rolledBackWindow = try #require(
+            try context.fetch(FetchDescriptor<MicrocycleWindowModel>()).first
+        )
+        #expect(rolledBackWindow.plannedRestDays.count == 2)
+        #expect(rolledBackWindow.plannedRestDays.last?.completedRestDayID == nil)
+        #expect(try context.fetch(FetchDescriptor<RestDayModel>()).count == 1)
+    }
 }
