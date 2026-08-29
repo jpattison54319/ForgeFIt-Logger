@@ -23,7 +23,7 @@ enum ForgeFitWatchWorkoutStyle: String, AppEnum {
 struct ForgeFitWatchStartWorkoutIntent: StartWorkoutIntent {
     static let title: LocalizedStringResource = "Start ForgeFit Workout"
     static let description = IntentDescription(
-        "Starts a ForgeFit workout through your reachable iPhone."
+        "Starts a ForgeFit workout through your reachable phone."
     )
     static var supportedModes: IntentModes { .background }
 
