@@ -160,6 +160,10 @@ nonisolated enum WorkoutIntentCatalogInvalidationPolicy {
             return identifiers.contains { isCatalogEntity(named: $0.entityName) }
         }
     }
+
+    static func containsCatalogChange(in entityNames: some Sequence<String>) -> Bool {
+        entityNames.contains(where: isCatalogEntity)
+    }
 }
 
 nonisolated enum WorkoutIntentCatalogWorker {
@@ -357,14 +361,11 @@ struct WorkoutIntentCatalogObserver: View, Equatable {
                 }
             }
             .onReceive(
-                NotificationCenter.default.publisher(
-                    for: ModelContext.didSave,
-                    object: modelContext
-                )
-            ) { notification in
-                guard WorkoutIntentCatalogInvalidationPolicy.containsCatalogChange(notification) else {
-                    return
-                }
+                RenderPerformanceInvalidationPolicy.saveDeliveries(for: modelContext)
+            ) { delivery in
+                guard WorkoutIntentCatalogInvalidationPolicy.containsCatalogChange(
+                    in: delivery.entityNames
+                ) else { return }
                 publicationRequestRevision &+= 1
             }
             .onReceive(

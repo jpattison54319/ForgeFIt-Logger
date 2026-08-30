@@ -1,3 +1,4 @@
+import Combine
 import ForgeData
 import Foundation
 import Observation
@@ -47,6 +48,12 @@ nonisolated enum RenderPerformanceInvalidationSource: Int, Comparable, Sendable 
     static func < (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
+}
+
+nonisolated struct RenderPerformanceSaveDelivery: Sendable {
+    let entityNames: Set<String>
+    let invalidation: RenderPerformanceInvalidation
+    let source: RenderPerformanceInvalidationSource
 }
 
 /// Routes persistent entity changes to the smallest affected render cache.
@@ -105,30 +112,83 @@ nonisolated enum RenderPerformanceInvalidationPolicy {
     /// one revision delivery.
     static var remoteStoreInvalidation: RenderPerformanceInvalidation { .all }
 
-    static func belongsToContainer(
-        _ notification: Notification,
-        container: ModelContainer
-    ) -> Bool {
-        guard let savingContext = notification.object as? ModelContext else { return false }
-        return savingContext.container === container
-    }
-
-    @MainActor
     static func invalidation(
         from notification: Notification,
         matching container: ModelContainer
     ) -> RenderPerformanceInvalidation {
-        guard belongsToContainer(notification, container: container) else { return [] }
+        guard let names = entityNames(
+            from: notification,
+            matchingContainerIdentifier: ObjectIdentifier(container)
+        ) else { return [] }
+        return invalidation(for: names)
+    }
+
+    private static func entityNames(
+        from notification: Notification,
+        matchingContainerIdentifier containerIdentifier: ObjectIdentifier
+    ) -> Set<String>? {
+        // `ModelContext.didSave` is delivered synchronously on the saving
+        // context's executor. Read the context only at that boundary; worker
+        // contexts can be released immediately after save returns.
+        guard let savingContext = notification.object as? ModelContext,
+              ObjectIdentifier(savingContext.container) == containerIdentifier else {
+            return nil
+        }
         let keys: [ModelContext.NotificationKey] = [
             .insertedIdentifiers,
             .updatedIdentifiers,
             .deletedIdentifiers,
         ]
-        let names = keys.lazy.flatMap { key in
+        return Set(keys.lazy.flatMap { key in
             let identifiers = notification.userInfo?[key.rawValue] as? [PersistentIdentifier] ?? []
             return identifiers.lazy.map(\.entityName)
-        }
-        return invalidation(for: names)
+        })
+    }
+
+    /// Classifies every save from this store, including worker contexts. An
+    /// object-filtered notification subscription sees only the view context
+    /// and silently misses same-count edits made by migrations, finishers, and
+    /// other isolated transactions; those edits still need a settled cache
+    /// revision after their query generation merges.
+    static func delivery(
+        from notification: Notification,
+        matchingContainerIdentifier containerIdentifier: ObjectIdentifier,
+        viewContextIdentifier: ObjectIdentifier
+    ) -> RenderPerformanceSaveDelivery? {
+        guard let savingContext = notification.object as? ModelContext,
+              let names = entityNames(
+                from: notification,
+                matchingContainerIdentifier: containerIdentifier
+              ) else { return nil }
+        return RenderPerformanceSaveDelivery(
+            entityNames: names,
+            invalidation: invalidation(for: names),
+            source: ObjectIdentifier(savingContext) == viewContextIdentifier
+                ? .mainContextSave
+                : .externalContextSave
+        )
+    }
+
+    /// Snapshots a save while its originating context is guaranteed to be
+    /// alive, then moves only immutable value data to the main queue. Deferring
+    /// the raw notification can outlive a short-lived worker context and trap
+    /// inside SwiftData when its container is queried.
+    @MainActor
+    static func saveDeliveries(
+        for viewContext: ModelContext
+    ) -> AnyPublisher<RenderPerformanceSaveDelivery, Never> {
+        let containerIdentifier = ObjectIdentifier(viewContext.container)
+        let viewContextIdentifier = ObjectIdentifier(viewContext)
+        return NotificationCenter.default.publisher(for: ModelContext.didSave)
+            .compactMap { notification in
+                delivery(
+                    from: notification,
+                    matchingContainerIdentifier: containerIdentifier,
+                    viewContextIdentifier: viewContextIdentifier
+                )
+            }
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
     }
 }
 

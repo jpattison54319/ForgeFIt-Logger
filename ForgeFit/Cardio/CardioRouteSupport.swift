@@ -132,11 +132,13 @@ nonisolated enum CardioRouteMath {
     }
 }
 
-/// Scalar and relationship state touched by a cardio/yoga terminal mutation.
+/// Scalar state touched by a cardio/yoga terminal mutation.
 /// SwiftData rollback restores the store transaction, but a view or Watch
 /// command can still hold model references with their just-mutated values.
 /// Terminal callers restore this snapshot before presenting/publishing the
-/// still-live session after a failed save.
+/// still-live session after a failed save. To-many relationships are omitted:
+/// rollback restores them and invalidates their relationship proxies, so
+/// assigning captured arrays back through those proxies can trap.
 @MainActor
 struct CardioSessionPersistenceSnapshot {
     private let startedAt: Date
@@ -150,8 +152,6 @@ struct CardioSessionPersistenceSnapshot {
     private let yogaStyleRaw: String?
     private let flexibilityExposureJSON: String?
     private let posesCompleted: Int?
-    private let routePoints: [CardioRoutePointModel]
-    private let splits: [CardioSplitModel]
 
     init(_ session: CardioSessionModel) {
         startedAt = session.startedAt
@@ -165,8 +165,6 @@ struct CardioSessionPersistenceSnapshot {
         yogaStyleRaw = session.yogaStyleRaw
         flexibilityExposureJSON = session.flexibilityExposureJSON
         posesCompleted = session.posesCompleted
-        routePoints = session.routePoints
-        splits = session.splits
     }
 
     func restore(_ session: CardioSessionModel) {
@@ -181,8 +179,6 @@ struct CardioSessionPersistenceSnapshot {
         session.yogaStyleRaw = yogaStyleRaw
         session.flexibilityExposureJSON = flexibilityExposureJSON
         session.posesCompleted = posesCompleted
-        session.routePoints = routePoints
-        session.splits = splits
     }
 }
 

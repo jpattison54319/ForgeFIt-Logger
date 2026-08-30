@@ -5,7 +5,7 @@ import Foundation
 /// Stable identity for a conditioning prescription. Display names and the
 /// generated section/movement IDs are intentionally excluded; changing any
 /// work, timing, ordering, load, or scoring field creates a new comparison.
-enum ConditioningPrescriptionSignature {
+nonisolated enum ConditioningPrescriptionSignature {
     static func key(for section: ConditioningSection) -> String {
         let movements = section.movements.map { movement in
             [
@@ -72,21 +72,14 @@ enum ConditioningPresetStats {
         for target: ConditioningSection,
         in workouts: [WorkoutModel]
     ) -> [Entry] {
-        let targetKey = ConditioningPrescriptionSignature.key(for: target)
-        let targetLineageKey = ConditioningPresetLineageSignature.key(for: target)
+        let matcher = ConditioningPresetHistoryMatcher(source: target)
         return workouts
             .filter { $0.deletedAt == nil && $0.endedAt != nil }
             .flatMap { workout -> [Entry] in
                 contexts(for: workout).flatMap { context in
                     let results = context.result?.sectionResults ?? []
                     return context.plan.sections.enumerated().compactMap { index, section -> Entry? in
-                        let sameReference = target.presetReferenceID != nil
-                            && section.presetReferenceID == target.presetReferenceID
-                        let samePrescription = ConditioningPrescriptionSignature.key(for: section) == targetKey
-                        let sameLegacyLineage = ConditioningPresetLineageSignature.key(for: section) == targetLineageKey
-                        guard sameReference || samePrescription || sameLegacyLineage else {
-                            return nil
-                        }
+                        guard matcher.matches(section) else { return nil }
                         let indexedResult = results.indices.contains(index) ? results[index] : nil
                         guard let result = results.first(where: { $0.id == section.id }) ?? indexedResult else {
                             return nil

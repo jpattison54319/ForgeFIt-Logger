@@ -2163,6 +2163,18 @@ struct ContentView: View {
                 }
             )
         }
+        #if DEBUG
+        // Account reset rebuilds the shell and clears pending presentations.
+        // Reassert this explicit fixture only after the reset/seed boundary,
+        // matching the stable auto-start lane above.
+        if ProcessInfo.processInfo.arguments.contains(
+            QuickIncrementUITestFixture.livePrefillLaunchArgument
+        ), let workout = try? QuickIncrementUITestFixture.seedLivePrefillWorkout(
+            in: modelContext
+        ) {
+            presentLoggerWhenActiveWorkoutIsReady(workoutID: workout.id)
+        }
+        #endif
         // No-ops when a demo seed is active (see HealthMetricsStore.refresh).
         HealthMetricsStore.shared.refresh()
         consumePendingExperimentNotificationRoute()
@@ -2557,6 +2569,11 @@ struct ContentView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--seed-quick-increment-history") {
                 try QuickIncrementUITestFixture.seed(in: modelContext)
+            }
+            if ProcessInfo.processInfo.arguments.contains(
+                QuickIncrementUITestFixture.livePrefillLaunchArgument
+            ) {
+                _ = try QuickIncrementUITestFixture.seedLivePrefillWorkout(in: modelContext)
             }
             if ProcessInfo.processInfo.arguments.contains("--seed-block-prefill-history") {
                 try BlockPrefillUITestFixture.seed(in: modelContext)

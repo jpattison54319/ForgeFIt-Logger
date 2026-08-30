@@ -341,7 +341,7 @@ struct WorkoutShareCard: View {
     // MARK: - Between-set recovery
 
     private var recoveryBlock: some View {
-        let dict = Dictionary(recoveryPoints.map { ($0.setID, $0) }, uniquingKeysWith: { first, _ in first })
+        let sections = SetRecoveryPresentation.sections(points: recoveryPoints, refs: recoverySetRefs)
         let drops = recoveryPoints.compactMap(\.recoveryBPM)
         let avg = drops.isEmpty ? 0 : Int((Double(drops.reduce(0, +)) / Double(drops.count)).rounded())
         let best = drops.max() ?? 0
@@ -351,42 +351,65 @@ struct WorkoutShareCard: View {
             HStack(spacing: 12) {
                 chrome.miniStat("Avg drop", "\(avg) bpm")
                 chrome.miniStat("Best drop", "\(best) bpm")
-                chrome.miniStat("Sets", "\(drops.count)")
+                chrome.miniStat("Rests read", "\(drops.count)")
             }
-            ForEach(sortedExercises.filter { we in workout.cardioSessions.allSatisfy { $0.workoutExerciseID != we.id } }) { we in
-                let sets = we.sets.sorted { $0.position < $1.position }
-                let rows = Array(sets.enumerated()).compactMap { index, set -> (String, SetRecoveryPoint)? in
-                    dict[set.id].map { (numberedLabel(for: set, index: index, sets: sets), $0) }
-                }
-                if !rows.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(library(we)?.name ?? "Exercise")
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
-                        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                            HStack(spacing: 8) {
-                                Text(row.0).font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(theme.textSecondary).frame(width: 30, alignment: .leading)
-                                Text("\(row.1.peakHR) bpm peak")
+            ForEach(sections) { section in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(section.title)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                    ForEach(section.rows) { row in
+                        HStack(spacing: 8) {
+                            Text(row.label).font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(theme.textSecondary).frame(width: 38, alignment: .leading)
+                            HStack(spacing: 4) {
+                                Text("\(row.point.peakHR) bpm peak")
                                     .font(.tag).foregroundStyle(theme.textPrimary)
-                                    .frame(width: 92, alignment: .leading)
-                                GeometryReader { geo in
-                                    ZStack(alignment: .leading) {
-                                        Capsule().fill(theme.surfaceHighlight)
-                                        Capsule().fill(theme.success)
-                                            .frame(width: geo.size.width * CGFloat(row.1.recoveryBPM ?? 0) / CGFloat(maxDrop))
-                                    }
+                                if let rise = row.point.withinUnitRise, rise > 0 {
+                                    Text("▲\(rise)")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(theme.secondaryAccentForeground)
                                 }
-                                .frame(height: 7)
-                                Text(row.1.recoveryBPM.map { "▼\($0)" } ?? "—")
-                                    .font(.tag)
-                                    .foregroundStyle(row.1.recoveryBPM != nil ? theme.success : theme.textTertiary)
-                                    .frame(width: 40, alignment: .trailing)
                             }
+                            .frame(width: 118, alignment: .leading)
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(theme.surfaceHighlight)
+                                    Capsule().fill(theme.success)
+                                        .frame(width: geo.size.width * CGFloat(row.point.recoveryBPM ?? 0) / CGFloat(maxDrop))
+                                }
+                            }
+                            .frame(height: 7)
+                            Text(row.point.recoveryBPM.map { "▼\($0)" } ?? "—")
+                                .font(.tag)
+                                .foregroundStyle(row.point.recoveryBPM != nil ? theme.success : theme.textTertiary)
+                                .frame(width: 40, alignment: .trailing)
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Per-set context for `SetRecoveryPresentation`, mirroring the detail
+    /// view so the shared image groups rounds exactly as the app does.
+    private var recoverySetRefs: [UUID: SetRecoveryPresentation.SetRef] {
+        var refs: [UUID: SetRecoveryPresentation.SetRef] = [:]
+        let rows = sortedExercises.filter { we in
+            workout.cardioSessions.allSatisfy { $0.workoutExerciseID != we.id }
+        }
+        for we in rows {
+            let name = library(we)?.name ?? "Exercise"
+            let sets = we.sets.sorted { $0.position < $1.position }
+            for (index, set) in sets.enumerated() {
+                refs[set.id] = SetRecoveryPresentation.SetRef(
+                    exerciseRowID: we.id,
+                    exerciseName: name,
+                    exerciseOrder: we.position,
+                    label: numberedLabel(for: set, index: index, sets: sets)
+                )
+            }
+        }
+        return refs
     }
 
     // MARK: - Muscles worked

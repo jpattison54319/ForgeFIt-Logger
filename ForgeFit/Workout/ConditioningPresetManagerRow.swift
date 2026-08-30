@@ -7,6 +7,8 @@ struct ConditioningPresetManagerRow: View {
     let selection: ConditioningPresetSelection
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
+    var loadsPersistedHistory = false
     let deleteMessage: String
     let onDelete: () -> Void
 
@@ -46,7 +48,9 @@ struct ConditioningPresetManagerRow: View {
                         ConditioningPresetDetailDestination(
                             selection: selection,
                             workouts: workouts,
-                            exercises: exercises
+                            exercises: exercises,
+                            historySnapshot: historySnapshot,
+                            loadsPersistedHistory: loadsPersistedHistory
                         )
                     } label: {
                         HStack(spacing: Space.sm) {

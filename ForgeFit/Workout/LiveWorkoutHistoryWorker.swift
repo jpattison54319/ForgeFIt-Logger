@@ -88,6 +88,44 @@ nonisolated struct LiveWorkoutReferenceInput: Equatable, Sendable {
     let routineID: UUID?
     let startedAt: Date
     let exerciseIDs: Set<UUID>
+
+    func scoped(to exerciseIDs: Set<UUID>) -> Self {
+        Self(
+            workoutID: workoutID,
+            routineID: routineID,
+            startedAt: startedAt,
+            exerciseIDs: exerciseIDs
+        )
+    }
+}
+
+nonisolated struct LiveWorkoutPrefillSnapshot: Equatable, Sendable {
+    let recordBaselines: [UUID: ExerciseRecordBaseline]
+    let previousSetsByExerciseID: [UUID: [LivePreviousSetSnapshot]]
+    let previousCardioByExerciseID: [UUID: LivePreviousCardioSnapshot]
+}
+
+/// Screen-owned immutable history cache. Completed history does not change
+/// during a live workout, so add/replace only needs to load exercise IDs the
+/// logger has not seen yet. Retaining prior entries avoids both blanking a
+/// replacement that was already loaded and repeating database work.
+nonisolated struct LiveWorkoutPrefillCache: Equatable, Sendable {
+    private(set) var loadedExerciseIDs = Set<UUID>()
+    private(set) var recordBaselines: [UUID: ExerciseRecordBaseline] = [:]
+    private(set) var previousSetsByExerciseID: [UUID: [LivePreviousSetSnapshot]] = [:]
+    private(set) var previousCardioByExerciseID: [UUID: LivePreviousCardioSnapshot] = [:]
+
+    mutating func merge(_ snapshot: LiveWorkoutPrefillSnapshot) {
+        let loaded = Set(snapshot.previousSetsByExerciseID.keys)
+        loadedExerciseIDs.formUnion(loaded)
+        recordBaselines.merge(snapshot.recordBaselines) { _, latest in latest }
+        previousSetsByExerciseID.merge(snapshot.previousSetsByExerciseID) { _, latest in latest }
+        previousCardioByExerciseID.merge(snapshot.previousCardioByExerciseID) { _, latest in latest }
+    }
+
+    func missingExerciseIDs(from requested: Set<UUID>) -> Set<UUID> {
+        requested.subtracting(loadedExerciseIDs)
+    }
 }
 
 nonisolated struct LiveWorkoutReferenceSnapshot: Equatable, Sendable {
@@ -207,8 +245,53 @@ nonisolated struct LiveWorkoutHistoryWorker: Sendable {
         let task = Task.detached(priority: .utility) {
             let context = ModelContext(container)
             context.autosaveEnabled = false
+            let prefill = try Self.makePrefillSnapshot(input: input, in: context)
             let history = try Self.completedHistory(in: context, excluding: input.workoutID)
-            return try Self.makeReferenceSnapshot(input: input, history: history)
+            return LiveWorkoutReferenceSnapshot(
+                recordBaselines: prefill.recordBaselines,
+                previousSetsByExerciseID: prefill.previousSetsByExerciseID,
+                previousCardioByExerciseID: prefill.previousCardioByExerciseID,
+                pickerHistory: try Self.makePickerHistorySnapshot(history: history)
+            )
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    /// User-visible "Previous" and ghost values are interaction-critical. Query
+    /// only rows belonging to the requested exercises and return them ahead of
+    /// slower all-history picker analytics. The isolated context keeps every
+    /// relationship fault off MainActor without making a large history delay
+    /// the logger's functional state.
+    func prefillSnapshot(
+        for input: LiveWorkoutReferenceInput
+    ) async throws -> LiveWorkoutPrefillSnapshot {
+        let container = modelContainer
+        let task = Task.detached(priority: .userInitiated) {
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            return try Self.makePrefillSnapshot(input: input, in: context)
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    /// Picker ranking is useful but not required for the logger's first usable
+    /// state. It remains a single utility-priority history projection and is
+    /// retained for the whole workout rather than restarting after add/replace.
+    func pickerHistorySnapshot(
+        excluding workoutID: UUID
+    ) async throws -> ExercisePickerHistorySnapshot {
+        let container = modelContainer
+        let task = Task.detached(priority: .utility) {
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            let history = try Self.completedHistory(in: context, excluding: workoutID)
+            return try Self.makePickerHistorySnapshot(history: history)
         }
         return try await withTaskCancellationHandler(
             operation: { try await task.value },
@@ -299,6 +382,47 @@ nonisolated struct LiveWorkoutHistoryWorker: Sendable {
         )
     }
 
+    /// Identifies every completed workout containing the exact conditioning
+    /// prescription (or its established reference/legacy lineage). Preset
+    /// analytics and rename-on-edit must never be truncated to a recent-window
+    /// approximation, but discovering the usually-small matching ID set does
+    /// not belong on MainActor or on the live logger's first frame.
+    func completedWorkoutIDs(
+        matchingConditioning section: ConditioningSection
+    ) async throws -> [UUID] {
+        let container = modelContainer
+        let task = Task.detached(priority: .utility) {
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            let history = try Self.completedHistory(in: context, excluding: nil)
+            let matcher = ConditioningPresetHistoryMatcher(source: section)
+            return history.compactMap { workout in
+                matcher.workoutContainsMatchingPlan(workout) ? workout.id : nil
+            }
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
+    /// Parent-only lookup used when an explicit historical workout drill-in
+    /// needs the same complete comparison context it had before the logger's
+    /// render path was optimized. Relationship traversal remains deferred
+    /// until the user actually opens that detail screen.
+    func completedWorkoutIDs() async throws -> [UUID] {
+        let container = modelContainer
+        let task = Task.detached(priority: .utility) {
+            let context = ModelContext(container)
+            context.autosaveEnabled = false
+            return try Self.completedHistory(in: context, excluding: nil).map(\.id)
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+
     #if DEBUG
     func isExecutingOnMainThreadForTesting() async -> Bool {
         let container = modelContainer
@@ -324,22 +448,112 @@ nonisolated struct LiveWorkoutHistoryWorker: Sendable {
         return workouts.filter { $0.id != workoutID }
     }
 
-    private static func makeReferenceSnapshot(
+    private static func makePrefillSnapshot(
         input: LiveWorkoutReferenceInput,
-        history: [WorkoutModel]
-    ) throws -> LiveWorkoutReferenceSnapshot {
+        in context: ModelContext
+    ) throws -> LiveWorkoutPrefillSnapshot {
         var baselines: [UUID: ExerciseRecordBaseline] = [:]
         var previousSets = Dictionary(
             uniqueKeysWithValues: input.exerciseIDs.map { ($0, [LivePreviousSetSnapshot]()) }
         )
         var previousCardio: [UUID: LivePreviousCardioSnapshot] = [:]
+        let requestedExerciseIDs = Array(input.exerciseIDs)
+        let matchingRows: [WorkoutExerciseModel]
+        if requestedExerciseIDs.isEmpty {
+            matchingRows = []
+        } else {
+            matchingRows = try context.fetch(FetchDescriptor<WorkoutExerciseModel>(
+                predicate: #Predicate { requestedExerciseIDs.contains($0.exerciseID) }
+            ))
+        }
+        let rowsByExerciseID = Dictionary(grouping: matchingRows, by: \WorkoutExerciseModel.exerciseID)
+        for exerciseID in input.exerciseIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+            let eligible = (rowsByExerciseID[exerciseID] ?? []).filter { row in
+                guard let workout = row.workout else { return false }
+                return workout.id != input.workoutID
+                    && workout.endedAt != nil
+                    && workout.deletedAt == nil
+            }
+            let chronological = eligible.sorted(by: rowNewestFirst)
+
+            for row in chronological {
+                guard let workout = row.workout, workout.startedAt < input.startedAt else { continue }
+                var baseline = baselines[exerciseID] ?? ExerciseRecordBaseline()
+                for set in row.sets { baseline.absorb(set) }
+                baselines[exerciseID] = baseline
+            }
+
+            let routineRows: [WorkoutExerciseModel]
+            if let routineID = input.routineID {
+                routineRows = chronological.filter { $0.workout?.routineID == routineID }
+            } else {
+                routineRows = []
+            }
+            let routineRowIDs = Set(routineRows.map(\.id))
+            let ordered = routineRows + chronological.filter { !routineRowIDs.contains($0.id) }
+            var unresolvedTypes = Set(SetType.allCases.map(\.rawValue))
+            for row in ordered where !unresolvedTypes.isEmpty {
+                let completed = row.sets
+                    .filter { $0.completedAt != nil }
+                    .sorted { $0.position < $1.position }
+                for type in SetType.allCases where unresolvedTypes.contains(type.rawValue) {
+                    let matching = completed.filter { $0.setType == type }
+                    guard !matching.isEmpty else { continue }
+                    previousSets[exerciseID, default: []].append(
+                        contentsOf: matching.map(LivePreviousSetSnapshot.init(set:))
+                    )
+                    unresolvedTypes.remove(type.rawValue)
+                }
+                try Task.checkCancellation()
+            }
+
+            // Cardio's established contract is chronological, not routine-first:
+            // "Last time" means the newest completed session of that exercise.
+            for row in chronological {
+                guard let workout = row.workout,
+                      let session = workout.cardioSessions.first(where: {
+                    $0.workoutExerciseID == row.id
+                        && $0.endedAt != nil
+                        && $0.deletedAt == nil
+                }) else { continue }
+                previousCardio[exerciseID] = LivePreviousCardioSnapshot(
+                    distanceMeters: session.distanceMeters,
+                    durationSeconds: session.durationSeconds,
+                    averageHeartRate: session.avgHR
+                )
+                break
+            }
+            try Task.checkCancellation()
+        }
+
+        return LiveWorkoutPrefillSnapshot(
+            recordBaselines: baselines,
+            previousSetsByExerciseID: previousSets,
+            previousCardioByExerciseID: previousCardio
+        )
+    }
+
+    private static func rowNewestFirst(
+        _ lhs: WorkoutExerciseModel,
+        _ rhs: WorkoutExerciseModel
+    ) -> Bool {
+        guard let lhsWorkout = lhs.workout, let rhsWorkout = rhs.workout else {
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+        if lhsWorkout.startedAt != rhsWorkout.startedAt {
+            return lhsWorkout.startedAt > rhsWorkout.startedAt
+        }
+        if lhs.position != rhs.position { return lhs.position < rhs.position }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    private static func makePickerHistorySnapshot(
+        history: [WorkoutModel]
+    ) throws -> ExercisePickerHistorySnapshot {
         var occurrenceCountByExerciseID: [UUID: Int] = [:]
         var completedWorkoutCountByExerciseID: [UUID: Int] = [:]
         var latestUpdatedAt: Date?
 
-        // One relationship pass serves both the logger's record baseline and
-        // the picker's all-history usage projection. Rewalking every exercise
-        // graph solely for suggestions doubled cold-cache I/O after launch.
         for workout in history {
             latestUpdatedAt = max(latestUpdatedAt ?? workout.updatedAt, workout.updatedAt)
             let completedCardioRowIDs = Set(
@@ -349,19 +563,11 @@ nonisolated struct LiveWorkoutHistoryWorker: Sendable {
                 }
             )
             var completedExerciseIDs = Set<UUID>()
-            for workoutExercise in workout.exercises
-            {
+            for workoutExercise in workout.exercises {
                 occurrenceCountByExerciseID[workoutExercise.exerciseID, default: 0] += 1
                 if workoutExercise.sets.contains(where: { $0.completedAt != nil })
                     || completedCardioRowIDs.contains(workoutExercise.id) {
                     completedExerciseIDs.insert(workoutExercise.exerciseID)
-                }
-                if workout.startedAt < input.startedAt,
-                   input.exerciseIDs.contains(workoutExercise.exerciseID) {
-                    var baseline = baselines[workoutExercise.exerciseID]
-                        ?? ExerciseRecordBaseline()
-                    for set in workoutExercise.sets { baseline.absorb(set) }
-                    baselines[workoutExercise.exerciseID] = baseline
                 }
             }
             for exerciseID in completedExerciseIDs {
@@ -369,74 +575,12 @@ nonisolated struct LiveWorkoutHistoryWorker: Sendable {
             }
             try Task.checkCancellation()
         }
-        let pickerHistory = ExercisePickerHistorySnapshot(
+
+        return ExercisePickerHistorySnapshot(
             completedWorkoutCount: history.count,
             latestWorkoutUpdatedAt: latestUpdatedAt,
             occurrenceCountByExerciseID: occurrenceCountByExerciseID,
             completedWorkoutCountByExerciseID: completedWorkoutCountByExerciseID
-        )
-
-        let routineMatches = input.routineID.map { routineID in
-            history.filter { $0.routineID == routineID }
-        } ?? []
-        let routineMatchIDs = Set(routineMatches.map(\.id))
-        let ordered = routineMatches + history.filter { !routineMatchIDs.contains($0.id) }
-        var unresolvedTypes = Dictionary(
-            uniqueKeysWithValues: input.exerciseIDs.map {
-                ($0, Set(SetType.allCases.map(\.rawValue)))
-            }
-        )
-
-        for workout in ordered {
-            for workoutExercise in workout.exercises
-            where input.exerciseIDs.contains(workoutExercise.exerciseID) {
-                let exerciseID = workoutExercise.exerciseID
-                let completed = workoutExercise.sets
-                    .filter { $0.completedAt != nil }
-                    .sorted { $0.position < $1.position }
-                if var unresolved = unresolvedTypes[exerciseID], !unresolved.isEmpty {
-                    for type in SetType.allCases where unresolved.contains(type.rawValue) {
-                        let matching = completed.filter { $0.setType == type }
-                        guard !matching.isEmpty else { continue }
-                        previousSets[exerciseID, default: []].append(
-                            contentsOf: matching.map(LivePreviousSetSnapshot.init(set:))
-                        )
-                        unresolved.remove(type.rawValue)
-                    }
-                    unresolvedTypes[exerciseID] = unresolved
-                }
-
-            }
-            try Task.checkCancellation()
-            if unresolvedTypes.values.allSatisfy(\.isEmpty) { break }
-        }
-
-        // Cardio's established contract is chronological, not routine-first:
-        // "Last time" means the newest completed session of that exercise no
-        // matter which routine contained it.
-        for workout in history {
-            for workoutExercise in workout.exercises
-            where input.exerciseIDs.contains(workoutExercise.exerciseID)
-                && previousCardio[workoutExercise.exerciseID] == nil {
-                guard let session = workout.cardioSessions.first(where: {
-                    $0.workoutExerciseID == workoutExercise.id
-                        && $0.endedAt != nil
-                        && $0.deletedAt == nil
-                }) else { continue }
-                previousCardio[workoutExercise.exerciseID] = LivePreviousCardioSnapshot(
-                    distanceMeters: session.distanceMeters,
-                    durationSeconds: session.durationSeconds,
-                    averageHeartRate: session.avgHR
-                )
-            }
-            try Task.checkCancellation()
-        }
-
-        return LiveWorkoutReferenceSnapshot(
-            recordBaselines: baselines,
-            previousSetsByExerciseID: previousSets,
-            previousCardioByExerciseID: previousCardio,
-            pickerHistory: pickerHistory
         )
     }
 

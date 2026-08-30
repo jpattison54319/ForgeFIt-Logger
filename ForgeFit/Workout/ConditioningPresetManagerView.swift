@@ -12,6 +12,12 @@ struct ConditioningPresetManagerView: View {
     let exercises: [ExerciseLibraryModel]
     var historySnapshot: ExercisePickerHistorySnapshot? = nil
 
+    /// A value-backed caller (the live logger) deliberately does not retain
+    /// the complete workout graph. Preset detail resolves its exact historical
+    /// rows on demand instead of treating the caller's bounded compatibility
+    /// window as complete history.
+    private var loadsPersistedHistory: Bool { historySnapshot != nil }
+
     // Keep soft-deleted rows available so visibility and restore state are
     // derived from the complete persisted history. The local ID sets below
     // make successful deletes disappear immediately while SwiftData refreshes.
@@ -57,6 +63,8 @@ struct ConditioningPresetManagerView: View {
                                         selection: preset,
                                         workouts: workouts,
                                         exercises: exercises,
+                                        historySnapshot: historySnapshot,
+                                        loadsPersistedHistory: loadsPersistedHistory,
                                         deleteMessage: "Removes it from the preset menu. Existing blocks stay unchanged.",
                                         onDelete: { delete(preset) }
                                     )
@@ -71,6 +79,8 @@ struct ConditioningPresetManagerView: View {
                                         selection: preset,
                                         workouts: workouts,
                                         exercises: exercises,
+                                        historySnapshot: historySnapshot,
+                                        loadsPersistedHistory: loadsPersistedHistory,
                                         deleteMessage: "Removes this saved preset. Existing blocks stay unchanged.",
                                         onDelete: { delete(preset) }
                                     )

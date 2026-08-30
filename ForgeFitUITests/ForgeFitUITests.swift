@@ -140,13 +140,27 @@ final class ForgeFitUITests: XCTestCase {
     ) -> Bool {
         if element.waitForExistence(timeout: timeout) { return true }
 
-        // Query the real Button. The surrounding Liquid Glass accessibility
-        // proxy exposes the same identifier with a degenerate {-1, -1} frame,
-        // so a broad `.any` query can find an element that exists but can never
-        // receive the recovery tap.
-        let expand = app.buttons["expand-active-workout"].firstMatch
-        guard expand.waitForExistence(timeout: 5) else { return false }
-        tapWhenReady(expand)
+        // The surrounding Liquid Glass container and its real Button can
+        // expose the same identifier. Select the concrete rendered Button so
+        // the recovery tap never targets the {-1, -1} proxy.
+        let expandQuery = app.buttons.matching(identifier: "expand-active-workout")
+        let deadline = Date().addingTimeInterval(5)
+        var expand: XCUIElement?
+        while expand == nil, Date() < deadline {
+            expand = expandQuery.allElementsBoundByIndex.first {
+                $0.exists && !$0.frame.isEmpty && $0.frame.minX >= 0
+            }
+            if expand == nil {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+        }
+        guard let expand else { return false }
+        acceptanceExpect(
+            ["finish-workout-button"],
+            phase: .setup,
+            invariants: ["The visible mini workout bar reopens the active logger"]
+        )
+        tapVisibleFrame(expand, in: app)
         return element.waitForExistence(timeout: 5)
     }
 
@@ -206,6 +220,19 @@ final class ForgeFitUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return element.value as? String != originalValue
+    }
+
+    private func waitForAccessibilityValue(
+        _ expectedValue: String,
+        in element: XCUIElement,
+        timeout: TimeInterval = 4
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.value as? String == expectedValue { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return element.value as? String == expectedValue
     }
 
     /// Keyboard queries can briefly retain the previous off-screen host view
@@ -463,6 +490,150 @@ final class ForgeFitUITests: XCTestCase {
             waitForNumericValue(convertedDisplay + switchedNearestDelta, in: weightField),
             "The mounted recognizer must immediately use the switched unit's nearest band."
         )
+    }
+
+    /// Regression: completed exercise history belongs to the exercise, not to
+    /// the routine that happened to contain it. A brand-new routine and a live
+    /// replacement must both show the historical Previous/ghost values before
+    /// the lifter completes any set.
+    @MainActor
+    func testNewRoutineAndReplacementPrefillHistoryBeforeSetCompletion() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store",
+            "--seed-live-prefill-regression",
+            "--skip-onboarding",
+            "-didOnboard", "YES",
+            "-initialTab", "home",
+            "-weightUnitRaw", "kg",
+        ]
+        acceptanceExpect(
+            phase: .setup,
+            invariants: ["The deterministic new-routine history fixture launches into the live logger"]
+        )
+        app.acceptanceLaunch()
+
+        let weightField = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Weight")
+        ).firstMatch
+        let repsField = app.textFields.matching(
+            NSPredicate(format: "label == %@", "Reps")
+        ).firstMatch
+        let didFindLiveLogger = waitForLiveLogger(containing: weightField, in: app)
+        try acceptanceRequire(
+            didFindLiveLogger,
+            "The deterministic fixture did not present the new routine's strength row"
+        )
+        let initialPrevious = app.buttons["97.5 × 10"].firstMatch
+        guard acceptanceAssert(
+            initialPrevious.waitForExistence(timeout: 3),
+            "A new routine must immediately fall back to this exercise's global history."
+        ) else { return }
+        guard acceptanceAssert(
+            waitForAccessibilityValue(
+                "Suggested 97.5, not entered",
+                in: weightField,
+                timeout: 1
+            ),
+            "The initial row must ghost its 97.5 kg history before any set is completed."
+        ) else { return }
+        guard acceptanceAssert(
+            waitForAccessibilityValue(
+                "Suggested 10, not entered",
+                in: repsField,
+                timeout: 1
+            ),
+            "The initial row must ghost its 10-rep history before any set is completed."
+        ) else { return }
+        acceptanceExpect(
+            visibleLabels: ["97.5 × 10"],
+            phase: .assertion,
+            invariants: ["Historical weight and reps are visible before the first set is completed"]
+        )
+        initialPrevious.acceptanceTap()
+        guard acceptanceAssert(
+            waitForNumericValue(97.5, in: weightField, timeout: 1),
+            "Tapping Previous should materialize the exact visible 97.5 kg history"
+        ) else { return }
+
+        let menu = app.descendants(matching: .any)["exercise-overflow-menu"].firstMatch
+        try acceptanceRequire(menu.waitForExistence(timeout: 3), "The exercise menu was unavailable")
+        acceptanceExpect(
+            visibleLabels: ["Replace Exercise"],
+            phase: .transition,
+            invariants: ["The live card exposes its familiar replacement action"]
+        )
+        tapWhenReady(menu)
+        acceptanceExpect(
+            visibleLabels: ["Search all exercises"],
+            phase: .transition,
+            invariants: ["Replacement suggestions open without changing the live set"]
+        )
+        tapWhenReady(app.buttons["Replace Exercise"].firstMatch)
+        acceptanceExpect(
+            visibleLabels: ["Replace Exercise"],
+            phase: .transition,
+            invariants: ["Full exercise search remains in replacement mode"]
+        )
+        tapWhenReady(app.buttons["Search all exercises"].firstMatch)
+
+        let search = app.searchFields.firstMatch
+        try acceptanceRequire(search.waitForExistence(timeout: 5), "Replacement search did not appear")
+        acceptanceExpect(
+            ["Replace Exercise"],
+            phase: .transition,
+            invariants: ["The replacement search accepts a direct exercise query"]
+        )
+        search.acceptanceTap()
+        acceptanceExpect(
+            ["replacement-swap-Dumbbell Bench Press"],
+            phase: .transition,
+            invariants: ["The exact requested replacement is selectable"]
+        )
+        search.acceptanceTypeText("Dumbbell Bench Press")
+        let replacementMatches = app.descendants(matching: .any)
+            .matching(identifier: "replacement-swap-Dumbbell Bench Press")
+        let replacement = replacementMatches.element(
+            boundBy: max(0, replacementMatches.count - 1)
+        )
+        try acceptanceRequire(
+            replacement.waitForExistence(timeout: 4),
+            "The seeded replacement exercise was absent from exact search"
+        )
+        acceptanceExpect(
+            visibleLabels: ["Dumbbell Bench Press", "42.5 × 8"],
+            phase: .assertion,
+            invariants: ["Replacement history is visible without completing a set to trigger it"]
+        )
+        tapWhenReady(replacement)
+
+        guard acceptanceAssert(
+            app.staticTexts["Dumbbell Bench Press"].firstMatch.waitForExistence(timeout: 3),
+            "Expected the replacement to stay in the original live card."
+        ) else { return }
+        let replacementPrevious = app.buttons["42.5 × 8"].firstMatch
+        guard acceptanceAssert(
+            replacementPrevious.waitForExistence(timeout: 3),
+            "The replacement must load its own completed history without a set-completion trigger."
+        ) else { return }
+        guard acceptanceAssert(
+            waitForAccessibilityValue(
+                "Suggested 42.5, not entered",
+                in: weightField,
+                timeout: 1
+            ),
+            "The replacement row must ghost 42.5 kg from its own history."
+        ) else { return }
+        guard acceptanceAssert(
+            waitForAccessibilityValue(
+                "Suggested 8, not entered",
+                in: repsField,
+                timeout: 1
+            ),
+            "The replacement row must ghost 8 reps from its own history."
+        ) else { return }
+        attachScreenshot(app, name: "replacement-history-prefill-before-completion")
     }
 
     /// A fast vertical drag that originates on a weight field belongs to the

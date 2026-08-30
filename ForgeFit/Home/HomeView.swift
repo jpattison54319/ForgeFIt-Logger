@@ -776,18 +776,11 @@ struct HomeView: View {
         }
         .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
         .onReceive(
-            NotificationCenter.default.publisher(
-                for: ModelContext.didSave,
-                object: modelContext
-            )
-        ) { notification in
-            let invalidation = RenderPerformanceInvalidationPolicy.invalidation(
-                from: notification,
-                matching: modelContext.container
-            )
+            RenderPerformanceInvalidationPolicy.saveDeliveries(for: modelContext)
+        ) { delivery in
             renderRevisionController.receive(
-                invalidation,
-                source: .mainContextSave,
+                delivery.invalidation,
+                source: delivery.source,
                 surfaceIsActive: isRenderActive
             )
         }

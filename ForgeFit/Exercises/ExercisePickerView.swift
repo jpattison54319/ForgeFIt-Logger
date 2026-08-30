@@ -70,8 +70,6 @@ struct ExercisePickerView: View {
     @State private var showConditioningBuilder = false
     @State private var showYogaBuilder = false
     @State private var detailExercise: ExerciseLibraryModel?
-    @State private var boundedDrillInHistory: [WorkoutModel] = []
-    @State private var isDrillInHistoryLoading = false
     @State private var filteredMemo = Memo<String, [ExerciseLibraryModel]>()
     @State private var suggestedMemo = Memo<String, [ExerciseLibraryModel]>()
     /// Keyed by filter state only (NOT the query): the filtered base list and
@@ -310,14 +308,13 @@ struct ExercisePickerView: View {
                 ConditioningBlockBuilderView(
                     planJSON: nil,
                     exercises: exercises,
-                    workouts: resolvedDrillInHistory,
+                    workouts: history,
                     historySnapshot: historySnapshot,
                     onSave: { json in
                         onAddConditioningBlock?(json)
                         dismiss()
                     }
                 )
-                .task { await ensureBoundedDrillInHistoryLoaded() }
             }
             .sheet(isPresented: $showYogaBuilder) {
                 YogaFlowBuilderView(planJSON: nil, onSave: { json in
@@ -659,31 +656,6 @@ struct ExercisePickerView: View {
         if presetModality == nil, let modalityFilter, created.modality != modalityFilter {
             self.modalityFilter = nil
         }
-    }
-
-    private static let drillInHistoryLimit = 160
-
-    private var resolvedDrillInHistory: [WorkoutModel] {
-        history.isEmpty ? boundedDrillInHistory : history
-    }
-
-    /// Conditioning preset/history screens still use model-backed APIs. Keep
-    /// that compatibility read bounded and behind the explicit drill-in; the
-    /// picker list and its suggestions remain entirely value-backed.
-    private func ensureBoundedDrillInHistoryLoaded() async {
-        guard history.isEmpty,
-              boundedDrillInHistory.isEmpty,
-              !isDrillInHistoryLoading else { return }
-        isDrillInHistoryLoading = true
-        defer { isDrillInHistoryLoading = false }
-        await Task.yield()
-        guard !Task.isCancelled else { return }
-        var descriptor = FetchDescriptor<WorkoutModel>(
-            predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = Self.drillInHistoryLimit
-        boundedDrillInHistory = (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func commit(_ list: [ExerciseLibraryModel]) {

@@ -47,6 +47,84 @@ struct LiveWorkoutHistoryWorkerTests {
     }
 
     @MainActor
+    @Test("Scoped prefill finds global history for a new routine and retains replacement history")
+    func scopedPrefillSupportsNewRoutineAndReplacement() async throws {
+        let (container, context) = try TestStore.make()
+        let originalExerciseID = UUID()
+        let replacementExerciseID = UUID()
+        let unrelatedExerciseID = UUID()
+        let newRoutineID = UUID()
+        let base = Date(timeIntervalSince1970: 8_000)
+
+        let prior = workout(
+            routineID: UUID(),
+            startedAt: base,
+            exercises: [
+                exercise(originalExerciseID, sets: [
+                    completedSet(position: 0, type: .working, reps: 10, weight: 97.5, at: base)
+                ]),
+                exercise(replacementExerciseID, sets: [
+                    completedSet(position: 0, type: .working, reps: 8, weight: 42.5, at: base)
+                ]),
+            ]
+        )
+        context.insert(prior)
+        // Unrelated history must not leak into the scoped DTO or become a
+        // prerequisite for either user-visible prefill.
+        for offset in 1...40 {
+            context.insert(workout(
+                routineID: nil,
+                startedAt: base.addingTimeInterval(TimeInterval(offset)),
+                exercises: [exercise(unrelatedExerciseID, sets: [
+                    completedSet(
+                        position: 0,
+                        type: .working,
+                        reps: offset,
+                        weight: Double(offset),
+                        at: base.addingTimeInterval(TimeInterval(offset))
+                    )
+                ])]
+            ))
+        }
+        let active = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            routineID: newRoutineID,
+            startedAt: base.addingTimeInterval(100),
+            exercises: [exercise(originalExerciseID, sets: [])]
+        )
+        context.insert(active)
+        try context.save()
+
+        let worker = LiveWorkoutHistoryWorker(modelContainer: container)
+        let fullInput = LiveWorkoutReferenceInput(
+            workoutID: active.id,
+            routineID: newRoutineID,
+            startedAt: active.startedAt,
+            exerciseIDs: [originalExerciseID]
+        )
+        let initial = try await worker.prefillSnapshot(for: fullInput)
+
+        #expect(Set(initial.previousSetsByExerciseID.keys) == [originalExerciseID])
+        #expect(initial.previousSetsByExerciseID[originalExerciseID]?.first?.weight == 97.5)
+        #expect(initial.previousSetsByExerciseID[originalExerciseID]?.first?.reps == 10)
+        #expect(initial.previousSetsByExerciseID[unrelatedExerciseID] == nil)
+
+        var cache = LiveWorkoutPrefillCache()
+        cache.merge(initial)
+        #expect(cache.missingExerciseIDs(from: [originalExerciseID, replacementExerciseID]) == [replacementExerciseID])
+
+        let replacement = try await worker.prefillSnapshot(
+            for: fullInput.scoped(to: [replacementExerciseID])
+        )
+        cache.merge(replacement)
+
+        #expect(cache.previousSetsByExerciseID[originalExerciseID]?.first?.weight == 97.5)
+        #expect(cache.previousSetsByExerciseID[replacementExerciseID]?.first?.weight == 42.5)
+        #expect(cache.previousSetsByExerciseID[replacementExerciseID]?.first?.reps == 8)
+        #expect(cache.missingExerciseIDs(from: [originalExerciseID, replacementExerciseID]).isEmpty)
+    }
+
+    @MainActor
     @Test("Reference projection preserves routine-first previous values off MainActor")
     func referenceProjectionPreservesSemantics() async throws {
         let (container, context) = try TestStore.make()
@@ -267,6 +345,55 @@ struct LiveWorkoutHistoryWorkerTests {
 
         #expect(rows.map(\.id) == [live.id])
         _ = container
+    }
+
+    @MainActor
+    @Test("Conditioning drill-in finds exact history beyond the former recent window")
+    func conditioningDrillInIsExactAndUnbounded() async throws {
+        let (container, context) = try TestStore.make()
+        let base = Date(timeIntervalSince1970: 55_000)
+        let matchingMovementID = UUID()
+        let matching = conditioningWorkout(
+            startedAt: base,
+            movementID: matchingMovementID,
+            elapsed: 90,
+            roundCompletions: [40, 90],
+            ended: true
+        )
+        context.insert(matching)
+        let target = try #require(
+            ConditioningPlan.decode(from: matching.conditioningPlanSnapshotJSON)?.sections.first
+        )
+        let matchingWithoutResult = WorkoutModel(
+            userID: ForgeFitDemo.userID,
+            title: "Conditioning without result payload",
+            startedAt: base.addingTimeInterval(-100),
+            endedAt: base.addingTimeInterval(-10),
+            conditioningPlanSnapshotJSON: ConditioningPlan(sections: [target]).encodedJSON()
+        )
+        context.insert(matchingWithoutResult)
+
+        // The performance commit's compatibility bridge fetched only the 160
+        // newest workouts. Put the only matching prescription outside that
+        // window to prove the on-demand worker preserves complete history.
+        for offset in 1...180 {
+            context.insert(conditioningWorkout(
+                startedAt: base.addingTimeInterval(TimeInterval(offset)),
+                movementID: UUID(),
+                elapsed: 100,
+                roundCompletions: [50, 100],
+                ended: true
+            ))
+        }
+        try context.save()
+
+        let worker = LiveWorkoutHistoryWorker(modelContainer: container)
+        let matchingIDs = try await worker.completedWorkoutIDs(
+            matchingConditioning: target
+        )
+
+        #expect(matchingIDs == [matching.id, matchingWithoutResult.id])
+        #expect(try await worker.completedWorkoutIDs().count == 182)
     }
 
     @MainActor

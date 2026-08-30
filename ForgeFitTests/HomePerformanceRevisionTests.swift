@@ -293,6 +293,40 @@ struct HomePerformanceRevisionTests {
         #expect(deliveries == 1)
     }
 
+    @Test("A private-context save from the same store reaches render and intent invalidation")
+    func privateContextSaveIsClassifiedForSettledDelivery() throws {
+        let store = try TestStore.makeContainer()
+        let viewContext = ModelContext(store)
+        let workerContext = ModelContext(store)
+        workerContext.autosaveEnabled = false
+        var received: Notification?
+        let subscription = NotificationCenter.default.publisher(for: ModelContext.didSave)
+            .sink { notification in
+                guard let savingContext = notification.object as? ModelContext,
+                      savingContext === workerContext else { return }
+                received = notification
+            }
+        defer { subscription.cancel() }
+
+        workerContext.insert(ExerciseLibraryModel(id: UUID(), name: "Worker Exercise"))
+        try workerContext.save()
+
+        let notification = try #require(received)
+        let delivery = try #require(RenderPerformanceInvalidationPolicy.delivery(
+            from: notification,
+            matchingContainerIdentifier: ObjectIdentifier(viewContext.container),
+            viewContextIdentifier: ObjectIdentifier(viewContext)
+        ))
+        #expect(delivery.source == .externalContextSave)
+        #expect(delivery.invalidation.contains(.exerciseCatalog))
+        #expect(delivery.invalidation.contains(.historyAnalytics))
+        #expect(delivery.entityNames.contains("ExerciseLibraryModel"))
+        #expect(WorkoutIntentCatalogInvalidationPolicy.containsCatalogChange(notification))
+        #expect(WorkoutIntentCatalogInvalidationPolicy.containsCatalogChange(
+            in: delivery.entityNames
+        ))
+    }
+
     @Test("A private-context same-count edit rebuilds from durable state")
     func privateContextSameCountEditUsesSettledRevision() throws {
         let store = try TestStore.makeContainer()

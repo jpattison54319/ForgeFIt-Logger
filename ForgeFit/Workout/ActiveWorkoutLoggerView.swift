@@ -107,9 +107,9 @@ struct ActiveWorkoutLoggerView: View {
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
     /// Caller-supplied history (the historical editor passes its own). Live
-    /// sessions leave it empty and use isolated value projections plus bounded
-    /// drill-in reads, so ContentView's per-save @Query updates never hand this
-    /// view a new array identity and force a full subtree diff.
+    /// sessions leave it empty and use isolated value projections plus exact,
+    /// on-demand drill-in reads, so ContentView's per-save @Query updates never
+    /// hand this view a new array identity and force a full subtree diff.
     var injectedHistory: [WorkoutModel] = []
     var mode: WorkoutLoggerMode = .active
     var onMinimize: (() -> Void)? = nil
@@ -134,19 +134,18 @@ struct ActiveWorkoutLoggerView: View {
     /// unticked sets.
     @State private var incompleteWorkSummary: IncompleteWorkSummary?
     @State private var detailExercise: ExerciseLibraryModel?
-    /// Best prior values per exercise — the bar a set must clear to earn a
-    /// record award. Computed once; history doesn't change mid-session.
-    @State private var recordBaselines: [UUID: ExerciseRecordBaseline] = [:]
+    /// Interaction-critical history is loaded per exercise, then retained for
+    /// the workout. Add/replace only fetches movements this screen has not seen.
+    @State private var prefillCache = LiveWorkoutPrefillCache()
     @State private var liveSurfacePublishTask: Task<Void, Never>?
-    /// Exactly one isolated history scan belongs to this screen. Structural
-    /// changes supersede it through `referenceRequestGate`; dismissal cancels
-    /// it so neither the task nor a stale model projection can retain/apply.
-    @State private var referenceCacheTask: Task<Void, Never>?
+    /// Critical prefill and all-history picker ranking have separate lifetimes:
+    /// structural changes supersede only the scoped prefill request.
+    @State private var prefillCacheTask: Task<Void, Never>?
+    @State private var pickerHistoryTask: Task<Void, Never>?
     @State private var referenceRequestGate = LiveWorkoutReferenceRequestGate()
     @State private var preparedWorkoutID: UUID?
-    @State private var previousSetsByExerciseID: [UUID: [LivePreviousSetSnapshot]] = [:]
-    @State private var previousCardioByExerciseID: [UUID: LivePreviousCardioSnapshot] = [:]
     @State private var pickerHistory = ExercisePickerHistorySnapshot.empty
+    @State private var pickerHistoryLoaded = false
     /// Logger-local lookup snapshots. Card reconstruction is a hot path during
     /// typing/completion; it must not linearly scan the library and notes for
     /// every visible exercise.
@@ -156,13 +155,8 @@ struct ActiveWorkoutLoggerView: View {
     /// logger received at presentation. Otherwise a later cache refresh can
     /// reinsert that stale model before the parent's @Query catches up.
     @State private var removedSetupNoteExerciseIDs = Set<UUID>()
-    /// Model-backed drill-ins are deliberately bounded and loaded only after a
-    /// user opens one. Ordinary add/replace suggestions use `pickerHistory`
-    /// and never need a MainActor workout graph.
-    @State private var boundedDrillInHistory: [WorkoutModel] = []
-    @State private var isDrillInHistoryLoading = false
     private var drillInHistory: [WorkoutModel] {
-        injectedHistory.isEmpty ? boundedDrillInHistory : injectedHistory
+        injectedHistory
     }
     private var projectedPickerHistory: ExercisePickerHistorySnapshot? {
         injectedHistory.isEmpty ? pickerHistory : nil
@@ -273,16 +267,15 @@ struct ActiveWorkoutLoggerView: View {
                 }
             }
         }
-        // Reference caches walk the full workout history on an isolated
-        // SwiftData context. Rows show "—" for a frame or two, then fill in;
-        // no historical PersistentModel or relationship fault crosses back to
-        // MainActor during the logger's first interactive frames.
+        // User-visible previous values use scoped isolated reads. The slower
+        // whole-history picker projection waits behind that critical work and
+        // runs at most once for this workout.
         .task(id: workout.id) {
             prepareReferenceStateForCurrentWorkout()
             await Task.yield()
             guard !Task.isCancelled else { return }
             requestReferenceCacheRefresh()
-            await referenceCacheTask?.value
+            requestPickerHistoryRefresh()
         }
         .onDisappear {
             cancelReferenceCacheRefresh()
@@ -365,7 +358,6 @@ struct ActiveWorkoutLoggerView: View {
                     historySnapshot: projectedPickerHistory,
                     commit: { updateBlock(block, planJSON: $0) }
                 )
-                .task { await ensureBoundedDrillInHistoryLoaded() }
             } else {
                 YogaFlowBuilderView(planJSON: block.planSnapshotJSON, commit: { json in
                     guard let json else { return false }
@@ -617,7 +609,7 @@ struct ActiveWorkoutLoggerView: View {
                 },
                 onReorderDragEnded: { reorderDragEnded() },
                 onAccessibilityMoveBy: { offset in accessibilityMoveItem(we.id, by: offset) },
-                previousSession: previousCardioByExerciseID[we.exerciseID]
+                previousSession: prefillCache.previousCardioByExerciseID[we.exerciseID]
             )
         } else {
             ExerciseLogCard(
@@ -627,7 +619,7 @@ struct ActiveWorkoutLoggerView: View {
                 pinnedNote: setupNoteByExerciseID[we.exerciseID],
                 onPinnedNoteChanged: { updateSetupNote($0, for: we.exerciseID) },
                 previousSets: cachedPreviousSets(for: we),
-                recordBaseline: recordBaselines[we.exerciseID],
+                recordBaseline: prefillCache.recordBaselines[we.exerciseID],
                 allowsRestTimers: !isHistoricalEdit,
                 allowsCollapse: !isHistoricalEdit,
                 showRPE: showRPEInLogger,
@@ -878,18 +870,13 @@ struct ActiveWorkoutLoggerView: View {
         showAddPicker = true
     }
 
-    private static let drillInHistoryLimit = 160
-
     private func prepareReferenceStateForCurrentWorkout() {
         guard preparedWorkoutID != workout.id else { return }
         cancelReferenceCacheRefresh()
         preparedWorkoutID = workout.id
-        recordBaselines = [:]
-        previousSetsByExerciseID = [:]
-        previousCardioByExerciseID = [:]
+        prefillCache = LiveWorkoutPrefillCache()
         pickerHistory = .empty
-        boundedDrillInHistory = []
-        isDrillInHistoryLoading = false
+        pickerHistoryLoaded = false
     }
 
     private func referenceInput() -> LiveWorkoutReferenceInput {
@@ -901,8 +888,8 @@ struct ActiveWorkoutLoggerView: View {
         )
     }
 
-    /// Refreshes cheap screen-owned lookups synchronously, then coalesces the
-    /// relationship-heavy history projection behind one cancelable task.
+    /// Refreshes cheap screen-owned lookups synchronously, then loads only the
+    /// missing exercise histories behind one cancelable latest-request task.
     private func requestReferenceCacheRefresh() {
         exerciseByID = LiveExerciseLibraryCache.refreshedLookup(
             library: exercises,
@@ -926,54 +913,64 @@ struct ActiveWorkoutLoggerView: View {
         refreshLiveStats()
 
         let input = referenceInput()
+        let missingExerciseIDs = prefillCache.missingExerciseIDs(from: input.exerciseIDs)
+        guard !missingExerciseIDs.isEmpty else {
+            prefillCacheTask?.cancel()
+            prefillCacheTask = nil
+            referenceRequestGate.cancel()
+            return
+        }
         let begin = referenceRequestGate.begin(input)
         guard begin.startsNewWork else { return }
-        referenceCacheTask?.cancel()
+        prefillCacheTask?.cancel()
         let request = begin.request
         let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
-        referenceCacheTask = Task { @MainActor in
+        let scopedInput = input.scoped(to: missingExerciseIDs)
+        prefillCacheTask = Task { @MainActor in
             defer {
                 if referenceRequestGate.finish(request) {
-                    referenceCacheTask = nil
+                    prefillCacheTask = nil
                 }
             }
-            guard let snapshot = try? await worker.referenceSnapshot(for: input),
+            guard let snapshot = try? await worker.prefillSnapshot(for: scopedInput),
                   !Task.isCancelled,
                   referenceRequestGate.shouldApply(
                     request,
                     currentInput: referenceInput()
                   ) else { return }
-            recordBaselines = snapshot.recordBaselines
-            previousSetsByExerciseID = snapshot.previousSetsByExerciseID
-            previousCardioByExerciseID = snapshot.previousCardioByExerciseID
-            pickerHistory = snapshot.pickerHistory
+            prefillCache.merge(snapshot)
+        }
+    }
+
+    /// The add/replace picker's aggregate ranking is intentionally decoupled
+    /// from ghost values. It waits for any superseding prefill requests, then
+    /// performs one utility-priority scan whose result is retained.
+    private func requestPickerHistoryRefresh() {
+        guard injectedHistory.isEmpty,
+              !pickerHistoryLoaded,
+              pickerHistoryTask == nil else { return }
+        let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
+        let workoutID = workout.id
+        pickerHistoryTask = Task { @MainActor in
+            defer { pickerHistoryTask = nil }
+            while let criticalTask = prefillCacheTask {
+                await criticalTask.value
+                guard !Task.isCancelled else { return }
+            }
+            guard let snapshot = try? await worker.pickerHistorySnapshot(excluding: workoutID),
+                  !Task.isCancelled,
+                  workout.id == workoutID else { return }
+            pickerHistory = snapshot
+            pickerHistoryLoaded = true
         }
     }
 
     private func cancelReferenceCacheRefresh() {
-        referenceCacheTask?.cancel()
-        referenceCacheTask = nil
+        prefillCacheTask?.cancel()
+        prefillCacheTask = nil
+        pickerHistoryTask?.cancel()
+        pickerHistoryTask = nil
         referenceRequestGate.cancel()
-    }
-
-    /// Rare conditioning/history drill-ins still consume model-backed APIs.
-    /// Bound that compatibility bridge and start it only after the drill-in's
-    /// first frame; picker ranking and exercise detail use exact DTO/scoped
-    /// paths and never depend on this collection.
-    private func ensureBoundedDrillInHistoryLoaded() async {
-        guard injectedHistory.isEmpty,
-              boundedDrillInHistory.isEmpty,
-              !isDrillInHistoryLoading else { return }
-        isDrillInHistoryLoading = true
-        defer { isDrillInHistoryLoading = false }
-        await Task.yield()
-        guard !Task.isCancelled else { return }
-        var descriptor = FetchDescriptor<WorkoutModel>(
-            predicate: #Predicate { $0.endedAt != nil && $0.deletedAt == nil },
-            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
-        )
-        descriptor.fetchLimit = Self.drillInHistoryLimit
-        boundedDrillInHistory = (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func updateSetupNote(_ note: UserExerciseNoteModel?, for exerciseID: UUID) {
@@ -1026,11 +1023,11 @@ struct ActiveWorkoutLoggerView: View {
     }
 
     private func cachedPreviousSets(for workoutExercise: WorkoutExerciseModel) -> [LivePreviousSetSnapshot] {
-        if let cached = previousSetsByExerciseID[workoutExercise.exerciseID] {
+        if let cached = prefillCache.previousSetsByExerciseID[workoutExercise.exerciseID] {
             return cached
         }
-        // Before the deferred cache build lands, render "—" instead of
-        // re-walking the whole history per card on the very first frame.
+        // Before the scoped read lands, render "—" instead of relationship
+        // faulting historical models from a card render.
         return []
     }
 
@@ -1081,7 +1078,6 @@ struct ActiveWorkoutLoggerView: View {
             }
             modelContext.insert(we)
             workout.exercises.append(we)
-            previousSetsByExerciseID[exercise.id] = []
             if exercise.isCardio {
                 let kind = CardioKind.infer(name: exercise.name, equipment: exercise.equipment)
                 let session = CardioSessionModel(
@@ -1119,7 +1115,6 @@ struct ActiveWorkoutLoggerView: View {
         }
         modelContext.insert(we)
         workout.exercises.append(we)
-        previousSetsByExerciseID[sessionExercise.id] = []
         let session = CardioSessionModel(
             userID: ForgeFitDemo.userID,
             workoutExerciseID: we.id,
@@ -1263,8 +1258,6 @@ struct ActiveWorkoutLoggerView: View {
             target.updatedAt = Date()
         }
 
-        previousSetsByExerciseID[replacement.id] = []
-        recordBaselines[replacement.id] = nil
         if let suggestion = progressionByWorkoutExercise[target.id], suggestion.statusRaw == "pending" {
             suggestion.statusRaw = "rejected"
             suggestion.updatedAt = Date()
@@ -2440,7 +2433,6 @@ private struct ExerciseLogCard: View {
                 expandedCard
             }
         }
-        .accessibilityIdentifier("live-exercise-card-\(exercise?.name ?? workoutExercise.exerciseID.uuidString)")
         .animation(.snappy(duration: 0.28), value: isCollapsed)
         .onAppear {
             if allowsCollapse && allSetsCompleted { collapsed = true }

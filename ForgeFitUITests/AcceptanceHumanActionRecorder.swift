@@ -180,9 +180,13 @@ final class AcceptanceHumanActionRecorder: NSObject, XCTestObservation {
         session.pendingExpectation = nil
         let checkpointID = String(format: "action-%04d", actionNumber)
         let targetApplication = session.app ?? app
+        // Querying XCUIApplication.state before launch freezes the launch
+        // configuration on Xcode 27, dropping launchArguments from the app
+        // process. A launch begins from a known not-running contract, so keep
+        // the required before artifacts without touching the application proxy.
         let before = captureState(
             session: session,
-            app: targetApplication,
+            app: action == "launch" ? nil : targetApplication,
             checkpointID: checkpointID,
             phase: "before"
         )

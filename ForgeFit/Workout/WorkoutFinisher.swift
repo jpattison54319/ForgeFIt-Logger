@@ -460,9 +460,7 @@ enum WorkoutFinisher {
                 updatedAt: $0.updatedAt,
                 yogaStyleRaw: $0.yogaStyleRaw,
                 flexibilityExposureJSON: $0.flexibilityExposureJSON,
-                posesCompleted: $0.posesCompleted,
-                routePoints: $0.routePoints,
-                splits: $0.splits
+                posesCompleted: $0.posesCompleted
             )
         }
         let workoutUserID = workout.userID
@@ -500,8 +498,12 @@ enum WorkoutFinisher {
                 state.model.yogaStyleRaw = state.yogaStyleRaw
                 state.model.flexibilityExposureJSON = state.flexibilityExposureJSON
                 state.model.posesCompleted = state.posesCompleted
-                state.model.routePoints = state.routePoints
-                state.model.splits = state.splits
+                // `rollback()` already restores to-many relationships and
+                // invalidates their SwiftData relationship proxies. Assigning
+                // a captured route/split array back through that invalid proxy
+                // traps before the user can retry the failed terminal save.
+                // Restore only scalars held directly by the live UI objects;
+                // a fresh context supplies durable relationship truth.
             }
             if let progressBeforeFinish {
                 progressBeforeFinish.model.totalXP = progressBeforeFinish.totalXP

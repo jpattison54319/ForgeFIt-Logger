@@ -50,8 +50,20 @@ struct ShareCardRenderTests {
             (w.startedAt.addingTimeInterval(Double($0) * 90), 110 + ($0 % 20))
         }
         let recovery = [
-            SetRecoveryPoint(setID: w.exercises[0].sets[0].id, peakHR: 158, recoveryBPM: 34),
-            SetRecoveryPoint(setID: w.exercises[0].sets[1].id, peakHR: 160, recoveryBPM: 28),
+            SetRecoveryPoint(
+                setIDs: [w.exercises[0].sets[0].id],
+                peakHR: 158,
+                recoveryBPM: 34,
+                withinUnitRise: nil,
+                restObservedSeconds: 95
+            ),
+            SetRecoveryPoint(
+                setIDs: [w.exercises[0].sets[1].id],
+                peakHR: 160,
+                recoveryBPM: 28,
+                withinUnitRise: nil,
+                restObservedSeconds: 88
+            ),
         ]
         let image = WorkoutShareRenderer.image(
             for: w, exercises: library, theme: .sage, hrSamples: hrSamples, recoveryPoints: recovery

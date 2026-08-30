@@ -7,22 +7,34 @@ import SwiftUI
 /// depend on seeded exercise identities; custom presets carry the exact saved
 /// section and therefore remain viewable even if a movement is later deleted.
 struct ConditioningPresetDetailDestination: View {
+    @Environment(\.modelContext) private var modelContext
+
     let selection: ConditioningPresetSelection
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
+    var loadsPersistedHistory = false
 
     @Query(sort: \IntervalPresetModel.updatedAt, order: .reverse)
     private var presetRecords: [IntervalPresetModel]
     @State private var activeSelection: ConditioningPresetSelection
+    @State private var loadedHistory: [WorkoutModel]?
+    @State private var loadedHistorySectionKey: String?
+    @State private var historyLoadFailed = false
+    @State private var historyRetryRevision = 0
 
     init(
         selection: ConditioningPresetSelection,
         workouts: [WorkoutModel],
-        exercises: [ExerciseLibraryModel]
+        exercises: [ExerciseLibraryModel],
+        historySnapshot: ExercisePickerHistorySnapshot? = nil,
+        loadsPersistedHistory: Bool = false
     ) {
         self.selection = selection
         self.workouts = workouts
         self.exercises = exercises
+        self.historySnapshot = historySnapshot
+        self.loadsPersistedHistory = loadsPersistedHistory
         _activeSelection = State(initialValue: selection)
     }
 
@@ -36,19 +48,96 @@ struct ConditioningPresetDetailDestination: View {
         return .saved(id: id, name: name.isEmpty ? section.name : name, section: section)
     }
 
-    var body: some View {
-        if let section = resolvedSelection.resolvedSection(in: exercises) {
-            ConditioningPresetDetailView(
-                title: resolvedSelection.title,
-                section: section,
-                workouts: workouts,
-                exercises: exercises,
-                editingSelection: resolvedSelection,
-                onSelectionChanged: { activeSelection = $0 }
-            )
-        } else {
-            ConditioningPresetUnavailableView(title: resolvedSelection.title)
+    private var resolvedSection: ConditioningSection? {
+        resolvedSelection.resolvedSection(in: exercises)
+    }
+
+    private var historyLoadKey: String {
+        let sectionKey = resolvedSection.map(ConditioningPrescriptionSignature.key(for:))
+            ?? "unavailable"
+        return "\(sectionKey)|\(historyRetryRevision)"
+    }
+
+    private var resolvedLoadedHistory: [WorkoutModel]? {
+        guard let resolvedSection,
+              loadedHistorySectionKey == ConditioningPrescriptionSignature.key(for: resolvedSection) else {
+            return nil
         }
+        return loadedHistory
+    }
+
+    var body: some View {
+        Group {
+            if resolvedSection == nil {
+                ConditioningPresetUnavailableView(title: resolvedSelection.title)
+            } else if loadsPersistedHistory, resolvedLoadedHistory == nil {
+                if historyLoadFailed {
+                    ContentUnavailableView {
+                        Label("History unavailable", systemImage: "arrow.clockwise.circle")
+                    } description: {
+                        Text("ForgeFit couldn't load the complete preset history.")
+                    } actions: {
+                        Button("Try Again") { historyRetryRevision &+= 1 }
+                    }
+                } else {
+                    ProgressView("Loading complete history")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("conditioning-preset-history-loading")
+                }
+            } else if let section = resolvedSection {
+                ConditioningPresetDetailView(
+                    title: resolvedSelection.title,
+                    section: section,
+                    workouts: resolvedLoadedHistory ?? workouts,
+                    exercises: exercises,
+                    historySnapshot: historySnapshot,
+                    loadsCompleteHistoryForWorkoutDetail: loadsPersistedHistory,
+                    editingSelection: resolvedSelection,
+                    onSelectionChanged: {
+                        loadedHistory = nil
+                        loadedHistorySectionKey = nil
+                        activeSelection = $0
+                    }
+                )
+            }
+        }
+        .task(id: historyLoadKey) {
+            guard loadsPersistedHistory, let section = resolvedSection else { return }
+            loadedHistory = nil
+            loadedHistorySectionKey = nil
+            historyLoadFailed = false
+            do {
+                let worker = LiveWorkoutHistoryWorker(modelContainer: modelContext.container)
+                let ids = try await worker.completedWorkoutIDs(matchingConditioning: section)
+                guard !Task.isCancelled else { return }
+                let history = try await fetchCompletedHistory(ids: ids)
+                guard !Task.isCancelled else { return }
+                loadedHistory = history
+                loadedHistorySectionKey = ConditioningPrescriptionSignature.key(for: section)
+            } catch is CancellationError {
+                return
+            } catch {
+                historyLoadFailed = true
+            }
+        }
+    }
+
+    @MainActor
+    private func fetchCompletedHistory(ids: [UUID]) async throws -> [WorkoutModel] {
+        guard !ids.isEmpty else { return [] }
+        var rows: [WorkoutModel] = []
+        let batchSize = 160
+        for start in stride(from: 0, to: ids.count, by: batchSize) {
+            let end = min(start + batchSize, ids.count)
+            rows.append(contentsOf: try modelContext.fetch(
+                ExercisePickerHistoryDetailDestination.completedHistoryDescriptor(
+                    for: Array(ids[start..<end])
+                )
+            ))
+            await Task.yield()
+            try Task.checkCancellation()
+        }
+        return rows.sorted { $0.startedAt > $1.startedAt }
     }
 }
 
@@ -62,6 +151,8 @@ struct ConditioningPresetDetailView: View {
     let section: ConditioningSection
     let workouts: [WorkoutModel]
     let exercises: [ExerciseLibraryModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
+    var loadsCompleteHistoryForWorkoutDetail = false
     var editingSelection: ConditioningPresetSelection? = nil
     var onSelectionChanged: ((ConditioningPresetSelection) -> Void)? = nil
 
@@ -151,7 +242,8 @@ struct ConditioningPresetDetailView: View {
                 selection: selection,
                 section: section,
                 exercises: exercises,
-                workouts: workouts
+                workouts: workouts,
+                historySnapshot: historySnapshot
             ) { updatedSelection in
                 onSelectionChanged?(updatedSelection)
             }
@@ -342,11 +434,19 @@ struct ConditioningPresetDetailView: View {
 
                 ForEach(Array(visibleEntries.enumerated()), id: \.element.id) { index, entry in
                     NavigationLink {
-                        WorkoutDetailView(
-                            workout: entry.workout,
-                            exercises: exercises,
-                            history: workouts
-                        )
+                        if loadsCompleteHistoryForWorkoutDetail {
+                            CompleteWorkoutHistoryDetailDestination(
+                                workout: entry.workout,
+                                exercises: exercises,
+                                seedHistory: workouts
+                            )
+                        } else {
+                            WorkoutDetailView(
+                                workout: entry.workout,
+                                exercises: exercises,
+                                history: workouts
+                            )
+                        }
                     } label: {
                         historyRow(entry)
                     }
@@ -411,6 +511,82 @@ struct ConditioningPresetDetailView: View {
             parts.append("\(fact.label) \(fact.value)")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// The live logger intentionally carries no complete model-backed workout
+/// graph. If the user drills from exact preset history into a saved workout,
+/// restore the detail screen's complete comparison context at that explicit
+/// boundary instead of silently limiting awards and exercise history to the
+/// logger's former recent-window approximation.
+private struct CompleteWorkoutHistoryDetailDestination: View {
+    @Environment(\.modelContext) private var modelContext
+
+    let workout: WorkoutModel
+    let exercises: [ExerciseLibraryModel]
+    let seedHistory: [WorkoutModel]
+
+    @State private var loadedHistory: [WorkoutModel]?
+    @State private var historyLoadFailed = false
+    @State private var retryRevision = 0
+
+    var body: some View {
+        Group {
+            if let loadedHistory {
+                WorkoutDetailView(
+                    workout: loadedHistory.first(where: { $0.id == workout.id }) ?? workout,
+                    exercises: exercises,
+                    history: loadedHistory
+                )
+            } else if historyLoadFailed {
+                ContentUnavailableView {
+                    Label("History unavailable", systemImage: "arrow.clockwise.circle")
+                } description: {
+                    Text("ForgeFit couldn't load the complete workout comparison history.")
+                } actions: {
+                    Button("Try Again") { retryRevision &+= 1 }
+                }
+            } else {
+                ProgressView("Loading workout history")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: retryRevision) {
+            historyLoadFailed = false
+            do {
+                let ids = try await LiveWorkoutHistoryWorker(
+                    modelContainer: modelContext.container
+                ).completedWorkoutIDs()
+                guard !Task.isCancelled else { return }
+                loadedHistory = try await fetchCompletedHistory(ids: ids)
+            } catch is CancellationError {
+                return
+            } catch {
+                historyLoadFailed = true
+            }
+        }
+    }
+
+    @MainActor
+    private func fetchCompletedHistory(ids: [UUID]) async throws -> [WorkoutModel] {
+        var byID = Dictionary(
+            seedHistory.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let batchSize = 160
+        for start in stride(from: 0, to: ids.count, by: batchSize) {
+            let end = min(start + batchSize, ids.count)
+            let rows = try modelContext.fetch(
+                ExercisePickerHistoryDetailDestination.completedHistoryDescriptor(
+                    for: Array(ids[start..<end])
+                )
+            )
+            for row in rows { byID[row.id] = row }
+            await Task.yield()
+            try Task.checkCancellation()
+        }
+        if byID[workout.id] == nil { byID[workout.id] = workout }
+        return byID.values.sorted { $0.startedAt > $1.startedAt }
     }
 }
 

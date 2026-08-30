@@ -218,6 +218,7 @@ struct WorkoutDetailView: View {
     @State private var finalizationWindowExpired = false
     @State private var heartRateRefreshError: String?
     @State private var recoveryPoints: [SetRecoveryPoint] = []
+    @State private var showingRecoveryInfo = false
     @State private var showSharePreview = false
     @State private var sharePayload: SharePayload?
     @State private var routeExportError: String?
@@ -668,11 +669,41 @@ struct WorkoutDetailView: View {
         let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
         let sets = presentationPlan.strengthExercises
             .filter { !cardioExerciseIDs.contains($0.id) }
-            .flatMap(\.sets)
-            .compactMap { set -> (id: UUID, completedAt: Date)? in
-                set.completedAt.map { (set.id, $0) }
+            .flatMap { we in
+                we.sets.compactMap { set -> RecoverySetInput? in
+                    set.completedAt.map {
+                        RecoverySetInput(
+                            id: set.id,
+                            exerciseID: we.id,
+                            supersetGroup: we.supersetGroup,
+                            setType: set.setType,
+                            position: set.position,
+                            completedAt: $0
+                        )
+                    }
+                }
             }
         return SetHRRecovery.analyze(samples: samples, sets: sets)
+    }
+
+    /// Per-set context the analyzer deliberately doesn't carry: which logging
+    /// row a set sits on and what it's called in the log.
+    private var recoverySetRefs: [UUID: SetRecoveryPresentation.SetRef] {
+        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
+        var refs: [UUID: SetRecoveryPresentation.SetRef] = [:]
+        for we in presentationPlan.strengthExercises where !cardioExerciseIDs.contains(we.id) {
+            let name = exercises.first { $0.id == we.exerciseID }?.name ?? "Exercise"
+            let sets = we.sets.sorted { $0.position < $1.position }
+            for (index, set) in sets.enumerated() {
+                refs[set.id] = SetRecoveryPresentation.SetRef(
+                    exerciseRowID: we.id,
+                    exerciseName: name,
+                    exerciseOrder: we.position,
+                    label: historicalSetLabel(for: set, index: index, sets: sets)
+                )
+            }
+        }
+        return refs
     }
 
     /// Heart-rate-over-time graph for the session (Apple Watch samples).
@@ -696,17 +727,14 @@ struct WorkoutDetailView: View {
         }
     }
 
-    /// How far HR fell during rest after each strength set, distinct from set
-    /// effort (which RPE/RIR cover).
+    /// How far HR fell during the rest after each round of unbroken work,
+    /// distinct from set effort (which RPE/RIR cover).
     private var betweenSetRecoveryCard: some View {
-        let dict = Dictionary(recoveryPoints.map { ($0.setID, $0) }, uniquingKeysWith: { first, _ in first })
+        let sections = SetRecoveryPresentation.sections(points: recoveryPoints, refs: recoverySetRefs)
         let drops = recoveryPoints.compactMap(\.recoveryBPM)
         let avg = drops.isEmpty ? 0 : Int((Double(drops.reduce(0, +)) / Double(drops.count)).rounded())
         let best = drops.max() ?? 0
         let maxDrop = max(1, best)
-        let cardioExerciseIDs = Set(workout.cardioSessions.compactMap { $0.workoutExerciseID })
-        let strengthExercises = presentationPlan.strengthExercises
-            .filter { !cardioExerciseIDs.contains($0.id) }
         return Card {
             VStack(alignment: .leading, spacing: Space.md) {
                 HStack(spacing: 6) {
@@ -714,33 +742,42 @@ struct WorkoutDetailView: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(theme.danger)
                     Text("Between-set recovery").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Button("About between-set recovery", systemImage: "info.circle") {
+                        showingRecoveryInfo = true
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("between-set-recovery-info")
                 }
+                .frame(height: 44)
                 HStack {
                     StatColumn(label: "Avg drop", value: "\(avg) bpm")
                     StatColumn(label: "Best drop", value: "\(best) bpm")
-                    StatColumn(label: "Sets", value: "\(drops.count)")
+                    StatColumn(label: "Rests read", value: "\(drops.count)")
                 }
                 VStack(alignment: .leading, spacing: Space.md) {
-                    ForEach(strengthExercises) { we in
-                        let sets = we.sets.sorted { $0.position < $1.position }
-                        let rows = Array(sets.enumerated()).compactMap { index, set -> (label: String, point: SetRecoveryPoint)? in
-                            dict[set.id].map { (historicalSetLabel(for: set, index: index, sets: sets), $0) }
-                        }
-                        if !rows.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(exercises.first { $0.id == we.exerciseID }?.name ?? "Exercise")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(theme.textPrimary)
-                                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                                    recoveryRow(label: row.label, point: row.point, maxDrop: maxDrop)
-                                }
+                    ForEach(sections) { section in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(section.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                            ForEach(section.rows) { row in
+                                recoveryRow(label: row.label, point: row.point, maxDrop: maxDrop)
                             }
                         }
                     }
                 }
-                Text("Peak HR at the end of each set and how far it fell before the next set. Bigger drops mean faster recovery — a conditioning signal, not a measure of how hard the set was.")
-                    .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
             }
+        }
+        .sheet(isPresented: $showingRecoveryInfo) {
+            BetweenSetRecoveryInfoSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -749,14 +786,21 @@ struct WorkoutDetailView: View {
             Text(label)
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(theme.textSecondary)
-                .frame(width: 32, alignment: .leading)
+                .frame(width: 40, alignment: .leading)
             HStack(spacing: 3) {
                 Image(systemName: "bolt.heart.fill")
                     .font(.system(size: 10, weight: .bold)).foregroundStyle(theme.danger)
                 Text("\(point.peakHR)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                // A zero rise is honest but says nothing: mid-workout HR is
+                // already at its working plateau when the first leg ends.
+                if let rise = point.withinUnitRise, rise > 0 {
+                    Text("▲\(rise)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.secondaryAccentForeground)
+                }
             }
-            .frame(width: 56, alignment: .leading)
+            .frame(width: 84, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(theme.surfaceHighlight)
@@ -770,6 +814,21 @@ struct WorkoutDetailView: View {
                 .foregroundStyle(point.recoveryBPM != nil ? theme.success : theme.textTertiary)
                 .frame(width: 44, alignment: .trailing)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.recoveryAccessibilityLabel(label: label, point: point))
+    }
+
+    static func recoveryAccessibilityLabel(label: String, point: SetRecoveryPoint) -> String {
+        var parts = ["\(label), peak \(point.peakHR) beats per minute"]
+        if let rise = point.withinUnitRise {
+            parts.append("climbed \(rise) across the round")
+        }
+        if let drop = point.recoveryBPM, let rest = point.restObservedSeconds {
+            parts.append("fell \(drop) over \(rest) seconds of rest")
+        } else {
+            parts.append("no recovery reading, too little rest observed")
+        }
+        return parts.joined(separator: ", ")
     }
 
     /// Fractional-set volume by muscle for this workout — a quick read on what

@@ -257,19 +257,32 @@ struct YogaPartialHoldCompletionTests {
         )
 
         // This is the view's failed-save recovery sequence: roll back the
-        // uncommitted terminal graph, repair the held model reference, then
-        // reconstruct the runner from complete(persist: false)'s checkpoint.
+        // uncommitted terminal graph and repair scalar state held by the UI.
+        // SwiftData invalidates loaded to-many proxies during rollback, so a
+        // resumed runner must bind to a fresh model instance just as relaunch
+        // recovery and the production isolated terminal transaction do.
         context.rollback()
         sessionBeforeCompletion.restore(session)
-        hub.start(plan: flow, session: session, context: context)
+        #expect(session.endedAt == nil)
 
-        let restoredRunner = try #require(hub.runner(for: session.id))
+        let sessionID = session.id
+        let recoveryContext = ModelContext(container)
+        let recoveredSession = try #require(recoveryContext.fetch(
+            FetchDescriptor<CardioSessionModel>(
+                predicate: #Predicate { $0.id == sessionID }
+            )
+        ).first)
+        hub.start(plan: flow, session: recoveredSession, context: recoveryContext)
+
+        let restoredRunner = try #require(hub.runner(for: sessionID))
         #expect(restoredRunner.currentIndex == 0)
         #expect(restoredRunner.isPaused)
         #expect(!restoredRunner.isFinished)
-        #expect(session.endedAt == nil)
-        #expect(session.splits.isEmpty)
-        _ = container
+        #expect(recoveredSession.endedAt == nil)
+        let recoveredSplits = try recoveryContext.fetch(FetchDescriptor<CardioSplitModel>(
+            predicate: #Predicate { $0.cardioSessionID == sessionID }
+        ))
+        #expect(recoveredSplits.isEmpty)
     }
 
     // MARK: - Skip vs Complete parity

@@ -4,7 +4,7 @@ import Foundation
 /// Backward-compatible preset identity for plans saved before a stable preset
 /// reference was embedded in snapshots. Movement rows are sorted because old
 /// included-preset versions could emit the same work in a different order.
-enum ConditioningPresetLineageSignature {
+nonisolated enum ConditioningPresetLineageSignature {
     static func key(for section: ConditioningSection) -> String {
         let movements = section.movements.map { movement in
             [

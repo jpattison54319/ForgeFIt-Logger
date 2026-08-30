@@ -12,6 +12,7 @@ struct ConditioningPresetEditView: View {
     let section: ConditioningSection
     let exercises: [ExerciseLibraryModel]
     let workouts: [WorkoutModel]
+    var historySnapshot: ExercisePickerHistorySnapshot? = nil
     let onSaved: (ConditioningPresetSelection) -> Void
 
     private var editingSection: ConditioningSection {
@@ -34,6 +35,7 @@ struct ConditioningPresetEditView: View {
             planJSON: ConditioningPlan(sections: [editingSection]).encodedJSON(),
             exercises: exercises,
             workouts: workouts,
+            historySnapshot: historySnapshot,
             navigationTitle: navigationTitle,
             allowsMultipleSections: false,
             showsPresetActions: false,
