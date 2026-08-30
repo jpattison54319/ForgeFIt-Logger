@@ -315,7 +315,7 @@ struct MicrocycleDetailView: View {
             ?? routines.first(where: { $0.id == item.routine.id })
         let completedName = item.completedRoutineID.flatMap { id in
             routines.first(where: { $0.id == id })?.name
-                ?? (id == item.routine.alternateRoutineID ? item.routine.alternateRoutineName : item.routine.name)
+                ?? item.routine.memberName(for: id)
         }
         return HStack(spacing: Space.sm) {
             MicrocycleRoutineStatusMarker(
@@ -343,10 +343,10 @@ struct MicrocycleDetailView: View {
                 HStack(spacing: Space.xs) {
                     routineStartButton(
                         startRoutine,
-                        isAlternate: false
+                        isNext: false
                     )
-                    if let other = alternatingState?.other {
-                        routineStartButton(other, isAlternate: true)
+                    if let next = alternatingState?.next(after: startRoutine.id) {
+                        routineStartButton(next, isNext: true)
                     }
                 }
                 .layoutPriority(1)
@@ -358,28 +358,24 @@ struct MicrocycleDetailView: View {
     @ViewBuilder
     private func routineStartButton(
         _ routine: RoutineModel,
-        isAlternate: Bool
+        isNext: Bool
     ) -> some View {
-        let compactName = routine.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = isAlternate
-            ? (!compactName.isEmpty && compactName.count <= 5 ? "Start \(compactName)" : "Start Alt")
-            : "Start"
-        if isAlternate {
+        if isNext {
             Button {
                 startRoutine(id: routine.id)
             } label: {
-                compactAlternateStartLabel(title)
+                compactAlternateStartLabel("Start \(routine.name)")
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Start \(routine.name)")
-            .accessibilityIdentifier("microcycle-start-alternate-\(routine.id.uuidString)")
+            .accessibilityIdentifier("microcycle-start-next-\(routine.id.uuidString)")
         } else {
             Button {
                 startRoutine(id: routine.id)
             } label: {
-                MicrocycleCompactPrimaryActionLabel(title: title)
+                MicrocycleCompactPrimaryActionLabel(title: "Start")
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Start \(routine.name)")
@@ -390,7 +386,8 @@ struct MicrocycleDetailView: View {
     private func compactAlternateStartLabel(_ title: String) -> some View {
         Text(title)
             .font(.footnote.bold())
-            .lineLimit(1)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
             .minimumScaleFactor(0.85)
             .allowsTightening(true)
             .padding(.horizontal, Space.sm)

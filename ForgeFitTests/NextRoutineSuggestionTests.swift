@@ -220,6 +220,112 @@ struct NextRoutineSuggestionTests {
         #expect(afterOwner?.alternatingWith == owner.name)
     }
 
+    @Test func alternatingCycleOccupiesOneSuggestionSlotAndAdvancesThroughEveryMember() throws {
+        let fixture = fixture()
+        let owner = try #require(fixture.volumeRoutines.first)
+        let second = try #require(fixture.volumeRoutines.last)
+        let third = routine(
+            "Volume C",
+            folderID: fixture.volumeMicrocycleID,
+            position: 2
+        )
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [owner.id, second.id, third.id],
+            createdAt: now.addingTimeInterval(-10 * 86_400)
+        )
+        let all = fixture.volumeRoutines + [third]
+            + fixture.intensityRoutines
+            + fixture.prehabRoutines
+
+        let initial = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.volumeMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(initial?.routineID == owner.id)
+        #expect(initial?.alternatingWith == "Volume B + 1 more")
+
+        let afterOwner = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [completedWorkout(routineID: owner.id, daysAgo: 2)],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.volumeMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(afterOwner?.routineID == second.id)
+        #expect(afterOwner?.alternatingWith == "Volume A + 1 more")
+
+        let afterSecond = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [
+                completedWorkout(routineID: owner.id, daysAgo: 2),
+                completedWorkout(routineID: second.id, daysAgo: 1),
+            ],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.volumeMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(afterSecond?.routineID == third.id)
+        #expect(afterSecond?.alternatingWith == "Volume A + 1 more")
+    }
+
+    @Test func membersRemainIndependentWhenTheirOwnerIsOutsideTheScope() throws {
+        let fixture = fixture()
+        let owner = try #require(fixture.volumeRoutines.first)
+        let second = try #require(fixture.intensityRoutines.first)
+        let third = routine(
+            "Intensity B",
+            folderID: fixture.intensityMicrocycleID,
+            position: 1
+        )
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [owner.id, second.id, third.id],
+            createdAt: now.addingTimeInterval(-10 * 86_400)
+        )
+        let all = fixture.volumeRoutines
+            + fixture.intensityRoutines
+            + [third]
+            + fixture.prehabRoutines
+
+        let initial = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.intensityMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(initial?.routineID == second.id)
+        #expect(initial?.alternatingWith == nil)
+
+        let afterSecond = NextRoutineSuggestion.suggest(
+            routines: all,
+            completedWorkouts: [completedWorkout(routineID: second.id, daysAgo: 1)],
+            alternations: [alternation],
+            activeMicrocycleFolderID: fixture.intensityMicrocycleID,
+            activeMesocycleFolderID: nil,
+            mesocycleSubtree: subtree(fixture),
+            now: now
+        )
+        #expect(afterSecond?.routineID == third.id)
+        #expect(afterSecond?.alternatingWith == nil)
+    }
+
     @Test func noRoutinesReturnsNil() {
         let fixture = fixture()
         let result = NextRoutineSuggestion.suggest(

@@ -379,6 +379,82 @@ struct RoutineOrganizerTests {
         #expect(persistedPositions == [0, 1, 2])
     }
 
+    @Test("A fully colocated alternating cycle moves as one row in library order")
+    func keepsColocatedAlternatingCycleTogether() throws {
+        let source = folder("Source", position: 0)
+        let destination = folder("Destination", position: 1)
+        let owner = routine("A", folderID: source.id, position: 0)
+        let second = routine("B", folderID: source.id, position: 1)
+        let third = routine("C", folderID: source.id, position: 2)
+        let last = routine("Last", folderID: destination.id, position: 0)
+        let alternation = RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: third.id,
+            memberRoutineIDs: [owner.id, third.id, second.id]
+        )
+        let state = RoutineAlternationService.State(
+            alternation: alternation,
+            owner: owner,
+            members: [owner, third, second],
+            due: owner
+        )
+        let draft = RoutineOrganizerDraft(
+            folders: [source, destination],
+            routines: [third, owner, second, last],
+            alternationStates: [state]
+        )
+
+        let cycle = try #require(draft.routines(in: .folder(source.id)).first)
+        #expect(cycle.routineIDs == [owner.id, second.id, third.id])
+        #expect(cycle.name == "A / C / B")
+        #expect(draft.moveRoutine(cycle.id, to: .folder(destination.id)))
+
+        try RoutineOrganizerPersistence.apply(
+            draft,
+            folders: [source, destination],
+            routines: [owner, second, third, last]
+        )
+
+        #expect([owner.folderID, second.folderID, third.folderID].allSatisfy { $0 == destination.id })
+        let persistedPositions: [Int] = [
+            last.position,
+            owner.position,
+            second.position,
+            third.position,
+        ]
+        #expect(persistedPositions == [0, 1, 2, 3])
+    }
+
+    @Test("A cycle split across destinations never partially collapses")
+    func leavesSplitAlternatingCycleIndependent() {
+        let source = folder("Source", position: 0)
+        let destination = folder("Destination", position: 1)
+        let owner = routine("A", folderID: source.id, position: 0)
+        let second = routine("B", folderID: source.id, position: 1)
+        let third = routine("C", folderID: destination.id, position: 0)
+        let alternation = RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [owner.id, second.id, third.id]
+        )
+        let state = RoutineAlternationService.State(
+            alternation: alternation,
+            owner: owner,
+            members: [owner, second, third],
+            due: owner
+        )
+        let draft = RoutineOrganizerDraft(
+            folders: [source, destination],
+            routines: [owner, second, third],
+            alternationStates: [state]
+        )
+
+        #expect(draft.routines(in: .folder(source.id)).map(\.routineIDs) == [[owner.id], [second.id]])
+        #expect(draft.routines(in: .folder(destination.id)).map(\.routineIDs) == [[third.id]])
+    }
+
     @Test("A child folder can return to the root without changing its routines")
     func unnestsFolderWithoutMovingRoutines() throws {
         let parent = folder("Parent", position: 0)

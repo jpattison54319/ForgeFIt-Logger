@@ -129,12 +129,13 @@ struct RoutineLibraryPerformanceSnapshot {
         )
         var stateByRoutineID: [UUID: RoutineAlternationService.State] = [:]
         for state in states {
-            stateByRoutineID[state.owner.id] = state
-            stateByRoutineID[state.partner.id] = state
+            for member in state.members {
+                stateByRoutineID[member.id] = state
+            }
         }
         let configuredIDs = Set(
-            RoutineAlternationService.live(alternations).flatMap {
-                [$0.ownerRoutineID, $0.partnerRoutineID]
+            RoutineAlternationService.resolved(alternations).flatMap {
+                RoutineAlternationService.configuredMemberRoutineIDs(for: $0)
             }
         )
         let canOrganize = RoutineOrganizerDraft(

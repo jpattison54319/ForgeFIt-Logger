@@ -67,6 +67,33 @@ struct RoutineLibraryPerformanceSnapshotTests {
         #expect(RoutineLibraryCardPresentation.make(for: owner).orderedItems.isEmpty)
     }
 
+    @Test("Every member of an alternating cycle receives the shared state")
+    func indexesEveryAlternationMember() throws {
+        let owner = RoutineModel(userID: ForgeFitDemo.userID, name: "A", position: 0)
+        let second = RoutineModel(userID: ForgeFitDemo.userID, name: "B", position: 1)
+        let third = RoutineModel(userID: ForgeFitDemo.userID, name: "C", position: 2)
+        let alternation = RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [owner.id, second.id, third.id]
+        )
+
+        let snapshot = RoutineLibraryPerformanceSnapshot.make(
+            routines: [third, owner, second],
+            folders: [],
+            alternations: [alternation],
+            workouts: [],
+            generation: "three-member"
+        )
+
+        #expect(snapshot.alternationStates.count == 1)
+        #expect(snapshot.alternationStateByRoutineID[owner.id]?.memberIDs == [owner.id, second.id, third.id])
+        #expect(snapshot.alternationStateByRoutineID[second.id]?.alternation.id == alternation.id)
+        #expect(snapshot.alternationStateByRoutineID[third.id]?.alternation.id == alternation.id)
+        #expect(snapshot.configuredAlternationRoutineIDs == [owner.id, second.id, third.id])
+    }
+
     @Test("A persistence signal invalidates the O(1) library key")
     func persistenceSignalInvalidatesKey() {
         let before = RoutineLibraryPerformanceKey(

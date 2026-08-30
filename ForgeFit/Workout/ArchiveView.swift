@@ -342,9 +342,17 @@ struct ArchiveView: View {
     /// fight CloudKit sync and the deduplicator's tombstone rules.
     private func delete(_ routine: RoutineModel) {
         let now = Date()
-        routine.updatedAt = now
-        routine.deletedAt = now
-        modelContext.saveUserChanges()
+        PersistentChangeSaveCenter.shared.perform {
+            try RoutineAlternationService.detachRoutine(
+                routine.id,
+                in: modelContext,
+                now: now,
+                saveChanges: false
+            )
+            routine.updatedAt = now
+            routine.deletedAt = now
+            try modelContext.save()
+        }
     }
 
     private func delete(_ folder: RoutineFolderModel) {

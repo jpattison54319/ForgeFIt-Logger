@@ -43,6 +43,68 @@ struct AlternatingRoutineSlotResolverTests {
         #expect(AlternatingRoutineSlotResolver.presentedRoutine(for: partner, state: state).id == partner.id)
     }
 
+    @Test("Only the owner and due member trade places in a three-routine cycle")
+    func transposesOnlyOwnerAndDueMember() throws {
+        let owner = routine("A")
+        let second = routine("B")
+        let third = routine("C")
+        let base = Date(timeIntervalSinceReferenceDate: 20_000)
+        let alternation = RoutineAlternationModel(
+            userID: owner.userID,
+            ownerRoutineID: owner.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [owner.id, second.id, third.id],
+            createdAt: base
+        )
+
+        let initial = try #require(RoutineAlternationService.state(
+            for: alternation,
+            routines: [owner, second, third],
+            workouts: []
+        ))
+        expectSlots(
+            [owner, second, third],
+            state: initial,
+            presented: [owner, second, third]
+        )
+
+        let ownerCompletion = workout(routine: owner, endedAt: base.addingTimeInterval(100))
+        let secondDue = try #require(RoutineAlternationService.state(
+            for: alternation,
+            routines: [owner, second, third],
+            workouts: [ownerCompletion]
+        ))
+        expectSlots(
+            [owner, second, third],
+            state: secondDue,
+            presented: [second, owner, third]
+        )
+
+        let secondCompletion = workout(routine: second, endedAt: base.addingTimeInterval(200))
+        let thirdDue = try #require(RoutineAlternationService.state(
+            for: alternation,
+            routines: [owner, second, third],
+            workouts: [ownerCompletion, secondCompletion]
+        ))
+        expectSlots(
+            [owner, second, third],
+            state: thirdDue,
+            presented: [third, second, owner]
+        )
+
+        let thirdCompletion = workout(routine: third, endedAt: base.addingTimeInterval(300))
+        let ownerDueAgain = try #require(RoutineAlternationService.state(
+            for: alternation,
+            routines: [owner, second, third],
+            workouts: [ownerCompletion, secondCompletion, thirdCompletion]
+        ))
+        expectSlots(
+            [owner, second, third],
+            state: ownerDueAgain,
+            presented: [owner, second, third]
+        )
+    }
+
     @Test("Completed workouts drive a full owner-partner-owner presentation cycle")
     func followsCompletionHistoryThroughBothSwapDirections() throws {
         let owner = routine("AX400")
@@ -133,5 +195,19 @@ struct AlternatingRoutineSlotResolverTests {
     ) {
         #expect(AlternatingRoutineSlotResolver.presentedRoutine(for: owner, state: state).id == ownerSlot.id)
         #expect(AlternatingRoutineSlotResolver.presentedRoutine(for: partner, state: state).id == partnerSlot.id)
+    }
+
+    private func expectSlots(
+        _ slots: [RoutineModel],
+        state: RoutineAlternationService.State,
+        presented: [RoutineModel]
+    ) {
+        #expect(slots.count == presented.count)
+        for (slot, expected) in zip(slots, presented) {
+            #expect(AlternatingRoutineSlotResolver.presentedRoutine(
+                for: slot,
+                state: state
+            ).id == expected.id)
+        }
     }
 }

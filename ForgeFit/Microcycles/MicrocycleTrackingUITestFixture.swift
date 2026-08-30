@@ -9,12 +9,22 @@ import SwiftData
 /// microcycle, without introducing Health data.
 @MainActor
 enum MicrocycleTrackingUITestFixture {
-    static func seed(in context: ModelContext, now: Date = .now) throws {
+    static func seed(
+        in context: ModelContext,
+        now: Date = .now,
+        includesAlternation: Bool = false
+    ) throws {
         for window in try context.fetch(FetchDescriptor<MicrocycleWindowModel>()) {
             context.delete(window)
         }
         for tracking in try context.fetch(FetchDescriptor<MicrocycleTrackingModel>()) {
             context.delete(tracking)
+        }
+        for workout in try context.fetch(FetchDescriptor<WorkoutModel>()) {
+            context.delete(workout)
+        }
+        for alternation in try context.fetch(FetchDescriptor<RoutineAlternationModel>()) {
+            context.delete(alternation)
         }
         for routine in try context.fetch(FetchDescriptor<RoutineModel>()) {
             context.delete(routine)
@@ -58,10 +68,34 @@ enum MicrocycleTrackingUITestFixture {
         )
         [strengthFolder, conditioningFolder].forEach(context.insert)
         [upper, lower, intervals].forEach(context.insert)
-        let strengthRoutines = [
-            MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0),
-            MicrocycleRoutineSnapshot(id: lower.id, name: lower.name, position: 1),
-        ]
+        let strengthRoutines: [MicrocycleRoutineSnapshot]
+        if includesAlternation {
+            let createdAt = today.addingTimeInterval(-7_200)
+            context.insert(RoutineAlternationModel(
+                userID: ForgeFitDemo.userID,
+                ownerRoutineID: upper.id,
+                partnerRoutineID: lower.id,
+                memberRoutineIDs: [upper.id, lower.id],
+                createdAt: createdAt,
+                updatedAt: createdAt
+            ))
+            strengthRoutines = [
+                MicrocycleRoutineSnapshot(
+                    id: upper.id,
+                    name: upper.name,
+                    position: 0,
+                    alternateRoutineID: lower.id,
+                    alternateRoutineName: lower.name,
+                    memberRoutineIDs: [upper.id, lower.id],
+                    memberRoutineNames: [upper.name, lower.name]
+                ),
+            ]
+        } else {
+            strengthRoutines = [
+                MicrocycleRoutineSnapshot(id: upper.id, name: upper.name, position: 0),
+                MicrocycleRoutineSnapshot(id: lower.id, name: lower.name, position: 1),
+            ]
+        }
 
         let stoppedStart = calendar.date(byAdding: .day, value: -14, to: today)!
         let stoppedAt = calendar.date(byAdding: .hour, value: 12, to:

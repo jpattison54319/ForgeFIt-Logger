@@ -25,6 +25,7 @@ enum AppPreferenceKeys {
         "trainingFocusRaw",
         ShareCardStyle.preferenceKey,
         HomeQuickStartAction.preferenceKey,
+        FeatureDiscoveryStore.defaultsKey,
         AppQuickActionStore.key,
         CyclePreferenceMigration.activeMesocycleKey,
         CyclePreferenceMigration.activeMicrocycleKey,

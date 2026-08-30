@@ -2,274 +2,392 @@ import ForgeData
 import SwiftData
 import SwiftUI
 
-/// Creates or removes one alternating pair with routine and folder context
-/// visible at the decision point. Already-paired routines remain visible but
-/// unavailable, so the constraint never needs explanatory instructions.
+/// Immutable editor input assembled when the user chooses Manage. Keeping the
+/// library/history projections here prevents SwiftUI from rebuilding them as
+/// the presented sheet's view value is reconstructed.
+@MainActor
+struct RoutineAlternationEditorPayload: Identifiable {
+    let id = UUID()
+    let anchor: RoutineModel
+    let configuredAlternation: RoutineAlternationModel?
+    let configuredAlternationUpdatedAt: Date?
+    let routineByID: [UUID: RoutineModel]
+    let folderPathByRoutineID: [UUID: String]
+    let claimedRoutineIDs: Set<UUID>
+    let initialMemberIDs: [UUID]
+    let latestCompletionByMemberID: [UUID: RoutineAlternationDraft.Completion]
+
+    init(
+        anchor: RoutineModel,
+        routines: [RoutineModel],
+        folders: [RoutineFolderModel],
+        alternations: [RoutineAlternationModel],
+        workouts: [WorkoutModel]
+    ) {
+        self.anchor = anchor
+
+        let configured = RoutineAlternationService.alternation(
+            containing: anchor.id,
+            in: alternations
+        )
+        configuredAlternation = configured
+        configuredAlternationUpdatedAt = configured?.updatedAt
+
+        let canonicalRoutines = RoutineDeduplicator.canonicalRoutines(routines)
+        routineByID = Dictionary(
+            canonicalRoutines.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        folderPathByRoutineID = Self.makeFolderPaths(
+            routines: canonicalRoutines,
+            folders: folders
+        )
+
+        let configuredIDs = configured.map {
+            RoutineAlternationService.configuredMemberRoutineIDs(for: $0)
+        } ?? [anchor.id]
+        initialMemberIDs = configuredIDs.isEmpty ? [anchor.id] : configuredIDs
+        let joinedAtByMemberID = configured.map { alternation in
+            Dictionary(
+                uniqueKeysWithValues: RoutineAlternationService.configuration(for: alternation)
+                    .members
+                    .map { ($0.routineID, $0.joinedAt) }
+            )
+        } ?? [:]
+
+        var claimed: Set<UUID> = []
+        for alternation in RoutineAlternationService.resolved(alternations)
+            where alternation.id != configured?.id {
+            claimed.formUnion(
+                RoutineAlternationService.configuredMemberRoutineIDs(for: alternation)
+            )
+        }
+        claimedRoutineIDs = claimed
+        latestCompletionByMemberID = configured == nil ? [:] : Self.latestCompletions(
+            among: Set(initialMemberIDs),
+            workouts: workouts,
+            joinedAtByMemberID: joinedAtByMemberID
+        )
+    }
+
+    private static func latestCompletions(
+        among memberIDs: Set<UUID>,
+        workouts: [WorkoutModel],
+        joinedAtByMemberID: [UUID: Date]
+    ) -> [UUID: RoutineAlternationDraft.Completion] {
+        var result: [UUID: RoutineAlternationDraft.Completion] = [:]
+        for workout in workouts {
+            guard workout.deletedAt == nil,
+                  let routineID = workout.routineID,
+                  memberIDs.contains(routineID),
+                  let endedAt = workout.endedAt,
+                  endedAt >= joinedAtByMemberID[routineID, default: .distantFuture] else {
+                continue
+            }
+            let candidate = RoutineAlternationDraft.Completion(
+                endedAt: endedAt,
+                workoutID: workout.id
+            )
+            if let existing = result[routineID] {
+                if existing.endedAt > candidate.endedAt { continue }
+                if existing.endedAt == candidate.endedAt,
+                   existing.workoutID.uuidString >= candidate.workoutID.uuidString {
+                    continue
+                }
+            }
+            result[routineID] = candidate
+        }
+        return result
+    }
+
+    private static func makeFolderPaths(
+        routines: [RoutineModel],
+        folders: [RoutineFolderModel]
+    ) -> [UUID: String] {
+        let folderByID = Dictionary(
+            folders.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return Dictionary(uniqueKeysWithValues: routines.map { routine in
+            let path: String
+            if let folderID = routine.folderID, let folder = folderByID[folderID] {
+                if let parentID = folder.parentID, let parent = folderByID[parentID] {
+                    path = "\(parent.name) › \(folder.name)"
+                } else {
+                    path = folder.name
+                }
+            } else {
+                path = "Ungrouped"
+            }
+            return (routine.id, path)
+        })
+    }
+}
+
+/// Stages the complete ordered membership of one alternating routine cycle.
+/// Library order and folder membership are never changed here.
 struct RoutineAlternationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.theme) private var theme
 
     let anchor: RoutineModel
-    let routines: [RoutineModel]
-    let folders: [RoutineFolderModel]
-    let alternations: [RoutineAlternationModel]
-    let workouts: [WorkoutModel]
-    let exercises: [ExerciseLibraryModel]
-    let setupNotes: [UserExerciseNoteModel]
 
-    @State private var searchText = ""
-    @State private var errorMessage: String?
-    @State private var showingRemoveConfirmation = false
+    private let configuredAlternation: RoutineAlternationModel?
+    private let configuredAlternationUpdatedAt: Date?
+    private let routineByID: [UUID: RoutineModel]
+    private let folderPathByRoutineID: [UUID: String]
+    private let claimedRoutineIDs: Set<UUID>
 
-    private var state: RoutineAlternationService.State? {
-        RoutineAlternationService.state(
-            containing: anchor.id,
-            alternations: alternations,
-            routines: routines,
-            workouts: workouts
-        )
+    @State private var draft: RoutineAlternationDraft
+    @State private var showingRoutinePicker = false
+    @State private var showingDiscardConfirmation = false
+    @State private var showingStopConfirmation = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
+
+    init(payload: RoutineAlternationEditorPayload) {
+        anchor = payload.anchor
+        configuredAlternation = payload.configuredAlternation
+        configuredAlternationUpdatedAt = payload.configuredAlternationUpdatedAt
+        routineByID = payload.routineByID
+        folderPathByRoutineID = payload.folderPathByRoutineID
+        claimedRoutineIDs = payload.claimedRoutineIDs
+        _draft = State(initialValue: RoutineAlternationDraft(
+            memberIDs: payload.initialMemberIDs,
+            latestCompletionByMemberID: payload.latestCompletionByMemberID
+        ))
     }
 
-    private var configuredAlternation: RoutineAlternationModel? {
-        RoutineAlternationService.alternation(containing: anchor.id, in: alternations)
-    }
-
-    private var choices: [RoutineModel] {
-        routines
-            .filter {
-                $0.id != anchor.id
-                    && $0.deletedAt == nil
-                    && $0.archivedAt == nil
-                    && (searchText.isEmpty || $0.name.localizedStandardContains(searchText))
-            }
-            .sorted {
-                if $0.name != $1.name {
-                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-                }
-                return $0.id.uuidString < $1.id.uuidString
-            }
+    private var hasUnavailableMembers: Bool {
+        draft.memberIDs.contains { memberID in
+            guard let routine = routineByID[memberID] else { return true }
+            return routine.deletedAt != nil || routine.archivedAt != nil
+        }
     }
 
     var body: some View {
+        let unavailableMembers = hasUnavailableMembers
+        let dueMemberID = draft.dueMemberID
+
         NavigationStack {
-            Group {
-                if let state {
-                    pairedContent(state)
-                } else if let configuredAlternation {
-                    unavailablePairContent(configuredAlternation)
-                } else {
-                    pickerContent
+            List {
+                Section {
+                    ForEach(Array(draft.memberIDs.enumerated()), id: \.element) { index, memberID in
+                        let routine = routineByID[memberID]
+                        RoutineAlternationMemberRow(
+                            routine: routine,
+                            fallbackName: "Unavailable Routine",
+                            location: memberLocation(for: routine),
+                            position: index + 1,
+                            memberCount: draft.memberIDs.count,
+                            isNext: !unavailableMembers && dueMemberID == memberID,
+                            allowsRemoval: configuredAlternation != nil
+                                || (memberID != anchor.id && draft.memberIDs.count > 1),
+                            removalStopsAlternation: configuredAlternation != nil
+                                && draft.memberIDs.count <= 2,
+                            onRemove: { draft.remove(memberID) },
+                            onStopAlternating: stopAlternating
+                        )
+                    }
+                    .onMove(perform: draft.move)
+
+                    Button {
+                        showingRoutinePicker = true
+                    } label: {
+                        Label("Add Routine", systemImage: "plus.circle.fill")
+                            .font(.bodyStrong)
+                            .foregroundStyle(theme.accentForeground)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .minimumTouchTarget()
+                    }
+                    .accessibilityIdentifier("add-alternating-routine")
+                    .listRowBackground(theme.background)
+                } header: {
+                    Text("Order")
+                }
+
+                if unavailableMembers {
+                    Section {
+                        Label(
+                            "Restore or remove unavailable routines before saving changes.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("alternation-unavailable-members")
+                        .listRowBackground(theme.background)
+                    }
+                }
+
+                if configuredAlternation != nil {
+                    Section {
+                        Button(
+                            "Stop Alternating",
+                            systemImage: "link.badge.minus",
+                            role: .destructive
+                        ) {
+                            showingStopConfirmation = true
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .listRowBackground(theme.background)
+                        .accessibilityIdentifier("remove-routine-alternation")
+                        .confirmationDialog(
+                            "Stop alternating these routines?",
+                            isPresented: $showingStopConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Stop Alternating", role: .destructive, action: stopAlternating)
+                            Button("Cancel", role: .cancel) { }
+                        } message: {
+                            Text("The routines stay in your library and remain available to start.")
+                        }
+                    }
                 }
             }
-            .navigationTitle(configuredAlternation == nil ? "Choose Alternate" : "Alternating Routine")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(theme.background)
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Alternating Routines")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done", action: dismiss.callAsFunction)
-                }
-            }
-            .navigationDestination(for: RoutineModel.self) { routine in
-                RoutineDetailView(routine: routine, exercises: exercises, setupNotes: setupNotes)
-            }
-        }
-        .alert("Couldn't update alternation", isPresented: errorIsPresented) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-        .confirmationDialog(
-            "Remove alternating routine?",
-            isPresented: $showingRemoveConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Remove Alternation", role: .destructive, action: removeAlternation)
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Both routines stay in your library and remain available to start.")
-        }
-    }
-
-    private var pickerContent: some View {
-        List {
-            Section {
-                ForEach(choices) { routine in
-                    let configured = RoutineAlternationService.alternation(
-                        containing: routine.id,
-                        in: alternations
-                    )
-                    let existing = RoutineAlternationService.state(
-                        containing: routine.id,
-                        alternations: alternations,
-                        routines: routines,
-                        workouts: workouts
-                    )
-                    Button {
-                        createPair(with: routine)
-                    } label: {
-                        HStack(spacing: Space.md) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(routine.name)
-                                    .font(.bodyStrong)
-                                    .foregroundStyle(theme.textPrimary)
-                                Text(existing.map { "Alternates with \(counterpart(to: routine, in: $0).name)" }
-                                    ?? (configured == nil ? folderPath(for: routine) : "Alternate unavailable"))
-                                    .font(.caption)
-                                    .foregroundStyle(configured == nil ? theme.textSecondary : theme.textTertiary)
-                            }
-                            Spacer()
-                            Image(systemName: configured == nil ? "plus.circle" : "arrow.triangle.2.circlepath")
-                                .foregroundStyle(configured == nil ? theme.accent : theme.textTertiary)
-                                .accessibilityHidden(true)
+                    Button("Cancel", action: cancel)
+                        .confirmationDialog(
+                            "Discard alternation changes?",
+                            isPresented: $showingDiscardConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Discard Changes", role: .destructive, action: dismiss.callAsFunction)
+                            Button("Keep Editing", role: .cancel) { }
+                        } message: {
+                            Text("The cycle will stay as it was before you opened this screen.")
                         }
-                    }
-                    .disabled(configured != nil)
-                    .accessibilityIdentifier("choose-alternate-\(routine.id.uuidString)")
                 }
-            } header: {
-                Text("Alternate with \(anchor.name)")
-            }
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(theme.background)
-        .searchable(text: $searchText, prompt: "Search routines")
-        .overlay {
-            if choices.isEmpty {
-                ContentUnavailableView.search
-            }
-        }
-    }
-
-    private func pairedContent(_ state: RoutineAlternationService.State) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                Card {
-                    VStack(spacing: Space.md) {
-                        pairRow(state.owner, isNext: state.due.id == state.owner.id)
-                        Divider().overlay(theme.separator)
-                        pairRow(state.partner, isNext: state.due.id == state.partner.id)
-                    }
-                }
-
-                Button("Remove Alternation", systemImage: "link.badge.minus", role: .destructive) {
-                    showingRemoveConfirmation = true
-                }
-                .font(.bodyStrong)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("remove-routine-alternation")
-            }
-            .padding(Space.lg)
-        }
-        .background(theme.background)
-    }
-
-    private func unavailablePairContent(_ alternation: RoutineAlternationModel) -> some View {
-        let counterpartID = alternation.ownerRoutineID == anchor.id
-            ? alternation.partnerRoutineID
-            : alternation.ownerRoutineID
-        let counterpart = routines.first { $0.id == counterpartID }
-        return ScrollView {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                Card {
-                    HStack(spacing: Space.md) {
-                        Image(systemName: "archivebox")
-                            .foregroundStyle(theme.textSecondary)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(counterpart?.name ?? "Alternate routine")
-                                .font(.bodyStrong)
-                                .foregroundStyle(theme.textPrimary)
-                            Text(counterpart?.archivedAt == nil ? "Unavailable" : "Archived")
-                                .font(.caption)
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                    }
-                }
-
-                Text("Restore the routine to resume alternating, or remove the alternation. Your routines are not deleted.")
-                    .font(.label)
-                    .foregroundStyle(theme.textSecondary)
-
-                Button("Remove Alternation", systemImage: "link.badge.minus", role: .destructive) {
-                    showingRemoveConfirmation = true
-                }
-                .font(.bodyStrong)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .accessibilityIdentifier("remove-unavailable-routine-alternation")
-            }
-            .padding(Space.lg)
-        }
-        .background(theme.background)
-    }
-
-    private func pairRow(_ routine: RoutineModel, isNext: Bool) -> some View {
-        NavigationLink(value: routine) {
-            HStack(spacing: Space.md) {
-                Image(systemName: isNext ? "play.circle.fill" : "arrow.triangle.2.circlepath")
-                    .foregroundStyle(isNext ? theme.accent : theme.textSecondary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(routine.name)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save changes", systemImage: "checkmark", action: save)
+                        .labelStyle(.iconOnly)
                         .font(.bodyStrong)
-                        .foregroundStyle(theme.textPrimary)
-                    Text(isNext ? "Next" : folderPath(for: routine))
-                        .font(.caption)
-                        .foregroundStyle(isNext ? theme.accent : theme.textSecondary)
+                        .disabled(!draft.canSave || unavailableMembers)
+                        .accessibilityIdentifier("save-routine-alternation")
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(theme.textTertiary)
-                    .accessibilityHidden(true)
             }
-            .contentShape(Rectangle())
-            .minimumTouchTarget()
+            .navigationDestination(isPresented: $showingRoutinePicker) {
+                RoutineAlternationPicker(
+                    routines: Array(routineByID.values),
+                    existingMemberIDs: Set(draft.memberIDs),
+                    claimedRoutineIDs: claimedRoutineIDs,
+                    folderPathByRoutineID: folderPathByRoutineID
+                ) { routine in
+                    draft.add(routine.id)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(routine.name), \(isNext ? "next" : "alternate")")
+        .interactiveDismissDisabled(draft.hasChanges)
+        .alert("Couldn't update alternation", isPresented: $showingError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
+        .accessibilityIdentifier("routine-alternation-organizer")
     }
 
-    private func folderPath(for routine: RoutineModel) -> String {
-        guard let folderID = routine.folderID,
-              let folder = folders.first(where: { $0.id == folderID }) else { return "Ungrouped" }
-        guard let parentID = folder.parentID,
-              let parent = folders.first(where: { $0.id == parentID }) else { return folder.name }
-        return "\(parent.name) › \(folder.name)"
+    private func memberLocation(for routine: RoutineModel?) -> String {
+        guard let routine else { return "Unavailable" }
+        if routine.deletedAt != nil { return "Unavailable" }
+        if routine.archivedAt != nil {
+            return "Archived · \(folderPathByRoutineID[routine.id, default: "Ungrouped"])"
+        }
+        return folderPathByRoutineID[routine.id, default: "Ungrouped"]
     }
 
-    private var errorIsPresented: Binding<Bool> {
-        Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )
+    private func cancel() {
+        if draft.hasChanges {
+            showingDiscardConfirmation = true
+        } else {
+            dismiss()
+        }
     }
 
-    private func counterpart(
-        to routine: RoutineModel,
-        in state: RoutineAlternationService.State
-    ) -> RoutineModel {
-        state.owner.id == routine.id ? state.partner : state.owner
-    }
+    private func save() {
+        guard draft.canSave else { return }
+        if configuredAlternation != nil, !draft.hasChanges {
+            dismiss()
+            return
+        }
+        guard !hasUnavailableMembers else {
+            presentError("Restore or remove unavailable routines before saving changes.")
+            return
+        }
+        let orderedMembers = draft.memberIDs.compactMap { routineByID[$0] }
+        guard orderedMembers.count == draft.memberIDs.count else {
+            presentError("Your routine library changed while this screen was open. Close it and try again.")
+            return
+        }
 
-    private func createPair(with partner: RoutineModel) {
         do {
-            try RoutineAlternationService.create(owner: anchor, partner: partner, in: modelContext)
-            WatchLink.shared.invalidateRoutineSummaryCache()
-            WatchLink.shared.publishState(policy: .immediate)
+            if let configuredAlternation {
+                guard configuredAlternationIsCurrent(configuredAlternation) else {
+                    presentError("This alternating cycle changed while this screen was open. Close it and try again.")
+                    return
+                }
+                try RoutineAlternationService.update(
+                    configuredAlternation,
+                    orderedMembers: orderedMembers,
+                    in: modelContext,
+                    now: .now
+                )
+            } else {
+                try RoutineAlternationService.create(
+                    owner: anchor,
+                    members: orderedMembers,
+                    in: modelContext,
+                    now: .now
+                )
+            }
+            publishRoutineChanges()
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(error.localizedDescription)
         }
     }
 
-    private func removeAlternation() {
+    private func stopAlternating() {
+        guard let configuredAlternation else {
+            dismiss()
+            return
+        }
+        guard configuredAlternationIsCurrent(configuredAlternation) else {
+            presentError("This alternating cycle changed while this screen was open. Close it and try again.")
+            return
+        }
         do {
-            try RoutineAlternationService.removeAll(containing: anchor.id, in: modelContext)
-            WatchLink.shared.invalidateRoutineSummaryCache()
-            WatchLink.shared.publishState(policy: .immediate)
+            try RoutineAlternationService.remove(configuredAlternation, in: modelContext)
+            publishRoutineChanges()
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(error.localizedDescription)
         }
     }
+
+    private func configuredAlternationIsCurrent(
+        _ alternation: RoutineAlternationModel
+    ) -> Bool {
+        alternation.deletedAt == nil
+            && alternation.updatedAt == configuredAlternationUpdatedAt
+            && RoutineAlternationService.configuredMemberRoutineIDs(for: alternation)
+                == draft.originalMemberIDs
+    }
+
+    private func publishRoutineChanges() {
+        WatchLink.shared.invalidateRoutineSummaryCache()
+        WatchLink.shared.publishState(policy: .immediate)
+    }
+
+    private func presentError(_ message: String) {
+        errorMessage = message
+        showingError = true
+    }
+
 }

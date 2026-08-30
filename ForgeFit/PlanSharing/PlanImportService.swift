@@ -240,14 +240,22 @@ enum PlanImportService {
 
         for source in document.alternations {
             guard let ownerID = routineMap[source.ownerRoutineID],
-                  let partnerID = routineMap[source.partnerRoutineID] else {
+                  let partnerID = routineMap[source.partnerRoutineID],
+                  source.hasValidMemberRoutineIDs else {
                 throw ImportError.invalid("An alternating routine is unavailable.")
+            }
+            let memberIDs = try source.resolvedMemberRoutineIDs.map { sourceID in
+                guard let mappedID = routineMap[sourceID] else {
+                    throw ImportError.invalid("An alternating routine is unavailable.")
+                }
+                return mappedID
             }
             context.insert(RoutineAlternationModel(
                 id: UUID(),
                 userID: userID,
                 ownerRoutineID: ownerID,
                 partnerRoutineID: partnerID,
+                memberRoutineIDs: memberIDs,
                 createdAt: .now,
                 updatedAt: .now
             ))
@@ -293,25 +301,33 @@ enum PlanImportService {
         if document.formatVersion < 2, !document.alternations.isEmpty {
             throw ImportError.invalid("Its alternating routines require a newer format version.")
         }
+        if document.formatVersion < 4,
+           document.alternations.contains(where: { $0.memberRoutineIDs != nil }) {
+            throw ImportError.invalid("Its alternating routine groups require a newer format version.")
+        }
         var claimedRoutineIDs: Set<UUID> = []
         for alternation in document.alternations {
-            guard alternation.ownerRoutineID != alternation.partnerRoutineID,
-                  routineIDSet.contains(alternation.ownerRoutineID),
-                  routineIDSet.contains(alternation.partnerRoutineID),
-                  claimedRoutineIDs.insert(alternation.ownerRoutineID).inserted,
-                  claimedRoutineIDs.insert(alternation.partnerRoutineID).inserted else {
-                throw ImportError.invalid("An alternating routine pair is invalid.")
+            let memberIDs = alternation.resolvedMemberRoutineIDs
+            guard alternation.hasValidMemberRoutineIDs,
+                  memberIDs.allSatisfy(routineIDSet.contains),
+                  memberIDs.allSatisfy({ claimedRoutineIDs.insert($0).inserted }) else {
+                throw ImportError.invalid("An alternating routine group is invalid.")
             }
         }
 
         switch document.kind {
         case .routine:
+            let hasValidStructure: Bool = {
+                if document.alternations.isEmpty {
+                    return document.routines.count == 1
+                }
+                guard document.alternations.count == 1,
+                      let alternation = document.alternations.first else { return false }
+                return Set(alternation.resolvedMemberRoutineIDs) == routineIDSet
+            }()
             guard document.folders.isEmpty,
-                  (1...2).contains(document.routines.count),
                   document.routines.allSatisfy({ $0.folderID == nil }),
-                  (document.routines.count == 1
-                    ? document.alternations.isEmpty
-                    : document.alternations.count == 1) else {
+                  hasValidStructure else {
                 throw ImportError.invalid("The routine structure is invalid.")
             }
         case .microcycle:
@@ -443,13 +459,9 @@ enum PlanImportService {
         let companionIDs = Set(routines.filter { $0.folderID == nil }.map(\.id))
         guard !scopedIDs.isEmpty else { return false }
         let linkedCompanions = Set(alternations.flatMap { alternation -> [UUID] in
-            if scopedIDs.contains(alternation.ownerRoutineID), companionIDs.contains(alternation.partnerRoutineID) {
-                return [alternation.partnerRoutineID]
-            }
-            if scopedIDs.contains(alternation.partnerRoutineID), companionIDs.contains(alternation.ownerRoutineID) {
-                return [alternation.ownerRoutineID]
-            }
-            return []
+            let memberIDs = Set(alternation.resolvedMemberRoutineIDs)
+            guard !memberIDs.isDisjoint(with: scopedIDs) else { return [] }
+            return Array(memberIDs.intersection(companionIDs))
         })
         return linkedCompanions == companionIDs
     }

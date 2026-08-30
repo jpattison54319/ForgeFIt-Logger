@@ -42,6 +42,8 @@ struct HomeView: View {
     @State private var reviewRequest: CoachReviewRequest?
     @State private var showingExperiments = false
     @State private var loggingExperiment: ExperimentModel?
+    @State private var discoveryOffer: FeatureDiscoveryOffer?
+    @State private var discoveryTrackingFolder: RoutineFolderModel?
 
     /// New (unopened) Wrapped reports — drives the "Report Available" card,
     /// which disappears the moment the story is opened (viewedAt set).
@@ -83,6 +85,7 @@ struct HomeView: View {
     let routines: [RoutineModel]
     let exercises: [ExerciseLibraryModel]
     let setupNotes: [UserExerciseNoteModel]
+    let featureDiscovery: FeatureDiscoveryStore
     let isRenderActive: Bool
 
     // Recovery reports are full-history passes — memoized so the always-alive
@@ -219,11 +222,28 @@ struct HomeView: View {
         MicrocycleTrackingService.activeTracking(microcycleTrackings)
     }
 
+    private var retainedMicrocycleTrackings: [MicrocycleTrackingModel] {
+        microcycleTrackings.filter { $0.deletedAt == nil }
+    }
+
     private var activeMicrocycleWindow: MicrocycleWindowModel? {
         guard let activeMicrocycle else { return nil }
         return MicrocycleTrackingService.currentWindow(
             for: activeMicrocycle,
             windows: microcycleWindows
+        )
+    }
+
+    private var featureDiscoveryTaskKey: HomePerformanceRevision.FeatureDiscoveryKey {
+        HomePerformanceRevision.featureDiscovery(
+            persistenceRevision: renderRevisions.homeSuggestion,
+            workoutCount: workouts.count,
+            routineCount: routines.count,
+            folderCount: allFolders.count,
+            trackingCount: retainedMicrocycleTrackings.count,
+            latestTrackingUpdate: retainedMicrocycleTrackings.first?.updatedAt,
+            discoveryRevision: featureDiscovery.revision,
+            surfaceIsActive: isRenderActive
         )
     }
 
@@ -556,6 +576,20 @@ struct HomeView: View {
                         )
                     }
 
+                    if activeMicrocycle == nil,
+                       retainedMicrocycleTrackings.isEmpty,
+                       let discoveryOffer {
+                        FeatureDiscoveryOfferCard(
+                            offer: discoveryOffer,
+                            onAccept: presentDiscoverySetup,
+                            onDismiss: dismissDiscoveryOffer
+                        )
+                        .dismissesQuickStartEdit(
+                            isEditing: quickStartEditing,
+                            dismiss: dismissQuickStartEdit
+                        )
+                    }
+
                     if let activeExperiment {
                         ActiveExperimentHomeCard(
                             experiment: activeExperiment,
@@ -676,6 +710,9 @@ struct HomeView: View {
                 }
                 await refreshDashboardAnalytics(for: analyticsRequestKey)
             }
+            .task(id: featureDiscoveryTaskKey) {
+                await refreshFeatureDiscoveryOffer()
+            }
             .fullScreenCover(item: $presentedWrappedReport) { report in
                 WrappedStoryView(report: report)
             }
@@ -709,6 +746,27 @@ struct HomeView: View {
                     trackers: trackers(for: experiment),
                     entries: entries(for: experiment)
                 )
+            }
+            .sheet(item: $discoveryTrackingFolder) { folder in
+                MicrocycleSetupView(
+                    folder: folder,
+                    routines: liveRoutines(in: folder)
+                ) { startDate, durationDays in
+                    _ = try MicrocycleTrackingService.start(
+                        folder: folder,
+                        routines: routines,
+                        folders: RoutineDeduplicator.canonicalFolders(allFolders),
+                        startDate: startDate,
+                        durationDays: durationDays,
+                        in: modelContext
+                    )
+                    activeMicrocycleFolderRaw = folder.id.uuidString
+                    if let parentID = folder.parentID {
+                        activeMesocycleFolderRaw = parentID.uuidString
+                    }
+                    featureDiscovery.markAdopted(.microcycleTracking)
+                    discoveryOffer = nil
+                }
             }
             .sheet(isPresented: $showQuickStartAdd) {
                 QuickStartAddSheet(
@@ -804,6 +862,54 @@ struct HomeView: View {
         RoutineDeduplicator.canonicalRoutines(routines)
             .filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }
             .sorted { $0.position < $1.position }
+    }
+
+    private func liveRoutines(in folder: RoutineFolderModel) -> [RoutineModel] {
+        routines.filter {
+            $0.folderID == folder.id
+                && $0.deletedAt == nil
+                && $0.archivedAt == nil
+        }
+        .sorted { $0.position < $1.position }
+    }
+
+    private func refreshFeatureDiscoveryOffer() async {
+        guard isRenderActive else { return }
+        await Task.yield()
+        guard !Task.isCancelled, isRenderActive else { return }
+
+        featureDiscovery.reloadIfChanged()
+        if !retainedMicrocycleTrackings.isEmpty {
+            featureDiscovery.markAdopted(.microcycleTracking)
+            discoveryOffer = nil
+            return
+        }
+        discoveryOffer = FeatureDiscoveryCoordinator.offer(
+            workouts: workouts,
+            routines: routines,
+            folders: allFolders,
+            trackings: microcycleTrackings,
+            store: featureDiscovery
+        )
+    }
+
+    private func presentDiscoverySetup() {
+        guard let discoveryOffer,
+              let folder = RoutineDeduplicator.canonicalFolders(allFolders).first(where: {
+                  $0.id == discoveryOffer.targetID
+                      && $0.deletedAt == nil
+                      && $0.archivedAt == nil
+              }),
+              !liveRoutines(in: folder).isEmpty else {
+            self.discoveryOffer = nil
+            return
+        }
+        discoveryTrackingFolder = folder
+    }
+
+    private func dismissDiscoveryOffer() {
+        featureDiscovery.dismiss(.microcycleTracking)
+        discoveryOffer = nil
     }
 
     private func microcycleNeedsAttentionCard(
@@ -1503,26 +1609,9 @@ struct HomeView: View {
                     )
                 }
 
-                Button {
+                QuickStartAddTile {
                     showQuickStartAdd = true
-                } label: {
-                    VStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 19, weight: .bold))
-                        Text("Add")
-                            .font(.tag)
-                    }
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 104, height: 76)
-                    .background(theme.surface.opacity(0.34))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                            .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
-                            .foregroundStyle(theme.separator)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                 }
-                .buttonStyle(PressableButtonStyle())
             }
         }
     }
@@ -1855,6 +1944,35 @@ private struct QuickStartTile: View {
         .animation(.easeInOut(duration: 0.18), value: isEditing)
         .animation(.easeInOut(duration: 0.16), value: isDragging)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+/// Kept as a concrete view boundary because nesting this label directly in
+/// Home's already-large quick-start builder can overflow Swift metadata
+/// instantiation on current iOS beta runtimes.
+private struct QuickStartAddTile: View {
+    @Environment(\.theme) private var theme
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 19, weight: .bold))
+                Text("Add")
+                    .font(.tag)
+            }
+            .foregroundStyle(theme.textSecondary)
+            .frame(width: 104, height: 76)
+            .background(theme.surface.opacity(0.34))
+            .overlay {
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .stroke(style: StrokeStyle(lineWidth: 1.3, dash: [6, 5]))
+                    .foregroundStyle(theme.separator)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        }
+        .buttonStyle(PressableButtonStyle())
     }
 }
 

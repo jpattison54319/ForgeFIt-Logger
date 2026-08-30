@@ -71,7 +71,7 @@ struct WorkoutHomeView: View {
     @State private var trackingFolder: RoutineFolderModel?
     @State private var activationOfferFolder: RoutineFolderModel?
     @State private var editingMicrocycleTracking: MicrocycleTrackingModel?
-    @State private var alternationRoutine: RoutineModel?
+    @State private var alternationEditor: RoutineAlternationEditorPayload?
 
     /// A mesocycle can contain several microcycles. Home uses the active
     /// microcycle first, then its broader mesocycle, then the full library.
@@ -423,16 +423,8 @@ struct WorkoutHomeView: View {
                     )
                 }
             }
-            .sheet(item: $alternationRoutine) { routine in
-                RoutineAlternationSheet(
-                    anchor: routine,
-                    routines: routines,
-                    folders: library.folders,
-                    alternations: alternations,
-                    workouts: workouts,
-                    exercises: exercises,
-                    setupNotes: setupNotes
-                )
+            .sheet(item: $alternationEditor) { payload in
+                RoutineAlternationSheet(payload: payload)
             }
         }
         .onChange(of: tabRootRequestID) { navigationPath = NavigationPath() }
@@ -883,7 +875,15 @@ struct WorkoutHomeView: View {
             hasConfiguredAlternation: hasConfiguredAlternation,
             onStart: start,
             onEdit: { edit(routine) },
-            onManageAlternation: { alternationRoutine = routine },
+            onManageAlternation: {
+                alternationEditor = RoutineAlternationEditorPayload(
+                    anchor: routine,
+                    routines: routines,
+                    folders: library.folders,
+                    alternations: alternations,
+                    workouts: workouts
+                )
+            },
             onDelete: { routinePendingDelete = routine },
             onDuplicate: { duplicate(routine) },
             onArchive: { archive(routine) },
@@ -991,10 +991,10 @@ struct WorkoutHomeView: View {
     }
 
     private func delete(_ routine: RoutineModel) {
-        let now = Date()
+        let now = Date.now
         PersistentChangeSaveCenter.shared.perform {
-            try RoutineAlternationService.removeAll(
-                containing: routine.id,
+            try RoutineAlternationService.detachRoutine(
+                routine.id,
                 in: modelContext,
                 now: now,
                 saveChanges: false
@@ -1071,11 +1071,11 @@ private struct RoutineCard: View {
     let onArchive: () -> Void
     var onToggleSummary: () -> Void = {}
 
-    private var pairedRoutine: RoutineModel? {
-        guard let alternationState else { return nil }
-        return alternationState.owner.id == routine.id
-            ? alternationState.partner
-            : alternationState.owner
+    private var nextRoutine: RoutineModel? {
+        alternationState?.next(after: routine.id)
+    }
+    private var alternationSummary: String? {
+        alternationState?.memberSummary(excluding: routine.id)
     }
     private var isNext: Bool {
         alternationState?.due.id == routine.id
@@ -1124,21 +1124,22 @@ private struct RoutineCard: View {
                         .accessibilityLabel("Start \(routine.name)")
                         .accessibilityIdentifier("start-routine-\(routine.name)")
                         Menu {
-                            if let pairedRoutine {
+                            if let nextRoutine {
                                 Button(
-                                    "Start \(pairedRoutine.name) Instead",
+                                    "Start Next",
                                     systemImage: "play.fill"
                                 ) {
-                                    onStart(pairedRoutine)
+                                    onStart(nextRoutine)
                                 }
-                                .disabled(OrderedRoutineItem.ordered(in: pairedRoutine).isEmpty)
-                                .accessibilityIdentifier("start-alternate-\(pairedRoutine.name)")
+                                .disabled(OrderedRoutineItem.ordered(in: nextRoutine).isEmpty)
+                                .accessibilityLabel("Start Next, \(nextRoutine.name)")
+                                .accessibilityIdentifier("start-next-\(routine.name)")
                                 Divider()
                             }
                             Button("Edit \(routine.name)", systemImage: "pencil", action: onEdit)
                             Button("Duplicate \(routine.name)", systemImage: "doc.on.doc", action: onDuplicate)
                             Button(
-                                hasConfiguredAlternation ? "Manage Alternating Routine" : "Add Alternating Routine",
+                                hasConfiguredAlternation ? "Manage Alternating Routines" : "Add Alternating Routine",
                                 systemImage: "arrow.triangle.2.circlepath",
                                 action: onManageAlternation
                             )
@@ -1156,11 +1157,11 @@ private struct RoutineCard: View {
                         .accessibilityIdentifier("routine-menu-\(routine.name)")
                     }
 
-                    if let pairedRoutine {
+                    if let alternationSummary {
                         Label(
                             isNext
-                                ? "Next up · Alternating with \(pairedRoutine.name)"
-                                : "Alternating with \(pairedRoutine.name)",
+                                ? "Next up · Alternating with \(alternationSummary)"
+                                : "Alternating with \(alternationSummary)",
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.system(size: 13, weight: .semibold))

@@ -279,30 +279,33 @@ struct PlanSharingTests {
         }
     }
 
-    @Test func alternatingRoutineShareIncludesBothMembersAndImportRemapsThePair() throws {
+    @Test func alternatingRoutineShareIncludesEveryMemberAndImportRemapsTheCycle() throws {
         UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey)
         defer { UserDefaults.standard.removeObject(forKey: PlanImportService.importedPackagesDefaultsKey) }
 
         let owner = RoutineModel(userID: userID, name: "AX400", position: 0)
         let partner = RoutineModel(userID: userID, name: "Cindy", position: 1)
+        let third = RoutineModel(userID: userID, name: "Fran", position: 2)
         let alternation = RoutineAlternationModel(
             userID: userID,
             ownerRoutineID: owner.id,
-            partnerRoutineID: partner.id
+            partnerRoutineID: partner.id,
+            memberRoutineIDs: [owner.id, partner.id, third.id]
         )
 
         let document = try PlanShareService.routineDocument(
             owner,
-            allRoutines: [owner, partner],
+            allRoutines: [owner, partner, third],
             alternations: [alternation],
             exercises: []
         )
-        #expect(document.formatVersion == 3)
-        #expect(document.routines.map(\.name) == ["AX400", "Cindy"])
+        #expect(document.formatVersion == 4)
+        #expect(document.routines.map(\.name) == ["AX400", "Cindy", "Fran"])
         #expect(document.alternations == [SharedPlanAlternation(
             id: alternation.id,
             ownerRoutineID: owner.id,
-            partnerRoutineID: partner.id
+            partnerRoutineID: partner.id,
+            memberRoutineIDs: [owner.id, partner.id, third.id]
         )])
 
         let decoded = try ForgeFitPlanCodec.decode(ForgeFitPlanCodec.encode(document))
@@ -314,16 +317,18 @@ struct PlanSharingTests {
         let importedContext = ModelContext(container)
         let routines = try importedContext.fetch(FetchDescriptor<RoutineModel>())
             .filter { result.routineIDs.contains($0.id) }
-        let importedPair = try #require(
+        let importedCycle = try #require(
             try importedContext.fetch(FetchDescriptor<RoutineAlternationModel>()).first
         )
         let importedByID = Dictionary(uniqueKeysWithValues: routines.map { ($0.id, $0.name) })
+        let importedMemberIDs = RoutineAlternationService.configuredMemberRoutineIDs(
+            for: importedCycle
+        )
 
-        #expect(result.routineIDs.count == 2)
-        #expect(importedPair.ownerRoutineID != owner.id)
-        #expect(importedPair.partnerRoutineID != partner.id)
-        #expect(importedByID[importedPair.ownerRoutineID] == "AX400")
-        #expect(importedByID[importedPair.partnerRoutineID] == "Cindy")
+        #expect(result.routineIDs.count == 3)
+        #expect(importedCycle.ownerRoutineID != owner.id)
+        #expect(importedCycle.partnerRoutineID != partner.id)
+        #expect(importedMemberIDs.map { importedByID[$0] } == ["AX400", "Cindy", "Fran"])
     }
 
     @Test func microcycleShareCarriesAnAlternateFromOutsideTheFolder() throws {
@@ -357,6 +362,8 @@ struct PlanSharingTests {
         #expect(document.routines.first { $0.id == owner.id }?.folderID == microcycle.id)
         #expect(document.routines.first { $0.id == partner.id }?.folderID == nil)
         #expect(document.alternations.count == 1)
+        #expect(document.formatVersion == 3)
+        #expect(document.alternations.first?.memberRoutineIDs == nil)
         try PlanImportService.validate(document)
     }
 
@@ -377,6 +384,30 @@ struct PlanSharingTests {
 
         #expect(decoded.formatVersion == 1)
         #expect(decoded.alternations.isEmpty)
+        try PlanImportService.validate(decoded)
+    }
+
+    @Test func versionThreeAlternatingPairWithoutOrderedMembersStillDecodes() throws {
+        let first = SharedPlanRoutine(id: UUID(), name: "A", position: 0)
+        let second = SharedPlanRoutine(id: UUID(), name: "B", position: 1)
+        let legacy = ForgeFitPlanDocument(
+            formatVersion: 3,
+            createdAt: .now,
+            kind: .routine,
+            name: "Legacy Pair",
+            routines: [first, second],
+            alternations: [SharedPlanAlternation(
+                id: UUID(),
+                ownerRoutineID: first.id,
+                partnerRoutineID: second.id
+            )],
+            exercises: []
+        )
+
+        let decoded = try ForgeFitPlanCodec.decode(ForgeFitPlanCodec.encode(legacy))
+
+        #expect(decoded.alternations.first?.memberRoutineIDs == nil)
+        #expect(decoded.alternations.first?.resolvedMemberRoutineIDs == [first.id, second.id])
         try PlanImportService.validate(decoded)
     }
 
@@ -417,6 +448,23 @@ struct PlanSharingTests {
         )
         #expect(throws: PlanImportService.ImportError.self) {
             try PlanImportService.validate(repeatedMember)
+        }
+
+        let repeatedWithinGroup = ForgeFitPlanDocument(
+            createdAt: .now,
+            kind: .routine,
+            name: "Broken Group",
+            routines: [first, second],
+            alternations: [SharedPlanAlternation(
+                id: UUID(),
+                ownerRoutineID: first.id,
+                partnerRoutineID: second.id,
+                memberRoutineIDs: [first.id, second.id, first.id]
+            )],
+            exercises: []
+        )
+        #expect(throws: PlanImportService.ImportError.self) {
+            try PlanImportService.validate(repeatedWithinGroup)
         }
     }
 

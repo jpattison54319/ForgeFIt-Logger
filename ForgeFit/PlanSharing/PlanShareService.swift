@@ -98,20 +98,18 @@ enum PlanShareService {
         var includedRoutineIDs = Set(routines.filter {
             $0.deletedAt == nil && $0.archivedAt == nil
         }.map(\.id))
-        var includedAlternations: [RoutineAlternationModel] = []
-        let validAlternations = RoutineAlternationService.states(
+        var includedAlternationStates: [RoutineAlternationService.State] = []
+        let validAlternationStates = RoutineAlternationService.states(
             alternations: alternations,
             routines: availableRoutines,
             workouts: []
-        ).map(\.alternation)
-        for alternation in validAlternations {
-            guard includedRoutineIDs.contains(alternation.ownerRoutineID)
-                    || includedRoutineIDs.contains(alternation.partnerRoutineID),
-                  availableByID[alternation.ownerRoutineID] != nil,
-                  availableByID[alternation.partnerRoutineID] != nil else { continue }
-            includedRoutineIDs.insert(alternation.ownerRoutineID)
-            includedRoutineIDs.insert(alternation.partnerRoutineID)
-            includedAlternations.append(alternation)
+        )
+        for state in validAlternationStates {
+            let memberIDs = state.members.map(\.id)
+            guard memberIDs.contains(where: includedRoutineIDs.contains),
+                  memberIDs.allSatisfy({ availableByID[$0] != nil }) else { continue }
+            includedRoutineIDs.formUnion(memberIDs)
+            includedAlternationStates.append(state)
         }
         let liveRoutines = availableRoutines
             .filter { includedRoutineIDs.contains($0.id) }
@@ -135,7 +133,13 @@ enum PlanShareService {
         }
 
         let includedFolderIDs = Set(folders.map(\.id))
+        let requiresOrderedAlternationGroups = includedAlternationStates.contains {
+            $0.members.count > 2
+        }
         return ForgeFitPlanDocument(
+            formatVersion: requiresOrderedAlternationGroups
+                ? ForgeFitPlanDocument.currentVersion
+                : ForgeFitPlanSetTypeContract.latestVersion,
             createdAt: .now,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
             kind: kind,
@@ -158,11 +162,12 @@ enum PlanShareService {
                     folderID: routine.folderID.flatMap { includedFolderIDs.contains($0) ? $0 : nil }
                 )
             },
-            alternations: includedAlternations.map {
+            alternations: includedAlternationStates.map { state in
                 SharedPlanAlternation(
-                    id: $0.id,
-                    ownerRoutineID: $0.ownerRoutineID,
-                    partnerRoutineID: $0.partnerRoutineID
+                    id: state.alternation.id,
+                    ownerRoutineID: state.owner.id,
+                    partnerRoutineID: state.next(after: state.owner.id)?.id ?? state.owner.id,
+                    memberRoutineIDs: state.members.count > 2 ? state.members.map(\.id) : nil
                 )
             },
             exercises: definitions

@@ -825,41 +825,44 @@ enum MicrocycleTrackingService {
     ) -> [MicrocycleRoutineSnapshot] {
         let liveRoutines = RoutineDeduplicator.canonicalRoutines(routines)
             .filter { $0.deletedAt == nil && $0.archivedAt == nil }
-        let byID = Dictionary(liveRoutines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var pairByOwnerID: [UUID: RoutineModel] = [:]
-        var claimedRoutineIDs: Set<UUID> = []
-        for alternation in RoutineAlternationService.live(alternations) {
-            guard !claimedRoutineIDs.contains(alternation.ownerRoutineID),
-                  !claimedRoutineIDs.contains(alternation.partnerRoutineID),
-                  let owner = byID[alternation.ownerRoutineID],
-                  let partner = byID[alternation.partnerRoutineID],
-                  owner.id != partner.id else { continue }
-            pairByOwnerID[owner.id] = partner
-            claimedRoutineIDs.insert(owner.id)
-            claimedRoutineIDs.insert(partner.id)
-        }
-        let colocatedPartnerIDs: Set<UUID> = Set(pairByOwnerID.compactMap { ownerID, partner -> UUID? in
-            guard byID[ownerID]?.folderID == folderID, partner.folderID == folderID else { return nil }
-            return partner.id
+        let states = RoutineAlternationService.states(
+            alternations: alternations,
+            routines: liveRoutines,
+            workouts: []
+        )
+        let stateByOwnerID = Dictionary(
+            states.map { ($0.owner.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let colocatedMemberIDs = Set(states.flatMap { state -> [UUID] in
+            guard state.owner.folderID == folderID else { return [] }
+            return state.members.compactMap { member in
+                member.id != state.owner.id && member.folderID == folderID
+                    ? member.id
+                    : nil
+            }
         })
 
         return liveRoutines
             .filter {
                 $0.folderID == folderID
-                    && !colocatedPartnerIDs.contains($0.id)
+                    && !colocatedMemberIDs.contains($0.id)
             }
             .sorted {
                 if $0.position != $1.position { return $0.position < $1.position }
                 return $0.id.uuidString < $1.id.uuidString
             }
             .map { routine in
-                let partner = pairByOwnerID[routine.id]
+                let state = stateByOwnerID[routine.id]
+                let legacyPartner = state?.next(after: routine.id)
                 return MicrocycleRoutineSnapshot(
                     id: routine.id,
                     name: routine.name,
                     position: routine.position,
-                    alternateRoutineID: partner?.id,
-                    alternateRoutineName: partner?.name
+                    alternateRoutineID: legacyPartner?.id,
+                    alternateRoutineName: legacyPartner?.name,
+                    memberRoutineIDs: state?.members.map(\.id),
+                    memberRoutineNames: state?.members.map(\.name)
                 )
             }
     }

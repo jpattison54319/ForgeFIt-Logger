@@ -326,6 +326,49 @@ struct ShareCardRenderTests {
         #expect(image != nil)
     }
 
+    @Test func folderCardRendersAnOrderedAlternatingCycleExactlyOnce() {
+        func routine(_ name: String) -> RoutineModel {
+            RoutineModel(userID: userID, name: name)
+        }
+        let first = routine("A")
+        let second = routine("B")
+        let third = routine("C")
+        let push = routine("Push")
+        let alternation = RoutineAlternationModel(
+            userID: userID,
+            ownerRoutineID: first.id,
+            partnerRoutineID: third.id,
+            memberRoutineIDs: [first.id, third.id, second.id]
+        )
+
+        let colocated = FolderShareSlotBuilder.sections(
+            [.init(title: nil, routines: [first, second, third, push])],
+            alternations: [alternation],
+            availableRoutines: [first, second, third, push]
+        )
+        #expect(colocated[0].slots.map { $0.routines.map(\.name) } == [["A", "C", "B"], ["Push"]])
+
+        let external = FolderShareSlotBuilder.sections(
+            [.init(title: nil, routines: [second, push])],
+            alternations: [alternation],
+            availableRoutines: [first, second, third, push]
+        )
+        #expect(external[0].slots.map { $0.routines.map(\.name) } == [["A", "C", "B"], ["Push"]])
+
+        let split = FolderShareSlotBuilder.sections(
+            [
+                .init(title: "Week 1", routines: [second]),
+                .init(title: "Week 2", routines: [third, push]),
+                .init(title: "Week 3", routines: [first]),
+            ],
+            alternations: [alternation],
+            availableRoutines: [first, second, third, push]
+        )
+        #expect(split[0].slots.map { $0.routines.map(\.name) } == [["A", "C", "B"]])
+        #expect(split[1].slots.map { $0.routines.map(\.name) } == [["Push"]])
+        #expect(split[2].slots.isEmpty)
+    }
+
     /// Every representative Wrapped page kind must render as a share card —
     /// a page that draws blank ships a broken share button.
     @Test func wrappedPagesRenderAsShareCards() {

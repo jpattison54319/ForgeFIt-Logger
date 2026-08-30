@@ -408,16 +408,19 @@ public final class RoutineModel {
     }
 }
 
-/// A user-authored two-routine slot whose owner keeps its library and
-/// microcycle position while either member can be performed. Scalar IDs keep
-/// the CloudKit plan record independent from SwiftData relationship delivery
-/// order; `RoutineAlternationService` validates both endpoints before use.
+/// A user-authored, ordered routine cycle whose owner keeps its library and
+/// microcycle position while any member can be performed. Scalar IDs keep a
+/// legacy two-routine mirror, while the additive optional JSON stores atomic
+/// ordered membership without relying on SwiftData relationship delivery.
 @Model
 public final class RoutineAlternationModel {
     public var id: UUID = UUID()
     public var userID: UUID = UUID()
     public var ownerRoutineID: UUID = UUID()
     public var partnerRoutineID: UUID = UUID()
+    /// Versioned `RoutineAlternationConfiguration`. Nil means this is a legacy
+    /// two-routine record whose order is owner, then partner.
+    public var memberConfigurationJSON: String?
     public var createdAt: Date = Date()
     public var updatedAt: Date = Date()
     public var deletedAt: Date?
@@ -427,6 +430,7 @@ public final class RoutineAlternationModel {
         userID: UUID,
         ownerRoutineID: UUID,
         partnerRoutineID: UUID,
+        memberRoutineIDs: [UUID]? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         deletedAt: Date? = nil
@@ -435,6 +439,12 @@ public final class RoutineAlternationModel {
         self.userID = userID
         self.ownerRoutineID = ownerRoutineID
         self.partnerRoutineID = partnerRoutineID
+        self.memberConfigurationJSON = memberRoutineIDs.flatMap {
+            RoutineAlternationConfiguration(
+                memberRoutineIDs: $0,
+                joinedAt: createdAt
+            ).encoded()
+        }
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt

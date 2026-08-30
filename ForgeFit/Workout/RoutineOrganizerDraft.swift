@@ -381,24 +381,27 @@ final class RoutineOrganizerDraft {
     ) -> [RoutineItem] {
         let routineIDs = Set(routines.map(\.id))
         let states = alternationStates.filter {
-            routineIDs.contains($0.owner.id) && routineIDs.contains($0.partner.id)
+            $0.memberIDs.isSubset(of: routineIDs)
         }
         var statesByOwner: [UUID: RoutineAlternationService.State] = [:]
         for state in states where statesByOwner[state.owner.id] == nil {
             statesByOwner[state.owner.id] = state
         }
-        let partnerIDs = Set(states.map { $0.partner.id })
+        let collapsedMemberIDs = Set(states.flatMap { state in
+            state.members.compactMap { $0.id == state.owner.id ? nil : $0.id }
+        })
 
         return routines.compactMap { routine in
-            if partnerIDs.contains(routine.id) { return nil }
+            if collapsedMemberIDs.contains(routine.id) { return nil }
             guard let state = statesByOwner[routine.id] else {
                 return RoutineItem(id: routine.id, routineIDs: [routine.id], name: routine.name)
             }
-            let pairIDs = Set([state.owner.id, state.partner.id])
             return RoutineItem(
                 id: state.owner.id,
-                routineIDs: routines.filter { pairIDs.contains($0.id) }.map(\.id),
-                name: "\(state.owner.name) / \(state.partner.name)"
+                // Preserve the library's stored order. Cyclic order is edited
+                // independently and must not silently rearrange folder slots.
+                routineIDs: routines.filter { state.memberIDs.contains($0.id) }.map(\.id),
+                name: state.members.map(\.name).joined(separator: " / ")
             )
         }
     }

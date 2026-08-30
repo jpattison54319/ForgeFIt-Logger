@@ -55,6 +55,18 @@ enum HomePerformanceRevision {
         let routineUpdatedAt: Date
     }
 
+    struct FeatureDiscoveryKey: Hashable {
+        let persistenceRevision: Int
+        let workoutCount: Int
+        let routineCount: Int
+        let folderCount: Int
+        let trackingCount: Int
+        let latestTrackingUpdate: Date?
+        let discoveryRevision: Int
+        let surfaceIsActive: Bool
+        let day: Date
+    }
+
     static func suggestion(
         persistenceRevision: Int,
         routineCount: Int,
@@ -107,6 +119,31 @@ enum HomePerformanceRevision {
                 containing: now,
                 calendar: calendar
             ).start
+        )
+    }
+
+    static func featureDiscovery(
+        persistenceRevision: Int,
+        workoutCount: Int,
+        routineCount: Int,
+        folderCount: Int,
+        trackingCount: Int,
+        latestTrackingUpdate: Date?,
+        discoveryRevision: Int,
+        surfaceIsActive: Bool,
+        now: Date = .now,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> FeatureDiscoveryKey {
+        FeatureDiscoveryKey(
+            persistenceRevision: persistenceRevision,
+            workoutCount: workoutCount,
+            routineCount: routineCount,
+            folderCount: folderCount,
+            trackingCount: trackingCount,
+            latestTrackingUpdate: latestTrackingUpdate,
+            discoveryRevision: discoveryRevision,
+            surfaceIsActive: surfaceIsActive,
+            day: calendar.startOfDay(for: now)
         )
     }
 

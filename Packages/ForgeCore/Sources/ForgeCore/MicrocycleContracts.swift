@@ -12,26 +12,56 @@ public struct MicrocycleRoutineSnapshot: Codable, Equatable, Hashable, Identifia
     /// The owner remains `id`; either member can satisfy this one slot.
     public let alternateRoutineID: UUID?
     public let alternateRoutineName: String?
+    /// Additive ordered group metadata. New snapshots include the owner and
+    /// every alternate in cyclic order; legacy snapshots fall back to the
+    /// singular fields above.
+    public let memberRoutineIDs: [UUID]?
+    public let memberRoutineNames: [String]?
 
     public init(
         id: UUID,
         name: String,
         position: Int,
         alternateRoutineID: UUID? = nil,
-        alternateRoutineName: String? = nil
+        alternateRoutineName: String? = nil,
+        memberRoutineIDs: [UUID]? = nil,
+        memberRoutineNames: [String]? = nil
     ) {
         self.id = id
         self.name = name
         self.position = position
         self.alternateRoutineID = alternateRoutineID
         self.alternateRoutineName = alternateRoutineName
+        self.memberRoutineIDs = memberRoutineIDs
+        self.memberRoutineNames = memberRoutineNames
     }
 
     public var memberIDs: Set<UUID> {
-        Set([id, alternateRoutineID].compactMap { $0 })
+        Set(orderedMemberIDs)
     }
 
-    public var isAlternating: Bool { alternateRoutineID != nil }
+    public var orderedMemberIDs: [UUID] {
+        if let memberRoutineIDs,
+           memberRoutineIDs.count >= 2,
+           Set(memberRoutineIDs).count == memberRoutineIDs.count,
+           memberRoutineIDs.contains(id) {
+            return memberRoutineIDs
+        }
+        return [id, alternateRoutineID].compactMap { $0 }
+    }
+
+    public func memberName(for routineID: UUID) -> String? {
+        if let memberRoutineNames,
+           memberRoutineNames.count == orderedMemberIDs.count,
+           let index = orderedMemberIDs.firstIndex(of: routineID) {
+            return memberRoutineNames[index]
+        }
+        if routineID == id { return name }
+        if routineID == alternateRoutineID { return alternateRoutineName }
+        return nil
+    }
+
+    public var isAlternating: Bool { orderedMemberIDs.count >= 2 }
 }
 
 /// A reversible, microcycle-only placement of an existing completed workout.

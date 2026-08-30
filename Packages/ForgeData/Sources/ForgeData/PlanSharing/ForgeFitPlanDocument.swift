@@ -32,10 +32,10 @@ public enum ForgeFitPlanSetTypeContract {
 /// A user-created training plan that can leave ForgeFit without carrying any
 /// workout history, Health data, account identity, or local progress state.
 public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
-    /// v3 adds the lengthened-partial and lengthened-extended set vocabulary.
-    /// Keeping this distinct from v2 makes older recipients request an app
-    /// update instead of misdiagnosing a valid set type as document damage.
-    public static let currentVersion = max(2, ForgeFitPlanSetTypeContract.latestVersion)
+    /// v3 adds the lengthened set vocabulary; v4 adds ordered alternating
+    /// groups. Older recipients request an update rather than silently
+    /// importing only the legacy pair mirror.
+    public static let currentVersion = max(4, ForgeFitPlanSetTypeContract.latestVersion)
 
     public var formatVersion: Int
     public var packageID: UUID
@@ -177,11 +177,31 @@ public struct SharedPlanAlternation: Codable, Equatable, Sendable {
     public var id: UUID
     public var ownerRoutineID: UUID
     public var partnerRoutineID: UUID
+    /// Additive v4 ordered membership. Nil is a legacy v2/v3 pair.
+    public var memberRoutineIDs: [UUID]?
 
-    public init(id: UUID, ownerRoutineID: UUID, partnerRoutineID: UUID) {
+    public init(
+        id: UUID,
+        ownerRoutineID: UUID,
+        partnerRoutineID: UUID,
+        memberRoutineIDs: [UUID]? = nil
+    ) {
         self.id = id
         self.ownerRoutineID = ownerRoutineID
         self.partnerRoutineID = partnerRoutineID
+        self.memberRoutineIDs = memberRoutineIDs
+    }
+
+    public var resolvedMemberRoutineIDs: [UUID] {
+        memberRoutineIDs ?? [ownerRoutineID, partnerRoutineID]
+    }
+
+    public var hasValidMemberRoutineIDs: Bool {
+        let ids = resolvedMemberRoutineIDs
+        guard ids.count >= 2,
+              Set(ids).count == ids.count,
+              let ownerIndex = ids.firstIndex(of: ownerRoutineID) else { return false }
+        return ids[(ownerIndex + 1) % ids.count] == partnerRoutineID
     }
 }
 

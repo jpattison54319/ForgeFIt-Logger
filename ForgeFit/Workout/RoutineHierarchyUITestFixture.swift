@@ -22,6 +22,7 @@ enum RoutineHierarchyUITestFixture {
         case alternatingCrossGroupOwnerDue = "--seed-routine-hierarchy-alternating-cross-group-owner-due"
         case alternatingCrossGroupPartnerDue = "--seed-routine-hierarchy-alternating-cross-group"
         case alternatingSameGroupPartnerDue = "--seed-routine-hierarchy-alternating-same-group"
+        case alternatingMultiMember = "--seed-routine-hierarchy-alternating-multi-member"
     }
 
     static func seedIfRequested(arguments: [String], in context: ModelContext) throws {
@@ -120,6 +121,10 @@ enum RoutineHierarchyUITestFixture {
                 completedMember: .owner,
                 into: context
             )
+
+        case .alternatingMultiMember:
+            let folder = insertFolder("Cycle Plan", position: 0, into: context)
+            insertAlternatingGroup(folderID: folder.id, into: context)
         }
 
         try context.save()
@@ -218,6 +223,53 @@ enum RoutineHierarchyUITestFixture {
                 endedAt: now.addingTimeInterval(-1_800)
             ))
         }
+    }
+
+    private static func insertAlternatingGroup(
+        folderID: UUID,
+        into context: ModelContext
+    ) {
+        let first = insertRoutine(
+            "Ax400",
+            folderID: folderID,
+            position: 0,
+            exerciseIDs: [GlobalExerciseLibrary.machineChestPressID],
+            includesTargetSet: true,
+            into: context
+        )
+        let second = insertRoutine(
+            "Cindy",
+            folderID: nil,
+            position: 0,
+            exerciseIDs: [GlobalExerciseLibrary.smithMachineSquatID],
+            includesTargetSet: true,
+            into: context
+        )
+        let third = insertRoutine(
+            "Fran",
+            folderID: folderID,
+            position: 2,
+            exerciseIDs: [GlobalExerciseLibrary.romanianDeadliftID],
+            includesTargetSet: true,
+            into: context
+        )
+        insertRoutine(
+            "Diane",
+            folderID: folderID,
+            position: 3,
+            exerciseIDs: [GlobalExerciseLibrary.overheadCableTricepsExtensionID],
+            includesTargetSet: true,
+            into: context
+        )
+        let now = Date()
+        context.insert(RoutineAlternationModel(
+            userID: ForgeFitDemo.userID,
+            ownerRoutineID: first.id,
+            partnerRoutineID: second.id,
+            memberRoutineIDs: [first.id, second.id, third.id],
+            createdAt: now.addingTimeInterval(-7_200),
+            updatedAt: now.addingTimeInterval(-7_200)
+        ))
     }
 }
 #endif

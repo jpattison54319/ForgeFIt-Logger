@@ -257,7 +257,7 @@ struct MicrocycleTrackingServiceTests {
         #expect(current.routines.map(\.position) == [0, 1])
     }
 
-    @Test func colocatedAlternatesFreezeAsOneRequirementAndEitherMemberCompletesIt() throws {
+    @Test func colocatedAlternatesFreezeAsOneRequirementAndAnyMemberCompletesIt() throws {
         let (container, context) = try TestStore.make()
         defer { _ = container }
         let folder = RoutineFolderModel(userID: ForgeFitDemo.userID, name: "Conditioning")
@@ -277,23 +277,31 @@ struct MicrocycleTrackingServiceTests {
             userID: ForgeFitDemo.userID,
             name: "Strength",
             folderID: folder.id,
+            position: 3
+        )
+        let third = RoutineModel(
+            userID: ForgeFitDemo.userID,
+            name: "Fran",
+            folderID: folder.id,
             position: 2
         )
         let alternation = RoutineAlternationModel(
             userID: ForgeFitDemo.userID,
             ownerRoutineID: owner.id,
-            partnerRoutineID: partner.id
+            partnerRoutineID: partner.id,
+            memberRoutineIDs: [owner.id, partner.id, third.id]
         )
         context.insert(folder)
         context.insert(owner)
         context.insert(partner)
+        context.insert(third)
         context.insert(strength)
         context.insert(alternation)
         try context.save()
 
         _ = try MicrocycleTrackingService.start(
             folder: folder,
-            routines: [owner, partner, strength],
+            routines: [owner, partner, third, strength],
             folders: [folder],
             startDate: date(2026, 8, 1),
             durationDays: 10,
@@ -306,10 +314,12 @@ struct MicrocycleTrackingServiceTests {
         #expect(window.routines.map(\.name) == ["AX400", "Strength"])
         #expect(window.routines.first?.alternateRoutineID == partner.id)
         #expect(window.routines.first?.alternateRoutineName == "Cindy")
+        #expect(window.routines.first?.orderedMemberIDs == [owner.id, partner.id, third.id])
+        #expect(window.routines.first?.memberRoutineNames == ["AX400", "Cindy", "Fran"])
 
-        let completedPartner = WorkoutModel(
+        let completedThird = WorkoutModel(
             userID: ForgeFitDemo.userID,
-            routineID: partner.id,
+            routineID: third.id,
             startedAt: date(2026, 8, 3),
             endedAt: date(2026, 8, 3, 13)
         )
@@ -321,12 +331,12 @@ struct MicrocycleTrackingServiceTests {
         )
         let progress = MicrocycleTrackingService.progress(
             for: window,
-            workouts: [completedPartner, repeatedOwner]
+            workouts: [completedThird, repeatedOwner]
         )
 
         #expect(progress.requiredCount == 2)
         #expect(progress.completedCount == 1)
-        #expect(progress.routines.first?.completedRoutineID == partner.id)
+        #expect(progress.routines.first?.completedRoutineID == third.id)
     }
 
     @Test func aPartnerInAnotherMicrocycleRemainsItsOwnRequirementThere() throws {

@@ -50,12 +50,8 @@ struct MicrocycleHistoryRoutineCard: View {
     }
 
     private func completedName(for item: MicrocycleRoutineProgress) -> String {
-        guard let completedID = item.completedRoutineID,
-              completedID == item.routine.alternateRoutineID,
-              let alternateName = item.routine.alternateRoutineName else {
-            return item.routine.name
-        }
-        return alternateName
+        guard let completedID = item.completedRoutineID else { return item.routine.name }
+        return item.routine.memberName(for: completedID) ?? item.routine.name
     }
 
     private func completionText(for item: MicrocycleRoutineProgress) -> String {

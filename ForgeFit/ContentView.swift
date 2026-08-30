@@ -351,6 +351,7 @@ struct ContentView: View {
     @Query(sort: \YogaFlowModel.position) private var yogaFlows: [YogaFlowModel]
 
     @State private var appState = AppState()
+    @State private var featureDiscovery = FeatureDiscoveryStore.shared
     @State private var social = SocialService.make()
     @State private var performanceGate = LiveWorkoutPerformanceGate.shared
     @State private var showReplaceWorkoutConfirm = false
@@ -1043,6 +1044,7 @@ struct ContentView: View {
                     routines: logicalRoutines,
                     exercises: exercises,
                     setupNotes: setupNotes,
+                    featureDiscovery: featureDiscovery,
                     isRenderActive: isRenderActive
                 )
             case .workout:
@@ -2534,6 +2536,7 @@ struct ContentView: View {
             let forcedReset = ProcessInfo.processInfo.arguments.contains("--reset-store")
             if forcedReset {
                 resetAutomationDefaults()
+                featureDiscovery.resetEnrollment()
                 try AccountResetService.deleteAllLocalModels(in: modelContext)
             }
             // Version-gated: re-materializing the whole library (+ muscle
@@ -2611,7 +2614,12 @@ struct ContentView: View {
                 try ImportedExerciseReviewUITestFixture.seed(in: modelContext)
             }
             if ProcessInfo.processInfo.arguments.contains("--seed-microcycle-tracking") {
-                try MicrocycleTrackingUITestFixture.seed(in: modelContext)
+                try MicrocycleTrackingUITestFixture.seed(
+                    in: modelContext,
+                    includesAlternation: ProcessInfo.processInfo.arguments.contains(
+                        "--seed-microcycle-tracking-alternation"
+                    )
+                )
             }
             if ForgeFitAppIntentWorkoutUITestFixture.isRequested {
                 try ForgeFitAppIntentWorkoutUITestFixture.seed(in: modelContext)
@@ -2621,6 +2629,11 @@ struct ContentView: View {
             }
             try RoutineHierarchyUITestFixture.seedIfRequested(
                 arguments: ProcessInfo.processInfo.arguments,
+                in: modelContext
+            )
+            try FeatureDiscoveryUITestFixture.seedIfRequested(
+                arguments: ProcessInfo.processInfo.arguments,
+                discovery: featureDiscovery,
                 in: modelContext
             )
             // App Store screenshot/preview capture. Runs after the catalogs so
@@ -2900,6 +2913,7 @@ struct ContentView: View {
         onboardingPlanImportErrorMessage = nil
         appState.pendingWorkoutStart = nil
         quickActionsReloadToken += 1
+        featureDiscovery.resetEnrollment()
         InsightDataCoordinator.shared.invalidate()
         cleanedOnboardingSlate = false
         showOnboarding = true

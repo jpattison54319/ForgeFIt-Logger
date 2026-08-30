@@ -9,6 +9,7 @@ struct MicrocycleRoutineMarkerTests {
         let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
         let thirdID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         let partnerID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        let secondAlternateID = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
         let routines = [
             MicrocycleRoutineSnapshot(id: thirdID, name: "Conditioning", position: 30),
             MicrocycleRoutineSnapshot(
@@ -16,7 +17,9 @@ struct MicrocycleRoutineMarkerTests {
                 name: "Lower",
                 position: 20,
                 alternateRoutineID: partnerID,
-                alternateRoutineName: "Lower B"
+                alternateRoutineName: "Lower B",
+                memberRoutineIDs: [secondID, partnerID, secondAlternateID],
+                memberRoutineNames: ["Lower", "Lower B", "Lower C"]
             ),
             MicrocycleRoutineSnapshot(id: firstID, name: "Upper", position: 10)
         ]
@@ -26,6 +29,7 @@ struct MicrocycleRoutineMarkerTests {
         #expect(markers[firstID] == "A")
         #expect(markers[secondID] == "B")
         #expect(markers[partnerID] == "B")
+        #expect(markers[secondAlternateID] == "B")
         #expect(markers[thirdID] == "C")
         #expect(MicrocycleRoutineMarker.markers(
             for: [thirdID, partnerID],

@@ -144,6 +144,7 @@ struct WorkoutHistoryImportView: View {
                 let file = try await BackupRestoreService.loadFile(at: backup.url)
                 let outcome = try BackupRestoreService.commit(file, restorePreferences: true, in: modelContext)
                 themeManager.reload()
+                FeatureDiscoveryStore.shared.reloadIfChanged()
                 let enrichment = await HealthEnrichmentService().enrich(
                     workoutIDs: outcome.restoredWorkoutIDs, in: modelContext
                 )

@@ -130,6 +130,44 @@ struct MicrocycleEngineTests {
         #expect(result.routines.first?.completedRoutineID == partnerID)
     }
 
+    @Test func anyMemberOfAnAlternatingGroupCompletesOneSlot() throws {
+        let ownerID = UUID()
+        let secondID = UUID()
+        let thirdID = UUID()
+        let window = try MicrocycleEngine.window(
+            anchor: date(2026, 8, 1),
+            durationDays: 10,
+            index: 0,
+            timeZoneIdentifier: timeZone
+        )
+        let slot = MicrocycleRoutineSnapshot(
+            id: ownerID,
+            name: "A",
+            position: 0,
+            alternateRoutineID: secondID,
+            alternateRoutineName: "B",
+            memberRoutineIDs: [ownerID, secondID, thirdID],
+            memberRoutineNames: ["A", "B", "C"]
+        )
+        let workout = MicrocycleWorkoutEvidence(
+            id: UUID(),
+            routineID: thirdID,
+            startedAt: date(2026, 8, 3),
+            isCompleted: true
+        )
+
+        let result = MicrocycleEngine.progress(
+            window: window,
+            routines: [slot],
+            workouts: [workout]
+        )
+
+        #expect(result.requiredCount == 1)
+        #expect(result.completedCount == 1)
+        #expect(result.routines.first?.completedRoutineID == thirdID)
+        #expect(slot.memberName(for: thirdID) == "C")
+    }
+
     @Test func dateBeforeAnchorFailsClosed() {
         #expect(throws: MicrocycleEngine.Error.dateBeforeAnchor) {
             try MicrocycleEngine.window(

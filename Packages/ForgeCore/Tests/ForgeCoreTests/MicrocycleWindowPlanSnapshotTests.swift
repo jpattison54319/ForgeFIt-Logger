@@ -67,4 +67,27 @@ struct MicrocycleWindowPlanSnapshotTests {
         #expect(removed.orderedItems.map(\.id) == [a.id, b.id])
         #expect(removed.routines == [a, b])
     }
+
+    @Test func orderedAlternatingGroupMetadataRoundTrips() throws {
+        let grouped = MicrocycleRoutineSnapshot(
+            id: a.id,
+            name: a.name,
+            position: a.position,
+            alternateRoutineID: b.id,
+            alternateRoutineName: b.name,
+            memberRoutineIDs: [a.id, c.id, b.id],
+            memberRoutineNames: [a.name, c.name, b.name]
+        )
+        let json = try #require(
+            MicrocycleWindowPlanSnapshot(routines: [grouped]).encodedJSON()
+        )
+
+        let decoded = try #require(
+            MicrocycleWindowPlanSnapshot.decode(from: json).routines.first
+        )
+
+        #expect(decoded.orderedMemberIDs == [a.id, c.id, b.id])
+        #expect(decoded.memberName(for: c.id) == c.name)
+        #expect(decoded.memberIDs == Set([a.id, b.id, c.id]))
+    }
 }

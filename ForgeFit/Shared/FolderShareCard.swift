@@ -13,8 +13,7 @@ import UIKit
 /// Renders to a single tall image for sharing.
 struct FolderShareCard: View {
     /// One position in the cycle. Usually a single routine; an alternating
-    /// pair fills one slot with both of its members, the way the tracked
-    /// microcycle treats a pair as one day rather than two.
+    /// cycle fills one slot with all of its ordered members.
     struct Slot: Identifiable {
         let id: UUID
         let routines: [RoutineModel]
@@ -38,7 +37,7 @@ struct FolderShareCard: View {
             self.slots = slots
         }
 
-        /// Convenience for cycles without alternating pairs — one slot per routine.
+        /// Convenience for cycles without alternating groups — one slot per routine.
         init(title: String?, routines: [RoutineModel]) {
             self.init(title: title, slots: routines.map { Slot(routines: [$0]) })
         }
@@ -111,9 +110,8 @@ struct FolderShareCard: View {
         }
     }
 
-    /// A single routine renders on its own; an alternating pair renders as one
-    /// tinted group so the image shows that the two routines swap in and out of
-    /// the same slot instead of reading as two separate training days.
+    /// A single routine renders on its own; an alternating cycle renders as one
+    /// tinted group so its members read as one training slot.
     @ViewBuilder
     private func slotBlock(_ slot: Slot) -> some View {
         if slot.isAlternating {
@@ -121,8 +119,8 @@ struct FolderShareCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.accentForeground)
-                    // The two routine names sit directly below — repeating
-                    // them in the header would just be noise.
+                    // Member names sit directly below, so repeating them in
+                    // the header would just be noise.
                     Text("Alternating")
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(theme.textPrimary)
                     Spacer(minLength: 0)
@@ -246,10 +244,9 @@ enum FolderShareRenderer {
     }
 }
 
-/// Groups a cycle's routines into share-card slots, pairing routines that
-/// alternate with each other. A partner that lives outside the shared cycle
-/// still rides along in its owner's slot — the plan file already carries it,
-/// so the image would otherwise hide half of the pair.
+/// Groups a cycle's routines into share-card slots. Members outside the shared
+/// cycle still ride along in the first encountered member's slot so the static
+/// image never hides part of the configured cycle.
 @MainActor
 enum FolderShareSlotBuilder {
     struct Group {
@@ -269,21 +266,22 @@ enum FolderShareSlotBuilder {
             routines: availableRoutines,
             workouts: []
         )
-        var partnerByRoutineID: [UUID: RoutineModel] = [:]
+        var stateByRoutineID: [UUID: RoutineAlternationService.State] = [:]
         for state in states {
-            partnerByRoutineID[state.owner.id] = state.partner
-            partnerByRoutineID[state.partner.id] = state.owner
+            for member in state.members {
+                stateByRoutineID[member.id] = state
+            }
         }
-        // A pair renders once, in the section where its first member appears,
-        // so a partner in a sibling microcycle can't be drawn twice.
+        // A cycle renders once, in the section where its first member appears,
+        // so members in sibling microcycles cannot be drawn twice.
         var placedRoutineIDs: Set<UUID> = []
         return groups.map { group in
             var slots: [FolderShareCard.Slot] = []
             for routine in group.routines {
                 guard placedRoutineIDs.insert(routine.id).inserted else { continue }
-                if let partner = partnerByRoutineID[routine.id],
-                   placedRoutineIDs.insert(partner.id).inserted {
-                    slots.append(FolderShareCard.Slot(routines: [routine, partner]))
+                if let state = stateByRoutineID[routine.id] {
+                    placedRoutineIDs.formUnion(state.memberIDs)
+                    slots.append(FolderShareCard.Slot(routines: state.members))
                 } else {
                     slots.append(FolderShareCard.Slot(routines: [routine]))
                 }

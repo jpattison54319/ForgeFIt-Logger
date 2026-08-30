@@ -85,11 +85,11 @@ struct WatchHomeView: View {
                                     Text(routine.name)
                                         .font(.system(size: 15, weight: .semibold))
                                         .lineLimit(1)
-                                    if let partner = routine.alternatingPartnerName {
+                                    if let nextName = routine.alternatingPartnerName {
                                         Label(
                                             routine.isNextInAlternation == true
-                                                ? "Next · alternates with \(partner)"
-                                                : "Alternates with \(partner)",
+                                                ? "Next · cycles to \(nextName)"
+                                                : "Cycles to \(nextName)",
                                             systemImage: "arrow.triangle.2.circlepath"
                                         )
                                         .font(.system(size: 11))

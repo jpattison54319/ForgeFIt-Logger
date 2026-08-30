@@ -36,7 +36,7 @@ struct PlanImportView: View {
                             }
                             LabeledContent("Routines", value: "\(pending.routineCount)")
                             if pending.alternationCount > 0 {
-                                LabeledContent("Alternating pairs", value: "\(pending.alternationCount)")
+                                LabeledContent("Alternating cycles", value: "\(pending.alternationCount)")
                             }
                             LabeledContent("Exercises", value: "\(pending.exerciseCount)")
                             if pending.customExerciseCount > 0 {
@@ -47,7 +47,7 @@ struct PlanImportView: View {
                         .foregroundStyle(theme.textPrimary)
                     }
 
-                    Text("Routine notes, targets, and alternating pairs are copied. Workout history, cycle progress, and health data are not included.")
+                    Text("Routine notes, targets, and alternating cycles are copied. Workout history, cycle progress, and health data are not included.")
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -99,7 +99,7 @@ struct PlanImportView: View {
                         .font(.cardTitle)
                         .foregroundStyle(theme.textPrimary)
                     Text(pending.alternationCount > 0 && pending.document.kind == .routine
-                        ? "Alternating pair"
+                        ? "Alternating cycle"
                         : pending.document.kind.title)
                         .font(.label)
                         .foregroundStyle(theme.textSecondary)
@@ -121,7 +121,7 @@ struct PlanImportView: View {
 
     private var saveTitle: String {
         switch pending.document.kind {
-        case .routine: pending.alternationCount > 0 ? "Save Alternating Pair" : "Save Routine"
+        case .routine: pending.alternationCount > 0 ? "Save Alternating Cycle" : "Save Routine"
         case .microcycle: "Save Microcycle"
         case .mesocycle: "Save Mesocycle"
         }

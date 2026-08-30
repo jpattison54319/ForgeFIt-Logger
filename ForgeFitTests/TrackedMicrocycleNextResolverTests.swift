@@ -95,9 +95,10 @@ struct TrackedMicrocycleNextResolverTests {
         #expect(resolution == .routine(id: id, title: "Edited"))
     }
 
-    @Test func incompleteAlternatingSlotUsesTheCurrentlyDuePartner() {
+    @Test func incompleteAlternatingSlotUsesTheCurrentlyDueGroupMember() {
         let owner = routine("A", position: 0)
         let partner = routine("B", position: 1)
+        let third = routine("C", position: 2)
         let tracking = activeTracking()
         let window = currentWindow(
             tracking: tracking,
@@ -106,30 +107,33 @@ struct TrackedMicrocycleNextResolverTests {
                 name: owner.name,
                 position: 0,
                 alternateRoutineID: partner.id,
-                alternateRoutineName: partner.name
+                alternateRoutineName: partner.name,
+                memberRoutineIDs: [owner.id, partner.id, third.id],
+                memberRoutineNames: [owner.name, partner.name, third.name]
             )]
         )
         let alternation = RoutineAlternationModel(
             userID: userID,
             ownerRoutineID: owner.id,
             partnerRoutineID: partner.id,
+            memberRoutineIDs: [owner.id, partner.id, third.id],
             createdAt: start.addingTimeInterval(-1_000)
         )
-        let previousOwnerWorkout = completedWorkout(
-            routine: owner,
+        let previousPartnerWorkout = completedWorkout(
+            routine: partner,
             startedAt: start.addingTimeInterval(-500)
         )
 
         let resolution = TrackedMicrocycleNextResolver.resolve(
             trackings: [tracking],
             windows: [window],
-            routines: [owner, partner],
+            routines: [owner, partner, third],
             alternations: [alternation],
-            workouts: [previousOwnerWorkout],
+            workouts: [previousPartnerWorkout],
             now: start.addingTimeInterval(200)
         )
 
-        #expect(resolution == .routine(id: partner.id, title: "B"))
+        #expect(resolution == .routine(id: third.id, title: "C"))
     }
 
     @Test func completedWindowRepeatsContinuouslyAndWraps() {

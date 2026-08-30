@@ -75,6 +75,51 @@ final class MicrocycleTrackingUITests: XCTestCase {
     }
 
     @MainActor
+    func testAlternatedRoutineActionNamesItsCyclicSuccessor() throws {
+        let app = launch(
+            initialTab: "workout",
+            additionalArguments: ["--seed-microcycle-tracking-alternation"]
+        )
+        let progress = app.descendants(matching: .any)["microcycle-folder-progress"].firstMatch
+        try acceptanceRequire(
+            progress.waitForExistence(timeout: 10),
+            "Expected the seeded tracked microcycle entry point."
+        )
+        acceptanceExpect(
+            visibleLabels: ["Start Upper", "Start Lower"],
+            invariants: [
+                "The compact alternate action names Lower, the immediate cyclic successor of the due Upper routine."
+            ]
+        )
+        progress.acceptanceTap()
+
+        let successor = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'microcycle-start-next-'")
+        ).firstMatch
+        try acceptanceRequire(
+            successor.waitForExistence(timeout: 5),
+            "Expected the tracked alternating routine to expose its cyclic successor."
+        )
+        let due = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'microcycle-start-routine-'")
+        ).firstMatch
+        acceptanceAssert(
+            due.label == "Start Upper",
+            "Expected the primary action to announce the due Upper routine."
+        )
+        acceptanceAssert(
+            successor.label == "Start Lower",
+            "Expected the alternate action to name Lower instead of using generic next copy."
+        )
+        acceptanceAssert(
+            app.buttons.matching(
+                NSPredicate(format: "label BEGINSWITH[c] 'Start Next'")
+            ).count == 0,
+            "Expected no generic Start Next action in the tracked microcycle."
+        )
+    }
+
+    @MainActor
     func testFirstStopExplainsHistoryAndOpensItFromProfile() {
         let app = launch(
             initialTab: "workout",

@@ -34,7 +34,7 @@ enum NextRoutineSuggestion {
         activeMicrocycleFolderID: UUID?,
         activeMesocycleFolderID: UUID?,
         mesocycleSubtree: (UUID) -> Set<UUID>,
-        now: Date = Date()
+        now: Date = .now
     ) -> Result? {
         let active = routines
             .filter { $0.deletedAt == nil && $0.archivedAt == nil && !$0.exercises.isEmpty }
@@ -99,9 +99,9 @@ enum NextRoutineSuggestion {
         )
     }
 
-    /// The owner contributes one ordered slot. Its partner is suppressed only
-    /// when the owner is also in this scope; a partner whose owner lives in a
-    /// different microcycle remains an ordinary requirement there.
+    /// The owner contributes one ordered slot. Other members are suppressed
+    /// only when the owner is also in this scope; members whose owner lives in
+    /// a different microcycle remain ordinary requirements there.
     private static func slots(
         from pool: [RoutineModel],
         allRoutines: [RoutineModel],
@@ -115,21 +115,21 @@ enum NextRoutineSuggestion {
             workouts: workouts
         )
         let stateByOwnerID = Dictionary(states.map { ($0.owner.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let suppressedPartnerIDs = Set(states.compactMap { state in
-            poolIDs.contains(state.owner.id) && poolIDs.contains(state.partner.id)
-                ? state.partner.id
-                : nil
-        })
+        let suppressedMemberIDs = states.reduce(into: Set<UUID>()) { result, state in
+            guard poolIDs.contains(state.owner.id) else { return }
+            result.formUnion(state.memberIDs.intersection(poolIDs))
+            result.remove(state.owner.id)
+        }
 
         return pool.compactMap { routine in
-            guard !suppressedPartnerIDs.contains(routine.id) else { return nil }
+            guard !suppressedMemberIDs.contains(routine.id) else { return nil }
             guard let state = stateByOwnerID[routine.id] else {
                 return Slot(routine: routine, memberIDs: [routine.id], alternatingWith: nil)
             }
             return Slot(
                 routine: state.due,
-                memberIDs: [state.owner.id, state.partner.id],
-                alternatingWith: state.other.name
+                memberIDs: state.memberIDs,
+                alternatingWith: state.memberSummary(excluding: state.due.id)
             )
         }
     }

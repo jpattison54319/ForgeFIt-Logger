@@ -1,7 +1,8 @@
 import ForgeData
 
-/// Keeps an alternating pair's library positions stable while presenting the
-/// due routine in the owner's slot and the other routine in the partner's slot.
+/// Keeps an alternating cycle's library positions stable while presenting the
+/// due routine in the owner's slot. Only the owner and due member trade places;
+/// every other member remains in its stored slot.
 @MainActor
 enum AlternatingRoutineSlotResolver {
     static func presentedRoutine(
@@ -9,8 +10,9 @@ enum AlternatingRoutineSlotResolver {
         state: RoutineAlternationService.State?
     ) -> RoutineModel {
         guard let state else { return slot }
+        guard state.due.id != state.owner.id else { return slot }
         if slot.id == state.owner.id { return state.due }
-        if slot.id == state.partner.id { return state.other }
+        if slot.id == state.due.id { return state.owner }
         return slot
     }
 }
