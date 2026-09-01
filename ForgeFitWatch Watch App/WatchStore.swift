@@ -605,8 +605,17 @@ final class WatchStore: NSObject {
 
     func handleWorkoutConfiguration(_ configuration: Any) {
         guard let config = configuration as? HKWorkoutConfigurationBox else { return }
+        // A HealthKit handoff starts a new authority round. Any context held
+        // before this callback may describe the prior idle/workout state and
+        // cannot bind the provisional session that is about to start.
+        hasReceivedAuthoritativeContext = false
         showPhoneStartedWorkoutPlaceholder()
         pendingHandoffConfiguration = config.value
+        // The HealthKit handoff and WatchConnectivity activation are separate
+        // channels. Explicitly ask for the workout graph here so a publish the
+        // phone attempted while WCSession was activating cannot leave this
+        // placeholder blank and the HR stream quarantined indefinitely.
+        requestFreshContext()
         // Recovery owns the first engine decision. Starting from the handoff
         // before checking for a headless session can overwrite A's durable
         // identity or collide with its HealthKit session. Once recovery
@@ -632,8 +641,11 @@ final class WatchStore: NSObject {
     }
 
     private func showPhoneStartedWorkoutPlaceholder() {
-        guard activeWorkout == nil else { return }
         isAwaitingWorkoutIdentity = true
+        // Preserve a visible exercise graph if the phone's matching context
+        // won the race and arrived just before the HealthKit handoff. It is
+        // still treated as provisional until the explicit refresh resolves it.
+        guard activeWorkout == nil else { return }
         var ctx = context ?? WatchAppContext()
         ctx.workout = WatchWorkoutSnapshot(
             workoutID: UUID(),
@@ -772,8 +784,11 @@ final class WatchStore: NSObject {
     /// opens the phone app. `sendMessage` also background-launches the phone
     /// app to answer, so it works with the phone in a pocket.
     func requestFreshContext() {
-        guard WCSession.isSupported(),
-              WCSession.default.activationState == .activated else { return }
+        guard WCSession.isSupported() else { return }
+        guard WCSession.default.activationState == .activated else {
+            WCSession.default.activate()
+            return
+        }
         send(.requestContext)
     }
 
@@ -881,8 +896,14 @@ extension WatchStore: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in
             self.isReachable = session.isReachable
-            // Pick up whatever the phone last published.
-            if let data = session.receivedApplicationContext[WatchWire.contextKey] as? Data,
+            // A retained context predates a phone-start handoff and must not
+            // bind its provisional HealthKit session to an old workout (or
+            // clear it from an old idle snapshot). Request a newly generated
+            // context below instead.
+            if WatchHandoffContextPolicy.shouldApplyRetainedContext(
+                isAwaitingWorkoutIdentity: self.isAwaitingWorkoutIdentity
+            ),
+               let data = session.receivedApplicationContext[WatchWire.contextKey] as? Data,
                let ctx = WatchWire.decode(WatchAppContext.self, from: data) {
                 self.apply(context: ctx)
             }
@@ -897,8 +918,12 @@ extension WatchStore: WCSessionDelegate {
             self.isReachable = session.isReachable
             // Any reconnection is a chance to notice "phone says a workout is
             // live but our engine is idle" (e.g. the engine died while we
-            // were unreachable) and restart collection.
-            if session.isReachable { await self.recoverOrStartWorkoutSession() }
+            // were unreachable), refresh a missed workout graph, and restart
+            // collection under the exact authoritative identity.
+            if session.isReachable {
+                self.requestFreshContext()
+                await self.recoverOrStartWorkoutSession()
+            }
         }
     }
 

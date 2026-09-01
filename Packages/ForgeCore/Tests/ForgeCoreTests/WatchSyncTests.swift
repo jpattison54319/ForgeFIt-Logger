@@ -819,6 +819,19 @@ extension WatchSyncTests {
     private static let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
     private static let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
 
+    /// `receivedApplicationContext` predates a HealthKit handoff. Applying it
+    /// would resolve the placeholder against an old idle/workout state and
+    /// keep the new session's HR quarantined, so handoffs wait for the fresh
+    /// context they explicitly request.
+    @Test func pendingHandoffDoesNotApplyTheRetainedContext() {
+        #expect(!WatchHandoffContextPolicy.shouldApplyRetainedContext(
+            isAwaitingWorkoutIdentity: true
+        ))
+        #expect(WatchHandoffContextPolicy.shouldApplyRetainedContext(
+            isAwaitingWorkoutIdentity: false
+        ))
+    }
+
     /// The confirmed FF-003 trigger: recovery/context against snapshot B while
     /// the live session belongs to A must never resume streaming under B — the
     /// stale session is ended and a fresh one is started for the current

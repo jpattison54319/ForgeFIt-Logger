@@ -745,7 +745,10 @@ final class ForgeFitActiveWorkoutIntentService: @unchecked Sendable {
     private func publish(workout: WorkoutModel) {
         guard publishesExternalSurfaces else { return }
         WatchLink.shared.configureIfNeeded(container: container)
-        WatchLink.shared.publishState(policy: .immediate)
+        // App Intents may run without ContentView and may follow an isolated
+        // workout start. The durable path both activates the transport on
+        // demand and reads the complete committed graph from a fresh context.
+        WatchLink.shared.publishDurableState()
         let library = (try? container.mainContext.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
         WorkoutActivityController.shared.update(workout: workout, exercises: library)
 

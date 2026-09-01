@@ -1794,7 +1794,11 @@ struct ContentView: View {
                 schedulePlanDeduplication()
             }
         }
-        WatchLink.shared.publishState(policy: .immediate)
+        // Active-workout transitions are structural and rare. Read them back
+        // through a fresh context so an isolated WorkoutFactory commit cannot
+        // publish the parent row before its exercise/set relationships have
+        // refreshed in this long-lived UI context.
+        WatchLink.shared.publishDurableState()
         if newID == nil {
             // Backstop for externally removed workouts. Normal finish/discard
             // paths already send their more specific terminal command.

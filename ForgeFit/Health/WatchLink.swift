@@ -145,8 +145,15 @@ final class WatchLink: NSObject {
 
     private func publishStateNow(usingFreshContext: Bool = false) {
         #if canImport(WatchConnectivity)
-        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
-              let context = modelContext else { return }
+        guard WCSession.isSupported(), let context = modelContext else { return }
+        guard WCSession.default.activationState == .activated else {
+            // A workout can commit while WCSession is still activating (cold
+            // launch, App Intent, or a background wake). Do not permanently
+            // drop that structural publish: activationDidComplete republishes
+            // the durable graph once the transport is usable.
+            activate()
+            return
+        }
         refresh()
         guard isWatchAppInstalled || WCSession.default.isReachable else { return }
         let readContext: ModelContext
@@ -199,7 +206,9 @@ final class WatchLink: NSObject {
     }
     #endif
 
-    private func buildContext(in context: ModelContext) -> WatchAppContext {
+    /// Internal so regression tests can verify the exact durable graph placed
+    /// on the wire after an isolated workout-start transaction.
+    func buildContext(in context: ModelContext) -> WatchAppContext {
         let active = (try? context.fetch(FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.deletedAt == nil && $0.endedAt == nil },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
@@ -1374,7 +1383,11 @@ final class WatchLink: NSObject {
         LiveMetricsHub.shared.clearLiveMetrics()
         context.saveUserChanges { [weak self] in
             self?.onWorkoutStartedFromWatch?()
-            self?.publishState(policy: .immediate)
+            // WorkoutFactory commits in an isolated context. Publish through
+            // a fresh reader so the Watch receives the committed exercise/set
+            // graph rather than a relationship cache that observed only the
+            // new parent row.
+            self?.publishDurableState()
         }
     }
 
@@ -1503,7 +1516,13 @@ extension WatchLink: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in
             refresh()
-            publishState()
+            // Activation can complete after a structural publish was attempted
+            // and dropped. A fresh read is rare here and guarantees that a
+            // newly started workout arrives with all exercises before the
+            // Watch binds its HealthKit session identity.
+            if activationState == .activated {
+                publishDurableState()
+            }
             // Pick up whatever HR the watch last published while we were
             // inactive/not-yet-launched — the always-latest fallback channel
             // (see WatchStore.send) means this is never a stale replay.

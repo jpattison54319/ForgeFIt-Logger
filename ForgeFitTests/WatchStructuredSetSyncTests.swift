@@ -11,6 +11,57 @@ struct WatchStructuredSetSyncTests {
 
     private let userID = ForgeFitDemo.userID
 
+    @Test func freshStartSnapshotCarriesTheCommittedExerciseAndSetGraph() throws {
+        let container = try TestStore.makeContainer()
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let exercise = ExerciseLibraryModel(
+            name: "Watch Snapshot Press",
+            equipment: "machine"
+        )
+        let routine = RoutineModel(
+            userID: userID,
+            name: "Watch Snapshot Routine",
+            exercises: [RoutineExerciseModel(
+                userID: userID,
+                exerciseID: exercise.id,
+                sets: [RoutineSetModel(
+                    userID: userID,
+                    position: 0,
+                    targetRepsLow: 8,
+                    targetWeight: 70
+                )]
+            )]
+        )
+        context.insert(exercise)
+        context.insert(routine)
+        try context.save()
+
+        // Match the production start boundary: WorkoutFactory persists in an
+        // isolated context, while WatchLink publishes from a fresh reader.
+        let startedWorkout = WorkoutFactory.start(
+            routine: routine,
+            exercises: [exercise],
+            in: context,
+            onCommit: { _ in }
+        )
+        let started = try #require(startedWorkout)
+        let readContext = ModelContext(container)
+        readContext.autosaveEnabled = false
+        let snapshot = WatchLink().buildContext(in: readContext).workout
+        let workout = try #require(snapshot)
+        let row = try #require(workout.exercises.first)
+        let set = try #require(row.sets.first)
+
+        #expect(workout.workoutID == started.id)
+        #expect(workout.title == routine.name)
+        #expect(workout.exercises.count == 1)
+        #expect(row.exerciseID == exercise.id)
+        #expect(row.name == exercise.name)
+        #expect(set.reps == 8)
+        #expect(set.weightKg == 70)
+    }
+
     @Test func queuedNextTrackedWorkoutCommandIsIgnored() throws {
         let container = try TestStore.makeContainer()
         let context = ModelContext(container)

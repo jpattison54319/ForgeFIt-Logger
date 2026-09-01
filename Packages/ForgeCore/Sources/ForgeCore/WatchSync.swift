@@ -768,6 +768,23 @@ public enum WatchTerminalCommandPolicy {
     }
 }
 
+// MARK: - Phone-start context recovery
+
+/// A HealthKit workout handoff can launch the Watch before the matching
+/// WatchConnectivity snapshot arrives. `receivedApplicationContext` is only
+/// the peer's last retained value and may describe the idle state (or an older
+/// workout), so it cannot resolve the new handoff's provisional identity.
+public enum WatchHandoffContextPolicy {
+    /// Outside a pending handoff, the retained latest-value context is useful
+    /// launch state. During a handoff the Watch must request and wait for a
+    /// newly published context instead.
+    public static func shouldApplyRetainedContext(
+        isAwaitingWorkoutIdentity: Bool
+    ) -> Bool {
+        !isAwaitingWorkoutIdentity
+    }
+}
+
 // MARK: - Engine workout identity policy (FF-003)
 
 /// The watch engine's live HKWorkoutSession is bound to the workout it was
