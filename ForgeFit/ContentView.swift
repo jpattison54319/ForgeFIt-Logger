@@ -1809,7 +1809,7 @@ struct ContentView: View {
                 pendingLaunchLoggerPresentation = false
                 pendingLaunchLoggerWorkoutID = nil
             }
-            WatchLink.shared.sendCommand(.workoutFinished)
+            WatchLink.shared.sendCommand(.workoutFinished(workoutID: oldID))
             readinessStampTask?.cancel()
             liveSurfaceUpdateTask?.cancel()
             WorkoutFinisher.cancelLiveRuntime()

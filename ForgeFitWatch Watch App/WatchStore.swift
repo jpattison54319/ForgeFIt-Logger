@@ -40,6 +40,7 @@ final class WatchStore: NSObject {
 
     /// Set after a workout ends so the summary screen can show final numbers.
     struct Summary {
+        var workoutID: UUID
         var durationSeconds: Int
         var completedSets: Int
         var metrics: WatchLiveMetrics
@@ -65,8 +66,15 @@ final class WatchStore: NSObject {
         // engine would otherwise try to open a HealthKit workout the
         // simulator can't authorize.
         if WatchAppStoreDemo.isRequested {
-            context = WatchAppStoreDemo.context()
-            WTheme.configure(family: context?.effectiveThemeFamily ?? .sage)
+            if WatchAppStoreDemo.wantsSupersededSummary {
+                summary = Summary(
+                    workoutID: UUID(),
+                    durationSeconds: 3_600,
+                    completedSets: 8,
+                    metrics: WatchLiveMetrics()
+                )
+            }
+            apply(context: WatchAppStoreDemo.context())
             if WatchAppStoreDemo.wantsActiveWorkout {
                 WatchAppStoreDemo.startHeartRateTicker(engine)
             }
@@ -163,6 +171,12 @@ final class WatchStore: NSObject {
     }
 
     func recoverOrStartWorkoutSession() async {
+        #if DEBUG
+        // Deterministic Watch demos render a phone-provided snapshot without
+        // starting HealthKit. Scene activation also calls this recovery path,
+        // so keep the fixture isolated from the system authorization sheet.
+        if WatchAppStoreDemo.isRequested { return }
+        #endif
         if recoveryBootstrapComplete {
             ensureWorkoutSessionRunning()
             return
@@ -605,6 +619,10 @@ final class WatchStore: NSObject {
 
     func handleWorkoutConfiguration(_ configuration: Any) {
         guard let config = configuration as? HKWorkoutConfigurationBox else { return }
+        // A phone-start handoff is a new live-workout presentation. Retire any
+        // summary left from the prior session immediately, before the matching
+        // WatchConnectivity snapshot arrives.
+        summary = nil
         // A HealthKit handoff starts a new authority round. Any context held
         // before this callback may describe the prior idle/workout state and
         // cannot bind the provisional session that is about to start.
@@ -657,6 +675,7 @@ final class WatchStore: NSObject {
 
     private func captureSummary(for workout: WatchWorkoutSnapshot, metrics: WatchLiveMetrics) {
         summary = Summary(
+            workoutID: workout.workoutID,
             durationSeconds: max(0, Int(Date().timeIntervalSince(workout.startedAt))),
             completedSets: workout.completedSets,
             metrics: metrics
@@ -671,6 +690,12 @@ final class WatchStore: NSObject {
         isAwaitingWorkoutIdentity = false
         hasReceivedAuthoritativeContext = true
         let previous = context
+        if WatchSummaryPresentationPolicy.shouldDismissSummary(
+            summaryWorkoutID: summary?.workoutID,
+            incomingWorkoutID: newContext.workout?.workoutID
+        ) {
+            summary = nil
+        }
         WTheme.configure(family: newContext.effectiveThemeFamily)
         ForgeThemePreferenceStore.save(ForgeThemePreference(
             family: newContext.effectiveThemeFamily,
@@ -821,11 +846,20 @@ final class WatchStore: NSObject {
 
     private func handle(_ command: WatchCommand) {
         switch command {
-        case .workoutFinished:
+        case .workoutFinished(let workoutID):
+            // transferUserInfo may deliver A's queued finish only after a new
+            // phone-started workout B wakes the Watch. Never let that stale
+            // command tear down B or put A's Done screen over B's live UI.
+            guard WatchTerminalCommandPolicy.mayRunTerminalCommand(
+                      isAwaitingIdentity: isAwaitingWorkoutIdentity
+                  ),
+                  let workout = activeWorkout,
+                  WatchTerminalCommandPolicy.shouldExecute(
+                      carriedWorkoutID: workoutID,
+                      activeWorkoutID: workout.workoutID
+                  ) else { return }
             if engine.hasActiveSession {
-                if let workout = activeWorkout {
-                    captureSummary(for: workout, metrics: engine.currentMetrics())
-                }
+                captureSummary(for: workout, metrics: engine.currentMetrics())
                 cancelEngineThenReconcile()
             }
             clearWorkoutLocally()

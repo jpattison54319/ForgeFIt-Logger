@@ -1097,7 +1097,7 @@ final class WatchLink: NSObject {
                 publishState(policy: .immediate)
             }
 
-        case .workoutFinished:
+        case .workoutFinished(_):
             break // phone → watch only
         }
     }

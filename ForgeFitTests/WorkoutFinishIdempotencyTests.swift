@@ -35,6 +35,7 @@ struct WorkoutFinishIdempotencyTests {
         #expect(workout.endedAt != nil)
         #expect(recorder.healthKitSaveCount == 1)
         #expect(recorder.watchSendCount == 1)
+        #expect(recorder.watchFinishedWorkoutIDs == [workout.id])
         #expect(recorder.watchPublishCount == 1)
         #expect(recorder.backupNoteCount == 1)
         // No BLE buffer exists in tests; the guarantee is "at most once".
@@ -694,6 +695,7 @@ private final class FinishRecorder {
     var healthKitRequests: [WorkoutFinisher.HealthKitSaveRequest] = []
     var heartRateSaveCount = 0
     var watchSendCount = 0
+    var watchFinishedWorkoutIDs: [UUID] = []
     var watchPublishCount = 0
     var backupNoteCount = 0
 
@@ -704,7 +706,10 @@ private final class FinishRecorder {
                 healthKitRequests.append(request)
             },
             scheduleHeartRateSamples: { [self] _ in heartRateSaveCount += 1 },
-            sendWorkoutFinishedToWatch: { [self] in watchSendCount += 1 },
+            sendWorkoutFinishedToWatch: { [self] workoutID in
+                watchSendCount += 1
+                watchFinishedWorkoutIDs.append(workoutID)
+            },
             publishWatchState: { [self] in watchPublishCount += 1 },
             noteLogDataChanged: { [self] in backupNoteCount += 1 }
         )

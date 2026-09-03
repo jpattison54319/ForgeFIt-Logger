@@ -262,9 +262,13 @@ struct WatchSyncTests {
             guard case .discardWorkout(let decodedID) = $0 else { return false }
             return decodedID == nil
         }
-        try expectCommand(.workoutFinished) {
-            guard case .workoutFinished = $0 else { return false }
-            return true
+        try expectCommand(.workoutFinished(workoutID: workoutID)) {
+            guard case .workoutFinished(let decodedID) = $0 else { return false }
+            return decodedID == workoutID
+        }
+        try expectCommand(.workoutFinished(workoutID: nil)) {
+            guard case .workoutFinished(let decodedID) = $0 else { return false }
+            return decodedID == nil
         }
     }
 
@@ -756,6 +760,39 @@ extension WatchSyncTests {
         #expect(decodedID == nil)
     }
 
+    /// The old phone command had no associated value. It must remain decodable
+    /// across a staggered phone/Watch update, but nil identity is intentionally
+    /// insufficient to finish whichever workout happens to be live now.
+    @Test func legacyPhoneFinishDecodesAsUnboundAndIsRefused() throws {
+        let legacyJSON = #"{"workoutFinished":{}}"#
+        let decoded = try #require(WatchWire.decode(WatchCommand.self, from: Data(legacyJSON.utf8)))
+
+        guard case .workoutFinished(let decodedID) = decoded else {
+            Issue.record("expected .workoutFinished case")
+            return
+        }
+        #expect(decodedID == nil)
+        #expect(!WatchTerminalCommandPolicy.shouldExecute(
+            carriedWorkoutID: decodedID,
+            activeWorkoutID: UUID()
+        ))
+    }
+
+    /// A Watch still running the prior enum shape ignores the new nested ID
+    /// field and continues to decode the finish case during a staggered
+    /// phone-first update.
+    @Test func identityBoundPhoneFinishStillDecodesOnLegacyWatchShape() throws {
+        let encoded = try #require(WatchWire.encode(
+            WatchCommand.workoutFinished(workoutID: UUID())
+        ))
+        let decoded = try #require(WatchWire.decode(LegacyPhoneWatchCommand.self, from: encoded))
+
+        guard case .workoutFinished = decoded else {
+            Issue.record("expected legacy .workoutFinished case")
+            return
+        }
+    }
+
     // MARK: Terminal-command identity policy — pure decision surface
 
     /// The phone gate: an identity-less or mismatched terminal command is
@@ -778,6 +815,30 @@ extension WatchSyncTests {
         #expect(WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: false))
         #expect(!WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: true))
     }
+
+    /// A prior workout's summary may survive while the Watch app is dormant,
+    /// but a newer active workout owns the screen as soon as it arrives.
+    @Test func newerWorkoutDismissesOnlyASupersededSummary() {
+        let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+        #expect(!WatchSummaryPresentationPolicy.shouldDismissSummary(
+            summaryWorkoutID: a,
+            incomingWorkoutID: a
+        ))
+        #expect(WatchSummaryPresentationPolicy.shouldDismissSummary(
+            summaryWorkoutID: a,
+            incomingWorkoutID: b
+        ))
+        #expect(!WatchSummaryPresentationPolicy.shouldDismissSummary(
+            summaryWorkoutID: a,
+            incomingWorkoutID: nil
+        ))
+    }
+}
+
+private enum LegacyPhoneWatchCommand: Codable {
+    case workoutFinished
 }
 
 // MARK: - Rest-timer mirroring (incl. block micro-rests)

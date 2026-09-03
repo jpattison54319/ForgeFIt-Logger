@@ -23,6 +23,12 @@ enum WatchAppStoreDemo {
         ProcessInfo.processInfo.arguments.contains("--seed-watch-demo-active")
     }
 
+    /// Acceptance-only reproduction of a completion summary retained while
+    /// the Watch was dormant between workouts.
+    static var wantsSupersededSummary: Bool {
+        ProcessInfo.processInfo.arguments.contains("--seed-watch-superseded-summary")
+    }
+
     /// `--seed-watch-lengthened`: adds one extended set (full-range reps plus
     /// lengthened partials) to the seeded workout. Kept behind its own flag so
     /// the App Store capture fixture stays exactly the workout it was composed

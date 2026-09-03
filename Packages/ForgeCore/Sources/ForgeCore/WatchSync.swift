@@ -733,7 +733,10 @@ public enum WatchCommand: Codable, Sendable {
     case discardWorkout(workoutID: UUID?)
 
     // phone → watch
-    case workoutFinished
+    /// The phone completed this exact workout. The identity is optional only
+    /// for mixed-version decoding: a legacy unbound message is refused by the
+    /// receiving Watch and the authoritative idle context performs teardown.
+    case workoutFinished(workoutID: UUID?)
     /// watch → phone: "publish a fresh context". The watch can't refresh
     /// day-scoped data on its own — without this it shows whatever the phone
     /// last pushed until the user opens the phone app.
@@ -742,16 +745,14 @@ public enum WatchCommand: Codable, Sendable {
 
 // MARK: - Terminal-command identity policy (FF-002)
 
-/// The shared gate for watch → phone terminal commands. Keeping the decision in
-/// ForgeCore lets the watch store and the phone handler both run the exact
-/// tested policy, and gives unit tests a pure surface independent of
-/// WatchConnectivity and the UI.
+/// The shared identity gate for terminal commands in either direction. Keeping
+/// the decision in ForgeCore lets both receivers run the exact tested policy,
+/// and gives unit tests a pure surface independent of WatchConnectivity and UI.
 public enum WatchTerminalCommandPolicy {
-    /// The phone may execute a terminal command only for the exact workout it
+    /// A receiver may execute a terminal command only for the exact workout it
     /// names. A nil carried ID is the legacy pre-binding wire form —
-    /// unverifiable — and any mismatch means the command is stale; both are
-    /// refused, and the phone re-publishes its authoritative snapshot so a
-    /// watch that cleared itself on the stale command converges.
+    /// unverifiable — and any mismatch means the command is stale, so both are
+    /// refused. The authoritative context then converges the peer's state.
     public static func shouldExecute(carriedWorkoutID: UUID?, activeWorkoutID: UUID?) -> Bool {
         guard let carriedWorkoutID, let activeWorkoutID else { return false }
         return carriedWorkoutID == activeWorkoutID
@@ -765,6 +766,21 @@ public enum WatchTerminalCommandPolicy {
     /// front, before any local mutation.
     public static func mayRunTerminalCommand(isAwaitingIdentity: Bool) -> Bool {
         !isAwaitingIdentity
+    }
+}
+
+// MARK: - Watch summary ownership
+
+/// A completion summary belongs to one workout. It may temporarily stay above
+/// a late snapshot for that same just-finished workout, but it must never cover
+/// a genuinely newer live workout.
+public enum WatchSummaryPresentationPolicy {
+    public static func shouldDismissSummary(
+        summaryWorkoutID: UUID?,
+        incomingWorkoutID: UUID?
+    ) -> Bool {
+        guard let summaryWorkoutID, let incomingWorkoutID else { return false }
+        return summaryWorkoutID != incomingWorkoutID
     }
 }
 

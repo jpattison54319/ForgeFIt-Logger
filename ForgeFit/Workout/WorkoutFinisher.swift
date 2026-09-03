@@ -117,7 +117,7 @@ enum WorkoutFinisher {
     struct FinishEffects {
         var scheduleHealthKitSave: (HealthKitSaveRequest) -> Void
         var scheduleHeartRateSamples: ([(date: Date, bpm: Int)]) -> Void
-        var sendWorkoutFinishedToWatch: () -> Void
+        var sendWorkoutFinishedToWatch: (UUID) -> Void
         var publishWatchState: () -> Void
         var noteLogDataChanged: () -> Void
 
@@ -144,8 +144,8 @@ enum WorkoutFinisher {
                 scheduleHeartRateSamples: { samples in
                     Task { await HealthService.shared.saveHeartRateSamples(samples) }
                 },
-                sendWorkoutFinishedToWatch: {
-                    WatchLink.shared.sendCommand(.workoutFinished)
+                sendWorkoutFinishedToWatch: { workoutID in
+                    WatchLink.shared.sendCommand(.workoutFinished(workoutID: workoutID))
                 },
                 publishWatchState: {
                     WatchLink.shared.publishDurableState()
@@ -755,7 +755,7 @@ enum WorkoutFinisher {
         }
 
         // Tell the watch the session is over and refresh its snapshot.
-        dispatchedEffects.sendWorkoutFinishedToWatch()
+        dispatchedEffects.sendWorkoutFinishedToWatch(workout.id)
         dispatchedEffects.publishWatchState()
         cancelLiveRuntime()
         // A finished workout is the log change that matters most — refresh

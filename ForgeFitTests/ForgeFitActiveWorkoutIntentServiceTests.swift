@@ -417,7 +417,7 @@ struct ForgeFitActiveWorkoutIntentServiceTests {
         WorkoutFinisher.FinishEffects(
             scheduleHealthKitSave: { _ in },
             scheduleHeartRateSamples: { _ in },
-            sendWorkoutFinishedToWatch: {},
+            sendWorkoutFinishedToWatch: { _ in },
             publishWatchState: {},
             noteLogDataChanged: {}
         )

@@ -209,6 +209,64 @@ final class ForgeFitWatch_Watch_AppUITests: XCTestCase {
         cancel.watchAcceptanceTap()
     }
 
+    /// Reproduces a queued prior-session completion coexisting with a newly
+    /// active phone-start snapshot. The new workout must own the screen without
+    /// asking the athlete to dismiss the old Done summary.
+    @MainActor
+    func testPhoneStartedWorkoutSupersedesPriorSummary() throws {
+        let scenario = WatchAcceptanceScenario(
+            id: "watch-phone-start-supersedes-summary",
+            title: "Phone start supersedes prior Watch summary",
+            purpose: "Verify a newly active phone-started workout is shown instead of a retained completion summary.",
+            fixtureArguments: [
+                "--seed-watch-demo",
+                "--seed-watch-demo-active",
+                "--seed-watch-superseded-summary",
+            ],
+            checkpoints: [
+                WatchAcceptanceCheckpoint(
+                    id: "watch-new-workout-active",
+                    title: "The new workout owns the Watch screen",
+                    action: "Launch with a prior summary and a newer active workout.",
+                    expectedVisibleIdentifiers: [
+                        "watch-active-workout",
+                        "watch-exercises-page",
+                        "watch-exercise-Barbell Bench Press",
+                    ],
+                    expectedVisibleLabels: [],
+                    screenshotRequired: true
+                )
+            ]
+        )
+        let app = XCUIApplication()
+        WatchHumanActionRecorder.shared.register(
+            app,
+            scenarioID: "ForgeFitWatch_Watch_AppUITests/testPhoneStartedWorkoutSupersedesPriorSummary"
+        )
+        app.launchArguments = scenario.fixtureArguments
+        watchAcceptanceExpect(
+            [
+                "watch-active-workout",
+                "watch-exercises-page",
+                "watch-exercise-Barbell Bench Press",
+            ]
+        )
+        app.watchAcceptanceLaunch()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["watch-active-workout"].firstMatch.waitForExistence(timeout: 15),
+            "A new phone-started workout must replace a prior completion summary"
+        )
+        XCTAssertTrue(
+            app.descendants(matching: .any)["watch-exercise-Barbell Bench Press"].firstMatch.exists,
+            "The new workout's live exercise list must remain visible"
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["watch-summary"].firstMatch.exists,
+            "The prior workout's Done screen must not cover the active workout"
+        )
+    }
+
     /// The wrist half of the extended set type: the row states the partials
     /// that followed the full-range reps, and the editor can change them.
     @MainActor
