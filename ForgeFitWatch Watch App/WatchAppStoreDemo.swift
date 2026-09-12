@@ -23,6 +23,30 @@ enum WatchAppStoreDemo {
         ProcessInfo.processInfo.arguments.contains("--seed-watch-demo-active")
     }
 
+    static var wantsStartRecovery: Bool {
+        isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-start-recovery")
+    }
+
+    static func startedContext(for request: WatchStartRequest) -> WatchAppContext {
+        var result = context()
+        if case .startRoutine = request.command {
+            result.workout = activeWorkout(now: Date())
+            result.workout?.workoutID = request.id
+            result.workout?.restEndsAt = nil
+        } else {
+            result.workout = WatchWorkoutSnapshot(workoutID: request.id, title: "Workout", startedAt: Date())
+        }
+        return result
+    }
+
+    static var wantsDelayedFinish: Bool {
+        isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-finish-pending")
+    }
+
+    static var wantsSyncRecovery: Bool {
+        isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-sync-recovery")
+    }
+
     /// Acceptance-only reproduction of a completion summary retained while
     /// the Watch was dormant between workouts.
     static var wantsSupersededSummary: Bool {

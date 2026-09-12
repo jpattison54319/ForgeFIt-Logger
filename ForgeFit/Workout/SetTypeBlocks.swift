@@ -465,7 +465,7 @@ struct SetBlockView: View {
             .accessibilityIdentifier("activation-reps-\(side)")
             .focused($activationFocus, equals: side)
             .quickIncrementable(
-                options: QuickIncrementController.repsOptions(),
+                kind: .reps,
                 onBegin: { activationFocus = nil },
                 base: {
                     // Mirrors the ghost the placeholder shows: side 2 leans
@@ -949,7 +949,7 @@ struct SetBlockView: View {
             }
         }
         .quickIncrementable(
-            options: QuickIncrementController.weightOptions(unit: displayUnit),
+            kind: .weight(displayUnit),
             onBegin: { weightFocused = false },
             base: {
                 if weightDraftActive {

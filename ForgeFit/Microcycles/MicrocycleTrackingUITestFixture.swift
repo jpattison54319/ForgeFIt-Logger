@@ -129,8 +129,9 @@ enum MicrocycleTrackingUITestFixture {
             updatedAt: stoppedAt
         )
 
-        let activeStart = calendar.date(byAdding: .day, value: -9, to: today)!
-        let currentStart = calendar.date(byAdding: .day, value: 7, to: activeStart)!
+        let previousCount = ProcessInfo.processInfo.arguments.contains("--seed-microcycle-long-history") ? 43 : 1
+        let activeStart = calendar.date(byAdding: .day, value: -(previousCount * 7 + 2), to: today)!
+        let currentStart = calendar.date(byAdding: .day, value: previousCount * 7, to: activeStart)!
         let activeTracking = MicrocycleTrackingModel(
             userID: ForgeFitDemo.userID,
             folderID: strengthFolder.id,
@@ -159,7 +160,7 @@ enum MicrocycleTrackingUITestFixture {
             trackingID: activeTracking.id,
             folderID: strengthFolder.id,
             folderName: strengthFolder.name,
-            index: 1,
+            index: previousCount,
             startsAt: currentStart,
             endsAt: calendar.date(byAdding: .day, value: 7, to: currentStart)!,
             timeZoneIdentifier: calendar.timeZone.identifier,
@@ -170,6 +171,24 @@ enum MicrocycleTrackingUITestFixture {
 
         [stoppedTracking, activeTracking].forEach(context.insert)
         [stoppedWindow, activePreviousWindow, activeCurrentWindow].forEach(context.insert)
+        if previousCount > 1 {
+            for index in 1..<previousCount {
+                let start = calendar.date(byAdding: .day, value: index * 7, to: activeStart)!
+                context.insert(MicrocycleWindowModel(
+                    userID: ForgeFitDemo.userID,
+                    trackingID: activeTracking.id,
+                    folderID: strengthFolder.id,
+                    folderName: strengthFolder.name,
+                    index: index,
+                    startsAt: start,
+                    endsAt: calendar.date(byAdding: .day, value: 7, to: start)!,
+                    timeZoneIdentifier: calendar.timeZone.identifier,
+                    routines: strengthRoutines,
+                    createdAt: start,
+                    updatedAt: now
+                ))
+            }
+        }
         UserDefaults.standard.set(
             strengthFolder.id.uuidString,
             forKey: CyclePreferenceMigration.activeMicrocycleKey

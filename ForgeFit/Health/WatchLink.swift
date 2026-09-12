@@ -38,7 +38,18 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var modelContext: ModelContext?
     @ObservationIgnored private let interactionPublisher = DeferredInteractionWork()
     @ObservationIgnored private var routineSummaryCache: [WatchRoutineSummary]?
+    @ObservationIgnored private var syncEpoch = UUID()
+    @ObservationIgnored private var syncRevision: UInt64 = 0
     @ObservationIgnored private let complicationDeliveryDefaults = UserDefaults.standard
+
+    @ObservationIgnored private let resetDefaults: UserDefaults
+    @ObservationIgnored private let resetNoticeSender: ((String) -> Bool)?
+
+    init(resetDefaults: UserDefaults = .standard, resetNoticeSender: ((String) -> Bool)? = nil) {
+        self.resetDefaults = resetDefaults
+        self.resetNoticeSender = resetNoticeSender
+        super.init()
+    }
 
     private static let complicationDeliverySignatureKey = "watch.complication.readiness-delivery-signature"
 
@@ -145,7 +156,7 @@ final class WatchLink: NSObject {
 
     private func publishStateNow(usingFreshContext: Bool = false) {
         #if canImport(WatchConnectivity)
-        guard WCSession.isSupported(), let context = modelContext else { return }
+        guard WCSession.isSupported(), modelContext != nil else { return }
         guard WCSession.default.activationState == .activated else {
             // A workout can commit while WCSession is still activating (cold
             // launch, App Intent, or a background wake). Do not permanently
@@ -156,27 +167,100 @@ final class WatchLink: NSObject {
         }
         refresh()
         guard isWatchAppInstalled || WCSession.default.isReachable else { return }
-        let readContext: ModelContext
-        if usingFreshContext {
-            readContext = ModelContext(context.container)
-            readContext.autosaveEnabled = false
-        } else {
-            readContext = context
+        cancelSupersededTerminalTransfers()
+        guard let packet = makeSyncPacket(usingFreshContext: usingFreshContext) else { return }
+        let (watchContext, data, metadata) = packet
+        guard let metadataData = WatchWire.encode(metadata) else { return }
+        let payload = [WatchWire.contextKey: data, WatchWire.syncMetadataKey: metadataData]
+        do {
+            try WCSession.default.updateApplicationContext(payload)
+        } catch {
+            WatchSyncDiagnostics.record("context-send-failed", error: error)
         }
-        let watchContext = buildContext(in: readContext)
-        guard let data = WatchWire.encode(watchContext) else { return }
-        let payload = [WatchWire.contextKey: data]
-        try? WCSession.default.updateApplicationContext(payload)
         // Application context can coalesce; when the watch is live, message it
         // for instant UI updates too.
         if WCSession.default.isReachable {
-            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            WCSession.default.sendMessage(payload, replyHandler: nil) { error in
+                WatchSyncDiagnostics.record("context-message-failed", error: error)
+            }
         }
         transferCurrentReadinessToComplicationIfNeeded(
             watchContext,
             payload: payload,
             session: WCSession.default
         )
+        #endif
+    }
+
+    private func makeSyncPacket(usingFreshContext: Bool) -> (WatchAppContext, Data, WatchSyncMetadata)? {
+        guard let context = modelContext else { return nil }
+        let readContext = usingFreshContext ? ModelContext(context.container) : context
+        if usingFreshContext { readContext.autosaveEnabled = false }
+        do {
+            let snapshot = try buildContext(in: readContext)
+            guard let data = WatchWire.encode(snapshot) else {
+                WatchSyncDiagnostics.record("context-encode-failed")
+                return nil
+            }
+            syncRevision += 1
+            return (snapshot, data, WatchSyncMetadata(
+                epoch: syncEpoch, revision: syncRevision, workoutID: snapshot.workout?.workoutID
+            ))
+        } catch {
+            WatchSyncDiagnostics.record("context-read-failed", error: error)
+            return nil
+        }
+    }
+
+    /// The reply is built from committed data and acknowledges this particular
+    /// request even when storage or the peer protocol is unavailable.
+    func makeSyncReply(to request: WatchSyncRequest) -> WatchSyncReply {
+        guard request.protocolVersion == WatchSyncRequest.protocolVersion else {
+            return WatchSyncReply(requestID: request.id, issue: .incompatible)
+        }
+        guard let (_, data, metadata) = makeSyncPacket(usingFreshContext: true) else {
+            return WatchSyncReply(requestID: request.id, issue: .storageUnavailable)
+        }
+        return WatchSyncReply(requestID: request.id, metadata: metadata, contextData: data)
+    }
+
+    func resetWatchState() {
+        let invalidatedEpoch = syncEpoch
+        syncEpoch = UUID()
+        syncRevision = 0
+        let defaults = resetDefaults
+        let pending = defaults.stringArray(forKey: "watch.pending-reset-epochs.v1") ?? []
+        defaults.set(Array((pending + [invalidatedEpoch.uuidString]).suffix(24)), forKey: "watch.pending-reset-epochs.v1")
+        flushPendingResetNotices()
+        publishDurableState()
+    }
+
+    func flushPendingResetNotices() {
+        let defaults = resetDefaults
+        let pending = defaults.stringArray(forKey: "watch.pending-reset-epochs.v1") ?? []
+        guard !pending.isEmpty else { return }
+        let remaining = pending.filter { !queueResetNotice($0) }
+        // WCSession durably owns accepted transfers. Unqueued notices survive
+        // activation failure and process relaunch without erasing newer state.
+        if remaining.isEmpty { defaults.removeObject(forKey: "watch.pending-reset-epochs.v1") }
+        else { defaults.set(remaining, forKey: "watch.pending-reset-epochs.v1") }
+    }
+
+    private func queueResetNotice(_ invalidatedEpoch: String) -> Bool {
+        if let resetNoticeSender { return resetNoticeSender(invalidatedEpoch) }
+        #if canImport(WatchConnectivity)
+        guard WCSession.isSupported(), WCSession.default.activationState == .activated else {
+            activate()
+            return false
+        }
+        let payload: [String: Any] = [
+            WatchWire.syncResetKey: invalidatedEpoch,
+            WatchWire.commandKey: WatchWire.encode(WatchCommand.discardWorkout(workoutID: nil)) ?? Data()
+        ]
+        WCSession.default.transferUserInfo(payload)
+        return true
+        #else
+        return false
         #endif
     }
 
@@ -208,11 +292,11 @@ final class WatchLink: NSObject {
 
     /// Internal so regression tests can verify the exact durable graph placed
     /// on the wire after an isolated workout-start transaction.
-    func buildContext(in context: ModelContext) -> WatchAppContext {
-        let active = (try? context.fetch(FetchDescriptor<WorkoutModel>(
+    func buildContext(in context: ModelContext) throws -> WatchAppContext {
+        let active = try context.fetch(FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.deletedAt == nil && $0.endedAt == nil },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
-        )))?.first
+        )).first
         // Library rows are needed only to describe the ACTIVE workout's
         // exercises (a dozen rows at most). This publish path fires up to
         // ~3×/s during logging (rest timer, interval steps, set edits) —
@@ -510,40 +594,91 @@ final class WatchLink: NSObject {
     // MARK: - Send (phone → watch)
 
     func sendCommand(_ command: WatchCommand) {
+        // A stopped workout is current state, not an event to replay later.
+        // The durable graph converges even when the immediate notice is lost.
+        if command.isPhoneTerminalNotice { publishDurableState() }
         #if canImport(WatchConnectivity)
         guard WCSession.isSupported(), WCSession.default.activationState == .activated,
               let data = WatchWire.encode(command) else { return }
         let payload = [WatchWire.commandKey: data]
         if WCSession.default.isReachable {
-            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
-        } else {
-            WCSession.default.transferUserInfo(payload)
+            WCSession.default.sendMessage(payload, replyHandler: nil) { error in
+                WatchSyncDiagnostics.record("terminal-message-failed", error: error)
+            }
+        }
+        #endif
+    }
+
+    private func cancelSupersededTerminalTransfers() {
+        #if canImport(WatchConnectivity)
+        for transfer in WCSession.default.outstandingUserInfoTransfers {
+            guard transfer.userInfo[WatchWire.syncResetKey] == nil,
+                  let data = transfer.userInfo[WatchWire.commandKey] as? Data,
+                  let command = WatchWire.decode(WatchCommand.self, from: data),
+                  command.isPhoneTerminalNotice else { continue }
+            transfer.cancel()
         }
         #endif
     }
 
     // MARK: - Handle (watch → phone)
 
-    /// Immediate, acknowledged start path used by the Watch App Intent. It is
-    /// deliberately separate from queued Watch commands: an unreachable phone
-    /// produces no mutation now and no surprise mutation later.
-    func handleImmediateStart(_ command: WatchCommand) -> WatchImmediateStartResult {
-        guard let context = modelContext else {
-            return .unavailable(message: "Open ForgeFit on your iPhone, then try again.")
+    /// The request identity becomes the durable workout identity. Replayed
+    /// requests cannot create another workout, even across a process restart.
+    func handleStartRequest(_ request: WatchStartRequest, now: Date = Date()) -> WatchStartReply {
+        func reply(_ result: WatchImmediateStartResult) -> WatchStartReply {
+            WatchStartReply(requestID: request.id, result: result)
         }
+        guard request.isValid(at: now) else {
+            return reply(.unavailable(message: "That start request expired. Try again."))
+        }
+        guard let container = modelContext?.container else {
+            return reply(.unavailable(message: "Open ForgeFit on your iPhone, then try again."))
+        }
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        let id = request.id
+        var existing = FetchDescriptor<WorkoutModel>(predicate: #Predicate { $0.id == id })
+        existing.fetchLimit = 1
+        do {
+            if let workout = try context.fetch(existing).first {
+                return reply(workout.endedAt == nil && workout.deletedAt == nil
+                    ? .activeWorkout(title: workout.title ?? "Workout")
+                    : .unavailable(message: "That workout has already ended."))
+            }
+            return reply(try performImmediateStart(request, in: context))
+        } catch {
+            WatchSyncDiagnostics.record("start-storage-failed", error: error)
+            return reply(.unavailable(message: "ForgeFit couldn't save the workout. Try again on iPhone."))
+        }
+    }
+
+    private enum StartError: Error { case expired }
+
+    private func startSave(for request: WatchStartRequest) -> WorkoutFactory.SaveOperation {
+        { context in
+            guard request.isValid(at: Date()) else { throw StartError.expired }
+            try context.save()
+        }
+    }
+
+    private func performImmediateStart(_ request: WatchStartRequest, in context: ModelContext) throws -> WatchImmediateStartResult {
         var activeDescriptor = FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
         )
         activeDescriptor.fetchLimit = 1
-        if let active = try? context.fetch(activeDescriptor).first {
+        if let active = try context.fetch(activeDescriptor).first {
             return .activeWorkout(title: active.title ?? "A workout")
         }
 
-        switch command {
+        switch request.command {
         case .startEmpty:
             let committed = WorkoutFactory.startEmpty(
                 in: context,
+                workoutID: request.id,
+                saveCenter: PersistentChangeSaveCenter(),
+                save: startSave(for: request),
                 onCommit: { [weak self] workout in
                     self?.beginSession(for: workout, in: context)
                 }
@@ -553,7 +688,7 @@ final class WatchLink: NSObject {
                 : .started(title: "Workout")
 
         case .startRoutine(let routineID):
-            return startRoutineImmediately(routineID, in: context)
+            return startRoutineImmediately(routineID, request: request, applyProgression: true, in: context)
 
         case .startNextTrackedWorkout:
             let resolution = TrackedMicrocycleNextResolver.resolve(
@@ -565,7 +700,7 @@ final class WatchLink: NSObject {
             )
             switch resolution {
             case .routine(let id, _):
-                return startRoutineImmediately(id, in: context)
+                return startRoutineImmediately(id, request: request, applyProgression: false, in: context)
             case .chooseWorkout(let message):
                 return .chooseWorkout(message: message)
             }
@@ -577,6 +712,8 @@ final class WatchLink: NSObject {
 
     private func startRoutineImmediately(
         _ routineID: UUID,
+        request: WatchStartRequest,
+        applyProgression: Bool,
         in context: ModelContext
     ) -> WatchImmediateStartResult {
         let routines = RoutineDeduplicator.canonicalRoutines(
@@ -594,7 +731,10 @@ final class WatchLink: NSObject {
             exercises: exercises,
             setupNotes: setupNotes,
             in: context,
-            applyProgression: false,
+            workoutID: request.id,
+            saveCenter: PersistentChangeSaveCenter(),
+            save: startSave(for: request),
+            applyProgression: applyProgression,
             onCommit: { [weak self] workout in
                 self?.beginSession(for: workout, in: context)
             }
@@ -607,6 +747,11 @@ final class WatchLink: NSObject {
     /// Internal so focused tests can exercise the real Watch command →
     /// SwiftData persistence path without routing through WCSession.
     func handle(_ command: WatchCommand) {
+        // Legacy starts must never be replayed, including messages already
+        // queued by build 98. Only the expiring request/reply protocol starts.
+        guard !command.startsWorkout else { publishDurableState(); return }
+        if case .liveMetrics(let metrics) = command,
+           !LiveMetricsHub.shared.mayAcceptFromWatch(metrics) { return }
         guard let context = modelContext else { return }
         var activeDescriptor = FetchDescriptor<WorkoutModel>(
             predicate: #Predicate { $0.endedAt == nil && $0.deletedAt == nil },
@@ -627,39 +772,8 @@ final class WatchLink: NSObject {
             // pre-finish model. Republishing that cached row would make the
             // Watch immediately start the completed session again.
             publishDurableState()
-        case .startRoutine(let routineID):
-            guard active == nil else { publishState(policy: .immediate); return }
-            let exercises = (try? context.fetch(FetchDescriptor<ExerciseLibraryModel>())) ?? []
-            let setupNotes = (try? context.fetch(FetchDescriptor<UserExerciseNoteModel>())) ?? []
-            let routines = RoutineDeduplicator.canonicalRoutines(
-                (try? context.fetch(FetchDescriptor<RoutineModel>())) ?? []
-            )
-            guard let routine = routines.first(where: { $0.id == routineID && $0.deletedAt == nil && $0.archivedAt == nil }) else { return }
-            WorkoutFactory.start(
-                routine: routine,
-                exercises: exercises,
-                setupNotes: setupNotes,
-                in: context,
-                onCommit: { [weak self] workout in
-                    self?.beginSession(for: workout, in: context)
-                }
-            )
-
-        case .startEmpty:
-            guard active == nil else { publishState(policy: .immediate); return }
-            WorkoutFactory.startEmpty(
-                in: context,
-                onCommit: { [weak self] workout in
-                    self?.beginSession(for: workout, in: context)
-                }
-            )
-
-        case .startNextTrackedWorkout:
-            // This command is valid only through the acknowledged
-            // `didReceiveMessage(...replyHandler:)` lane. Never honor it from
-            // the one-way message or queued user-info delegates, otherwise a
-            // disconnected Watch intent could start a stale workout later.
-            publishState(policy: .immediate)
+        case .startRoutine, .startEmpty, .startNextTrackedWorkout:
+            break // handled only by the expiring, acknowledged start protocol
 
         case .toggleSet(let setID, let completed):
             guard let active,
@@ -996,7 +1110,7 @@ final class WatchLink: NSObject {
                 metricsWorkoutID: metrics.workoutID,
                 activeWorkoutID: active?.id
             ) else { return }
-            LiveMetricsHub.shared.updateFromWatch(metrics)
+            guard LiveMetricsHub.shared.updateFromWatch(metrics) else { return }
             CardioRouteRecorder.shared.updateWatchDistance(metrics.distanceMeters)
             if let session = active?.cardioSessions.first(where: {
                 $0.liveStartedAt != nil && $0.endedAt == nil && $0.deletedAt == nil
@@ -1521,6 +1635,7 @@ extension WatchLink: WCSessionDelegate {
             // newly started workout arrives with all exercises before the
             // Watch binds its HealthKit session identity.
             if activationState == .activated {
+                flushPendingResetNotices()
                 publishDurableState()
             }
             // Pick up whatever HR the watch last published while we were
@@ -1550,8 +1665,24 @@ extension WatchLink: WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
+        if let data = message[WatchWire.startRequestKey] as? Data,
+           let request = WatchWire.decode(WatchStartRequest.self, from: data) {
+            Task { @MainActor in
+                let reply = self.handleStartRequest(request)
+                replyHandler([WatchWire.startReplyKey: WatchWire.encode(reply) ?? Data()])
+            }
+            return
+        }
+        if let data = message[WatchWire.syncRequestKey] as? Data,
+           let request = WatchWire.decode(WatchSyncRequest.self, from: data) {
+            Task { @MainActor in
+                let reply = self.makeSyncReply(to: request)
+                replyHandler([WatchWire.syncReplyKey: WatchWire.encode(reply) ?? Data()])
+            }
+            return
+        }
         guard let data = message[WatchWire.commandKey] as? Data,
-              let command = WatchWire.decode(WatchCommand.self, from: data) else {
+              WatchWire.decode(WatchCommand.self, from: data) != nil else {
             let result = WatchImmediateStartResult.unavailable(
                 message: "ForgeFit couldn't read that workout request."
             )
@@ -1560,22 +1691,21 @@ extension WatchLink: WCSessionDelegate {
             ])
             return
         }
-        Task { @MainActor in
-            let result = self.handleImmediateStart(command)
-            replyHandler([
-                WatchWire.immediateStartResultKey: WatchWire.encode(result) ?? Data()
-            ])
-        }
+        // Older request/reply starts lack expiration and identity. Fail
+        // explicitly rather than allowing a late start during mixed installs.
+        let result = WatchImmediateStartResult.unavailable(
+            message: "Update ForgeFit on Apple Watch, then try again."
+        )
+        replyHandler([WatchWire.immediateStartResultKey: WatchWire.encode(result) ?? Data()])
     }
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         guard let data = userInfo[WatchWire.commandKey] as? Data,
-              let command = WatchWire.decode(WatchCommand.self, from: data) else { return }
+              let command = WatchWire.decode(WatchCommand.self, from: data),
+              !command.startsWorkout else { return }
         Task { @MainActor in self.handle(command) }
     }
-    /// The watch's always-latest HR fallback (see `WatchWire.liveMetricsKey`):
-    /// delivered via application context so a reading from while the watch
-    /// display was off still reaches us the moment the phone reconnects,
-    /// instead of waiting for the next `sendMessage` after wrist-raise.
+    /// The fallback and immediate channel share identity, ordering, and age
+    /// checks. Background delivery may be delayed or arrive out of order.
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in self.applyReceivedLiveMetrics(applicationContext) }
     }

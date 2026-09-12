@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Hold-and-drag quick increments for weight/reps fields in the live logger:
-/// touch-and-hold a field and ±1/2/3-step options fan out above (+) and
+/// touch-and-hold a field and three configured amounts fan out above (+) and
 /// below (−); drag to one and release to apply — one continuous touch.
 /// Applying goes through the same draft/commit path as typing, so a ghost
 /// suggestion the user increments materializes as an entered value.
@@ -44,8 +44,8 @@ final class QuickIncrementController {
     }
 
     struct Option: Equatable {
-        /// Reps: whole reps. Weight: display-unit delta (already
-        /// step-multiplied, e.g. +5 for the second band of a 2.5 lb step).
+        /// Reps: whole reps. Weight: the configured display-unit amount,
+        /// with no multiplier or unit conversion.
         let delta: Double
         let label: String
     }
@@ -227,22 +227,22 @@ final class QuickIncrementController {
     // MARK: Option builders
 
     static func repsOptions() -> [Option] {
-        let positives = [3, 2, 1].map { (count: Int) in Option(delta: Double(count), label: "+\(count)") }
-        let negatives = [1, 2, 3].map { (count: Int) in Option(delta: -Double(count), label: "−\(count)") }
-        return positives + negatives
+        options(increments: QuickIncrementKind.reps.defaults)
     }
 
     /// Manual load nudges are native to the unit currently shown: quarter-
     /// plate jumps in kilograms and 2.5-pound jumps in pounds.
     static func weightOptions(unit: WeightUnit) -> [Option] {
-        let step = unit == .kg ? 1.25 : 2.5
-        func label(_ multiple: Int, sign: String) -> String {
-            let value = step * Double(multiple)
-            let text = value.formatted(.number.precision(.fractionLength(0...2)))
-            return "\(sign)\(text)"
+        options(increments: QuickIncrementKind.weight(unit).defaults)
+    }
+
+    static func options(increments: [Double]) -> [Option] {
+        func option(_ value: Double, sign: String) -> Option {
+            let text = value.formatted(.number.grouping(.never).precision(.fractionLength(0...2)))
+            return Option(delta: sign == "+" ? value : -value, label: "\(sign)\(text)")
         }
-        return [3, 2, 1].map { Option(delta: step * Double($0), label: label($0, sign: "+")) }
-            + [1, 2, 3].map { Option(delta: -step * Double($0), label: label($0, sign: "−")) }
+        return increments.reversed().map { option($0, sign: "+") }
+            + increments.map { option($0, sign: "−") }
     }
 
     /// Resolves the number actually visible in a field. Suggestion-backed
@@ -377,7 +377,8 @@ private struct QuickIncrementPressGesture: UIGestureRecognizerRepresentable {
 
 private struct QuickIncrementable: ViewModifier {
     @Environment(QuickIncrementController.self) private var controller: QuickIncrementController?
-    let options: [QuickIncrementController.Option]
+    var values: QuickIncrementValues
+    private var options: [QuickIncrementController.Option] { values.options }
     let isEnabled: Bool
     /// Clears any existing TextField focus only after the hold recognizes.
     /// A quick tap or scroll never invokes this closure.
@@ -455,7 +456,7 @@ private struct QuickIncrementable: ViewModifier {
 
 extension View {
     func quickIncrementable(
-        options: [QuickIncrementController.Option],
+        kind: QuickIncrementKind,
         isEnabled: Bool = true,
         onBegin: @escaping () -> Void = {},
         base: @escaping () -> Double?,
@@ -463,7 +464,7 @@ extension View {
     ) -> some View {
         modifier(
             QuickIncrementable(
-                options: options,
+                values: QuickIncrementValues(kind: kind),
                 isEnabled: isEnabled,
                 onBegin: onBegin,
                 base: base,

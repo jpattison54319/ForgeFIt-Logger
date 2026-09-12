@@ -404,6 +404,34 @@ final class MyoActivationUITests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testCustomQuickIncrementAmountsInGuidedMyoReps() throws {
+        let app = XCUIApplication()
+        AcceptanceHumanActionRecorder.shared.register(app, testName: name, sourceFile: #fileID)
+        app.launchArguments = [
+            "--reset-store", "--skip-onboarding", "--suppress-health-refresh",
+            "-didOnboard", "YES", "-initialTab", "home", "-weightUnitRaw", "lb",
+            "-quickIncrement.reps.0", "2", "-quickIncrement.reps.1", "6", "-quickIncrement.reps.2", "11",
+            "-quickIncrement.pounds.0", "2.25", "-quickIncrement.pounds.1", "4.75", "-quickIncrement.pounds.2", "8.5",
+            "-quickIncrement.kilograms.0", "2.25", "-quickIncrement.kilograms.1", "4.75", "-quickIncrement.kilograms.2", "8.5",
+        ]
+        app.acceptanceLaunch()
+        makeReadyMyoSet(in: app)
+        tapWhenHittable(element(app, "start-myo-rep-set"))
+        let weight = element(app, "myo-activation-weight")
+        let reps = element(app, "myo-activation-reps-1")
+        XCTAssertTrue(weight.waitForExistence(timeout: 5))
+        for (field, delta) in [(weight, 2.25), (reps, 2.0)] {
+            let base = try XCTUnwrap(numericValue(of: field))
+            for (offset, expected) in [(-64.0, base + delta), (64.0, base)] {
+                acceptanceExpect(invariants: ["Guided Myo fan uses the custom amount \(delta) and returns \(expected)"])
+                let start = field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                start.acceptancePress(forDuration: 0.55, thenDragTo: start.withOffset(CGVector(dx: 0, dy: offset)), withVelocity: .fast, thenHoldForDuration: 0)
+                XCTAssertEqual(try XCTUnwrap(numericValue(of: field)), expected, accuracy: 0.001)
+            }
+        }
+    }
+
     /// The pound ladder steps by 5. Same controls, same edges — a unit switch
     /// must not shrink the target or drop the increment.
     @MainActor

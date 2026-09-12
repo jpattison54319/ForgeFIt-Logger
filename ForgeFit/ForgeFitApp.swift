@@ -77,7 +77,11 @@ struct ForgeFitApp: App {
         // were never executed to receive the wake, and the refresh found a
         // nil container and scored nothing. `configure` is documented safe to
         // call again, and the scene still calls it on every foreground.
+        // Answer the Watch even when storage is blocked, so it can show
+        // a recoverable storage error instead of waiting without a response.
+        WatchLink.shared.activate()
         if let container = launchState.container {
+            WatchLink.shared.configureIfNeeded(container: container)
             ReadinessDelivery.shared.configure(container: container)
             AppDependencyManager.shared.add(
                 dependency: ForgeFitIntentRepository(container: container)
@@ -110,6 +114,8 @@ struct ForgeFitApp: App {
                         let recoveredState = PersistenceBootstrap.makeContainer()
                         persistenceState = recoveredState
                         if let container = recoveredState.container {
+                            WatchLink.shared.configureIfNeeded(container: container)
+                            WatchLink.shared.activate()
                             ReadinessDelivery.shared.configure(container: container)
                             AppDependencyManager.shared.add(
                                 dependency: ForgeFitIntentRepository(container: container)

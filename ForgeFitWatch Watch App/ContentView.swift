@@ -16,7 +16,6 @@ struct ContentView: View {
                 WatchHomeView(store: store)
             }
         }
-        .animation(.snappy, value: store.activeWorkout != nil)
     }
 }
 
@@ -31,9 +30,15 @@ struct WatchHomeView: View {
         let readinessBasis = context?.currentReadinessBasis()
         NavigationStack {
             List {
+                if store.isStartingWorkout || store.startIssue != nil {
+                    WatchStartStatusView(store: store)
+                }
+                if store.recoveryMessage != nil, !store.isStartingWorkout, store.startIssue == nil {
+                    WatchRecoveryControls(store: store)
+                }
                 // Day-gated: the retained context can be yesterday's, and a
                 // stale score here is worse than no score.
-                if let readiness = context?.currentReadiness() {
+                if !store.isStartingWorkout, store.startIssue == nil, let readiness = context?.currentReadiness() {
                     HStack(spacing: 10) {
                         if readinessBasis == .daily {
                             Gauge(value: Double(readiness), in: 0...100) {
@@ -69,6 +74,7 @@ struct WatchHomeView: View {
                         Label("Empty Workout", systemImage: "plus")
                             .font(.system(size: 15, weight: .semibold))
                     }
+                    .disabled(store.isStartingWorkout)
                     .listItemTint(WTheme.accent)
                     .accessibilityIdentifier("watch-empty-workout")
                 } header: {
@@ -101,6 +107,7 @@ struct WatchHomeView: View {
                                     }
                                 }
                             }
+                            .disabled(store.isStartingWorkout)
                             .accessibilityIdentifier("watch-routine-\(routine.name)")
                         }
                     } header: {

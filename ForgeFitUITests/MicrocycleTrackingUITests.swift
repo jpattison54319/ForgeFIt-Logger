@@ -75,6 +75,46 @@ final class MicrocycleTrackingUITests: XCTestCase {
     }
 
     @MainActor
+    func testPreviousCyclesProgressivelyDiscloseFullHistory() throws {
+        let app = launch(initialTab: "workout", additionalArguments: ["--seed-microcycle-long-history"])
+        let progress = app.descendants(matching: .any)["microcycle-folder-progress"].firstMatch
+        try acceptanceRequire(progress.waitForExistence(timeout: 10), "Expected the active tracker.")
+        acceptanceExpect(visibleLabels: ["Current window"], invariants: ["Only the latest three of 43 previous cycles appear on the detail screen."])
+        progress.acceptanceTap()
+        let all = app.buttons["microcycle-view-all-previous-cycles"]
+        scrollToHittable(all, in: app)
+        acceptanceAssert(all.frame.height >= 44, "View All must expose a 44-point touch target.")
+        acceptanceAssert(app.buttons["microcycle-previous-window-43"].exists, "Expected newest cycle in preview.")
+        acceptanceAssert(!app.buttons["microcycle-previous-window-40"].exists, "Older cycles must stay outside the preview.")
+        acceptanceExpect(visibleLabels: ["Previous Cycles", "Page 1", "Older"], invariants: ["The full browser starts with at most twenty previous cycles."])
+        all.acceptanceTap()
+        let older = app.buttons["microcycle-history-older"]
+        try acceptanceRequire(older.waitForExistence(timeout: 5), "Expected visible paging controls.")
+        acceptanceAssert(older.frame.height >= 44, "Older must expose a 44-point touch target.")
+        acceptanceAssert(app.buttons["microcycle-history-newer"].frame.height >= 44, "Newer must expose a 44-point touch target.")
+        acceptanceAssert(!app.buttons["microcycle-history-newer"].isEnabled, "Newest page has no newer page.")
+        acceptanceExpect(visibleLabels: ["Page 2", "Cycle 23"], invariants: ["Older advances to the next bounded page."])
+        older.acceptanceTap()
+        acceptanceAssert(app.staticTexts["Page 2"].waitForExistence(timeout: 5), "Expected second page.")
+        acceptanceExpect(visibleLabels: ["Page 3", "Cycle 1"], invariants: ["The final page preserves access to the oldest cycle."])
+        older.acceptanceTap()
+        acceptanceAssert(app.staticTexts["Page 3"].waitForExistence(timeout: 5), "Expected final page.")
+        acceptanceAssert(!older.isEnabled, "Final page cannot advance beyond history.")
+        let oldest = app.buttons["microcycle-previous-window-1"]
+        try acceptanceRequire(oldest.waitForExistence(timeout: 5), "Expected the oldest cycle.")
+        acceptanceExpect(visibleLabels: ["Workouts"], invariants: ["Oldest cycle opens the existing read-only detail."])
+        oldest.acceptanceTap()
+        acceptanceAssert(app.staticTexts["Workouts"].waitForExistence(timeout: 5), "Expected full cycle detail.")
+        acceptanceAssert(!app.buttons["microcycle-log-rest-day"].exists, "Historical cycles remain read-only.")
+        acceptanceExpect(visibleLabels: ["Page 3"], invariants: ["Back preserves the browser page."])
+        app.navigationBars.buttons.firstMatch.acceptanceTap()
+        acceptanceAssert(app.staticTexts["Page 3"].waitForExistence(timeout: 5), "Expected preserved page.")
+        acceptanceExpect(visibleLabels: ["Page 2"], invariants: ["Newer returns to the preceding page."])
+        app.buttons["microcycle-history-newer"].acceptanceTap()
+        acceptanceAssert(app.staticTexts["Page 2"].waitForExistence(timeout: 5), "Expected newer page.")
+    }
+
+    @MainActor
     func testAlternatedRoutineActionNamesItsCyclicSuccessor() throws {
         let app = launch(
             initialTab: "workout",

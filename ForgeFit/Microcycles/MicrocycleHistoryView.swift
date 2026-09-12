@@ -44,6 +44,10 @@ struct MicrocycleHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: MicrocycleHistoryRoute.self) { route in
             switch route {
+            case .previousCycles(let trackingID, let currentWindowID, let cutoff):
+                MicrocyclePreviousCyclesView(
+                    trackingID: trackingID, currentWindowID: currentWindowID, cutoff: cutoff
+                )
             case .window(let trackingID, let windowID):
                 MicrocycleHistoryWindowDetailView(
                     trackingID: trackingID,

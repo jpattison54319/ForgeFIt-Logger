@@ -12,13 +12,15 @@ public enum WatchWire {
     public static let contextKey = "forgefit.context"
     public static let commandKey = "forgefit.command"
     public static let immediateStartResultKey = "forgefit.immediateStartResult"
-    /// Watch → phone "always latest" heart-rate channel. Carried through
-    /// `updateApplicationContext` (not `sendMessage`/`transferUserInfo`) so a
-    /// fresh reading is never dropped just because the watch display is off —
-    /// `isReachable` tracks screen-on state, not whether the workout session
-    /// is still streaming. Application context coalesces to a single latest
-    /// value and is delivered the moment the phone reconnects, so this never
-    /// replays a backlog of stale readings the way a queued transfer would.
+    public static let startRequestKey = "forgefit.start.request.v1"
+    public static let startReplyKey = "forgefit.start.reply.v1"
+    public static let syncRequestKey = "forgefit.sync.request"
+    public static let syncReplyKey = "forgefit.sync.reply"
+    public static let syncMetadataKey = "forgefit.sync.metadata"
+    public static let syncResetKey = "forgefit.sync.reset.v1"
+    /// Latest-value fallback for live metrics. Immediate messages are the fast
+    /// path, including background workouts when reachable; application context
+    /// coalesces pending data but has no real-time delivery guarantee.
     public static let liveMetricsKey = "forgefit.livemetrics"
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
@@ -58,6 +60,28 @@ public struct WatchAppContext: Codable, Sendable, Equatable {
     /// Additive optionals keep mixed-version phone/watch pairs decodable.
     public var themeFamily: ThemeFamily?
     public var themeMode: ForgeThemeMode?
+
+    private enum CodingKeys: String, CodingKey {
+        case workout, routines, readiness, readinessAction, readinessDetail, readinessBasis
+        case unitSuffix, updatedAt, distanceUnit, hrZoneConfig, themeFamily, themeMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        workout = try values.decodeIfPresent(WatchWorkoutSnapshot.self, forKey: .workout)
+        routines = try values.decode([WatchRoutineSummary].self, forKey: .routines)
+        readiness = try values.decodeIfPresent(Int.self, forKey: .readiness)
+        readinessAction = try values.decodeIfPresent(String.self, forKey: .readinessAction)
+        readinessDetail = try values.decodeIfPresent(String.self, forKey: .readinessDetail)
+        // Presentation additions must not make session identity undecodable.
+        readinessBasis = try? values.decodeIfPresent(ForgeFitWidgetSnapshot.ReadinessBasis.self, forKey: .readinessBasis)
+        themeFamily = try? values.decodeIfPresent(ThemeFamily.self, forKey: .themeFamily)
+        themeMode = try? values.decodeIfPresent(ForgeThemeMode.self, forKey: .themeMode)
+        unitSuffix = try values.decode(String.self, forKey: .unitSuffix)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+        distanceUnit = try values.decodeIfPresent(DistanceUnit.self, forKey: .distanceUnit)
+        hrZoneConfig = try values.decodeIfPresent(HRZoneConfig.self, forKey: .hrZoneConfig)
+    }
 
     public init(
         workout: WatchWorkoutSnapshot? = nil,
@@ -547,6 +571,10 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
     /// Time of the heart-rate sample when `heartRate` is present. Producers
     /// without HR use their packet timestamp instead.
     public var asOf: Date
+    /// Additive transport ordering. `asOf` remains the sensor sample time.
+    public var streamID: UUID?
+    public var sequence: UInt64?
+    public var sentAt: Date?
 
     public init(
         workoutID: UUID? = nil,
@@ -556,7 +584,10 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         activeEnergyKcal: Double? = nil,
         distanceMeters: Double? = nil,
         hrZoneSeconds: [Int] = [],
-        asOf: Date = Date()
+        asOf: Date = Date(),
+        streamID: UUID? = nil,
+        sequence: UInt64? = nil,
+        sentAt: Date? = nil
     ) {
         self.workoutID = workoutID
         self.heartRate = heartRate
@@ -566,6 +597,9 @@ public struct WatchLiveMetrics: Codable, Sendable, Equatable {
         self.distanceMeters = distanceMeters
         self.hrZoneSeconds = hrZoneSeconds
         self.asOf = asOf
+        self.streamID = streamID
+        self.sequence = sequence
+        self.sentAt = sentAt
     }
 
     public func freshHeartRate(at date: Date = Date()) -> Int? {
@@ -727,9 +761,8 @@ public enum WatchCommand: Codable, Sendable {
     case finishWorkout(workoutID: UUID?, metrics: WatchLiveMetrics?, savedToHealth: Bool)
     /// Bidirectional terminal command: whichever device receives it cancels
     /// and discards its local live workout resources. `workoutID` binds the
-    /// watch → phone direction — the phone drops a discard whose ID no longer
-    /// matches its active workout. Phone → watch sends stay authoritative: the
-    /// watch clears its mirror unconditionally and ignores the carried ID.
+    /// both directions: a receiver drops a discard whose ID no longer matches
+    /// its active workout. Account reset uses its own epoch-scoped notice.
     case discardWorkout(workoutID: UUID?)
 
     // phone → watch
@@ -809,9 +842,8 @@ public enum WatchHandoffContextPolicy {
 /// or mismatched session must never resume or stream under the current
 /// snapshot. This pure decision surface is shared by the watch store's two
 /// session-reconciliation points (authoritative snapshot apply and
-/// post-recovery bootstrap) and is exactly what the unit tests pin down —
-/// the Watch target has no unit-test target of its own, so the policy lives
-/// here in ForgeCore like FF-002's `WatchTerminalCommandPolicy`.
+/// post-recovery bootstrap). ForgeCore tests cover the decision table; Watch
+/// integration tests also exercise the production store with a controlled engine.
 public enum WatchEngineIdentityPolicy {
 
     /// What the engine's active (or recovered) session is bound to.

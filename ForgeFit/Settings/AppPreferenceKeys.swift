@@ -52,7 +52,7 @@ enum AppPreferenceKeys {
         PlateInventoryStore.key(for: .lb),
         PlateInventoryStore.key(for: .kg),
         ResistanceBandProfileStore.key,
-    ] + StatisticsSectionPreference.allCases.map(\.defaultsKey)
+    ] + StatisticsSectionPreference.allCases.map(\.defaultsKey) + QuickIncrementPreferences.keys
 
     static let localOnly: [String] = [
         "initialTab",

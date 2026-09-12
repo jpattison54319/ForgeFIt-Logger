@@ -64,6 +64,8 @@ struct SettingsView: View {
                     HRZoneSettingsView()
                 case .warmupRamp:
                     WarmupRampSettingsView()
+                case .quickIncrements:
+                    QuickIncrementSettingsView()
                 case .platesAndBars:
                     PlatesAndBarsDetailView()
                 case .resistanceBands:

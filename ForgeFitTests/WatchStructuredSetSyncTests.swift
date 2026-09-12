@@ -48,7 +48,7 @@ struct WatchStructuredSetSyncTests {
         let started = try #require(startedWorkout)
         let readContext = ModelContext(container)
         readContext.autosaveEnabled = false
-        let snapshot = WatchLink().buildContext(in: readContext).workout
+        let snapshot = try WatchLink().buildContext(in: readContext).workout
         let workout = try #require(snapshot)
         let row = try #require(workout.exercises.first)
         let set = try #require(row.sets.first)
@@ -156,7 +156,8 @@ struct WatchStructuredSetSyncTests {
 
         let link = WatchLink()
         link.configure(context: context)
-        link.handle(.startRoutine(routineID: id))
+        let result = link.handleStartRequest(WatchStartRequest(command: .startRoutine(routineID: id)))
+        #expect(result.result == .started(title: "Edited Routine"))
 
         let verificationContext = ModelContext(container)
         let workouts = try verificationContext.fetch(FetchDescriptor<WorkoutModel>(

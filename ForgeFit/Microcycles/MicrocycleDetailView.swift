@@ -166,6 +166,10 @@ struct MicrocycleDetailView: View {
         }
         .navigationDestination(for: MicrocycleHistoryRoute.self) { route in
             switch route {
+            case .previousCycles(let trackingID, let currentWindowID, let cutoff):
+                MicrocyclePreviousCyclesView(
+                    trackingID: trackingID, currentWindowID: currentWindowID, cutoff: cutoff
+                )
             case .window(let trackingID, let windowID):
                 MicrocycleHistoryWindowDetailView(
                     trackingID: trackingID,
@@ -411,42 +415,11 @@ struct MicrocycleDetailView: View {
     }
 
     private func historySection(tracking: MicrocycleTrackingModel) -> some View {
-        let past = MicrocycleTrackingService.history(for: tracking, windows: trackingWindows)
-            .filter { $0.id != currentWindow?.id }
-        return VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Previous windows")
-                .font(.sectionTitle)
-                .foregroundStyle(theme.textPrimary)
-            if past.isEmpty {
-                Card {
-                    Text("Completed windows will appear here.")
-                        .font(.body)
-                        .foregroundStyle(theme.textSecondary)
-                }
-            } else {
-                ForEach(past) { window in
-                    if let presentation = MicrocycleHistoryPresentation.windowPresentation(
-                        tracking: tracking,
-                        window: window,
-                        windows: trackingWindows,
-                        workouts: workouts
-                    ) {
-                        NavigationLink(
-                            value: MicrocycleHistoryRoute.window(
-                                trackingID: tracking.id,
-                                windowID: window.id
-                            )
-                        ) {
-                            Card(padding: Space.md) {
-                                MicrocycleHistoryWindowRow(window: presentation)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("microcycle-previous-window-\(window.index + 1)")
-                    }
-                }
-            }
-        }
+        MicrocyclePreviousCyclesSection(
+            trackingID: tracking.id,
+            currentWindowID: currentWindow?.id,
+            cutoff: MicrocycleHistoryPresentation.cutoff(for: tracking)
+        )
     }
 
     private func showRestSheet() {

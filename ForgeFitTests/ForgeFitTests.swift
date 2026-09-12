@@ -19,7 +19,7 @@ struct ForgeFitTests {
 
     @Test func weightUnitFormatsAndParsesCanonicalKilograms() {
         #expect(Fmt.load(100, unit: .kg) == "100")
-        #expect(Fmt.load(100, unit: .lb) == "220.5")
+        #expect(Fmt.load(100, unit: .lb) == "220.46")
 
         let parsed = Fmt.loadKilograms(from: "220.5", unit: .lb)
         #expect(abs((parsed ?? 0) - 100) < 0.05)

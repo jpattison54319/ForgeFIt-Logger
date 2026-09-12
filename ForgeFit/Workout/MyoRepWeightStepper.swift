@@ -51,7 +51,7 @@ struct MyoRepWeightStepper: View {
                 .background(theme.surfaceElevated)
                 .clipShape(.rect(cornerRadius: Radius.control))
                 .quickIncrementable(
-                    options: QuickIncrementController.weightOptions(unit: displayUnit),
+                    kind: .weight(displayUnit),
                     onBegin: { focus.wrappedValue = nil },
                     base: { value },
                     apply: { value = max(0, $0) }

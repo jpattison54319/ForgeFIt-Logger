@@ -39,7 +39,7 @@ struct MyoRepIntegerStepper: View {
                     .clipShape(.rect(cornerRadius: Radius.control))
                     .accessibilityIdentifier(accessibilityIdentifier ?? "")
                     .quickIncrementable(
-                        options: QuickIncrementController.repsOptions(),
+                        kind: .reps,
                         onBegin: { focus.wrappedValue = nil },
                         base: { Double(value) },
                         apply: { value = max(minimum, Int($0.rounded())) }

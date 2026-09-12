@@ -7,6 +7,17 @@ struct SettingsTrainingSection: View {
 
     var body: some View {
         Section {
+            NavigationLink(value: SettingsRoute.quickIncrements) {
+                SettingsRowLabel(
+                    icon: "plusminus",
+                    iconTint: theme.accent,
+                    title: "Quick increments",
+                    subtitle: "Custom rep and weight adjustments in lb and kg."
+                )
+            }
+            .accessibilityIdentifier("settings-quick-increments")
+            .themedListRow()
+
             NavigationLink(value: SettingsRoute.heartRateZones) {
                 SettingsRowLabel(
                     icon: "heart.text.square.fill",

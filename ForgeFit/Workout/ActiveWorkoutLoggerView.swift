@@ -3784,7 +3784,7 @@ private struct SetRow: View {
                 keyboardType: .numberPad
             )
             .quickIncrementable(
-                options: QuickIncrementController.repsOptions(),
+                kind: .reps,
                 onBegin: { clearFocus() },
                 base: { set.partialReps.map(Double.init) ?? Double(parsedInt(partialsDraft) ?? 0) },
                 apply: { value in
@@ -3980,7 +3980,7 @@ private struct SetRow: View {
                     set: { editDraft(.weight, value: $0) }
                 ), placeholder: suggestedWeightText, width: grid.weight, field: .weight)
                 .quickIncrementable(
-                    options: QuickIncrementController.weightOptions(unit: displayUnit),
+                    kind: .weight(displayUnit),
                     onBegin: { clearFocus() },
                     base: quickWeightBase,
                     apply: applyQuickWeight
@@ -3998,7 +3998,7 @@ private struct SetRow: View {
                     set: { editDraft(.primary, value: $0) }
                 ), placeholder: suggestedRepsText, width: grid.reps, field: .primary, keyboardType: .numberPad)
                 .quickIncrementable(
-                    options: QuickIncrementController.repsOptions(),
+                    kind: .reps,
                     onBegin: { clearFocus() },
                     base: quickRepsBase,
                     apply: applyQuickReps

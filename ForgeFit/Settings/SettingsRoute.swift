@@ -6,6 +6,7 @@ enum SettingsRoute: Hashable {
     case theme
     case heartRateZones
     case warmupRamp
+    case quickIncrements
     case platesAndBars
     case resistanceBands
     case reminders

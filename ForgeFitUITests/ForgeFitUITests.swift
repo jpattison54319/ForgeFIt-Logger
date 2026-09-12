@@ -406,7 +406,7 @@ final class ForgeFitUITests: XCTestCase {
             "Expected the live logger's weight field."
         )
         let previousKilograms = app.buttons["97.5 × 10"].firstMatch
-        let previousPounds = app.buttons["215 × 10"].firstMatch
+        let previousPounds = app.buttons["214.95 × 10"].firstMatch
         let previousDeadline = Date().addingTimeInterval(4)
         while !previousKilograms.exists && !previousPounds.exists, Date() < previousDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -444,7 +444,7 @@ final class ForgeFitUITests: XCTestCase {
 
         chooseBand(field: weightField, yOffset: -94) // Middle positive band.
         let firstDelta = startsInKilograms ? 2.5 : 5.0
-        let firstExpected = (startsInKilograms ? 97.5 : 215.0) + firstDelta
+        let firstExpected = (startsInKilograms ? 97.5 : 214.95) + firstDelta
         XCTAssertTrue(
             waitForNumericValue(firstExpected, in: weightField),
             "The visible ghost plus the highlighted middle band must be applied, never a hidden value or negative band."

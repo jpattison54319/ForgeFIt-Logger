@@ -46,8 +46,32 @@ final class WatchStore: NSObject {
         var metrics: WatchLiveMetrics
     }
     var summary: Summary?
+    private(set) var finishingWorkoutID: UUID?
+    private(set) var finishIsDelayed = false
+    @ObservationIgnored private var finishTask: Task<Void, Never>?
+    @ObservationIgnored private var finishDelayTask: Task<Void, Never>?
 
-    private let engine = WatchWorkoutEngine.shared
+    let engine: any WatchWorkoutSessionControlling
+    @ObservationIgnored let recoveryRequestSender: ((WatchSyncRequest) -> Void)?
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored let startRequestSender: ((WatchStartRequest) -> Void)?
+    @ObservationIgnored private let metricsSender: ((WatchLiveMetrics) -> Void)?
+    @ObservationIgnored private let metricsStreamID = UUID()
+    @ObservationIgnored private var metricsSequence: UInt64 = 0
+    var pendingStartID: UUID?
+    var isWaitingForStartSnapshot = false
+    var startIssue: String?
+    @ObservationIgnored var startContinuation: CheckedContinuation<WatchImmediateStartResult, Never>?
+    @ObservationIgnored var startTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored var startSnapshotTask: Task<Void, Never>?
+    var syncRecovery = WatchSyncRecoveryState()
+    @ObservationIgnored var syncRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored var syncHealthCheckTask: Task<Void, Never>?
+    @ObservationIgnored var lastSnapshotReceivedAt: Date?
+    @ObservationIgnored var engineRetryTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycleGeneration: UInt64 = 0
+    private var recoveryBootstrapFailed = false
+    private var workoutSuppression: WatchWorkoutSuppression
     @ObservationIgnored private var restHapticTask: Task<Void, Never>?
     @ObservationIgnored private var intervalHapticTask: Task<Void, Never>?
     @ObservationIgnored private var lastIntervalStepEndsAt: Date?
@@ -55,8 +79,29 @@ final class WatchStore: NSObject {
     @ObservationIgnored private var recoveryBootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var recoveryBootstrapComplete = false
     @ObservationIgnored private var deferredSummaryWorkout: WatchWorkoutSnapshot?
-    @ObservationIgnored private var pendingHandoffConfiguration: HKWorkoutConfiguration?
     @ObservationIgnored private var engineReconciliationTask: Task<Void, Never>?
+    #if DEBUG
+    @ObservationIgnored var recoveryDemoContext: WatchAppContext?
+    #endif
+
+    init(
+        engine: (any WatchWorkoutSessionControlling)? = nil,
+        defaults: UserDefaults = .standard,
+        recoveryRequestSender: ((WatchSyncRequest) -> Void)? = nil,
+        startRequestSender: ((WatchStartRequest) -> Void)? = nil,
+        metricsSender: ((WatchLiveMetrics) -> Void)? = nil
+    ) {
+        self.engine = engine ?? WatchWorkoutEngine.shared
+        self.defaults = defaults
+        self.recoveryRequestSender = recoveryRequestSender
+        self.startRequestSender = startRequestSender
+        self.metricsSender = metricsSender
+        workoutSuppression = defaults.data(forKey: "watch.workout.suppression.v1")
+            .flatMap { WatchWire.decode(WatchWorkoutSuppression.self, from: $0) } ?? WatchWorkoutSuppression()
+        super.init()
+        self.engine.onRecoveryNeeded = { [weak self] in self?.scheduleEngineRecovery() }
+        self.engine.onMetrics = { [weak self] in self?.forwardMetrics($0) }
+    }
 
     func activate() {
         #if DEBUG
@@ -66,6 +111,13 @@ final class WatchStore: NSObject {
         // engine would otherwise try to open a HealthKit workout the
         // simulator can't authorize.
         if WatchAppStoreDemo.isRequested {
+            workoutSuppression = WatchWorkoutSuppression()
+            if WatchAppStoreDemo.wantsSyncRecovery {
+                if WatchAppStoreDemo.wantsActiveWorkout { showPhoneStartedWorkoutPlaceholder() }
+                syncRecovery.requireVerification(at: Date())
+                syncRecovery.failed(.unreachable)
+                return
+            }
             if WatchAppStoreDemo.wantsSupersededSummary {
                 summary = Summary(
                     workoutID: UUID(),
@@ -74,9 +126,13 @@ final class WatchStore: NSObject {
                     metrics: WatchLiveMetrics()
                 )
             }
-            apply(context: WatchAppStoreDemo.context())
+            let demo = WatchAppStoreDemo.context()
+            syncRecovery.refresh(at: Date(), force: true)
+            let request = syncRecovery.nextRequest(at: Date())!
+            _ = syncRecovery.accept(WatchSyncMetadata(epoch: UUID(), revision: 1, workoutID: demo.workout?.workoutID), replyTo: request.id)
+            apply(context: demo)
             if WatchAppStoreDemo.wantsActiveWorkout {
-                WatchAppStoreDemo.startHeartRateTicker(engine)
+                WatchAppStoreDemo.startHeartRateTicker(WatchWorkoutEngine.shared)
             }
             return
         }
@@ -85,18 +141,6 @@ final class WatchStore: NSObject {
         let session = WCSession.default
         session.delegate = self
         session.activate()
-        engine.onMetrics = { [weak self] metrics in
-            guard let self,
-                  WatchEngineIdentityPolicy.mayStreamMetrics(
-                      sessionWorkoutID: self.engine.activeSessionWorkoutID,
-                      isAwaitingAuthoritativeIdentity: self.engine.isAwaitingSessionWorkoutID
-                          || self.isAwaitingWorkoutIdentity,
-                      contextWorkoutID: self.activeWorkout?.workoutID
-                  ) else { return }
-            var attributed = metrics
-            attributed.workoutID = self.engine.activeSessionWorkoutID
-            self.send(.liveMetrics(attributed))
-        }
         // If watchOS relaunched us mid-workout (crash/jetsam), the workout
         // session may still be running headless — reattach before the phone's
         // next snapshot arrives so metric collection resumes immediately.
@@ -106,6 +150,106 @@ final class WatchStore: NSObject {
     }
 
     var activeWorkout: WatchWorkoutSnapshot? { context?.workout }
+
+    var isFinishingWorkout: Bool { finishingWorkoutID != nil }
+    var isRecordingStopped: Bool { workoutSuppression.isSuppressed(activeWorkout?.workoutID) }
+    var canStopRecordingOnWatch: Bool {
+        !isFinishingWorkout && !isRecordingStopped && (activeWorkout != nil || engine.hasActiveSession || isAwaitingWorkoutIdentity)
+    }
+    var needsBootstrapRecovery: Bool { !recoveryBootstrapComplete && recoveryBootstrapFailed }
+
+    var recoveryMessage: String? {
+        if isFinishingWorkout { return finishIsDelayed ? "Health save is taking longer…" : "Finishing workout…" }
+        if isRecordingStopped { return "Stopped on Watch" }
+        if let issue = syncRecovery.issue { return issue.message }
+        if isAwaitingWorkoutIdentity { return "Syncing workout…" }
+        if let issue = engine.retryState.issue { return issue.message }
+        if recoveryBootstrapFailed { return "Workout recording could not be restored" }
+        return nil
+    }
+
+    func retryWorkoutRecovery() {
+        guard !isFinishingWorkout else { return }
+        clearStartPresentation()
+        workoutSuppression.resume(activeWorkout?.workoutID)
+        saveWorkoutSuppression()
+        engine.retryRecordingExplicitly()
+        recoveryBootstrapFailed = false
+        syncRecovery.requireVerification(at: Date())
+        hasReceivedAuthoritativeContext = false
+        isAwaitingWorkoutIdentity = activeWorkout != nil
+        #if DEBUG
+        if WatchAppStoreDemo.wantsSyncRecovery || WatchAppStoreDemo.wantsStartRecovery {
+            completeRecoveryDemo()
+            return
+        }
+        #endif
+        requestFreshContext()
+    }
+
+    /// Stop only the recorder on this device. No fabricated identity or
+    /// phone-side discard is emitted, and late recovery cannot undo the stop.
+    func stopRecordingOnWatch() {
+        guard canStopRecordingOnWatch else { return }
+        stopSyncRecovery()
+        let id = hasReceivedAuthoritativeContext && !isAwaitingWorkoutIdentity ? activeWorkout?.workoutID : nil
+        workoutSuppression.stop(id)
+        saveWorkoutSuppression()
+        lifecycleGeneration &+= 1
+        recoveryBootstrapTask?.cancel()
+        recoveryBootstrapTask = nil
+        engineRetryTask?.cancel()
+        engineRetryTask = nil
+        cancelEngineThenReconcile()
+        WKInterfaceDevice.current().play(.stop)
+    }
+
+    /// A queued reset may clear only the phone epoch it invalidated. A notice
+    /// arriving after a newer verified workout merely requests current state.
+    func receiveReset(invalidatedEpoch: UUID) {
+        WatchSyncDiagnostics.clear(defaults: defaults)
+        guard syncRecovery.epoch == invalidatedEpoch else {
+            requestFreshContext()
+            return
+        }
+        stopSyncRecovery()
+        cancelImmediateStart()
+        clearStartPresentation()
+        clearFinishingState(cancelTask: true)
+        lifecycleGeneration &+= 1
+        recoveryBootstrapTask?.cancel()
+        recoveryBootstrapTask = nil
+        engineRetryTask?.cancel()
+        engineRetryTask = nil
+        deferredSummaryWorkout = nil
+        recoveryBootstrapComplete = true
+        recoveryBootstrapFailed = false
+        workoutSuppression = WatchWorkoutSuppression()
+        saveWorkoutSuppression()
+        WatchSyncDiagnostics.clear(defaults: defaults)
+        context = nil
+        summary = nil
+        isAwaitingWorkoutIdentity = false
+        hasReceivedAuthoritativeContext = false
+        restHapticTask?.cancel()
+        intervalHapticTask?.cancel()
+        publishComplicationSnapshot(WatchAppContext(), force: true)
+        syncRecovery = WatchSyncRecoveryState()
+        cancelEngineThenReconcile()
+        requestFreshContext()
+    }
+
+    private func saveWorkoutSuppression() {
+        #if DEBUG
+        if WatchAppStoreDemo.isRequested { return }
+        #endif
+        defaults.set(WatchWire.encode(workoutSuppression), forKey: "watch.workout.suppression.v1")
+    }
+
+    private func markTerminal(_ id: UUID) {
+        workoutSuppression.finish(id)
+        saveWorkoutSuppression()
+    }
 
     var conditioningFinishBlocker: String? {
         guard let workout = activeWorkout else { return nil }
@@ -131,6 +275,13 @@ final class WatchStore: NSObject {
     }
 
     private func reconcileEngineSession(previousWorkout: WatchWorkoutSnapshot?) {
+        // A new graph cannot transfer Health save ownership mid-commit.
+        // The finishing task reconciles the latest graph after it resolves.
+        if isFinishingWorkout { return }
+        if isRecordingStopped {
+            if engine.hasActiveSession { cancelEngineThenReconcile() }
+            return
+        }
         let resolution = WatchEngineIdentityPolicy.resolve(
             engineHasSession: engine.hasActiveSession,
             sessionWorkoutID: engine.activeSessionWorkoutID,
@@ -186,6 +337,7 @@ final class WatchStore: NSObject {
             return
         }
 
+        let generation = lifecycleGeneration
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             // A transient HealthKit recovery failure is not evidence that no
@@ -194,31 +346,30 @@ final class WatchStore: NSObject {
             var recoveryResult: WatchWorkoutEngine.RecoveryResult = .retryNeeded
             for attempt in 0..<3 {
                 recoveryResult = await self.engine.recoverSessionIfNeeded()
+                guard !Task.isCancelled, self.lifecycleGeneration == generation else { return }
                 guard recoveryResult == .retryNeeded else { break }
                 guard attempt < 2 else { break }
                 try? await Task.sleep(for: .seconds(attempt == 0 ? 1 : 3))
                 guard !Task.isCancelled else { return }
             }
-            guard recoveryResult != .retryNeeded else { return }
+            guard recoveryResult != .retryNeeded else {
+                self.recoveryBootstrapFailed = true
+                self.scheduleEngineRecovery()
+                return
+            }
+            self.recoveryBootstrapFailed = false
+            if recoveryResult == .sessionAvailable, !self.hasReceivedAuthoritativeContext, self.activeWorkout == nil {
+                self.showPhoneStartedWorkoutPlaceholder()
+            }
             self.recoveryBootstrapComplete = true
             let previousWorkout = self.deferredSummaryWorkout
             self.deferredSummaryWorkout = nil
             self.reconcileEngineSession(previousWorkout: previousWorkout)
-            self.startPendingHandoffIfNeeded()
+            self.engine.flushMetrics()
         }
         recoveryBootstrapTask = task
         await task.value
-        recoveryBootstrapTask = nil
-    }
-
-    private func startPendingHandoffIfNeeded() {
-        guard let configuration = pendingHandoffConfiguration else { return }
-        pendingHandoffConfiguration = nil
-        // An authoritative snapshot wins over the provisional handoff config;
-        // reconciliation already started (or ended) the exact workout it
-        // names. Otherwise start the accepted handoff with a pending identity.
-        guard !hasReceivedAuthoritativeContext, !engine.hasActiveSession else { return }
-        engine.start(configuration: configuration, workoutID: nil)
+        if lifecycleGeneration == generation { recoveryBootstrapTask = nil }
     }
 
     /// HealthKit teardown is asynchronous. Keep the old engine session alive
@@ -227,7 +378,7 @@ final class WatchStore: NSObject {
     /// discard immediately followed by Start) from colliding two primary
     /// workout sessions on the watch.
     private func cancelEngineThenReconcile() {
-        guard engineReconciliationTask == nil else { return }
+        guard !isFinishingWorkout, engineReconciliationTask == nil else { return }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.engine.cancel()
@@ -241,6 +392,9 @@ final class WatchStore: NSObject {
     /// so the engine can later verify a recovered session against the current
     /// context instead of streaming under a newer workout (FF-003).
     private func startEngineSession(for workout: WatchWorkoutSnapshot) {
+        #if DEBUG
+        if WatchAppStoreDemo.isRequested { return }
+        #endif
         engine.start(
             configuration: workoutConfiguration(for: workout),
             startDate: workout.startedAt,
@@ -252,28 +406,23 @@ final class WatchStore: NSObject {
     // MARK: - Commands (watch → phone)
 
     func send(_ command: WatchCommand) {
-        guard WCSession.isSupported(), WCSession.default.activationState == .activated,
+        guard !command.startsWorkout, WCSession.isSupported(), WCSession.default.activationState == .activated,
               let data = WatchWire.encode(command) else { return }
         let payload = [WatchWire.commandKey: data]
-        // Live metrics: `isReachable` tracks whether the watch screen is on,
-        // not whether the workout session is still streaming (HKLiveWorkoutBuilder
-        // keeps delivering HR the whole time the display is off). Gating the
-        // only send path on `isReachable`, as this used to, silently dropped
-        // every reading for the entire "wrist down" stretch of a workout — the
-        // phone only caught up once the wrist was raised and reachability
-        // flipped back, which is exactly the lag the user is seeing.
-        //
-        // `sendMessage` stays as the low-latency fast path while both sides
-        // are awake. `updateApplicationContext` runs unconditionally as the
-        // always-on fallback: it coalesces to a single latest value (no queue
-        // to replay), so it can't reintroduce the stale-reading problem
-        // `transferUserInfo` would — the phone just converges on the freshest
-        // HR the instant reachability (or app launch) lets it through.
+        // A running workout can remain reachable in the background. Send
+        // immediately when available and retain one latest fallback packet;
+        // background context delivery has no real-time latency guarantee.
         if case .liveMetrics = command {
             if WCSession.default.isReachable {
-                WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+                WCSession.default.sendMessage(payload, replyHandler: nil) { error in
+                    WatchSyncDiagnostics.record("metrics-message-failed", error: error)
+                }
             }
-            try? WCSession.default.updateApplicationContext([WatchWire.liveMetricsKey: data])
+            do {
+                try WCSession.default.updateApplicationContext([WatchWire.liveMetricsKey: data])
+            } catch {
+                WatchSyncDiagnostics.record("metrics-context-failed", error: error)
+            }
             return
         }
         if WCSession.default.isReachable {
@@ -286,60 +435,36 @@ final class WatchStore: NSObject {
         }
     }
 
+    /// Every delivery lane carries the same identity and sequence. Readings
+    /// collected before verification are released only after exact binding.
+    private func forwardMetrics(_ metrics: WatchLiveMetrics) {
+        guard hasReceivedAuthoritativeContext, syncRecovery.hasVerifiedContext,
+              !isRecordingStopped, !isFinishingWorkout,
+              WatchEngineIdentityPolicy.mayStreamMetrics(
+                sessionWorkoutID: engine.activeSessionWorkoutID,
+                isAwaitingAuthoritativeIdentity: engine.isAwaitingSessionWorkoutID || isAwaitingWorkoutIdentity,
+                contextWorkoutID: activeWorkout?.workoutID
+              ) else { return }
+        var packet = metrics
+        packet.workoutID = engine.activeSessionWorkoutID
+        metricsSequence &+= 1
+        packet.streamID = metricsStreamID
+        packet.sequence = metricsSequence
+        packet.sentAt = Date()
+        if let metricsSender { metricsSender(packet) }
+        else { send(.liveMetrics(packet)) }
+    }
+
+    private func cancelQueuedStarts() {
+        for transfer in WCSession.default.outstandingUserInfoTransfers {
+            guard let data = transfer.userInfo[WatchWire.commandKey] as? Data,
+                  let command = WatchWire.decode(WatchCommand.self, from: data),
+                  command.startsWorkout else { continue }
+            transfer.cancel()
+        }
+    }
+
     // MARK: - User actions
-
-    func startRoutine(_ routine: WatchRoutineSummary) {
-        send(.startRoutine(routineID: routine.id))
-        WKInterfaceDevice.current().play(.start)
-    }
-
-    func startEmpty() {
-        send(.startEmpty)
-        WKInterfaceDevice.current().play(.start)
-    }
-
-    /// App Intents must never queue a delayed workout start. This path uses
-    /// only WCSession's live request/reply channel and fails immediately when
-    /// the paired iPhone is not reachable.
-    func requestImmediateStart(_ command: WatchCommand) async -> WatchImmediateStartResult {
-        guard WCSession.isSupported(),
-              WCSession.default.activationState == .activated,
-              WCSession.default.isReachable else {
-            return .unavailable(
-                message: "Your iPhone must be reachable to start a ForgeFit workout from Apple Watch."
-            )
-        }
-        switch command {
-        case .startEmpty, .startNextTrackedWorkout:
-            break
-        default:
-            return .unavailable(message: "That workout start isn't available from Siri on Apple Watch.")
-        }
-        return await sendImmediateStart(command)
-    }
-
-    private func sendImmediateStart(_ command: WatchCommand) async -> WatchImmediateStartResult {
-        guard let data = WatchWire.encode(command) else {
-            return .unavailable(message: "ForgeFit couldn't prepare that workout request.")
-        }
-        let payload = [WatchWire.commandKey: data]
-        return await withCheckedContinuation { continuation in
-            WCSession.default.sendMessage(payload) { reply in
-                guard let data = reply[WatchWire.immediateStartResultKey] as? Data,
-                      let result = WatchWire.decode(WatchImmediateStartResult.self, from: data) else {
-                    continuation.resume(returning: .unavailable(
-                        message: "ForgeFit on iPhone didn't confirm the workout start."
-                    ))
-                    return
-                }
-                continuation.resume(returning: result)
-            } errorHandler: { _ in
-                continuation.resume(returning: .unavailable(
-                    message: "Your iPhone must be reachable to start a ForgeFit workout from Apple Watch."
-                ))
-            }
-        }
-    }
 
     /// Optimistically flips the set locally so the row responds instantly;
     /// the phone's next snapshot confirms it.
@@ -564,7 +689,7 @@ final class WatchStore: NSObject {
     /// Finish from the wrist: the watch saves the HKWorkout (richest data),
     /// the phone closes out the workout with the final metrics.
     func finishWorkout() {
-        guard let workout = activeWorkout else { return }
+        guard !isFinishingWorkout, let workout = activeWorkout else { return }
         // Refuse before touching the engine, HealthKit, the wire, or local
         // state: while identity is pending the visible workoutID is a
         // placeholder the phone would reject (FF-002).
@@ -576,18 +701,49 @@ final class WatchStore: NSObject {
             WKInterfaceDevice.current().play(.failure)
             return
         }
-        captureSummary(for: workout, metrics: engine.currentMetrics())
-        Task {
-            let result = await engine.finish(workoutName: workout.title)
-            summary?.metrics = result.metrics
-            // Bind the finish to the exact snapshot the wrist was showing when
-            // the user tapped Finish. If that workout was superseded on the
-            // phone before this command lands, the phone handler drops it
-            // rather than terminating the newer session.
-            send(.finishWorkout(workoutID: workout.workoutID, metrics: result.metrics, savedToHealth: result.savedToHealth))
+        finishingWorkoutID = workout.workoutID
+        finishIsDelayed = false
+        finishDelayTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            guard let self, self.finishingWorkoutID == workout.workoutID else { return }
+            self.finishIsDelayed = true
+            WatchSyncDiagnostics.record("engine-finish-delayed")
         }
-        clearWorkoutLocally()
-        WKInterfaceDevice.current().play(.success)
+        finishTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            #if DEBUG
+            if WatchAppStoreDemo.wantsDelayedFinish { try? await Task.sleep(for: .seconds(8)) }
+            #endif
+            if let reconciliation = self.engineReconciliationTask { await reconciliation.value }
+            guard !Task.isCancelled else { return }
+            let result = await self.engine.finish(workoutName: workout.title)
+            guard !Task.isCancelled else { return }
+            let sameWorkout = result.metrics.workoutID == workout.workoutID
+            let metrics = sameWorkout ? result.metrics : WatchLiveMetrics(workoutID: workout.workoutID)
+            self.markTerminal(workout.workoutID)
+            // Health save ownership is known only at actual completion. A
+            // timeout must not trigger a second, competing phone Health write.
+            self.send(.finishWorkout(workoutID: workout.workoutID, metrics: metrics, savedToHealth: sameWorkout && result.savedToHealth))
+            guard self.finishingWorkoutID == workout.workoutID else { return }
+            self.clearFinishingState(cancelTask: false)
+            if self.activeWorkout?.workoutID == workout.workoutID {
+                self.captureSummary(for: workout, metrics: metrics)
+                self.clearWorkoutLocally()
+                self.stopSyncRecovery()
+            } else {
+                self.reconcileEngineSession(previousWorkout: nil)
+            }
+            WKInterfaceDevice.current().play(.success)
+        }
+    }
+
+    private func clearFinishingState(cancelTask: Bool) {
+        if cancelTask { finishTask?.cancel() }
+        finishTask = nil
+        finishDelayTask?.cancel()
+        finishDelayTask = nil
+        finishingWorkoutID = nil
+        finishIsDelayed = false
     }
 
     private func conditioningTargetMessage(
@@ -600,12 +756,14 @@ final class WatchStore: NSObject {
     }
 
     func discardWorkout() {
+        guard !isFinishingWorkout else { return }
         // Refuse while identity is pending, before any engine/wire/local
         // mutation — see `finishWorkout` (FF-002).
         guard WatchTerminalCommandPolicy.mayRunTerminalCommand(isAwaitingIdentity: isAwaitingWorkoutIdentity) else {
             WKInterfaceDevice.current().play(.failure)
             return
         }
+        if let id = activeWorkout?.workoutID { markTerminal(id) }
         cancelEngineThenReconcile()
         // Stamped before `clearWorkoutLocally()` clears the mirror, so the
         // phone can refuse the discard if a newer workout is now active there.
@@ -618,27 +776,21 @@ final class WatchStore: NSObject {
     // MARK: - Phone-initiated launch (HKWorkoutConfiguration handoff)
 
     func handleWorkoutConfiguration(_ configuration: Any) {
-        guard let config = configuration as? HKWorkoutConfigurationBox else { return }
-        // A phone-start handoff is a new live-workout presentation. Retire any
-        // summary left from the prior session immediately, before the matching
-        // WatchConnectivity snapshot arrives.
-        summary = nil
-        // A HealthKit handoff starts a new authority round. Any context held
-        // before this callback may describe the prior idle/workout state and
-        // cannot bind the provisional session that is about to start.
+        guard configuration is HKWorkoutConfigurationBox else { return }
+        // HealthKit wake-ups carry no workout identity and may arrive late.
+        // Only a fresh correlated phone snapshot can start a new recorder.
+        // An old wake-up must not interrupt an already verified live stream.
+        if hasReceivedAuthoritativeContext, syncRecovery.hasVerifiedContext,
+           engine.hasActiveSession, let id = activeWorkout?.workoutID,
+           engine.activeSessionWorkoutID == id, !engine.isAwaitingSessionWorkoutID {
+            requestFreshContext()
+            return
+        }
+        // Keep an existing graph visible while checking the current state.
+        if !hasReceivedAuthoritativeContext { showPhoneStartedWorkoutPlaceholder() }
         hasReceivedAuthoritativeContext = false
-        showPhoneStartedWorkoutPlaceholder()
-        pendingHandoffConfiguration = config.value
-        // The HealthKit handoff and WatchConnectivity activation are separate
-        // channels. Explicitly ask for the workout graph here so a publish the
-        // phone attempted while WCSession was activating cannot leave this
-        // placeholder blank and the HR stream quarantined indefinitely.
+        syncRecovery.requireVerification(at: Date())
         requestFreshContext()
-        // Recovery owns the first engine decision. Starting from the handoff
-        // before checking for a headless session can overwrite A's durable
-        // identity or collide with its HealthKit session. Once recovery
-        // finishes, a still-provisional handoff starts with no identity and
-        // the first authoritative snapshot binds it.
         Task { await recoverOrStartWorkoutSession() }
     }
 
@@ -682,7 +834,16 @@ final class WatchStore: NSObject {
         )
     }
 
-    private func apply(context newContext: WatchAppContext) {
+    func apply(context incomingContext: WatchAppContext) {
+        guard syncRecovery.hasVerifiedContext else { return }
+        let wasVerified = hasReceivedAuthoritativeContext && !isAwaitingWorkoutIdentity
+        var newContext = incomingContext
+        let previousSuppression = workoutSuppression
+        workoutSuppression.resolve(newContext.workout?.workoutID)
+        if let id = newContext.workout?.workoutID, workoutSuppression.terminalIDs.contains(id) {
+            newContext.workout = nil
+        }
+        if previousSuppression != workoutSuppression { saveWorkoutSuppression() }
         // Any authoritative phone snapshot — with or without a workout —
         // resolves the visible placeholder identity (FF-002). Engine-session
         // binding uses its separate durable pending marker below; the UI flag
@@ -702,6 +863,7 @@ final class WatchStore: NSObject {
             mode: newContext.effectiveThemeMode
         ))
         context = newContext
+        if newContext.workout != nil { clearStartPresentation() }
 
         // Keep the live engine on the user's synced HR-zone model so wrist-side
         // time-in-zone and zone-adherence alerts match the phone.
@@ -716,7 +878,13 @@ final class WatchStore: NSObject {
         } else if newContext.workout == nil, let old = previous?.workout {
             deferredSummaryWorkout = old
         }
+        if !recoveryBootstrapComplete {
+            Task { await recoverOrStartWorkoutSession() }
+        }
 
+        if !wasVerified || previous?.workout?.workoutID != newContext.workout?.workoutID {
+            engine.flushMetrics()
+        }
         scheduleRestHaptic(endsAt: newContext.workout?.restEndsAt)
         scheduleIntervalHaptic(endsAt: newContext.workout?.intervalStepEndsAt)
         publishComplicationSnapshot(newContext)
@@ -809,12 +977,7 @@ final class WatchStore: NSObject {
     /// opens the phone app. `sendMessage` also background-launches the phone
     /// app to answer, so it works with the phone in a pocket.
     func requestFreshContext() {
-        guard WCSession.isSupported() else { return }
-        guard WCSession.default.activationState == .activated else {
-            WCSession.default.activate()
-            return
-        }
-        send(.requestContext)
+        startSyncRecovery()
     }
 
     /// Buzz the wrist when the phone's rest timer hits zero.
@@ -844,7 +1007,7 @@ final class WatchStore: NSObject {
         }
     }
 
-    private func handle(_ command: WatchCommand) {
+    func handle(_ command: WatchCommand) {
         switch command {
         case .workoutFinished(let workoutID):
             // transferUserInfo may deliver A's queued finish only after a new
@@ -857,17 +1020,18 @@ final class WatchStore: NSObject {
                   WatchTerminalCommandPolicy.shouldExecute(
                       carriedWorkoutID: workoutID,
                       activeWorkoutID: workout.workoutID
-                  ) else { return }
+                  ) else { requestFreshContext(); return }
+            markTerminal(workout.workoutID)
             if engine.hasActiveSession {
                 captureSummary(for: workout, metrics: engine.currentMetrics())
                 cancelEngineThenReconcile()
             }
             clearWorkoutLocally()
-        case .discardWorkout(_):
-            // Phone-initiated discards are authoritative: the phone already
-            // deleted the workout, so the mirror clears unconditionally. The
-            // carried `workoutID` (which gates the watch → phone direction on
-            // the phone) is not a gate here.
+        case .discardWorkout(let id):
+            guard !isAwaitingWorkoutIdentity,
+                  WatchTerminalCommandPolicy.shouldExecute(carriedWorkoutID: id, activeWorkoutID: activeWorkout?.workoutID),
+                  let id else { requestFreshContext(); return }
+            markTerminal(id)
             cancelEngineThenReconcile()
             clearWorkoutLocally()
             summary = nil
@@ -930,19 +1094,13 @@ extension WatchStore: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         Task { @MainActor in
             self.isReachable = session.isReachable
-            // A retained context predates a phone-start handoff and must not
-            // bind its provisional HealthKit session to an old workout (or
-            // clear it from an old idle snapshot). Request a newly generated
-            // context below instead.
-            if WatchHandoffContextPolicy.shouldApplyRetainedContext(
-                isAwaitingWorkoutIdentity: self.isAwaitingWorkoutIdentity
-            ),
-               let data = session.receivedApplicationContext[WatchWire.contextKey] as? Data,
-               let ctx = WatchWire.decode(WatchAppContext.self, from: data) {
-                self.apply(context: ctx)
+            if activationState == .activated {
+                self.cancelQueuedStarts()
+                self.engine.flushMetrics()
             }
-            // What the phone last published can be arbitrarily old; ask for
-            // today's before the retained copy is all the user ever sees.
+            // Retained state is never session authority, including a cold
+            // recovery whose in-memory pending flag has not been restored.
+            if let error { WatchSyncDiagnostics.record("activation-failed", error: error) }
             self.requestFreshContext()
         }
     }
@@ -955,6 +1113,7 @@ extension WatchStore: WCSessionDelegate {
             // were unreachable), refresh a missed workout graph, and restart
             // collection under the exact authoritative identity.
             if session.isReachable {
+                self.engine.flushMetrics()
                 self.requestFreshContext()
                 await self.recoverOrStartWorkoutSession()
             }
@@ -962,15 +1121,19 @@ extension WatchStore: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        guard let data = applicationContext[WatchWire.contextKey] as? Data,
-              let ctx = WatchWire.decode(WatchAppContext.self, from: data) else { return }
-        Task { @MainActor in self.apply(context: ctx) }
+        guard let data = applicationContext[WatchWire.contextKey] as? Data else { return }
+        let metadata = applicationContext[WatchWire.syncMetadataKey] as? Data
+        Task { @MainActor in self.receiveSnapshot(data, metadataData: metadata) }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        if let data = message[WatchWire.contextKey] as? Data,
-           let ctx = WatchWire.decode(WatchAppContext.self, from: data) {
-            Task { @MainActor in self.apply(context: ctx) }
+        if let rawEpoch = message[WatchWire.syncResetKey] as? String, let epoch = UUID(uuidString: rawEpoch) {
+            Task { @MainActor in self.receiveReset(invalidatedEpoch: epoch) }
+            return
+        }
+        if let data = message[WatchWire.contextKey] as? Data {
+            let metadata = message[WatchWire.syncMetadataKey] as? Data
+            Task { @MainActor in self.receiveSnapshot(data, metadataData: metadata) }
         }
         if let data = message[WatchWire.commandKey] as? Data,
            let command = WatchWire.decode(WatchCommand.self, from: data) {
@@ -979,9 +1142,13 @@ extension WatchStore: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        if let data = userInfo[WatchWire.contextKey] as? Data,
-           let context = WatchWire.decode(WatchAppContext.self, from: data) {
-            Task { @MainActor in self.apply(context: context) }
+        if let rawEpoch = userInfo[WatchWire.syncResetKey] as? String, let epoch = UUID(uuidString: rawEpoch) {
+            Task { @MainActor in self.receiveReset(invalidatedEpoch: epoch) }
+            return
+        }
+        if let data = userInfo[WatchWire.contextKey] as? Data {
+            let metadata = userInfo[WatchWire.syncMetadataKey] as? Data
+            Task { @MainActor in self.receiveSnapshot(data, metadataData: metadata) }
         }
         if let data = userInfo[WatchWire.commandKey] as? Data,
            let command = WatchWire.decode(WatchCommand.self, from: data) {

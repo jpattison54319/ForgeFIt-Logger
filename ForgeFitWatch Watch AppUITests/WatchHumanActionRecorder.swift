@@ -1018,6 +1018,20 @@ func watchAcceptanceAssert(
 }
 
 extension XCUIElement {
+    func watchAcceptanceTapAndWait(
+        for visibleElement: XCUIElement,
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) {
+        WatchHumanActionRecorder.shared.perform(action: "tap", target: self, sourceFile: file, sourceLine: line) {
+            self.tap()
+            let expectation = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true AND hittable == true"), object: visibleElement
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, file: file, line: line)
+        }
+    }
+
     func watchAcceptanceTap(file: StaticString = #fileID, line: UInt = #line) {
         WatchHumanActionRecorder.shared.perform(
             action: "tap",
@@ -1058,6 +1072,19 @@ extension XCUIElement {
 }
 
 extension XCUICoordinate {
+    func watchAcceptanceSlowDrag(
+        to otherCoordinate: XCUICoordinate,
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) {
+        WatchHumanActionRecorder.shared.perform(
+            action: "coordinatePressAndDrag", sourceFile: file, sourceLine: line
+        ) {
+            self.press(forDuration: 0.1, thenDragTo: otherCoordinate,
+                       withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+    }
+
     func watchAcceptancePress(
         forDuration duration: TimeInterval,
         thenDragTo otherCoordinate: XCUICoordinate,

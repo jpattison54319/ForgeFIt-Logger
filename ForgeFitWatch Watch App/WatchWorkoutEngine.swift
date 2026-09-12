@@ -46,6 +46,9 @@ final class WatchWorkoutEngine: NSObject {
 
     /// Throttled live-metrics stream (WatchStore forwards these to the phone).
     var onMetrics: ((WatchLiveMetrics) -> Void)?
+    var onRecoveryNeeded: (() -> Void)?
+    private(set) var retryState = WatchEngineRetryState()
+    @ObservationIgnored private var lifecycleGeneration: UInt64 = 0
 
     /// The user's HR-zone model, synced from the phone via `WatchAppContext`.
     /// Drives live time-in-zone and (feature 4) the zone-adherence guard.
@@ -59,8 +62,9 @@ final class WatchWorkoutEngine: NSObject {
     @ObservationIgnored private var lastZoneCueAt = Date.distantPast
 
     @ObservationIgnored private var lastZoneTick: Date?
-    @ObservationIgnored private var lastSend = Date.distantPast
-    @ObservationIgnored private var lastSentHR: Int?
+    @ObservationIgnored private lazy var metricsCoalescer = WatchMetricsCoalescer { [weak self] metrics in
+        self?.onMetrics?(metrics)
+    }
 
     /// Includes HealthKit's asynchronous start/recovery windows. Callers use
     /// this instead of `isRunning` so they never create a second primary
@@ -169,11 +173,12 @@ final class WatchWorkoutEngine: NSObject {
 
     @discardableResult
     func start(configuration: HKWorkoutConfiguration? = nil, startDate: Date = Date(), isYoga: Bool = false, workoutID: UUID? = nil) -> Bool {
-        guard !hasActiveSession, HKHealthStore.isHealthDataAvailable() else { return false }
+        let resetLiveMetrics = retryState.workoutID != workoutID || retryState.failures == 0
+        guard !hasActiveSession, HKHealthStore.isHealthDataAvailable(),
+              retryState.mayStart(workoutID, at: Date()) else { return false }
         let requestID = UUID()
         startRequestID = requestID
         isStarting = true
-        didAttemptFailureRestart = false
         // Bind the identity synchronously so a snapshot applied while the
         // async authorization is in flight still sees whose session this is
         // (FF-003).
@@ -207,10 +212,12 @@ final class WatchWorkoutEngine: NSObject {
                 } else {
                     resolved = configuration
                 }
-                beginSession(configuration: resolved, startDate: startDate)
+                beginSession(configuration: resolved, startDate: startDate, resetLiveMetrics: resetLiveMetrics)
             } else {
                 logger.error("Workout session not started because workout write access is unavailable")
+                retryState.failed(.permissionRequired, at: Date())
                 clearSessionIdentity()
+                onRecoveryNeeded?()
             }
         }
         return true
@@ -221,6 +228,7 @@ final class WatchWorkoutEngine: NSObject {
     @ObservationIgnored private var isEndingSession = false
     @ObservationIgnored private var startRequestID: UUID?
     @ObservationIgnored private var recoveryRequestID: UUID?
+    @ObservationIgnored private var teardownTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var sessionEndWaiters: [CheckedContinuation<Void, Never>] = []
 
     private func beginSession(configuration: HKWorkoutConfiguration?, startDate: Date, resetLiveMetrics: Bool = true) {
@@ -235,6 +243,7 @@ final class WatchWorkoutEngine: NSObject {
             let session = try HKWorkoutSession(healthStore: healthStore, configuration: config)
             let builder = session.associatedWorkoutBuilder()
             attach(session: session, builder: builder, configuration: config, startDate: startDate)
+            retryState.started()
             persistSessionIdentity()
             if resetLiveMetrics {
                 resetMetrics()
@@ -252,6 +261,9 @@ final class WatchWorkoutEngine: NSObject {
             startRouteIfNeeded(for: config)
         } catch {
             logger.error("Unable to create workout session: \(error.localizedDescription, privacy: .public)")
+            retryState.failed(recoveryIssue(for: error), at: Date())
+            WatchSyncDiagnostics.record("engine-start-failed", error: error)
+            onRecoveryNeeded?()
             // The start failed before a session existed, so no identity may
             // linger as if one were live (FF-003).
             clearSessionIdentity()
@@ -288,7 +300,10 @@ final class WatchWorkoutEngine: NSObject {
 
     @ObservationIgnored private var activeConfiguration: HKWorkoutConfiguration?
     @ObservationIgnored private var sessionStartDate: Date?
-    @ObservationIgnored private var didAttemptFailureRestart = false
+
+    func retryRecordingExplicitly() {
+        retryState.retryExplicitly()
+    }
 
     /// Reattach to a workout session that outlived the app process — watchOS
     /// relaunches us (workout-processing background mode) after a crash or
@@ -303,6 +318,7 @@ final class WatchWorkoutEngine: NSObject {
         // this was BEFORE the async HealthKit call so a snapshot applied
         // mid-recovery can still verify the session it will reattach (FF-003).
         activeSessionWorkoutID = WatchSessionIdentityStore.load()
+        if let activeSessionWorkoutID { retryState.bind(activeSessionWorkoutID) }
         isAwaitingSessionWorkoutID = WatchSessionIdentityStore.isPendingHandoff()
         let requestID = UUID()
         recoveryRequestID = requestID
@@ -366,6 +382,7 @@ final class WatchWorkoutEngine: NSObject {
     /// End the session and save the HKWorkout to Apple Health.
     /// Returns the final metrics and whether the save succeeded.
     func finish(workoutName: String? = nil) async -> (metrics: WatchLiveMetrics, savedToHealth: Bool) {
+        lifecycleGeneration &+= 1
         let metrics = currentMetrics()
         if isEndingSession {
             await waitForSessionEnd()
@@ -391,42 +408,66 @@ final class WatchWorkoutEngine: NSObject {
                 try? await builder.addMetadata([HKMetadataKeyWorkoutBrandName: workoutName])
             }
             try await builder.endCollection(at: Date())
-            if (try? await builder.finishWorkout()) != nil {
-                saved = true
-            }
+            // HealthKit may successfully save while locked and return no
+            // readable workout object. Only a thrown error means failure.
+            _ = try await builder.finishWorkout()
+            saved = true
         } catch {
             saved = false
         }
-        clearSession()
+        if self.session === session { clearSession() }
         return (metrics, saved)
     }
 
     /// End the session without saving an HKWorkout (the phone finished the
     /// workout and owns the Health write, or the session was discarded).
     func cancel() async {
-        if isEndingSession {
-            await waitForSessionEnd()
+        lifecycleGeneration &+= 1
+        cancelPendingTransitions()
+        guard let session else {
+            clearSession()
             return
         }
-        cancelPendingTransitions()
-        guard let session, let builder else {
-            clearSession()
+        if isEndingSession {
+            scheduleTeardownTimeout(for: session)
+            await waitForSessionEnd()
             return
         }
         isEndingSession = true
         isRunning = false
         session.end()
         stopRouteCollection()
-        do {
-            try await builder.endCollection(at: Date())
-        } catch {
-            logger.error("Unable to end discarded workout collection: \(error.localizedDescription, privacy: .public)")
+        scheduleTeardownTimeout(for: session)
+        let endingBuilder = builder
+        Task { @MainActor [weak self] in
+            if let endingBuilder {
+                do {
+                    try await endingBuilder.endCollection(at: Date())
+                } catch {
+                    WatchSyncDiagnostics.record("engine-discard-end-failed", error: error)
+                }
+                endingBuilder.discardWorkout()
+            }
+            // A late callback must not tear down a replacement session.
+            guard let self, self.session === session else { return }
+            self.clearSession()
         }
-        builder.discardWorkout()
-        // A late callback from an older lifecycle must never tear down a
-        // replacement session installed after it.
-        guard self.session === session, self.builder === builder else { return }
-        clearSession()
+        await waitForSessionEnd()
+    }
+
+    /// A missing HealthKit collection callback must not strand local Stop or
+    /// block reconciliation forever. Old builder callbacks retain object guards.
+    private func scheduleTeardownTimeout(for endingSession: HKWorkoutSession, retryOnTimeout: Bool = false) {
+        guard teardownTimeoutTask == nil else { return }
+        let generation = lifecycleGeneration
+        teardownTimeoutTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            guard let self, self.session === endingSession, self.isEndingSession else { return }
+            WatchSyncDiagnostics.record("engine-teardown-timeout")
+            self.builder?.discardWorkout()
+            self.clearSession()
+            if retryOnTimeout, self.lifecycleGeneration == generation { self.onRecoveryNeeded?() }
+        }
     }
 
     private func waitForSessionEnd() async {
@@ -436,7 +477,9 @@ final class WatchWorkoutEngine: NSObject {
         }
     }
 
-    private func clearSession(resetRestartAttempt: Bool = true) {
+    private func clearSession() {
+        teardownTimeoutTask?.cancel()
+        teardownTimeoutTask = nil
         cancelPendingTransitions()
         locationManager.stopUpdatingLocation()
         session = nil
@@ -447,19 +490,17 @@ final class WatchWorkoutEngine: NSObject {
         activeConfiguration = nil
         sessionStartDate = nil
         // Every teardown path clears the originating identity, in memory and
-        // durably; only the engine-internal failure restart re-stamps it
-        // (FF-003).
+        // durably. Store reconciliation alone authorizes a replacement
+        // session after checking its identity and local-stop state.
         clearSessionIdentity()
         isEndingSession = false
         let waiters = sessionEndWaiters
         sessionEndWaiters.removeAll()
         waiters.forEach { $0.resume() }
-        if resetRestartAttempt {
-            didAttemptFailureRestart = false
-        }
     }
 
     private func cancelPendingTransitions() {
+        metricsCoalescer.reset()
         startRequestID = nil
         isStarting = false
         recoveryRequestID = nil
@@ -488,14 +529,12 @@ final class WatchWorkoutEngine: NSObject {
         distanceMeters = nil
         zoneSeconds = [0, 0, 0, 0, 0]
         lastZoneTick = nil
-        lastSentHR = nil
-        lastSend = .distantPast
+        metricsCoalescer.reset()
     }
 
     private func prepareMetricsForRestart() {
         lastZoneTick = nil
-        lastSentHR = nil
-        lastSend = .distantPast
+        metricsCoalescer.reset()
     }
 
     private func restoreMetrics(from builder: HKLiveWorkoutBuilder) {
@@ -571,20 +610,14 @@ final class WatchWorkoutEngine: NSObject {
     }
 
     private func throttledSend() {
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastSend)
-        // Heart rate is the number the athlete watches most, so push it promptly
-        // when it moves (capped at ~1s to bound WatchConnectivity traffic);
-        // energy / distance / time-in-zone ride a steady ~5s heartbeat. This
-        // takes the worst-case HR lag on the phone from ~5s down to ~1s — the
-        // rest is inherent HealthKit batching + WC latency.
-        let currentHeartRate = liveHeartRate(at: now)
-        let hrMoved = currentHeartRate != lastSentHR
-        let minInterval: TimeInterval = hrMoved ? 1.0 : 5.0
-        guard elapsed >= minInterval else { return }
-        lastSend = now
-        lastSentHR = currentHeartRate
-        onMetrics?(currentMetrics(asOf: now))
+        metricsCoalescer.submit(currentMetrics())
+    }
+
+    func flushMetrics() {
+        guard hasActiveSession, !isEndingSession else { return }
+        let metrics = currentMetrics()
+        guard metrics.heartRate != nil || metrics.activeEnergyKcal != nil || metrics.distanceMeters != nil else { return }
+        metricsCoalescer.submit(metrics, force: true)
     }
 
     private func startRouteIfNeeded(
@@ -686,7 +719,7 @@ extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
         case .ended, .stopped:
             isRunning = false
             guard !isEndingSession else { return }
-            logger.error("Workout session ended unexpectedly; attempting one clean restart")
+            logger.error("Workout session ended unexpectedly; scheduling recovery")
             restartSession(after: workoutSession)
         case .notStarted, .prepared:
             isRunning = false
@@ -699,30 +732,31 @@ extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
         guard workoutSession === session, !isEndingSession else { return }
         logger.error("Workout session failed: \(error.localizedDescription, privacy: .public)")
 
-        let anotherWorkoutOwnsSensors: Bool
-        if let healthError = error as? HKError {
-            anotherWorkoutOwnsSensors = healthError.code == .errorAnotherWorkoutSessionStarted
-        } else {
-            anotherWorkoutOwnsSensors = false
-        }
-        restartSession(after: workoutSession, allowRestart: !anotherWorkoutOwnsSensors)
+        WatchSyncDiagnostics.record("engine-session-failed", error: error)
+        restartSession(after: workoutSession, issue: recoveryIssue(for: error))
     }
 
-    private func restartSession(after failedSession: HKWorkoutSession, allowRestart: Bool = true) {
+    private func recoveryIssue(for error: Error) -> WatchEngineRetryState.Issue {
+        guard let healthError = error as? HKError else { return .transient }
+        switch healthError.code {
+        case .errorAnotherWorkoutSessionStarted: return .anotherWorkout
+        case .errorAuthorizationDenied, .errorAuthorizationNotDetermined: return .permissionRequired
+        default: return .transient
+        }
+    }
+
+    private func restartSession(after failedSession: HKWorkoutSession, issue: WatchEngineRetryState.Issue = .transient) {
         guard failedSession === session else { return }
-        let config = activeConfiguration
-        let startDate = sessionStartDate
-        let workoutID = activeSessionWorkoutID
-        let wasAwaitingWorkoutID = isAwaitingSessionWorkoutID
+        let generation = lifecycleGeneration
         let failedBuilder = builder
-        let shouldRestart = allowRestart && !didAttemptFailureRestart && config != nil
-        didAttemptFailureRestart = true
+        retryState.failed(issue, at: Date())
 
         isRunning = false
         isEndingSession = true
         if failedSession.state != .ended && failedSession.state != .stopped {
             failedSession.end()
         }
+        scheduleTeardownTimeout(for: failedSession, retryOnTimeout: true)
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let failedBuilder {
@@ -734,27 +768,11 @@ extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
                 failedBuilder.discardWorkout()
             }
             guard failedSession === self.session else { return }
-            self.clearSession(resetRestartAttempt: false)
-
-            // Preserve the last known metrics across the handoff. Freshness
-            // checks hide HR automatically if the replacement does not
-            // deliver a new sample within 15 seconds.
-            if shouldRestart, let config {
-                // Only the engine-internal failure restart preserves the
-                // originating identity; every other teardown path clears it.
-                // `beginSession` re-persists it once the replacement attaches.
-                self.activeSessionWorkoutID = workoutID
-                self.isAwaitingSessionWorkoutID = wasAwaitingWorkoutID
-                self.beginSession(
-                    configuration: config,
-                    startDate: startDate ?? Date(),
-                    resetLiveMetrics: false
-                )
-            } else if !allowRestart {
-                self.logger.error("Workout session not restarted because another app owns the watch sensors")
-            } else {
-                self.logger.error("Workout session restart limit reached")
-            }
+            self.clearSession()
+            // Store reconciliation owns retries and rechecks identity and a
+            // durable local stop before creating any replacement session.
+            guard self.lifecycleGeneration == generation else { return }
+            self.onRecoveryNeeded?()
         }
     }
 
@@ -770,6 +788,7 @@ extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
               isAwaitingSessionWorkoutID,
               activeSessionWorkoutID == nil else { return }
         activeSessionWorkoutID = workoutID
+        retryState.bind(workoutID)
         isAwaitingSessionWorkoutID = false
         persistSessionIdentity()
     }

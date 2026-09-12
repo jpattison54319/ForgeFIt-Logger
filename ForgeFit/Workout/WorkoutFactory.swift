@@ -83,6 +83,7 @@ enum WorkoutFactory {
     @discardableResult
     static func startEmpty(
         in context: ModelContext,
+        workoutID: UUID = UUID(),
         saveCenter: PersistentChangeSaveCenter? = nil,
         save: @escaping SaveOperation = { try $0.save() },
         onCommit: @escaping @MainActor (WorkoutModel) -> Void
@@ -90,6 +91,7 @@ enum WorkoutFactory {
         let persistenceContext = ModelContext(context.container)
         persistenceContext.autosaveEnabled = false
         let workout = WorkoutModel(
+            id: workoutID,
             userID: ForgeFitDemo.userID,
             title: "Workout",
             sourceDevice: "iphone"
@@ -111,6 +113,7 @@ enum WorkoutFactory {
         exercises: [ExerciseLibraryModel],
         setupNotes: [UserExerciseNoteModel] = [],
         in context: ModelContext,
+        workoutID: UUID = UUID(),
         saveCenter: PersistentChangeSaveCenter? = nil,
         save: @escaping SaveOperation = { try $0.save() },
         applyProgression: Bool = true,
@@ -120,6 +123,7 @@ enum WorkoutFactory {
         let persistenceContext = ModelContext(context.container)
         persistenceContext.autosaveEnabled = false
         let workout = WorkoutModel(
+            id: workoutID,
             userID: ForgeFitDemo.userID,
             routineID: routine.id,
             title: routine.name,

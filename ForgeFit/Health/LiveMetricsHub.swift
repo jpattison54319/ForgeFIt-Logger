@@ -36,6 +36,7 @@ final class LiveMetricsHub {
     /// finish pipeline can persist the buffered samples.
     @ObservationIgnored private(set) var sessionAggregator: LiveHRAggregator?
     @ObservationIgnored private var zoneConfig = HRZoneConfigStore.load()
+    @ObservationIgnored private var watchOrdering = WatchMetricsOrdering()
 
     /// Start aggregating BLE readings for a workout. Idempotent per workout —
     /// callers may invoke it again on relaunch into an active session.
@@ -54,6 +55,7 @@ final class LiveMetricsHub {
         sessionAggregator = nil
         liveMetrics = nil
         source = .none
+        watchOrdering = WatchMetricsOrdering()
         return aggregator
     }
 
@@ -62,11 +64,18 @@ final class LiveMetricsHub {
         zoneConfig = HRZoneConfigStore.load()
     }
 
-    func updateFromWatch(_ metrics: WatchLiveMetrics) {
+    func mayAcceptFromWatch(_ metrics: WatchLiveMetrics) -> Bool {
+        watchOrdering.mayAccept(metrics)
+    }
+
+    @discardableResult
+    func updateFromWatch(_ metrics: WatchLiveMetrics) -> Bool {
+        guard watchOrdering.accept(metrics) else { return false }
         var current = metrics
         current.heartRate = metrics.freshHeartRate()
         liveMetrics = current
         source = current.heartRate == nil ? .none : .appleWatch
+        return true
     }
 
     func updateFromBLE(heartRate bpm: Int, at date: Date = Date()) {
@@ -88,6 +97,7 @@ final class LiveMetricsHub {
     func clearLiveMetrics() {
         liveMetrics = nil
         source = .none
+        watchOrdering = WatchMetricsOrdering()
     }
 
     // MARK: - Buffered BLE samples

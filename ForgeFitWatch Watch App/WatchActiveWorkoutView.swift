@@ -29,15 +29,7 @@ struct WatchActiveWorkoutView: View {
         }
         .tabViewStyle(.verticalPage)
         .accessibilityIdentifier("watch-active-workout")
-        .overlay(alignment: .top) {
-            // The rest countdown follows the athlete onto every page. The
-            // metrics page (0) has its own big headline, so the compact banner
-            // rides the logging + controls pages so you never have to swipe to
-            // find it.
-            if selection != 0 {
-                WatchRestBanner(workout: workout)
-            }
-        }
+
     }
 }
 
@@ -90,7 +82,7 @@ private struct WatchConditioningWorkoutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                    let heartRate = engine.liveHeartRate(at: context.date)
+                    let heartRate = store.isRecordingStopped ? nil : engine.liveHeartRate(at: context.date)
                     HStack(alignment: .bottom, spacing: 6) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(section?.format.title ?? "WORKOUT")
@@ -170,32 +162,35 @@ private struct WatchConditioningWorkoutView: View {
     }
 
     private var controlPage: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "stopwatch.fill").font(.system(size: 30)).foregroundStyle(WTheme.gold)
-            Text(section?.name ?? workout.title ?? "Conditioning")
-                .font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
-            Button(progress.status == .paused ? "Resume" : "Pause") {
-                store.applyConditioning(progress.status == .paused ? .resume : .pause, blockID: blockID)
-            }
-            .buttonStyle(.bordered)
-            Button(blockID == nil ? "Finish Workout" : "Finish Conditioning") {
-                if let blockID {
-                    store.finishConditioningBlock(blockID)
-                    dismiss()
-                } else {
-                    store.finishWorkout()
+        ScrollView {
+            VStack(spacing: 10) {
+                WatchRecoveryControls(store: store)
+                Image(systemName: "stopwatch.fill").font(.system(size: 30)).foregroundStyle(WTheme.gold)
+                Text(section?.name ?? workout.title ?? "Conditioning")
+                    .font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
+                Button(progress.status == .paused ? "Resume" : "Pause") {
+                    store.applyConditioning(progress.status == .paused ? .resume : .pause, blockID: blockID)
+                }
+                .buttonStyle(.bordered)
+                Button(blockID == nil ? "Finish Workout" : "Finish Conditioning") {
+                    if let blockID {
+                        store.finishConditioningBlock(blockID)
+                        dismiss()
+                    } else {
+                        store.finishWorkout()
+                    }
+                }
+                    .buttonStyle(.borderedProminent).tint(WTheme.teal)
+                    .disabled(requiredRoundsRemaining > 0 || store.isAwaitingWorkoutIdentity || store.isFinishingWorkout)
+                if requiredRoundsRemaining > 0 {
+                    Text("\(requiredRoundsRemaining) round\(requiredRoundsRemaining == 1 ? "" : "s") left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
-                .buttonStyle(.borderedProminent).tint(WTheme.teal)
-                .disabled(requiredRoundsRemaining > 0 || store.isAwaitingWorkoutIdentity)
-            if requiredRoundsRemaining > 0 {
-                Text("\(requiredRoundsRemaining) round\(requiredRoundsRemaining == 1 ? "" : "s") left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+            .padding(.horizontal, 6)
         }
-        .padding(.horizontal, 6)
     }
 
     private var requiredRoundsRemaining: Int {
@@ -271,6 +266,8 @@ private struct WatchRestBanner: View {
                 .overlay(Capsule().strokeBorder(tint.opacity(0.4), lineWidth: 1))
                 .padding(.horizontal, 8)
                 .transition(.move(edge: .top).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("watch-rest-banner")
                 .allowsHitTesting(false)
             }
         }
@@ -287,7 +284,7 @@ struct WatchMetricsPage: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { context in
-            let heartRate = engine.liveHeartRate(at: context.date)
+            let heartRate = store.isRecordingStopped ? nil : engine.liveHeartRate(at: context.date)
             VStack(alignment: .leading, spacing: 6) {
                 // Interval step, then rest countdown, take over the headline —
                 // whichever number the athlete needs right now.
@@ -426,39 +423,45 @@ struct WatchExercisesPage: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                heartRateRow
+            VStack(spacing: 4) {
+                WatchRestBanner(workout: workout)
+                List {
+                    if store.recoveryMessage != nil {
+                        WatchRecoveryControls(store: store)
+                    }
+                    if !store.isRecordingStopped { heartRateRow }
 
-                ForEach(workout.exercises) { exercise in
-                    if exercise.workoutBlockKindRaw == "conditioning",
-                       let plan = exercise.conditioningPlan,
-                       let progress = exercise.conditioningProgress {
-                        NavigationLink {
-                            WatchConditioningWorkoutView(
-                                store: store,
-                                workout: workout,
-                                plan: plan,
-                                progress: progress,
-                                blockID: exercise.id,
-                                movementNames: exercise.conditioningMovementNames ?? [:]
-                            )
-                        } label: {
-                            blockRow(exercise, systemImage: "stopwatch.fill")
+                    ForEach(workout.exercises) { exercise in
+                        if exercise.workoutBlockKindRaw == "conditioning",
+                           let plan = exercise.conditioningPlan,
+                           let progress = exercise.conditioningProgress {
+                            NavigationLink {
+                                WatchConditioningWorkoutView(
+                                    store: store,
+                                    workout: workout,
+                                    plan: plan,
+                                    progress: progress,
+                                    blockID: exercise.id,
+                                    movementNames: exercise.conditioningMovementNames ?? [:]
+                                )
+                            } label: {
+                                blockRow(exercise, systemImage: "stopwatch.fill")
+                            }
+                        } else if exercise.isCardio {
+                            cardioRow(exercise)
+                        } else {
+                            NavigationLink {
+                                WatchSetListView(store: store, exerciseID: exercise.id)
+                            } label: {
+                                exerciseRow(exercise)
+                            }
+                            .accessibilityIdentifier("watch-exercise-\(exercise.name)")
                         }
-                    } else if exercise.isCardio {
-                        cardioRow(exercise)
-                    } else {
-                        NavigationLink {
-                            WatchSetListView(store: store, exerciseID: exercise.id)
-                        } label: {
-                            exerciseRow(exercise)
-                        }
-                        .accessibilityIdentifier("watch-exercise-\(exercise.name)")
                     }
                 }
+                .navigationTitle("Exercises")
+                .accessibilityIdentifier("watch-exercises-page")
             }
-            .navigationTitle("Exercises")
-            .accessibilityIdentifier("watch-exercises-page")
         }
     }
 
@@ -479,7 +482,7 @@ struct WatchExercisesPage: View {
 
     private var heartRateRow: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let heartRate = engine.liveHeartRate(at: context.date)
+            let heartRate = store.isRecordingStopped ? nil : engine.liveHeartRate(at: context.date)
             HStack(spacing: 8) {
                 Image(systemName: "heart.fill")
                     .font(.system(size: 15, weight: .bold))
@@ -796,41 +799,42 @@ struct WatchControlsPage: View {
     @State private var confirmDiscard = false
 
     var body: some View {
-        VStack(spacing: 10) {
-            Button {
-                confirmFinish = true
-            } label: {
-                Label("Finish", systemImage: "checkmark")
-                    .font(.system(size: 16, weight: .bold))
-            }
-            .tint(WTheme.success)
-            .buttonStyle(.borderedProminent)
-            .disabled(store.conditioningFinishBlocker != nil || store.isAwaitingWorkoutIdentity)
+        VStack(spacing: 8) {
+            if let workout = store.activeWorkout { WatchRestBanner(workout: workout) }
+            ScrollView {
+                VStack(spacing: 10) {
+                    WatchRecoveryControls(store: store)
+                    Button {
+                        confirmFinish = true
+                    } label: {
+                        Label("Finish", systemImage: "checkmark")
+                            .font(.system(size: 16, weight: .bold))
+                    }
+                    .tint(WTheme.success)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.conditioningFinishBlocker != nil || store.isAwaitingWorkoutIdentity || store.isFinishingWorkout)
 
-            if let blocker = store.conditioningFinishBlocker {
-                Text(blocker)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            } else if store.isAwaitingWorkoutIdentity {
-                Text("Syncing workout…")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+                    if let blocker = store.conditioningFinishBlocker {
+                        Text(blocker)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
 
-            Button {
-                confirmDiscard = true
-            } label: {
-                Label("Discard", systemImage: "trash")
-                    .font(.system(size: 15, weight: .semibold))
+                    Button {
+                        confirmDiscard = true
+                    } label: {
+                        Label("Discard", systemImage: "trash")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .tint(WTheme.danger)
+                    .disabled(store.isAwaitingWorkoutIdentity || store.isFinishingWorkout)
+                    .accessibilityIdentifier("watch-discard-workout")
+                }
+                .padding(.horizontal, 4)
             }
-            .tint(WTheme.danger)
-            .disabled(store.isAwaitingWorkoutIdentity)
-            .accessibilityIdentifier("watch-discard-workout")
+            .accessibilityIdentifier("watch-controls-page")
         }
-        .padding(.horizontal, 4)
-        .accessibilityIdentifier("watch-controls-page")
         .confirmationDialog("Finish workout?", isPresented: $confirmFinish) {
             Button("Finish Workout") { store.finishWorkout() }
             Button("Cancel", role: .cancel) {}

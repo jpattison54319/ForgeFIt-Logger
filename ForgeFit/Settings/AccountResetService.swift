@@ -151,8 +151,7 @@ enum AccountResetService {
         // Pairing is device-local and deliberately excluded from backup. A full
         // reset must also stop a standing reconnect and forget its identifiers.
         BLEHeartRateService.shared.forget()
-        WatchLink.shared.sendCommand(.discardWorkout(workoutID: nil))
-        WatchLink.shared.publishState()
+        WatchLink.shared.resetWatchState()
     }
 
     private static func cancelAppNotifications() {
@@ -178,6 +177,7 @@ enum AccountResetService {
         SleepOverrideStore.shared.clearAll()
         RecoverySnapshotStore.shared.clearAll()
         YogaRuntimeCheckpointStore.clearAll(defaults: defaults)
+        WatchSyncDiagnostics.clear(defaults: defaults)
         // HR-zone config lives in the app-group suite (health-derived —
         // never backed up, but reset must still clear it).
         UserDefaults(suiteName: ForgeFitWidgetSnapshotStore.suiteName)?
