@@ -162,7 +162,9 @@ final class WatchStore: NSObject {
         if isFinishingWorkout { return finishIsDelayed ? "Health save is taking longer…" : "Finishing workout…" }
         if isRecordingStopped { return "Stopped on Watch" }
         if let issue = syncRecovery.issue { return issue.message }
-        if isAwaitingWorkoutIdentity { return "Syncing workout…" }
+        // A phone-started workout briefly waits for its correlated snapshot.
+        // That is the healthy handshake path, not a recovery failure, so do
+        // not flash an actionable Retry Sync surface while it resolves.
         if let issue = engine.retryState.issue { return issue.message }
         if recoveryBootstrapFailed { return "Workout recording could not be restored" }
         return nil

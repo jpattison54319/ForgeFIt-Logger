@@ -89,6 +89,8 @@ struct WatchRecoveryIntegrationTests {
         await settle()
         #expect(!fixture.engine.hasActiveSession)
         #expect(fixture.engine.starts == 0)
+        #expect(fixture.store.isAwaitingWorkoutIdentity)
+        #expect(fixture.store.recoveryMessage == nil)
         try push(fixture.store, workoutID: nil, epoch: epoch, revision: 1)
         await settle()
         #expect(fixture.store.isAwaitingWorkoutIdentity)
@@ -98,6 +100,18 @@ struct WatchRecoveryIntegrationTests {
         #expect(!fixture.store.isAwaitingWorkoutIdentity)
         #expect(fixture.engine.activeSessionWorkoutID == id)
         #expect(fixture.engine.starts == 1)
+    }
+
+    @Test func pendingHandoffShowsRetryOnlyAfterARealSyncFailure() async {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
+        await settle()
+        #expect(fixture.store.isAwaitingWorkoutIdentity)
+        #expect(fixture.store.recoveryMessage == nil)
+
+        fixture.store.syncRecovery.failed(.unreachable)
+        #expect(fixture.store.recoveryMessage == WatchSyncIssue.unreachable.message)
     }
 
     @Test func freshContextRestartsRecoveryAfterThreeTransientFailures() async throws {
