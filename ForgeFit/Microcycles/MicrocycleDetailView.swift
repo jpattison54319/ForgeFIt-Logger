@@ -36,8 +36,9 @@ struct MicrocycleDetailView: View {
     @State private var opensHistoryAfterEducation = false
     @State private var actionError: String?
     @State private var selectedDay: MicrocycleDaySelection?
-    @State private var draggedRestDayID: UUID?
-    @State private var previewPlanItemIDs: [UUID] = []
+    @State private var restDayDrag: MicrocycleRestReorderDropDelegate.Drag?
+    @State private var restDayInsertion: MicrocycleRestReorderDropDelegate.Insertion?
+    @State private var planRowFrames: [UUID: CGRect] = [:]
 
     private var tracking: MicrocycleTrackingModel? {
         trackings.first { $0.id == trackingID && $0.deletedAt == nil }
@@ -212,13 +213,9 @@ struct MicrocycleDetailView: View {
             routineProgress: progress,
             restDays: restDays
         )
-        let displayedItems = displayedPlanItems(planProgress.items)
+        let itemIDs = planProgress.items.map(\.id)
         let markersByRoutineID = MicrocycleRoutineMarker.markersByRoutineID(
             in: progress.routines.map(\.routine)
-        )
-        let indexByItemID = Dictionary(
-            displayedItems.enumerated().map { ($0.element.id, $0.offset) },
-            uniquingKeysWith: { first, _ in first }
         )
         let canLogRestToday = !hasRestLoggedToday(for: tracking)
         return Card {
@@ -246,53 +243,69 @@ struct MicrocycleDetailView: View {
                 )
 
                 VStack(spacing: Space.sm) {
-                    ForEach(displayedItems) { item in
-                        let itemIndex = indexByItemID[item.id] ?? 0
-                        switch item {
-                        case .routine(let routine):
-                            routineRow(
-                                routine,
-                                marker: markersByRoutineID[routine.routine.id] ?? "?"
-                            )
-                            .onDrop(
-                                of: [UTType.plainText],
-                                delegate: MicrocycleRestReorderDropDelegate(
-                                    targetID: item.id,
-                                    draggedRestDayID: $draggedRestDayID,
-                                    previewItemIDs: $previewPlanItemIDs,
-                                    reduceMotion: reduceMotion,
-                                    onCommit: movePlannedRestDay
+                    ForEach(planProgress.items.enumerated(), id: \.element.id) { itemIndex, item in
+                        Group {
+                            switch item {
+                            case .routine(let routine):
+                                routineRow(
+                                    routine,
+                                    marker: markersByRoutineID[routine.routine.id] ?? "?"
                                 )
-                            )
-                        case .restDay(let restDay):
-                            MicrocyclePlannedRestDayRow(
-                                restDay: restDay,
-                                position: itemIndex + 1,
-                                itemCount: planProgress.items.count,
-                                canMoveUp: itemIndex > 0,
-                                canMoveDown: itemIndex < planProgress.items.count - 1,
-                                canLogToday: canLogRestToday,
-                                isDragging: draggedRestDayID == restDay.id,
-                                onLogToday: { logPlannedRestDay(restDay.id) },
-                                onMoveUp: { movePlannedRestDay(restDay.id, to: itemIndex - 1) },
-                                onMoveDown: { movePlannedRestDay(restDay.id, to: itemIndex + 1) },
-                                onRemove: { removePlannedRestDay(restDay.id) },
-                                onDragStarted: {
-                                    beginDraggingRestDay(restDay.id, items: displayedItems)
-                                }
-                            )
-                            .onDrop(
-                                of: [UTType.plainText],
-                                delegate: MicrocycleRestReorderDropDelegate(
-                                    targetID: item.id,
-                                    draggedRestDayID: $draggedRestDayID,
-                                    previewItemIDs: $previewPlanItemIDs,
-                                    reduceMotion: reduceMotion,
-                                    onCommit: movePlannedRestDay
+                            case .restDay(let restDay):
+                                MicrocyclePlannedRestDayRow(
+                                    restDay: restDay,
+                                    position: itemIndex + 1,
+                                    itemCount: planProgress.items.count,
+                                    canMoveUp: itemIndex > 0,
+                                    canMoveDown: itemIndex < planProgress.items.count - 1,
+                                    canLogToday: canLogRestToday,
+                                    onLogToday: { logPlannedRestDay(restDay.id) },
+                                    onMoveUp: { movePlannedRestDay(restDay.id, to: itemIndex - 1) },
+                                    onMoveDown: { movePlannedRestDay(restDay.id, to: itemIndex + 1) },
+                                    onRemove: { removePlannedRestDay(restDay.id) },
+                                    makeDragItem: {
+                                        let drag = MicrocycleRestReorderDropDelegate.Drag(
+                                            restDayID: restDay.id, windowID: window.id
+                                        )
+                                        restDayDrag = drag
+                                        return drag.makeItemProvider()
+                                    }
                                 )
-                            )
+                            }
+                        }
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .named("microcycle-plan-rows"))
+                        } action: { frame in
+                            planRowFrames[item.id] = frame
                         }
                     }
+                }
+                .coordinateSpace(.named("microcycle-plan-rows"))
+                .contentShape(.rect)
+                .onDrop(
+                    of: [UTType.plainText],
+                    delegate: MicrocycleRestReorderDropDelegate(
+                        windowID: window.id,
+                        itemIDs: itemIDs,
+                        rowFrames: { planRowFrames },
+                        drag: $restDayDrag,
+                        insertion: $restDayInsertion,
+                        onCommit: movePlannedRestDay
+                    )
+                )
+                .overlay(alignment: .top) {
+                    if let restDayInsertion {
+                        Capsule()
+                            .fill(theme.accent)
+                            .frame(height: 2)
+                            .offset(y: restDayInsertion.y - 1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: itemIDs)
+                .onChange(of: Set(itemIDs)) { _, liveIDs in
+                    planRowFrames = planRowFrames.filter { liveIDs.contains($0.key) }
                 }
 
                 MicrocycleRestActionMenu(
@@ -477,27 +490,6 @@ struct MicrocycleDetailView: View {
         } catch {
             actionError = error.localizedDescription
         }
-    }
-
-    private func displayedPlanItems(
-        _ items: [MicrocyclePlanProgress.Item]
-    ) -> [MicrocyclePlanProgress.Item] {
-        guard draggedRestDayID != nil,
-              previewPlanItemIDs.count == items.count else { return items }
-        let itemsByID = Dictionary(
-            items.map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let preview = previewPlanItemIDs.compactMap { itemsByID[$0] }
-        return preview.count == items.count ? preview : items
-    }
-
-    private func beginDraggingRestDay(
-        _ id: UUID,
-        items: [MicrocyclePlanProgress.Item]
-    ) {
-        previewPlanItemIDs = items.map(\.id)
-        draggedRestDayID = id
     }
 
     private func hasRestLoggedToday(for tracking: MicrocycleTrackingModel) -> Bool {

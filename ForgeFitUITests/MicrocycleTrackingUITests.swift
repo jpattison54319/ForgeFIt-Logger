@@ -242,10 +242,21 @@ final class MicrocycleTrackingUITests: XCTestCase {
         let movedRestRow = app.staticTexts.matching(
             NSPredicate(format: "identifier BEGINSWITH 'planned-rest-title-'")
         ).firstMatch
+        let upperRoutine = app.staticTexts["Routine A, Upper, remaining"].firstMatch
         let lowerRoutine = app.staticTexts["Routine B, Lower, remaining"].firstMatch
+        let reorderHandle = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'planned-rest-reorder-'")
+        ).firstMatch
+        let restOptions = app.buttons["Rest day options"].firstMatch
+        scrollToHittable(reorderHandle, in: app)
         try acceptanceRequire(
-            movedRestRow.exists && lowerRoutine.exists,
-            "Expected the planned rest row and Lower routine as drag endpoints."
+            reorderHandle.isHittable && upperRoutine.isHittable && lowerRoutine.isHittable && movedRestRow.exists,
+            "Expected the rest-day handle and both routine rows on screen."
+        )
+        acceptanceAssert(
+            abs(movedRestRow.frame.minX - upperRoutine.frame.minX) <= 1
+                && abs(movedRestRow.frame.minX - lowerRoutine.frame.minX) <= 1,
+            "Expected the planned rest title to align with both routine titles."
         )
         acceptanceExpect(
             visibleLabels: [
@@ -254,9 +265,16 @@ final class MicrocycleTrackingUITests: XCTestCase {
                 "Routine A, Upper, remaining",
                 "Routine B, Lower, remaining",
             ],
-            invariants: ["Holding and dragging the rest row previews it snapping between fixed folder-ordered workouts before the drop commits."]
+            invariants: ["Dropping in the gap between workouts moves the rest day into that slot."]
         )
-        movedRestRow.acceptancePress(forDuration: 0.8, thenDragTo: lowerRoutine)
+        let handle = reorderHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let gapY = (upperRoutine.frame.midY + lowerRoutine.frame.midY) / 2
+        handle.acceptancePress(
+            forDuration: 0.8,
+            thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: lowerRoutine.frame.midX, dy: gapY)
+            )
+        )
 
         acceptanceAssert(
             movedRestRow.waitForExistence(timeout: 3)
@@ -264,7 +282,21 @@ final class MicrocycleTrackingUITests: XCTestCase {
             "Expected the rest slot to move above Lower while Upper remained first."
         )
 
-        let restOptions = app.buttons["Rest day options"].firstMatch
+        let back = app.navigationBars.firstMatch.buttons["BackButton"]
+        try acceptanceRequire(back.isHittable, "Expected a way back to the workout tab.")
+        acceptanceExpect(["microcycle-folder-progress"])
+        back.acceptanceTap()
+        try acceptanceRequire(progress.waitForExistence(timeout: 5), "Expected the tracked microcycle entry point.")
+        acceptanceExpect(["microcycle-rest-day-menu"], visibleLabels: ["Rest Day"])
+        progress.acceptanceTap()
+        acceptanceAssert(
+            movedRestRow.waitForExistence(timeout: 3)
+                && (movedRestRow.value as? String) == "Position 2 of 3"
+                && upperRoutine.frame.midY < movedRestRow.frame.midY
+                && movedRestRow.frame.midY < lowerRoutine.frame.midY,
+            "Reopening the microcycle should show the saved rest slot between the same workouts."
+        )
+
         scrollToHittable(restOptions, in: app)
         try acceptanceRequire(
             restOptions.exists && restOptions.isHittable,
@@ -333,6 +365,10 @@ final class MicrocycleTrackingUITests: XCTestCase {
             "Expected the planned rest row to show its logged state."
         )
         acceptanceAssert(app.staticTexts["1/3"].exists, "Expected rest to count as one planned item, not a workout.")
+        acceptanceAssert(
+            abs(movedRestRow.frame.minX - upperRoutine.frame.minX) <= 1,
+            "Expected the logged rest title to stay aligned with the routine titles."
+        )
 
         scrollToHittable(restMenu, in: app)
         acceptanceExpect(

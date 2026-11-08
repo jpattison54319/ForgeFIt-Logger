@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct MicrocycleRoutineStatusMarker: View {
+    static let diameter: CGFloat = 28
+
     @Environment(\.theme) private var theme
 
     let marker: String
@@ -22,7 +24,7 @@ struct MicrocycleRoutineStatusMarker: View {
                 .minimumScaleFactor(0.7)
                 .padding(3)
         }
-        .frame(width: 28, height: 28)
+        .frame(width: Self.diameter, height: Self.diameter)
         .accessibilityHidden(true)
     }
 }

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MicrocyclePlannedRestDayRow: View {
     @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingLogConfirmation = false
     @State private var showingOptions = false
 
@@ -13,19 +12,21 @@ struct MicrocyclePlannedRestDayRow: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
     let canLogToday: Bool
-    let isDragging: Bool
     let onLogToday: () -> Void
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
     let onRemove: () -> Void
-    let onDragStarted: () -> Void
+    let makeDragItem: () -> NSItemProvider
 
     var body: some View {
         HStack(spacing: Space.sm) {
             Image(systemName: restDay.isCompleted ? "checkmark.circle.fill" : "moon.zzz")
                 .font(.headline)
                 .foregroundStyle(restDay.isCompleted ? theme.accent : theme.textSecondary)
-                .frame(width: TouchTarget.minimum, height: TouchTarget.minimum)
+                .frame(
+                    width: MicrocycleRoutineStatusMarker.diameter,
+                    height: MicrocycleRoutineStatusMarker.diameter
+                )
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -73,7 +74,12 @@ struct MicrocyclePlannedRestDayRow: View {
                 .font(.bodyStrong)
                 .foregroundStyle(theme.textSecondary)
                 .minimumTouchTarget()
-                .accessibilityHidden(true)
+                .contentShape(.rect)
+                .onDrag(makeDragItem) {
+                    MicrocycleRestDragPreview()
+                }
+                .accessibilityLabel("Reorder rest day")
+                .accessibilityIdentifier("planned-rest-reorder-\(restDay.id.uuidString)")
 
             Button {
                 showingOptions = true
@@ -100,17 +106,6 @@ struct MicrocyclePlannedRestDayRow: View {
             }
         }
         .frame(minHeight: TouchTarget.minimum)
-        .contentShape(Rectangle())
-        .onDrag {
-            onDragStarted()
-            return NSItemProvider(object: restDay.id.uuidString as NSString)
-        } preview: {
-            MicrocycleRestDragPreview()
-        }
-        .scaleEffect(isDragging ? 1.02 : 1)
-        .opacity(isDragging ? 0.86 : 1)
-        .shadow(color: .black.opacity(isDragging ? 0.22 : 0), radius: isDragging ? 10 : 0, y: 4)
-        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: isDragging)
         .accessibilityAction(named: "Move Up", onMoveUp)
         .accessibilityAction(named: "Move Down", onMoveDown)
         .accessibilityAction(named: "Remove Rest Day", onRemove)

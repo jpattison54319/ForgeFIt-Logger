@@ -1,48 +1,76 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MicrocycleRestReorderDropDelegate: DropDelegate {
-    let targetID: UUID
-    @Binding var draggedRestDayID: UUID?
-    @Binding var previewItemIDs: [UUID]
-    let reduceMotion: Bool
+    struct Drag {
+        let restDayID: UUID
+        let windowID: UUID
+        let token = UUID().uuidString
+
+        func makeItemProvider() -> NSItemProvider {
+            let provider = NSItemProvider()
+            provider.suggestedName = token
+            let data = Data(token.utf8)
+            provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier, visibility: .ownProcess) { completion in
+                completion(data, nil)
+                return nil
+            }
+            return provider
+        }
+    }
+
+    struct Insertion: Equatable {
+        let index: Int
+        let y: CGFloat
+    }
+
+    let windowID: UUID
+    let itemIDs: [UUID]
+    let rowFrames: () -> [UUID: CGRect]
+    @Binding var drag: Drag?
+    @Binding var insertion: Insertion?
     let onCommit: (UUID, Int) -> Void
 
-    func dropEntered(info: DropInfo) {
-        guard let draggedRestDayID,
-              draggedRestDayID != targetID,
-              let sourceIndex = previewItemIDs.firstIndex(of: draggedRestDayID),
-              let targetIndex = previewItemIDs.firstIndex(of: targetID) else { return }
-
-        let updatePreview = {
-            previewItemIDs.move(
-                fromOffsets: IndexSet(integer: sourceIndex),
-                toOffset: targetIndex > sourceIndex ? targetIndex + 1 : targetIndex
-            )
-        }
-        if reduceMotion {
-            updatePreview()
-        } else {
-            withAnimation(.snappy(duration: 0.18), updatePreview)
-        }
+    func validateDrop(info: DropInfo) -> Bool {
+        drag?.windowID == windowID
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+        let target = insertion(at: info.location.y)
+        if insertion != target { insertion = target }
+        return DropProposal(operation: target == nil ? .forbidden : .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        insertion = nil
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard let draggedRestDayID,
-              let destination = previewItemIDs.firstIndex(of: draggedRestDayID) else {
-            cancelPreview()
-            return false
+        defer {
+            drag = nil
+            insertion = nil
         }
-        onCommit(draggedRestDayID, destination)
-        cancelPreview()
+        guard let drag,
+              let target = insertion(at: info.location.y),
+              info.itemProviders(for: [.plainText]).contains(where: { $0.suggestedName == drag.token }) else { return false }
+        onCommit(drag.restDayID, target.index)
         return true
     }
 
-    private func cancelPreview() {
-        draggedRestDayID = nil
-        previewItemIDs = []
+    private func insertion(at y: CGFloat) -> Insertion? {
+        guard let drag, drag.windowID == windowID, itemIDs.contains(drag.restDayID) else { return nil }
+        let frames = rowFrames()
+        var index = 0
+        var lastFrame: CGRect?
+        for id in itemIDs where id != drag.restDayID {
+            guard let frame = frames[id] else { return nil }
+            if y < frame.midY {
+                return Insertion(index: index, y: max(1, frame.minY - Space.sm / 2))
+            }
+            lastFrame = frame
+            index += 1
+        }
+        guard let lastFrame else { return nil }
+        return Insertion(index: index, y: lastFrame.maxY - 1)
     }
 }
