@@ -25,6 +25,7 @@ struct ForgeFitApp: App {
     }
 
     init() {
+        HealthService.shared.registerWatchWorkoutMirroring()
         let intentNavigator = ForgeFitIntentNavigator()
         _intentNavigator = State(initialValue: intentNavigator)
         AppDependencyManager.shared.add(dependency: intentNavigator)

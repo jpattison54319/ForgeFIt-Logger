@@ -5,14 +5,15 @@ struct SettingsSiriSection: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.theme) private var theme
     @State private var diagnostic: WorkoutIntentDiagnosticSnapshot?
+    @State private var showsPhraseIdeas = false
 
     var body: some View {
         Section {
             SettingsRow(
                 icon: "waveform",
                 iconTint: theme.accent,
-                title: "Control workouts with Siri",
-                subtitle: "Start, log sets, control rest, and finish with session exertion."
+                title: "Workout controls",
+                subtitle: "Start, log sets, and finish."
             ) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 22))
@@ -21,6 +22,39 @@ struct SettingsSiriSection: View {
             }
             .themedListRow()
             .accessibilityIdentifier("settings-app-intent-workouts-available")
+
+            Button {
+                withAnimation(.snappy) { showsPhraseIdeas.toggle() }
+            } label: {
+                SettingsRow(icon: "quote.bubble", iconTint: theme.accent, title: "What to say") {
+                    Image(systemName: showsPhraseIdeas ? "chevron.down" : "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.textTertiary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .themedListRow()
+            .accessibilityLabel("What to say")
+            .accessibilityValue(showsPhraseIdeas ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("settings-siri-phrase-ideas")
+
+            if showsPhraseIdeas {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    Text("“Start my next workout in ForgeFit”")
+                    Text("“What’s next in my ForgeFit workout?”")
+                    Text("“Mark my current set complete in ForgeFit”")
+                    Text("“Update my last set in ForgeFit”")
+                    Text("“Skip my rest timer in ForgeFit”")
+                    Text("“Finish my workout in ForgeFit”")
+                }
+                .font(.subheadline)
+                .foregroundStyle(theme.textSecondary)
+                .padding(.leading, Space.lg)
+                .padding(.vertical, Space.xs)
+                .themedListRow()
+            }
 
             if let diagnostic {
                 diagnosticRow(diagnostic)
@@ -34,8 +68,7 @@ struct SettingsSiriSection: View {
                     SettingsRowLabel(
                         icon: "trash",
                         iconTint: theme.danger,
-                    title: "Clear last workout start request",
-                    subtitle: "Removes this on-device workout-name diagnostic."
+                        title: "Clear last request"
                     )
                 }
                 .buttonStyle(.plain)
@@ -45,8 +78,7 @@ struct SettingsSiriSection: View {
                 SettingsRowLabel(
                     icon: "text.magnifyingglass",
                     iconTint: theme.textTertiary,
-                    title: "No workout start request recorded",
-                    subtitle: "Your latest structured workout-name lookup will appear here. Active-workout commands are not logged."
+                    title: "No recent workout request"
                 )
                 .themedListRow()
                 .accessibilityIdentifier("settings-no-app-intent-diagnostic")
@@ -54,7 +86,7 @@ struct SettingsSiriSection: View {
         } header: {
             SettingsSectionHeader(title: "Siri & Shortcuts")
         } footer: {
-            Text("Try “Start A X four hundred workout in ForgeFit.” During a workout, ask “What’s next in my ForgeFit workout?”, “Complete my current set in ForgeFit,” “Update my last set in ForgeFit,” “Skip my rest timer in ForgeFit,” or “Finish my workout in ForgeFit.” Siri asks for missing reps, load, RPE or RIR, and final session exertion, then confirms before saving. ForgeFit never receives your Siri audio. Only the latest workout-name lookup—not active-workout commands—is kept in the on-device diagnostic below. When you leave out the app name, Siri decides which workout apps to offer.")
+            Text("Only the latest workout-name lookup is saved here.")
         }
         .task {
             await refreshDiagnostic()
@@ -84,7 +116,7 @@ struct SettingsSiriSection: View {
             } else {
                 diagnosticLine(
                     label: "Name text",
-                    value: "Resolved directly by the system"
+                    value: "Selected by Siri or Shortcuts"
                 )
             }
 

@@ -3,9 +3,121 @@ import Testing
 @testable import ForgeCore
 
 struct WatchSyncRecoveryTests {
+    private let grace = WatchSyncRecoveryState.transientIssueGracePeriod
     private let now = Date(timeIntervalSince1970: 10_000)
     private let a = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
     private let b = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+    @Test func transientFailuresStayQuietUntilRecoveryHasHadTimeToWork() throws {
+        var state = WatchSyncRecoveryState()
+        state.refresh(at: now)
+        let first = try #require({ state.nextRequest(at: now) }())
+        state.failed(.unreachable, requestID: first.id, at: now)
+        #expect(state.issue == .unreachable)
+        #expect(state.presentedIssue == nil)
+        _ = state.nextRequest(at: now.addingTimeInterval(3))
+        state.failed(.transport, at: now.addingTimeInterval(3))
+        state.updatePresentation(at: now.addingTimeInterval(grace - 0.1))
+        #expect(state.presentedIssue == nil)
+        state.updatePresentation(at: now.addingTimeInterval(grace))
+        #expect(state.presentedIssue == .transport)
+    }
+
+    @Test func successfulRetryNeverFlashesADelayedError() throws {
+        var state = WatchSyncRecoveryState()
+        state.refresh(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        state.failed(.transport, requestID: request.id, at: now)
+        #expect({ state.accept(WatchSyncMetadata(epoch: a, revision: 1, workoutID: b), replyTo: request.id) == .accepted }())
+        state.updatePresentation(at: now.addingTimeInterval(60))
+        #expect(state.issue == nil)
+        #expect(state.presentedIssue == nil)
+    }
+
+    @Test func phoneHandoffGivesTransientStorageAndDecodeFailuresTimeToClear() throws {
+        var state = WatchSyncRecoveryState()
+        state.requireVerification(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        state.failed(.storageUnavailable, requestID: request.id, at: now)
+        #expect(state.presentedIssue == nil)
+        state.failed(.invalidPayload, requestID: request.id, at: now.addingTimeInterval(grace - 1))
+        #expect(state.presentedIssue == nil)
+        state.updatePresentation(at: now.addingTimeInterval(grace))
+        #expect(state.presentedIssue == .invalidPayload)
+        #expect({ state.accept(WatchSyncMetadata(epoch: a, revision: 1, workoutID: b), replyTo: request.id) == .accepted }())
+        #expect(state.presentedIssue == nil)
+    }
+
+    @Test func stoppingRecoveryClearsErrorsAndInvalidatesLateFailures() throws {
+        var state = try verifiedState()
+        state.refresh(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        state.failed(.unreachable, requestID: request.id, at: now)
+        state.updatePresentation(at: now.addingTimeInterval(grace + 1))
+        #expect(state.presentedIssue != nil)
+        state.cancelRequest()
+        state.failed(.transport, requestID: request.id, at: now.addingTimeInterval(20))
+        state.updatePresentation(at: now.addingTimeInterval(30))
+        #expect(state.issue == nil)
+        #expect(state.presentedIssue == nil)
+        #expect(state.hasVerifiedContext)
+        #expect(state.epoch == a)
+    }
+
+    @Test func reconnectionExpeditesBackoffWithoutReplacingAHealthyRequest() throws {
+        var state = try verifiedState()
+        state.refresh(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        let due = state.nextAttemptAt
+        state.retryAfterReconnect(at: now.addingTimeInterval(1))
+        #expect(state.pendingRequestID == request.id)
+        #expect(state.nextAttemptAt == due)
+        state.failed(.unreachable, requestID: request.id, at: now)
+        state.retryAfterReconnect(at: now.addingTimeInterval(1))
+        #expect({ state.nextRequest(at: now.addingTimeInterval(1)) != nil }())
+        #expect(state.hasVerifiedContext)
+    }
+
+    @Test func unchangedCorrelatedContextClearsFailureAndCanReverify() throws {
+        var state = try verifiedState()
+        for reverify in [false, true] {
+            if reverify { state.requireVerification(at: now) } else { state.refresh(at: now) }
+            let request = try #require({ state.nextRequest(at: now) }())
+            state.failed(.transport, requestID: request.id, at: now)
+            state.updatePresentation(at: now.addingTimeInterval(grace + 1))
+            let result = state.accept(WatchSyncMetadata(epoch: a, revision: 1, workoutID: a), replyTo: request.id)
+            #expect(result == (reverify ? .accepted : .duplicate))
+            #expect(state.hasVerifiedContext)
+            #expect(state.pendingRequestID == nil)
+            #expect(state.presentedIssue == nil)
+        }
+    }
+
+    @Test func actionableConfigurationFailuresDoNotWaitForTheGracePeriod() {
+        var state = WatchSyncRecoveryState()
+        for issue in [WatchSyncIssue.incompatible, .storageUnavailable, .invalidPayload] {
+            state.failed(issue, at: now)
+            #expect(state.presentedIssue == issue)
+        }
+    }
+
+    @Test func configurationFailureKeepsBackoffAndSurvivesTheIdleRetryBudget() throws {
+        var state = WatchSyncRecoveryState()
+        state.refresh(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        state.failed(.storageUnavailable, requestID: request.id, at: now)
+        let due = state.nextAttemptAt
+        state.retryAfterReconnect(at: now.addingTimeInterval(1))
+        #expect(state.nextAttemptAt == due)
+        state.cancelRequest(clearIssue: false)
+        #expect(state.pendingRequestID == nil)
+        #expect(state.nextAttemptAt == nil)
+        #expect(state.presentedIssue == .storageUnavailable)
+        state.failed(.transport, requestID: request.id, at: now.addingTimeInterval(10))
+        #expect(state.presentedIssue == .storageUnavailable)
+        state.cancelRequest()
+        #expect(state.presentedIssue == nil)
+    }
 
     @Test func lostResponseRetriesWithoutAcceptingAnObsoleteReply() throws {
         var state = WatchSyncRecoveryState()
@@ -87,6 +199,10 @@ struct WatchSyncRecoveryTests {
         metadata.protocolVersion = 900
         #expect({ state.accept(metadata) == .incompatible }())
         #expect(state.revision == 1)
+        #expect(state.issue == nil)
+        state.refresh(at: now)
+        let request = try #require({ state.nextRequest(at: now) }())
+        #expect({ state.accept(metadata, replyTo: request.id) == .incompatible }())
         #expect(state.issue == .incompatible)
     }
 

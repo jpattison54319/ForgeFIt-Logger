@@ -729,6 +729,10 @@ struct ContentView: View {
             .onChange(of: activeWorkout?.id) { oldID, newID in
                 handleActiveWorkoutChange(oldID: oldID, newID: newID)
             }
+            .task(id: activeWorkout?.id) {
+                guard let workout = activeWorkout else { return }
+                await prepareWorkoutBodyweight(for: workout)
+            }
             .onChange(of: appState.showingLogger) { _, isPresented in
                 if !isPresented {
                     presentedLoggerWorkoutID = nil
@@ -1764,7 +1768,27 @@ struct ContentView: View {
         }
     }
 
+    private func prepareWorkoutBodyweight(for workout: WorkoutModel) async {
+        let health = HealthMetricsStore.shared
+        await health.refreshWorkoutBodyweight()
+        guard !Task.isCancelled, activeWorkout?.id == workout.id,
+              workout.endedAt == nil, workout.deletedAt == nil,
+              health.latestBodyweight != nil else { return }
+        // A set can complete before the first HealthKit lookup returns.
+        // Repair that bounded live graph once, including a minimized logger.
+        var changed = false
+        for exercise in workout.exercises {
+            for set in exercise.sets where set.completedAt != nil && set.bodyweightKg == nil {
+                if health.fillBodyweight(set) { changed = true }
+            }
+        }
+        if changed {
+            modelContext.saveUserChanges { WatchLink.shared.publishState() }
+        }
+    }
+
     private func handleActiveWorkoutChange(oldID: UUID?, newID: UUID?) {
+        if let oldID, oldID != newID { StrengthHoldTimer.shared.cancel(workoutID: oldID) }
         structuralLiveSurfaceUpdateTask?.cancel()
         structuralLiveSurfaceUpdateTask = nil
         setLiveWorkoutPerformancePriority(newID != nil)

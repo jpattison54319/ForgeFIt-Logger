@@ -13,7 +13,19 @@ enum RoutineSetPresentation {
         return "\(number)\(style.badge)"
     }
 
-    static func repsText(for set: RoutineSetModel) -> String {
+    static func repsText(
+        for set: RoutineSetModel, defaultHoldSeconds: Int? = nil, tracksDistance: Bool = false
+    ) -> String {
+        if set.setType == .distance || tracksDistance {
+            let unit = StrengthDistanceUnit(rawValue: UserDefaults.standard.string(
+                forKey: StrengthDistanceUnit.preferenceKey
+            ) ?? "") ?? .meters
+            return set.targetDistanceMeters.map { unit.label(meters: $0) } ?? "—"
+        }
+        if set.setType == .timedHold || defaultHoldSeconds != nil {
+            return Fmt.elapsed(StrengthHold.validSeconds(set.targetDurationSeconds)
+                ?? defaultHoldSeconds ?? StrengthHold.defaultSeconds)
+        }
         switch set.setType {
         case .myoRep:
             if let minis = set.plannedMiniSetCount {

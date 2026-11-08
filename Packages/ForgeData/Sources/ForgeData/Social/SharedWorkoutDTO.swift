@@ -19,9 +19,8 @@ import Foundation
 /// what the type cannot express.
 ///
 /// Derived per-set aggregates (`effectiveLoad`, `totalVolume`, `estimated1RM`)
-/// ARE carried: they are computed numbers that let a viewer show volume and
-/// e1RM WITHOUT ever receiving the sharer's body weight (the input they were
-/// derived from). `weightKg` is training load, not a scale reading.
+/// are carried for external loads. Bodyweight-derived values are omitted
+/// because they could reveal the scale reading.
 public struct SharedWorkoutDTO: Codable, Sendable, Equatable {
     public static let currentSchemaVersion = 2
 

@@ -14,6 +14,7 @@ import ForgeCore
 /// `--seed-watch-demo-active` adds the live workout on top: two sets already
 /// logged, a rest countdown running, and a superset partner waiting.
 enum WatchAppStoreDemo {
+    @MainActor private static var heartRateTickerStarted = false
 
     static var isRequested: Bool {
         ProcessInfo.processInfo.arguments.contains("--seed-watch-demo")
@@ -45,6 +46,14 @@ enum WatchAppStoreDemo {
 
     static var wantsSyncRecovery: Bool {
         isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-sync-recovery")
+    }
+
+    static var wantsTransientSyncRecovery: Bool {
+        isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-transient-sync")
+    }
+
+    static var wantsFinishAfterSyncRecovery: Bool {
+        isRequested && ProcessInfo.processInfo.arguments.contains("--seed-watch-finish-after-sync")
     }
 
     /// Acceptance-only reproduction of a completion summary retained while
@@ -84,6 +93,8 @@ enum WatchAppStoreDemo {
     /// be re-stamped rather than set once.
     @MainActor
     static func startHeartRateTicker(_ engine: WatchWorkoutEngine) {
+        guard !heartRateTickerStarted else { return }
+        heartRateTickerStarted = true
         Task { @MainActor in
             var beat = 0
             while !Task.isCancelled {
@@ -118,6 +129,27 @@ enum WatchAppStoreDemo {
     /// Mirrors the iPhone fixture's Push Day: bench finished through set two,
     /// set three waiting, and the incline superset partner below it.
     private static func activeWorkout(now: Date) -> WatchWorkoutSnapshot {
+        if ProcessInfo.processInfo.arguments.contains("--seed-watch-timed-hold") {
+            let hold = WatchSetSnapshot(
+                id: UUID(), label: "1", completed: true,
+                setTypeRaw: SetType.timedHold.rawValue, weightModeRaw: WeightMode.bodyweight.rawValue,
+                durationSeconds: 65
+            )
+            return WatchWorkoutSnapshot(
+                workoutID: UUID(), title: "Core", startedAt: now,
+                exercises: [WatchExerciseSnapshot(id: UUID(), position: 0, name: "Plank", sets: [hold])]
+            )
+        }
+        if ProcessInfo.processInfo.arguments.contains("--seed-watch-strength-distance") {
+            let walk = WatchSetSnapshot(
+                id: UUID(), label: "1", completed: true, setTypeRaw: SetType.distance.rawValue,
+                strengthDistanceMeters: 30, strengthDistanceUnitRaw: StrengthDistanceUnit.feet.rawValue
+            )
+            return WatchWorkoutSnapshot(
+                workoutID: UUID(), title: "Legs", startedAt: now,
+                exercises: [WatchExerciseSnapshot(id: UUID(), position: 0, name: "Monster Walk", sets: [walk])]
+            )
+        }
         let bench = WatchExerciseSnapshot(
             id: UUID(),
             position: 0,

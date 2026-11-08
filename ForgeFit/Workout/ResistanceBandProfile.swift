@@ -129,6 +129,9 @@ struct ResistanceBandSwatch: View {
 }
 
 struct ResistanceBandLoadMenu: View {
+    static let width = TouchTarget.minimum
+    static let fieldSpacing: CGFloat = 6
+
     @AppStorage(ResistanceBandProfileStore.key) private var storedProfile = Data()
 
     let selectedWeightKilograms: Double?
@@ -162,16 +165,17 @@ struct ResistanceBandLoadMenu: View {
 
     var body: some View {
         ScrollSafeMenu(sections: sections) {
-            HStack(spacing: 2) {
+            HStack(spacing: 3) {
                 ResistanceBandSwatch(hue: selected?.hue ?? .gray)
                     .frame(width: 14, height: 14)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
             }
-            .frame(width: 24, height: 44)
+            .frame(width: Self.width, height: 44)
             .contentShape(.rect)
         }
         .accessibilityLabel("Resistance band color")
+        .accessibilityIdentifier("resistance-band-color")
         .accessibilityValue(selected.map { "\($0.name), \(Fmt.loadUnit($0.weightKilograms, unit: unit))" } ?? "Custom weight")
     }
 }

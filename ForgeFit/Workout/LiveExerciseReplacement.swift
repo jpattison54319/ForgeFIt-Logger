@@ -13,6 +13,8 @@ enum LiveExerciseReplacement {
         replacementExerciseID: UUID,
         replacementWeightMode: WeightMode,
         replacementIsUnilateral: Bool,
+        replacementHoldSeconds: Int? = nil,
+        replacementTracksDistance: Bool = false,
         now: Date = Date()
     ) {
         target.exerciseID = replacementExerciseID
@@ -27,7 +29,14 @@ enum LiveExerciseReplacement {
             set.weight = nil
             set.rpe = nil
             set.rir = nil
-            set.durationSeconds = nil
+            if replacementTracksDistance {
+                set.setType = .distance
+            } else if replacementHoldSeconds != nil {
+                set.setType = .timedHold
+            } else if set.setType.usesNonRepTracking {
+                set.setType = .working
+            }
+            set.durationSeconds = replacementHoldSeconds
             set.holdSeconds = nil
             set.partialReps = nil
             set.addedWeight = nil

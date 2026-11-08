@@ -129,7 +129,7 @@ struct RoutineLoadPrescriptionField: View {
     private var showsBasisSelector: Bool { supportsPercentage || isPercentage }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: supportsResistanceBands && !isPercentage ? ResistanceBandLoadMenu.fieldSpacing : 0) {
             if supportsResistanceBands && !isPercentage {
                 ResistanceBandLoadMenu(
                     selectedWeightKilograms: set.targetWeight,

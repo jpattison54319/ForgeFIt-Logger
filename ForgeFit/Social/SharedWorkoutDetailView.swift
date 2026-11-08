@@ -130,6 +130,15 @@ struct SharedWorkoutDetailView: View {
     /// — a viewer comparing loads has to know the rep quality behind them.
     private func loadText(_ set: SharedSetDTO) -> String {
         let type = SetType(rawValue: set.setType) ?? .working
+        if type == .distance, let meters = StrengthSetDistance.meters(in: set.machineSettingsJSON) {
+            let unit = StrengthDistanceUnit(rawValue: UserDefaults.standard.string(
+                forKey: StrengthDistanceUnit.preferenceKey
+            ) ?? "") ?? .meters
+            return unit.label(meters: meters)
+        }
+        if type == .timedHold, let seconds = set.durationSeconds {
+            return Fmt.elapsed(seconds)
+        }
         let plainReps = set.reps.map(String.init) ?? "—"
         // Partial-range readings already name their own unit, so they must not
         // pick up a trailing "reps" — "12 partials reps" is not a sentence.

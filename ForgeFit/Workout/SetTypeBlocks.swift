@@ -909,14 +909,13 @@ struct SetBlockView: View {
     /// still parses per keystroke so dependent UI stays live — and re-formats
     /// only on blur, so "62.5" survives being typed.
     private var weightField: some View {
-        ZStack(alignment: .leading) {
+        HStack(spacing: supportsResistanceBands ? ResistanceBandLoadMenu.fieldSpacing : 0) {
             if supportsResistanceBands {
                 ResistanceBandLoadMenu(
                     selectedWeightKilograms: visibleBandWeight,
                     unit: displayUnit,
                     onSelect: applyBandWeight
                 )
-                .zIndex(1)
             }
 
             blockField(
@@ -936,7 +935,6 @@ struct SetBlockView: View {
                 placeholder: suggestedWeightPlaceholder
             )
             .focused($weightFocused)
-            .padding(.leading, supportsResistanceBands ? 22 : 0)
         }
         .accessibilityLabel("Activation weight")
         .accessibilityIdentifier("activation-weight")

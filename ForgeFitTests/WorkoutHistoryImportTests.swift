@@ -11,6 +11,29 @@ struct WorkoutHistoryImportTests {
         case saveFailed
     }
 
+    @Test func forgeFitCSVKeepsStrengthDistanceAndHoldMeasurements() async throws {
+        let (container, context) = try TestStore.make()
+        defer { _ = container }
+        let csv = """
+        workout_title,started_at,ended_at,exercise,set_type,weight_kg,distance_m,duration_seconds
+        Legs,2026-10-01T17:00:00Z,2026-10-01T17:05:00Z,Band Crawl,distance,12,30,
+        Legs,2026-10-01T17:00:00Z,2026-10-01T17:05:00Z,Static Brace,timedHold,,,65
+        """
+        let preview = try await WorkoutHistoryImportService.preview(
+            data: Data(csv.utf8), fileName: "forgefit.csv", workouts: [], exercises: []
+        )
+        _ = try WorkoutHistoryImportService.commit(
+            preview: preview, workouts: [], exercises: [], in: context
+        )
+        let workout = try #require(context.fetch(FetchDescriptor<WorkoutModel>()).first)
+        let sets = workout.exercises.flatMap(\.sets)
+        #expect(sets.first { $0.setType == .distance }?.strengthDistanceMeters == 30)
+        #expect(sets.first { $0.setType == .timedHold }?.durationSeconds == 65)
+        let library = try context.fetch(FetchDescriptor<ExerciseLibraryModel>())
+        #expect(library.first { $0.name == "Band Crawl" }?.tracksStrengthDistance == true)
+        #expect(library.first { $0.name == "Static Brace" }?.strengthHoldSeconds == 65)
+    }
+
     @Test func hevyCSVParsesStrengthAndCardioRows() throws {
         let csv = """
         "title","start_time","end_time","description","exercise_title","superset_id","exercise_notes","set_index","set_type","weight_lbs","reps","distance_miles","duration_seconds","rpe"

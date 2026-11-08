@@ -592,7 +592,8 @@ private struct RoutineExerciseSummary: View {
             HStack(spacing: 8) {
                 Text("SET").frame(width: 44, alignment: .leading)
                 Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
-                Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
+                Text(exercise?.tracksStrengthDistance == true ? "DISTANCE" : (exercise?.strengthHoldSeconds != nil ? "TIME" : "REPS"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("EFFORT").frame(width: 64, alignment: .trailing)
             }
             .font(.tag)
@@ -600,6 +601,10 @@ private struct RoutineExerciseSummary: View {
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
                 let style = SetTypeStyle.of(set.setType, theme: theme)
+                let targetText = RoutineSetPresentation.repsText(
+                    for: set, defaultHoldSeconds: exercise?.strengthHoldSeconds,
+                    tracksDistance: exercise?.tracksStrengthDistance == true
+                )
                 HStack(alignment: .top, spacing: 8) {
                     Text(RoutineSetPresentation.badgeText(for: set, at: index, in: sortedSets))
                         .font(.system(size: 15, weight: .bold))
@@ -623,7 +628,7 @@ private struct RoutineExerciseSummary: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(RoutineSetPresentation.repsText(for: set))
+                    Text(targetText)
                         .font(.rowValue).foregroundStyle(theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -636,7 +641,7 @@ private struct RoutineExerciseSummary: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(
                     "\(style.label), \(accessibleLoadText(for: set)), "
-                        + "\(RoutineSetPresentation.repsText(for: set)), "
+                        + "\(targetText), "
                         + RoutineSetPresentation.effortText(for: set)
                 )
             }

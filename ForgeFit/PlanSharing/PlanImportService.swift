@@ -417,6 +417,9 @@ enum PlanImportService {
                     }
                     guard let setType,
                           ForgeFitPlanSetTypeContract.supports(setType, in: document.formatVersion),
+                          setType != .timedHold || StrengthHold.validSeconds(set.targetDurationSeconds) != nil,
+                          setType != .distance || set.targetDistanceMeters == nil
+                              || StrengthDistanceUnit.validMeters(set.targetDistanceMeters) != nil,
                           set.loadPrescriptionModeRaw.map({ LoadPrescriptionMode(rawValue: $0) != nil }) ?? true,
                           percentageIsValid,
                           nonnegative(set.targetRepsLow), nonnegative(set.targetRepsHigh),
@@ -432,9 +435,12 @@ enum PlanImportService {
             }
         }
         for exercise in document.exercises {
+            let validDistanceMode = exercise.modalityRaw == ExerciseLibraryModel.strengthDistanceModalityRaw
+                && !exercise.isCardio && ForgeFitPlanSetTypeContract.supports(.distance, in: document.formatVersion)
             guard !exercise.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   WeightMode(rawValue: exercise.defaultWeightModeRaw) != nil,
-                  exercise.modalityRaw.flatMap({ Modality(rawValue: $0) }) != nil || exercise.modalityRaw == nil else {
+                  validDistanceMode || exercise.modalityRaw.flatMap({ Modality(rawValue: $0) }) != nil
+                    || exercise.modalityRaw == nil else {
                 throw ImportError.invalid("An exercise definition isn't supported.")
             }
         }

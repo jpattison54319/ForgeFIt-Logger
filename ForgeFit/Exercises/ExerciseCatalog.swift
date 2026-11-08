@@ -18,6 +18,8 @@ nonisolated struct SeedExercise: Decodable, Sendable {
     let level: String?
     let mechanic: String?
     let equipment: String?
+    let weightMode: WeightMode?
+    let defaultHoldSeconds: Int?
     let primaryMuscles: [String]
     let secondaryMuscles: [String]
     let category: String?
@@ -162,15 +164,6 @@ enum ExerciseCatalog {
                 secondaryMuscles: refined.secondary,
                 equipment: seed.equipment
             )
-        }
-    }
-
-    private nonisolated static func weightMode(equipment: String?, name: String) -> WeightMode {
-        let n = name.lowercased()
-        if n.contains("assisted") { return .bodyweightAssisted }
-        switch equipment {
-        case "body only": return n.contains("weighted") ? .bodyweightAdded : .bodyweight
-        default: return .external
         }
     }
 
@@ -324,11 +317,9 @@ enum ExerciseCatalog {
         set(\.isUnilateral, false)
         let desiredWeightMode = isCardio
             ? WeightMode.bodyweight
-            : weightMode(equipment: seed.equipment, name: seed.name)
-        if model.defaultWeightMode != desiredWeightMode {
-            model.defaultWeightMode = desiredWeightMode
-            modelChanged = true
-        }
+            : (seed.weightMode ?? ExerciseLoadMode.inferred(equipment: seed.equipment, name: seed.name))
+        set(\.defaultWeightModeRaw, desiredWeightMode.rawValue)
+        set(\.defaultHoldSeconds, StrengthHold.validSeconds(seed.defaultHoldSeconds))
         set(\.difficulty, seed.level)
         set(\.isCardio, isCardio)
         set(\.mediaSlug, seed.image)

@@ -14,6 +14,7 @@ final class RecoveryTestEngine: WatchWorkoutSessionControlling {
     var zoneConfig = HRZoneConfig()
     var zoneTarget: Int?
     var starts = 0
+    var lastConfigurationActivityType: HKWorkoutActivityType?
     var flushes = 0
     var heartRate: Int?
     var cancellations = 0
@@ -36,6 +37,7 @@ final class RecoveryTestEngine: WatchWorkoutSessionControlling {
 
     func start(configuration: HKWorkoutConfiguration?, startDate: Date, isYoga: Bool, workoutID: UUID?) -> Bool {
         guard !hasActiveSession, retryState.mayStart(workoutID, at: Date()) else { return false }
+        lastConfigurationActivityType = configuration?.activityType
         hasActiveSession = true
         activeSessionWorkoutID = workoutID
         isAwaitingSessionWorkoutID = workoutID == nil

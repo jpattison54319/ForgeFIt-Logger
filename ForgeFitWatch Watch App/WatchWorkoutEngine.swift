@@ -55,7 +55,15 @@ final class WatchWorkoutEngine: NSObject {
     var zoneConfig = HRZoneConfig()
     /// Active "zone lock" target (1...5); when set, the wrist buzzes on leaving
     /// and re-entering the zone. Synced from the phone via the snapshot.
-    var zoneTarget: Int?
+    var zoneTarget: Int? {
+        didSet {
+            guard oldValue != zoneTarget else { return }
+            zoneGuardState = .unknown
+            lastZoneCueAt = .distantPast
+        }
+    }
+
+    @ObservationIgnored let mirroring = WatchWorkoutMirroring()
 
     private enum ZoneGuardState { case unknown, below, inZone, above }
     @ObservationIgnored private var zoneGuardState: ZoneGuardState = .unknown
@@ -258,6 +266,7 @@ final class WatchWorkoutEngine: NSObject {
                     self?.handleSessionFailure(session, error: error)
                 }
             }
+            mirroring.connect(session)
             startRouteIfNeeded(for: config)
         } catch {
             logger.error("Unable to create workout session: \(error.localizedDescription, privacy: .public)")
@@ -372,6 +381,7 @@ final class WatchWorkoutEngine: NSObject {
             default:
                 isRunning = false
             }
+            mirroring.connect(recoveredSession)
             return .sessionAvailable
         } catch {
             logger.error("Workout session recovery failed: \(error.localizedDescription, privacy: .public)")
@@ -478,6 +488,7 @@ final class WatchWorkoutEngine: NSObject {
     }
 
     private func clearSession() {
+        mirroring.clear()
         teardownTimeoutTask?.cancel()
         teardownTimeoutTask = nil
         cancelPendingTransitions()
@@ -541,6 +552,7 @@ final class WatchWorkoutEngine: NSObject {
         for type in readTypes.compactMap({ $0 as? HKQuantityType }) {
             ingest(statistics: builder.statistics(for: type), for: type)
         }
+        flushMetrics()
     }
 
     // MARK: - Metric ingestion
@@ -571,7 +583,6 @@ final class WatchWorkoutEngine: NSObject {
         default:
             break
         }
-        throttledSend()
     }
 
     /// Accumulate time-in-zone from the live heart-rate stream.
@@ -670,8 +681,14 @@ extension WatchWorkoutEngine: HKLiveWorkoutBuilderDelegate {
         let quantityTypes = collectedTypes.compactMap { $0 as? HKQuantityType }
         Task { @MainActor in
             guard workoutBuilder === self.builder else { return }
+            let wasWaitingForHeartRate = self.heartRate == nil
             for type in quantityTypes {
                 self.ingest(statistics: workoutBuilder.statistics(for: type), for: type)
+            }
+            if wasWaitingForHeartRate, self.heartRate != nil {
+                self.flushMetrics()
+            } else {
+                self.throttledSend()
             }
         }
     }
@@ -686,6 +703,20 @@ extension WatchWorkoutEngine: HKLiveWorkoutBuilderDelegate {
 /// and undone — otherwise heart rate silently stops streaming while the UI
 /// still says the workout is live.
 extension WatchWorkoutEngine: HKWorkoutSessionDelegate {
+    nonisolated func workoutSession(
+        _ workoutSession: HKWorkoutSession, didReceiveDataFromRemoteWorkoutSession data: [Data]
+    ) {
+        Task { @MainActor in self.mirroring.receive(data, from: workoutSession) }
+    }
+
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didDisconnectFromRemoteDeviceWithError error: Error?) {
+        Task { @MainActor in
+            guard self.session === workoutSession, !self.isEndingSession else { return }
+            self.mirroring.disconnected(workoutSession)
+            self.mirroring.connect(workoutSession)
+        }
+    }
+
     nonisolated func workoutSession(
         _ workoutSession: HKWorkoutSession,
         didChangeTo toState: HKWorkoutSessionState,

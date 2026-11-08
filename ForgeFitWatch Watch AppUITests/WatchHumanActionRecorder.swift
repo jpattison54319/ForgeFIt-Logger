@@ -1054,6 +1054,17 @@ extension XCUIElement {
         }
     }
 
+    func watchAcceptanceSwipeDown(file: StaticString = #fileID, line: UInt = #line) {
+        WatchHumanActionRecorder.shared.perform(
+            action: "swipeDown",
+            target: self,
+            sourceFile: file,
+            sourceLine: line
+        ) {
+            self.swipeDown()
+        }
+    }
+
     func watchAcceptancePress(
         forDuration duration: TimeInterval,
         thenDragTo otherElement: XCUIElement,

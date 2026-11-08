@@ -596,14 +596,30 @@ struct WatchSetListView: View {
     /// The flat set the double-tap gesture targets. A structured/AMRAP block
     /// must never be collapsed into the whole-set completion shortcut.
     private var firstUncompletedSetID: UUID? {
-        exercise?.sets.first { !$0.completed && !$0.isStructured && !$0.isAMRAP }?.id
+        exercise?.sets.first { !$0.completed && !$0.isStructured && !$0.isAMRAP && !$0.setType.usesNonRepTracking }?.id
     }
 
     var body: some View {
         List {
             if let exercise {
                 ForEach(exercise.sets) { set in
-                    if set.isStructured {
+                    if set.setType.usesNonRepTracking {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Set \(set.label) · \(setDescription(set))")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Text(set.completed ? "Completed" : "Log on iPhone")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: set.completed ? "checkmark.circle.fill" : (set.setType == .distance ? "ruler" : "timer"))
+                                .foregroundStyle(set.completed ? WTheme.success : WTheme.teal)
+                                .accessibilityHidden(true)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier(set.setType == .distance ? "watch-distance-set" : "watch-timed-set")
+                    } else if set.isStructured {
                         NavigationLink {
                             WatchStructuredSetView(store: store, exercise: exercise, set: set)
                         } label: {
@@ -702,6 +718,10 @@ struct WatchSetListView: View {
     }
 
     private func setDescription(_ set: WatchSetSnapshot) -> String {
+        if set.setType == .distance {
+            let unit = set.strengthDistanceUnitRaw.flatMap(StrengthDistanceUnit.init(rawValue:)) ?? .meters
+            return set.strengthDistanceMeters.map { unit.label(meters: $0) } ?? "—"
+        }
         if set.isStructured {
             let progress = set.structuredProgress
             let sideOne: String
@@ -717,7 +737,7 @@ struct WatchSetListView: View {
             }
             return sideOne.isEmpty ? "Ready" : sideOne
         }
-        if set.isAMRAP {
+        if set.isAMRAP || set.setType == .timedHold {
             let window = set.durationSeconds.map {
                 "\($0 / 60):\(String(format: "%02d", $0 % 60))"
             } ?? "—"

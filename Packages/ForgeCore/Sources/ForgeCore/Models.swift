@@ -14,14 +14,19 @@ public enum SetType: String, Codable, CaseIterable, Sendable {
     /// partials. `reps` holds the full-range portion and `partialReps` the
     /// partials that followed, so both halves stay separable forever.
     case lengthenedExtended
+    /// One strength hold measured in seconds.
+    case timedHold
+    case distance
 
     /// The types offered in set-type pickers. `restPause` is retired — it is
     /// indistinguishable from myo-reps in practice, so new sets can't choose
     /// it. The case stays in the enum so legacy synced data still decodes;
     /// a launch backfill converts stored rest-pause sets to myo-reps.
     public static var selectable: [SetType] {
-        allCases.filter { $0 != .restPause }
+        allCases.filter { $0 != .restPause && !$0.usesNonRepTracking }
     }
+
+    public var usesNonRepTracking: Bool { self == .timedHold || self == .distance }
 
     /// Whether a set of this type contributes to *working* volume (set-count
     /// volume per muscle and tonnage). Warm-up sets do not count toward volume.
@@ -35,7 +40,7 @@ public enum SetType: String, Codable, CaseIterable, Sendable {
     public var defaultRestSeconds: Int? {
         switch self {
         case .warmup: 60
-        case .working, .backoff: 120
+        case .working, .backoff, .timedHold, .distance: 120
         case .amrap: 180
         case .drop: nil
         case .myoRep, .restPause, .cluster: 120
@@ -163,6 +168,7 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
     public var rir: Int?
     public var durationSeconds: Int?
     public var holdSeconds: Int?
+    public var strengthDistanceMeters: Double?
     public var partialReps: Int?
 
     // Bodyweight handling
@@ -196,6 +202,7 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
         rir: Int? = nil,
         durationSeconds: Int? = nil,
         holdSeconds: Int? = nil,
+        strengthDistanceMeters: Double? = nil,
         partialReps: Int? = nil,
         addedWeight: Double? = nil,
         assistanceWeight: Double? = nil,
@@ -218,6 +225,7 @@ public struct SetEntry: Identifiable, Codable, Equatable, Sendable {
         self.rir = rir
         self.durationSeconds = durationSeconds
         self.holdSeconds = holdSeconds
+        self.strengthDistanceMeters = strengthDistanceMeters
         self.partialReps = partialReps
         self.addedWeight = addedWeight
         self.assistanceWeight = assistanceWeight

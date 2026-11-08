@@ -892,15 +892,16 @@ struct CreateExerciseView: View {
     @State private var weightMode: WeightMode = .external
     /// nil = no override — the exercise follows the app-wide unit.
     @State private var preferredUnit: WeightUnit?
-    @State private var modality: Modality = .strength
+    @State private var exerciseType: ExerciseCreationType = .lift
+    private var modality: Modality { exerciseType.modality }
     @State private var isUnilateral = false
     /// Explicit cardio modality; nil = auto-detect from name/equipment. Only
     /// meaningful while the Cardio mode is selected.
     @State private var cardioKindChoice: CardioKind?
-    /// Yoga-only fields: optional Sanskrit name (saved as a searchable alias)
-    /// and the default hold the flow builder starts from.
+    /// Sanskrit is a searchable yoga alias. Both yoga and timed strength
+    /// use a default hold when adding the exercise to a plan.
     @State private var sanskritName = ""
-    @State private var defaultHoldSeconds = 30
+    @State private var defaultHoldSeconds = StrengthHold.defaultSeconds
     /// The identity photos are filed under. Fixed up front so a photo picked
     /// before the first save still belongs to the exercise this form creates.
     @State private var mediaID = UUID()
@@ -957,7 +958,7 @@ struct CreateExerciseView: View {
             _name = State(initialValue: initialName)
         }
         if editing == nil, initialModality != .strength {
-            _modality = State(initialValue: initialModality)
+            _exerciseType = State(initialValue: ExerciseCreationType(modality: initialModality))
             _equipment = State(initialValue: ExerciseCatalog.primaryEquipment(modality: initialModality).first ?? "body only")
             if initialModality == .yoga {
                 _primaryMuscle = State(initialValue: "hip flexors")
@@ -979,10 +980,13 @@ struct CreateExerciseView: View {
             _equipment = State(initialValue: editing.equipment ?? "barbell")
             _weightMode = State(initialValue: editing.defaultWeightMode)
             _preferredUnit = State(initialValue: WeightUnit(rawValue: editing.preferredWeightUnitRaw ?? ""))
-            _modality = State(initialValue: editing.modality)
+            _exerciseType = State(initialValue: ExerciseCreationType(
+                modality: editing.modality, isTimedStrength: editing.strengthHoldSeconds != nil,
+                isDistanceStrength: editing.tracksStrengthDistance
+            ))
             _isUnilateral = State(initialValue: editing.isUnilateral)
             _cardioKindChoice = State(initialValue: editing.cardioKindRaw.flatMap(CardioKind.init(rawValue:)))
-            _defaultHoldSeconds = State(initialValue: editing.defaultHoldSeconds ?? 30)
+            _defaultHoldSeconds = State(initialValue: editing.defaultHoldSeconds ?? StrengthHold.defaultSeconds)
         }
     }
 
@@ -1009,10 +1013,12 @@ struct CreateExerciseView: View {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     // Modality first: creating a lift, a cardio exercise, and
                     // a yoga pose are different forms, not a metadata toggle.
-                    Picker("Exercise type", selection: $modality) {
-                        Text("Lift").tag(Modality.strength)
-                        Text("Cardio").tag(Modality.cardio)
-                        Text("Yoga").tag(Modality.yoga)
+                    Picker("Exercise type", selection: $exerciseType) {
+                        ForEach(ExerciseCreationType.allCases, id: \.self) { type in
+                            Text(type.rawValue)
+                                .accessibilityLabel(type == .timedStrength ? "Timed strength" : type.rawValue)
+                                .tag(type)
+                        }
                     }
                     .pickerStyle(.segmented)
                     .frame(minHeight: TouchTarget.minimum)
@@ -1021,7 +1027,10 @@ struct CreateExerciseView: View {
                     Card {
                         VStack(alignment: .leading, spacing: Space.md) {
                             FieldLabel("Name")
-                            DarkTextField(text: $name, placeholder: "e.g. Atlantis Leg Press")
+                            DarkTextField(
+                                text: $name,
+                                placeholder: exerciseType == .timedStrength ? "e.g. Wall sit" : "e.g. Atlantis Leg Press"
+                            )
                                 // Auto-capitalize each word so "atlantis leg press"
                                 // becomes "Atlantis Leg Press" as the user types —
                                 // exercise names are title-cased. Propagates through
@@ -1109,15 +1118,29 @@ struct CreateExerciseView: View {
             // discipline's default only when the current value belongs to the
             // OTHER discipline's primary set, so a deliberate edge-case pick
             // (kettlebell cardio, treadmill "lift") is left untouched.
-            .onChange(of: modality) { was, now in
+            .onChange(of: exerciseType) { previous, type in
+                let was = previous.modality
+                let now = type.modality
                 let primary = ExerciseCatalog.primaryEquipment(modality: now)
-                if !primary.contains(equipment) {
+                if type == .timedStrength, !isEditing, equipment == "barbell", weightMode == .external {
+                    equipment = "body only"
+                    selectPrimaryMuscle("abdominals")
+                } else if !primary.contains(equipment) {
                     equipment = primary.first ?? equipment
                 }
                 // Landing on the yoga form with the lift default still in
                 // place: start from a stretch-shaped region instead of chest.
                 if now == .yoga, primaryMuscle == "chest" { selectPrimaryMuscle("hip flexors") }
                 if was == .yoga, now == .strength, primaryMuscle == "hip flexors" { selectPrimaryMuscle("chest") }
+            }
+            .onChange(of: equipment) { old, new in
+                guard modality == .strength else { return }
+                if ExerciseLoadMode.isBodyweightEquipment(new), weightMode == .external {
+                    weightMode = ExerciseLoadMode.inferred(equipment: new, name: name)
+                } else if ExerciseLoadMode.isBodyweightEquipment(old),
+                          weightMode == .bodyweight, !ExerciseLoadMode.isBodyweightEquipment(new) {
+                    weightMode = .external
+                }
             }
             .background(theme.background)
             .navigationTitle(isEditing ? "Edit Exercise" : "New Exercise")
@@ -1168,6 +1191,18 @@ struct CreateExerciseView: View {
                 secondaryMuscleRow
                 Divider().overlay(theme.separator)
                 pickerRow("Equipment", selection: $equipment, options: ExerciseCatalog.equipmentOptions(isCardio: false))
+                if exerciseType == .timedStrength {
+                    Divider().overlay(theme.separator)
+                    HStack {
+                        Text("Default duration").font(.bodyStrong).foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        StrengthHoldDurationButton(
+                            seconds: defaultHoldSeconds,
+                            identifier: "exercise-hold-duration",
+                            onSave: { defaultHoldSeconds = $0 }
+                        )
+                    }
+                }
                 Divider().overlay(theme.separator)
                 HStack {
                     Text("Weight mode").font(.bodyStrong).foregroundStyle(theme.textPrimary)
@@ -1186,9 +1221,11 @@ struct CreateExerciseView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Movement").font(.bodyStrong).foregroundStyle(theme.textPrimary)
-                        Text("Unilateral = one arm/leg at a time; structured sets repeat per side.")
-                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if exerciseType != .timedStrength {
+                            Text("Unilateral = one arm/leg at a time; structured sets repeat per side.")
+                                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                     Menu {
@@ -1499,6 +1536,7 @@ struct CreateExerciseView: View {
         let draftModality = modality
         let draftIsCardio = modality == .cardio
         let draftIsYoga = modality == .yoga
+        let draftTracksDistance = exerciseType == .distanceStrength
         let draftKind = resolvedKind
         let draftPrimaryMuscle = primaryMuscle
         let draftSecondaryMuscles = ExerciseMuscleSelectionPolicy.secondaryMuscles(
@@ -1506,11 +1544,13 @@ struct CreateExerciseView: View {
             excluding: draftPrimaryMuscle
         ).sorted()
         let draftEquipment = equipment
-        let draftWeightMode = weightMode
+        let draftWeightMode = weightMode == .external && ExerciseLoadMode.isBodyweightEquipment(equipment)
+            ? ExerciseLoadMode.inferred(equipment: equipment, name: draftName)
+            : weightMode
         let draftPreferredUnitRaw = preferredUnit?.rawValue
         let draftCardioKindRaw = cardioKindChoice?.rawValue
         let draftIsUnilateral = isUnilateral
-        let draftDefaultHoldSeconds = defaultHoldSeconds
+        let draftDefaultHoldSeconds = (draftIsYoga || exerciseType == .timedStrength) ? defaultHoldSeconds : nil
         let draftSanskritName = sanskritName.trimmingCharacters(in: .whitespaces)
         let wasYoga = editing?.isYoga == true
         let isEditing = editing != nil
@@ -1519,6 +1559,7 @@ struct CreateExerciseView: View {
         let applyDraft: @MainActor (ExerciseLibraryModel) -> Void = { exercise in
             exercise.name = draftName
             exercise.modality = draftModality
+            if draftTracksDistance { exercise.modalityRaw = ExerciseLibraryModel.strengthDistanceModalityRaw }
             exercise.movementPattern = draftIsCardio ? "cardio" : (draftIsYoga ? "yoga" : nil)
             exercise.primaryMuscles = draftIsCardio ? draftKind.musclesWorked : [draftPrimaryMuscle]
             exercise.secondaryMuscles = draftIsCardio ? [] : draftSecondaryMuscles
@@ -1527,7 +1568,7 @@ struct CreateExerciseView: View {
             exercise.preferredWeightUnitRaw = draftIsCardio || draftIsYoga ? nil : draftPreferredUnitRaw
             exercise.cardioKindRaw = draftIsCardio ? draftCardioKindRaw : nil
             exercise.isUnilateral = draftIsCardio ? false : draftIsUnilateral
-            exercise.defaultHoldSeconds = draftIsYoga ? draftDefaultHoldSeconds : nil
+            exercise.defaultHoldSeconds = draftDefaultHoldSeconds
             switch draftModality {
             case .strength: exercise.category = "strength"
             case .cardio: exercise.category = "cardio"
@@ -1580,6 +1621,7 @@ struct CreateExerciseView: View {
                 if let editing {
                     applyDraft(editing)
                     onCreate(editing)
+                    WatchLink.shared.publishState()
                 } else {
                     onCreate(committedExercise)
                 }

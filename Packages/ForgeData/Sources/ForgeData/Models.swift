@@ -116,6 +116,7 @@ public final class RoutineFolderModel {
 
 @Model
 public final class ExerciseLibraryModel {
+    public static let strengthDistanceModalityRaw = "strengthDistance"
     public var id: UUID = UUID()
     public var ownerID: UUID?
     public var name: String = ""
@@ -136,8 +137,8 @@ public final class ExerciseLibraryModel {
     /// (see `modality`). New rows write both so old and new code agree.
     /// Additive-optional for CloudKit.
     public var modalityRaw: String?
-    /// Default hold duration for yoga poses (seconds), used by the flow
-    /// builder when a pose is added to a sequence. Nil for non-yoga rows.
+    /// Default hold duration for yoga poses and time-based strength exercises.
+    /// A valid value on a strength exercise selects timed holds for new sets.
     /// Additive-optional for CloudKit.
     public var defaultHoldSeconds: Int?
     public var mappedGlobalID: UUID?
@@ -232,8 +233,24 @@ public final class ExerciseLibraryModel {
     }
 
     public var defaultWeightMode: WeightMode {
-        get { WeightMode(rawValue: defaultWeightModeRaw) ?? .external }
+        get {
+            let stored = WeightMode(rawValue: defaultWeightModeRaw) ?? .external
+            guard stored == .external, modality == .strength,
+                  ExerciseLoadMode.isBodyweightEquipment(equipment) else { return stored }
+            return ExerciseLoadMode.inferred(equipment: equipment, name: name)
+        }
         set { defaultWeightModeRaw = newValue.rawValue }
+    }
+
+    public var strengthHoldSeconds: Int? {
+        guard modality == .strength, !tracksStrengthDistance else { return nil }
+        return StrengthHold.validSeconds(defaultHoldSeconds)
+    }
+
+    /// Distance is a tracking mode within strength training. Older clients
+    /// resolve the unknown raw value as strength through the isCardio fallback.
+    public var tracksStrengthDistance: Bool {
+        modalityRaw == Self.strengthDistanceModalityRaw
     }
 
     /// Resolved discipline. Legacy rows (nil `modalityRaw`) fall back to the
@@ -1119,6 +1136,10 @@ public final class SetModel {
             isPaused: entry.isPaused,
             completedAt: completedAt
         )
+        if let meters = entry.strengthDistanceMeters {
+            strengthDistanceMeters = meters
+            recomputeDerivedMetrics()
+        }
     }
 
     public var setType: SetType {
@@ -1180,6 +1201,7 @@ public final class SetModel {
             rir: rir,
             durationSeconds: durationSeconds,
             holdSeconds: holdSeconds,
+            strengthDistanceMeters: setType == .distance ? strengthDistanceMeters : nil,
             partialReps: partialReps,
             addedWeight: addedWeight,
             assistanceWeight: assistanceWeight,

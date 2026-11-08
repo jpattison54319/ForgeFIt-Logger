@@ -560,6 +560,8 @@ final class ForgeFitActiveWorkoutIntentService: @unchecked Sendable {
                 defaultsToFailure: preferences.defaultsToFailure,
                 needsSpecializedUI: set.setType.isBlockType
                     || set.setType == .amrap
+                    || set.setType.usesNonRepTracking
+                    || libraryExercise?.tracksStrengthDistance == true
                     || libraryExercise?.isCardio == true,
                 revision: revision(for: set)
             )
@@ -786,13 +788,14 @@ final class ForgeFitActiveWorkoutIntentService: @unchecked Sendable {
         set: SetModel,
         workoutExercise: WorkoutExerciseModel
     ) -> Bool {
-        guard !set.setType.isBlockType, set.setType != .amrap else { return true }
+        guard !set.setType.isBlockType, set.setType != .amrap, !set.setType.usesNonRepTracking else { return true }
         let exerciseID = workoutExercise.exerciseID
         var descriptor = FetchDescriptor<ExerciseLibraryModel>(
             predicate: #Predicate { $0.id == exerciseID && $0.deletedAt == nil }
         )
         descriptor.fetchLimit = 1
-        return (try? container.mainContext.fetch(descriptor).first)?.isCardio == true
+        let exercise = try? container.mainContext.fetch(descriptor).first
+        return exercise?.isCardio == true || exercise?.tracksStrengthDistance == true
     }
 
     private func validate(reps: Int) throws {
@@ -913,6 +916,8 @@ final class ForgeFitActiveWorkoutIntentService: @unchecked Sendable {
         case .drop: "drop set \(sameTypeOrdinal)"
         case .backoff: "back-off set \(sameTypeOrdinal)"
         case .amrap: "AMRAP set \(sameTypeOrdinal)"
+        case .timedHold: "timed hold \(sameTypeOrdinal)"
+        case .distance: "distance set \(sameTypeOrdinal)"
         case .myoRep: "myo-rep set \(sameTypeOrdinal)"
         case .restPause: "rest-pause set \(sameTypeOrdinal)"
         case .cluster: "cluster set \(sameTypeOrdinal)"
@@ -929,6 +934,8 @@ final class ForgeFitActiveWorkoutIntentService: @unchecked Sendable {
         case .restPause: "Rest-pause"
         case .backoff: "Back-off"
         case .amrap: "AMRAP"
+        case .timedHold: "Timed hold"
+        case .distance: "Distance"
         case .myoRep: "Myo-reps"
         case .cluster: "Cluster"
         case .lengthenedPartial: "Lengthened partials"

@@ -198,16 +198,19 @@ struct PlanSharingTests {
         try sourceContext.save()
 
         let document = try PlanShareService.routineDocument(routine, exercises: [exercise])
-        #expect(document.formatVersion == 3)
+        #expect(document.formatVersion == 6)
         #expect(document.routines.first?.exercises.first?.sets.map(\.setTypeRaw) == SetType.allCases.map(\.rawValue))
 
         // Builds released before v3 could already emit v2 files containing
         // these raw values. Current ForgeFit must continue accepting them.
         var legacyV2 = document
         legacyV2.formatVersion = 2
+        legacyV2.routines[0].exercises[0].sets.removeAll {
+            SetType(rawValue: $0.setTypeRaw)?.usesNonRepTracking == true
+        }
         try PlanImportService.validate(legacyV2)
 
-        var predatingVocabulary = document
+        var predatingVocabulary = legacyV2
         predatingVocabulary.formatVersion = 1
         #expect(throws: PlanImportService.ImportError.self) {
             try PlanImportService.validate(predatingVocabulary)

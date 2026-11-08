@@ -68,7 +68,9 @@ struct AdaptiveLoadResolution: Equatable {
 @MainActor
 enum AdaptiveLoadResolver {
     static func supportsPercentagePrescription(_ exercise: ExerciseLibraryModel?) -> Bool {
-        exercise?.modality == .strength && exercise?.defaultWeightMode == .external
+        exercise?.modality == .strength && exercise?.strengthHoldSeconds == nil
+            && exercise?.tracksStrengthDistance != true
+            && exercise?.defaultWeightMode == .external
     }
 
     static func bestEstimatedOneRepMax(

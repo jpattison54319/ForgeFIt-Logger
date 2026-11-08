@@ -34,6 +34,9 @@ struct ForgeFitWatch_Watch_AppApp: App {
                     }
                 }
         }
+        .backgroundTask(.watchConnectivity) {
+            await WatchStore.shared.handleWatchConnectivityBackgroundWake()
+        }
     }
 }
 

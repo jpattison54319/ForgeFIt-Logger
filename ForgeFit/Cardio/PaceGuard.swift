@@ -2,7 +2,6 @@ import AVFoundation
 import ForgeCore
 import Foundation
 import Observation
-import os
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -14,9 +13,8 @@ import UIKit
 /// raw comparisons.
 ///
 /// Fed by `IntervalRunner`'s poll loop (the only place with a live distance
-/// feed), so it needs no hook in the app-level metrics handler. Unlike the
-/// zone guard it does not resume an interrupted utterance — a pace cue is
-/// stale two seconds after it mattered.
+/// feed), so it needs no hook in the app-level metrics handler. Speech
+/// interruptions use the system's audio-session lifecycle.
 @MainActor
 @Observable
 final class PaceGuard: NSObject {
@@ -34,16 +32,17 @@ final class PaceGuard: NSObject {
 
     @ObservationIgnored private var lastCueAt = Date.distantPast
     @ObservationIgnored private var speakEnabled = true
-    @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
-    @ObservationIgnored private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ForgeFit", category: "PaceGuard")
+    @ObservationIgnored private let speech: WorkoutCueSpeech
 
-    private override init() {
+    init(speech: WorkoutCueSpeech? = nil) {
+        self.speech = speech ?? WorkoutCueSpeech()
         super.init()
-        synthesizer.delegate = self
     }
 
     func activate(band: IntervalPlan.Target, speak: Bool = true) {
         guard band.metric == .pace, band.isMeaningful else { return }
+        speech.stop()
+        lastCueAt = .distantPast
         self.band = band
         speakEnabled = speak
         state = .unknown
@@ -54,8 +53,7 @@ final class PaceGuard: NSObject {
         isActive = false
         band = nil
         state = .unknown
-        synthesizer.stopSpeaking(at: .immediate)
-        deactivateSession()
+        speech.stop()
     }
 
     /// Classify the latest rolling pace (seconds per km) and cue on real
@@ -98,49 +96,7 @@ final class PaceGuard: NSObject {
         case .onPace: phrase = "On pace"
         case .unknown: return
         }
-        // Reserve the debounce window up front: activation is async now, so we
-        // can't gate on its success synchronously. A rare activation failure
-        // costs one quiet interval, not a burst of retries.
         lastCueAt = now
-        speak(phrase)
-    }
-
-    private func speak(_ text: String) {
-        // Activation runs off the main thread; the utterance waits for it inside
-        // the task so it isn't clipped, and we stay silent if it fails.
-        Task {
-            do {
-                try await AudioCueSession.shared.activate()
-            } catch {
-                logger.error("Failed to activate pace cue audio session: \(error.localizedDescription, privacy: .public)")
-                return
-            }
-            if synthesizer.isSpeaking {
-                synthesizer.stopSpeaking(at: .immediate)
-            }
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.postUtteranceDelay = 0
-            synthesizer.speak(utterance)
-        }
-    }
-
-    private func deactivateSession() {
-        Task {
-            do {
-                try await AudioCueSession.shared.deactivate()
-            } catch {
-                logger.error("Failed to deactivate pace cue audio session: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-}
-
-extension PaceGuard: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            if !self.synthesizer.isSpeaking {
-                self.deactivateSession()
-            }
-        }
+        speech.speak(phrase, replacingCurrent: true)
     }
 }

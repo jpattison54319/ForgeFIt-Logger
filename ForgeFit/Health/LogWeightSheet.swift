@@ -18,7 +18,7 @@ struct LogWeightSheet: View {
         // button. The draft stays a plain string parsed only at save time —
         // per-keystroke numeric round-tripping eats a trailing "62.".
         _draft = State(initialValue:
-            HealthMetricsStore.shared.bodyweightSeries.last.map { Fmt.load($0.value) } ?? "")
+            HealthMetricsStore.shared.latestBodyweight.map { Fmt.load($0) } ?? "")
     }
 
     var body: some View {
@@ -79,7 +79,7 @@ struct LogWeightSheet: View {
                 saving = false
                 if saved {
                     dismiss()
-                    health.refresh(force: true)
+                    health.didLogBodyweight(kilograms)
                 } else {
                     // Say why nothing happened instead of silently flipping
                     // the button back — write access is the usual culprit.

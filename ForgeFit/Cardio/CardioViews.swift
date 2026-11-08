@@ -228,7 +228,16 @@ struct CardioExerciseCard: View {
             planJSON,
             to: workoutExercise,
             in: modelContext,
-            onCommit: { WatchLink.shared.publishState() }
+            onCommit: {
+                if let session, session.liveStartedAt != nil, session.endedAt == nil,
+                   IntervalRunnerHub.shared.runner(for: session.id) == nil {
+                    HRZoneGuard.shared.setTarget(
+                        IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hrZoneTarget,
+                        speak: zoneVoiceCues
+                    )
+                }
+                WatchLink.shared.publishState()
+            }
         )
     }
 
@@ -243,6 +252,7 @@ struct CardioExerciseCard: View {
                 Text("Zone lock").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                 Text(currentZoneTarget == 0 ? "Off" : HRZone.label(currentZoneTarget))
                     .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("live-zone-lock-status")
             }
             Spacer()
             Menu {
@@ -259,6 +269,9 @@ struct CardioExerciseCard: View {
                     .clipShape(Capsule())
                     .minimumTouchTarget()
             }
+            .accessibilityLabel("Zone lock")
+            .accessibilityValue(currentZoneTarget == 0 ? "Off" : HRZone.label(currentZoneTarget))
+            .accessibilityIdentifier("live-zone-lock-menu")
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(theme.surfaceElevated)
@@ -646,9 +659,8 @@ struct CardioExerciseCard: View {
             IntervalRunnerHub.shared.start(planJSON: planJSON, session: session, context: modelContext)
         }
         // Zone-only lock (no steps): begin audible/haptic adherence cues.
-        if IntervalRunnerHub.shared.runner(for: session.id) == nil,
-           let target = IntervalPlan.decode(from: workoutExercise.intervalPlanJSON)?.hrZoneTarget {
-            HRZoneGuard.shared.activate(targetZone: target, speak: zoneVoiceCues)
+        if IntervalRunnerHub.shared.runner(for: session.id) == nil {
+            HRZoneGuard.shared.setTarget(decodedPlan?.hrZoneTarget, speak: zoneVoiceCues)
         }
         WatchLink.shared.publishState()
     }

@@ -183,6 +183,8 @@ final class WatchLink: NSObject {
             WCSession.default.sendMessage(payload, replyHandler: nil) { error in
                 WatchSyncDiagnostics.record("context-message-failed", error: error)
             }
+        } else {
+            WatchWorkoutMirror.shared.sendSnapshot(data, metadata: metadata)
         }
         transferCurrentReadinessToComplicationIfNeeded(
             watchContext,
@@ -547,7 +549,9 @@ final class WatchLink: NSObject {
         let sorted = we.sets.sorted { $0.position < $1.position }
         var workingNumber = 0
         return sorted.map { set in
-            let style = SetTypeStyle.of(set.setType)
+            let type: SetType = set.completedAt == nil && exercise?.tracksStrengthDistance == true
+                ? .distance : set.setType
+            let style = SetTypeStyle.of(type)
             if style.numbered { workingNumber += 1 }
             let label = style.numbered ? "\(workingNumber)\(style.badge)" : style.badge
             // Mode-routed: for bodyweight-family sets the number lives in
@@ -559,11 +563,14 @@ final class WatchLink: NSObject {
                 weight: set.modeWeight.map { unit.displayValue(fromKilograms: $0) },
                 unitSuffix: unit.suffix,
                 weightKg: set.modeWeight,
-                reps: set.reps,
+                reps: type.usesNonRepTracking ? nil : set.reps,
                 completed: set.completedAt != nil,
-                setTypeRaw: set.setType.rawValue,
+                setTypeRaw: type.rawValue,
                 weightModeRaw: set.weightMode.rawValue,
                 durationSeconds: set.durationSeconds,
+                strengthDistanceMeters: type == .distance ? set.strengthDistanceMeters : nil,
+                strengthDistanceUnitRaw: type == .distance
+                    ? UserDefaults.standard.string(forKey: StrengthDistanceUnit.preferenceKey) : nil,
                 isUnilateral: exercise?.isUnilateral == true || set.isUnilateral,
                 miniReps: set.miniReps,
                 side2Reps: set.side2Reps,
@@ -1009,6 +1016,16 @@ final class WatchLink: NSObject {
                    let plan = YogaFlowPlan.resolved(for: we, exercise: library),
                    plan.hasSteps {
                     YogaFlowRunnerHub.shared.start(plan: plan, session: session, context: context)
+                } else if !session.isYogaSession {
+                    let planJSON = workoutExercise?.intervalPlanJSON
+                    if IntervalPlan.decode(from: planJSON)?.hasSteps == true {
+                        IntervalRunnerHub.shared.start(planJSON: planJSON, session: session, context: context)
+                    } else {
+                        HRZoneGuard.shared.setTarget(
+                            IntervalPlan.decode(from: planJSON)?.hrZoneTarget,
+                            speak: UserDefaults.standard.object(forKey: "zoneVoiceCues") as? Bool ?? true
+                        )
+                    }
                 }
                 self?.publishState(policy: .immediate)
             })
@@ -1513,7 +1530,14 @@ final class WatchLink: NSObject {
         var d = FetchDescriptor<SetModel>(predicate: #Predicate { $0.id == id })
         d.fetchLimit = 1
         guard let set = try? context.fetch(d).first,
-              set.workoutExercise?.workout?.id == workoutID else { return nil }
+              set.workoutExercise?.workout?.id == workoutID,
+              !set.setType.usesNonRepTracking else { return nil }
+
+        // A queued rep edit can outlive an exercise's switch to distance.
+        if set.completedAt == nil,
+           exercise(for: set.workoutExercise, in: context)?.tracksStrengthDistance == true {
+            return nil
+        }
 
         // Re-query the terminal fields instead of trusting a relationship
         // object retained by the long-lived Watch context. A finish may have

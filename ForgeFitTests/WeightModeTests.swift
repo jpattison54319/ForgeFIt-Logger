@@ -14,7 +14,7 @@ import Testing
 @Suite(.serialized)
 struct WeightModeTests {
     private let userID = ForgeFitDemo.userID
-    private let backfillKey = "weightModeBackfilled.v1"
+    private let backfillKey = WeightModeBackfill.convertKey
 
     private func makeRoutine(
         exercise: ExerciseLibraryModel,
@@ -75,6 +75,36 @@ struct WeightModeTests {
         // 215 lb bodyweight (97.5 kg) minus 25 kg assistance, ×10 reps.
         #expect(set.totalVolume == 725)
         #expect(set.effectiveLoad == 72.5)
+    }
+
+    @Test(arguments: [false, true])
+    func bodyOnlyExercisesUseMassInLiveAndSavedVolume(isCustom: Bool) throws {
+        let (container, context) = try TestStore.make()
+        let exercise = ExerciseLibraryModel(
+            ownerID: isCustom ? userID : nil,
+            name: isCustom ? "Custom floor press-up" : "Push-up",
+            equipment: "body only"
+        )
+        let routine = makeRoutine(exercise: exercise, targetWeight: nil, in: context)
+        let workout = try #require(WorkoutFactory.start(
+            routine: routine, exercises: [exercise], in: context, onCommit: { _ in }
+        ))
+        let set = try #require(workout.exercises.first?.sets.first)
+        let live = LiveWorkoutMetrics()
+        live.rebuild(from: workout)
+        #expect(live.volume == 0)
+        #expect(set.weightMode == .bodyweight)
+        #expect(set.modeWeight == nil)
+        LiveSetCompletion.prepare(set, completedAt: .now, latestBodyweight: 78)
+        live.refresh(changedSet: set, in: workout)
+        #expect(live.volume == 624)
+        workout.recomputeTotalVolume()
+        try context.save()
+        let id = workout.id
+        let readback = try #require(ModelContext(container).fetch(FetchDescriptor<WorkoutModel>(
+            predicate: #Predicate { $0.id == id }
+        )).first)
+        #expect(readback.totalVolume == 624)
     }
 
     @Test func cooperativeBackfillIsDurableIdempotentAndDoesNotSaveCallerEdits() async throws {

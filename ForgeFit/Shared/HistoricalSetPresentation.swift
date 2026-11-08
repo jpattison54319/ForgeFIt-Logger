@@ -21,6 +21,10 @@ enum HistoricalSetPresentation {
 
     static func outputText(_ set: SetModel) -> String {
         guard isCompleted(set) else { return incompleteLabel }
+        if set.setType == .distance, let meters = set.strengthDistanceMeters {
+            return strengthDistanceUnit.label(meters: meters)
+        }
+        if set.setType == .timedHold, let seconds = set.durationSeconds { return Fmt.elapsed(seconds) }
         if !set.miniReps.isEmpty {
             let activation = set.reps.map(String.init)
             let minis = set.miniReps.map(String.init).joined(separator: "+")
@@ -57,6 +61,14 @@ enum HistoricalSetPresentation {
 
     static func shareValue(_ set: SetModel, unit: WeightUnit) -> String {
         guard isCompleted(set) else { return incompleteLabel }
+        if set.setType == .distance, let meters = set.strengthDistanceMeters {
+            let distance = strengthDistanceUnit.label(meters: meters)
+            return set.modeWeight.map { "\(Fmt.loadUnit($0, unit: unit)) · \(distance)" } ?? distance
+        }
+        if set.setType == .timedHold, let seconds = set.durationSeconds {
+            let time = Fmt.elapsed(seconds)
+            return set.modeWeight.map { "\(Fmt.loadUnit($0, unit: unit)) · \(time)" } ?? time
+        }
         if !set.miniReps.isEmpty {
             let activation = set.reps.map(String.init)
             let minis = set.miniReps.map(String.init).joined(separator: "+")
@@ -74,6 +86,10 @@ enum HistoricalSetPresentation {
         let reps = set.reps.map { "\($0)" } ?? "—"
         guard let weight = set.modeWeight, weight > 0 else { return "\(reps) reps" }
         return "\(Fmt.load(weight, unit: unit)) \(unit.suffix) × \(reps)"
+    }
+
+    private static var strengthDistanceUnit: StrengthDistanceUnit {
+        StrengthDistanceUnit(rawValue: UserDefaults.standard.string(forKey: StrengthDistanceUnit.preferenceKey) ?? "") ?? .meters
     }
 
     /// Set-level tonnage only counts when the set was completed.

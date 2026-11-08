@@ -26,13 +26,24 @@ extension WatchStore {
                 if delay > 0 {
                     do { try await Task.sleep(for: .seconds(min(delay, 1))) } catch { return }
                 }
-                if (self.activeWorkout == nil || self.isRecordingStopped), self.syncRecovery.attempts >= 6,
-                   Date() >= due {
-                    self.syncRecovery.cancelRequest()
+                guard !Task.isCancelled else { return }
+                let now = Date()
+                var recovery = self.syncRecovery
+                recovery.updatePresentation(at: now)
+                if recovery.presentedIssue != self.syncRecovery.presentedIssue {
+                    self.syncRecovery = recovery
+                }
+                // A sleeping retry must not publish unchanged observable
+                // state on each clock check.
+                guard let due = self.syncRecovery.nextAttemptAt, now >= due else { continue }
+                if (self.activeWorkout == nil || self.isRecordingStopped), self.syncRecovery.attempts >= 6 {
+                    // Stop background work without hiding an actionable
+                    // version or storage problem that still needs attention.
+                    self.syncRecovery.cancelRequest(clearIssue: false)
                     return
                 }
                 guard !Task.isCancelled,
-                      let request = self.syncRecovery.nextRequest(at: Date()) else { continue }
+                      let request = self.syncRecovery.nextRequest(at: now) else { continue }
                 self.sendSyncRequest(request)
             }
         }
@@ -46,11 +57,11 @@ extension WatchStore {
         let session = WCSession.default
         guard session.activationState == .activated else {
             session.activate()
-            syncRecovery.failed(.transport, requestID: request.id)
+            tryMirroredSync(request, fallbackIssue: .transport)
             return
         }
         guard session.isReachable else {
-            syncRecovery.failed(.unreachable, requestID: request.id)
+            tryMirroredSync(request, fallbackIssue: .unreachable)
             return
         }
         guard let data = WatchWire.encode(request) else { return }
@@ -59,18 +70,36 @@ extension WatchStore {
             Task { @MainActor in self?.receiveSyncReply(data, requestID: request.id) }
         }, errorHandler: { [weak self] error in
             WatchSyncDiagnostics.record("sync-request-failed", error: error)
-            Task { @MainActor in self?.syncRecovery.failed(.transport, requestID: request.id) }
+            Task { @MainActor in self?.tryMirroredSync(request, fallbackIssue: .transport) }
         })
+    }
+
+    private func tryMirroredSync(_ request: WatchSyncRequest, fallbackIssue: WatchSyncIssue) {
+        guard request.id == syncRecovery.pendingRequestID else { return }
+        guard let workoutMirroring else {
+            syncRecovery.failed(fallbackIssue, requestID: request.id)
+            return
+        }
+        Task { [weak self] in
+            let sent = await workoutMirroring.requestSync(request)
+            guard !sent else { return }
+            self?.syncRecovery.failed(fallbackIssue, requestID: request.id)
+        }
     }
 
     func receiveSyncReply(_ data: Data?, requestID: UUID) {
         guard requestID == syncRecovery.pendingRequestID else { return }
         guard let data, let reply = WatchWire.decode(WatchSyncReply.self, from: data),
               reply.requestID == requestID else {
-            syncRecovery.failed(.incompatible, requestID: requestID)
-            WatchSyncDiagnostics.record("sync-reply-incompatible")
+            syncRecovery.failed(.transport, requestID: requestID)
+            WatchSyncDiagnostics.record("sync-reply-unreadable")
             return
         }
+        receiveSyncReply(reply, requestID: requestID)
+    }
+
+    func receiveSyncReply(_ reply: WatchSyncReply, requestID: UUID) {
+        guard requestID == syncRecovery.pendingRequestID, reply.requestID == requestID else { return }
         if let issue = reply.issue {
             syncRecovery.failed(issue, requestID: requestID)
             return
@@ -85,7 +114,6 @@ extension WatchStore {
     func receiveSnapshot(_ data: Data, metadataData: Data?) {
         guard let metadataData,
               let metadata = WatchWire.decode(WatchSyncMetadata.self, from: metadataData) else {
-            syncRecovery.failed(.incompatible)
             requestFreshContext()
             return
         }
@@ -95,7 +123,7 @@ extension WatchStore {
     func receiveSnapshot(_ data: Data, metadata: WatchSyncMetadata, replyTo requestID: UUID? = nil) {
         guard let context = WatchWire.decode(WatchAppContext.self, from: data),
               context.workout?.workoutID == metadata.workoutID else {
-            syncRecovery.failed(.invalidPayload, requestID: requestID)
+            if let requestID { syncRecovery.failed(.invalidPayload, requestID: requestID) }
             WatchSyncDiagnostics.record("context-decode-failed", peer: metadata.peer)
             requestFreshContext()
             return
@@ -103,6 +131,8 @@ extension WatchStore {
         // A previously unseen workout in retained/background state is a
         // refresh hint, never authority to replay a historical start. Keep
         // the current stream until a fresh reply identifies the next workout.
+        if requestID == nil, let id = context.workout?.workoutID,
+           isTerminalWorkout(id) { return }
         if requestID == nil, let id = context.workout?.workoutID, id != activeWorkout?.workoutID {
             requestFreshContext()
             return
@@ -115,7 +145,14 @@ extension WatchStore {
             scheduleSyncHealthCheck()
         case .needsHandshake:
             requestFreshContext()
-        case .duplicate, .obsoleteReply, .incompatible:
+        case .duplicate:
+            if requestID != nil, syncRecovery.pendingRequestID == nil {
+                lastSnapshotReceivedAt = Date()
+                scheduleSyncHealthCheck()
+            }
+        case .incompatible:
+            if requestID == nil { requestFreshContext() }
+        case .obsoleteReply:
             break
         }
     }
@@ -165,8 +202,10 @@ extension WatchStore {
     func completeRecoveryDemo() {
         let context = recoveryDemoContext ?? WatchAppStoreDemo.context()
         recoveryDemoContext = context
+        syncRecovery.refresh(at: Date(), force: true)
         guard let request = syncRecovery.nextRequest(at: Date()), let data = WatchWire.encode(context) else { return }
         receiveSnapshot(data, metadata: WatchSyncMetadata(epoch: UUID(), revision: 1, workoutID: context.workout?.workoutID), replyTo: request.id)
+        if context.workout != nil { WatchAppStoreDemo.startHeartRateTicker(WatchWorkoutEngine.shared) }
     }
     #endif
 }

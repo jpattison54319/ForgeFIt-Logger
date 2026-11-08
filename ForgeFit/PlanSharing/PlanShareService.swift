@@ -136,10 +136,21 @@ enum PlanShareService {
         let requiresOrderedAlternationGroups = includedAlternationStates.contains {
             $0.members.count > 2
         }
+        let includesTimedStrength = definitions.contains {
+            !$0.isCardio && $0.modalityRaw != Modality.yoga.rawValue && $0.defaultHoldSeconds != nil
+        } || liveRoutines.contains { routine in
+            routine.exercises.contains { $0.sets.contains { $0.setType == .timedHold } }
+        }
+        let includesDistanceStrength = definitions.contains {
+            $0.modalityRaw == ExerciseLibraryModel.strengthDistanceModalityRaw
+        } || liveRoutines.contains { routine in
+            routine.exercises.contains { $0.sets.contains { $0.setType == .distance } }
+        }
+        var formatVersion = requiresOrderedAlternationGroups ? 4 : 3
+        if includesTimedStrength { formatVersion = ForgeFitPlanSetTypeContract.introducedVersion(for: .timedHold) }
+        if includesDistanceStrength { formatVersion = ForgeFitPlanSetTypeContract.introducedVersion(for: .distance) }
         return ForgeFitPlanDocument(
-            formatVersion: requiresOrderedAlternationGroups
-                ? ForgeFitPlanDocument.currentVersion
-                : ForgeFitPlanSetTypeContract.latestVersion,
+            formatVersion: formatVersion,
             createdAt: .now,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
             kind: kind,

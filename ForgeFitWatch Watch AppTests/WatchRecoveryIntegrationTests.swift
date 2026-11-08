@@ -74,23 +74,39 @@ struct WatchRecoveryIntegrationTests {
         await settle()
         fixture.store.handle(.workoutFinished(workoutID: id))
         await settle()
-        try push(fixture.store, workoutID: id, epoch: epoch, revision: 2)
-        await settle()
+        for revision in UInt64(2)...4 {
+            fixture.store.handle(.workoutFinished(workoutID: id))
+            fixture.store.handle(.discardWorkout(workoutID: id))
+            try push(fixture.store, workoutID: id, epoch: epoch, revision: revision)
+            await settle()
+            #expect(fixture.store.syncRecovery.pendingRequestID == nil)
+            #expect(fixture.store.syncRecovery.nextAttemptAt == nil)
+            #expect(fixture.store.syncRecoveryTask == nil)
+            #expect(fixture.store.recoveryMessage == nil)
+        }
         #expect(fixture.store.activeWorkout == nil)
         #expect(!fixture.engine.hasActiveSession)
         #expect(fixture.engine.starts == 1)
     }
 
-    @Test func pendingHandoffWaitsForCorrelatedIdentityBeforeStarting() async throws {
+    @Test func sleepingWatchHandoffStartsQuarantinedSessionBeforePhoneReply() async throws {
         let fixture = Fixture()
         defer { fixture.cleanUp() }
         let epoch = UUID(), id = UUID()
-        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .yoga
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: configuration))
         await settle()
-        #expect(!fixture.engine.hasActiveSession)
-        #expect(fixture.engine.starts == 0)
+        #expect(fixture.engine.hasActiveSession)
+        #expect(fixture.engine.lastConfigurationActivityType == .yoga)
+        #expect(fixture.engine.isAwaitingSessionWorkoutID)
+        #expect(fixture.engine.activeSessionWorkoutID == nil)
+        #expect(fixture.engine.starts == 1)
         #expect(fixture.store.isAwaitingWorkoutIdentity)
         #expect(fixture.store.recoveryMessage == nil)
+        fixture.engine.heartRate = 120
+        fixture.engine.flushMetrics()
+        #expect(fixture.packets.values.isEmpty)
         try push(fixture.store, workoutID: nil, epoch: epoch, revision: 1)
         await settle()
         #expect(fixture.store.isAwaitingWorkoutIdentity)
@@ -99,10 +115,48 @@ struct WatchRecoveryIntegrationTests {
         await settle()
         #expect(!fixture.store.isAwaitingWorkoutIdentity)
         #expect(fixture.engine.activeSessionWorkoutID == id)
+        #expect(!fixture.engine.isAwaitingSessionWorkoutID)
         #expect(fixture.engine.starts == 1)
+        #expect(fixture.packets.values.last?.workoutID == id)
     }
 
-    @Test func pendingHandoffShowsRetryOnlyAfterARealSyncFailure() async {
+    @Test func newerHandoffWinsWhileSessionRecoveryIsPending() async {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        fixture.engine.suspendRecovery = true
+        let first = HKWorkoutConfiguration()
+        first.activityType = .running
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: first))
+        await settle()
+        let latest = HKWorkoutConfiguration()
+        latest.activityType = .yoga
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: latest))
+        fixture.engine.suspendRecovery = false
+        fixture.engine.recoveryContinuation?.resume(returning: .noSession)
+        fixture.engine.recoveryContinuation = nil
+        await settle()
+        #expect(fixture.engine.starts == 1)
+        #expect(fixture.engine.lastConfigurationActivityType == .yoga)
+        #expect(fixture.engine.isAwaitingSessionWorkoutID)
+    }
+
+    @Test func confirmedPhoneIdleBeatsAnUnfinishedHandoffRecovery() async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        fixture.engine.suspendRecovery = true
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
+        await settle()
+        try acknowledge(fixture.store, workoutID: nil, epoch: UUID(), revision: 1)
+        fixture.engine.suspendRecovery = false
+        fixture.engine.recoveryContinuation?.resume(returning: .noSession)
+        fixture.engine.recoveryContinuation = nil
+        await settle()
+        #expect(fixture.engine.starts == 0)
+        #expect(fixture.store.activeWorkout == nil)
+        #expect(!fixture.store.isAwaitingWorkoutIdentity)
+    }
+
+    @Test func pendingHandoffShowsRetryOnlyAfterASustainedSyncFailure() async {
         let fixture = Fixture()
         defer { fixture.cleanUp() }
         fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
@@ -110,8 +164,105 @@ struct WatchRecoveryIntegrationTests {
         #expect(fixture.store.isAwaitingWorkoutIdentity)
         #expect(fixture.store.recoveryMessage == nil)
 
-        fixture.store.syncRecovery.failed(.unreachable)
+        let now = Date()
+        fixture.store.syncRecovery.failed(.unreachable, at: now)
+        #expect(fixture.store.recoveryMessage == nil)
+        fixture.store.syncRecovery.updatePresentation(at: now.addingTimeInterval(WatchSyncRecoveryState.transientIssueGracePeriod + 1))
         #expect(fixture.store.recoveryMessage == WatchSyncIssue.unreachable.message)
+    }
+
+    @Test func briefStartupFailureHealsWithoutARecoveryBanner() async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
+        await settle()
+        fixture.store.syncRecovery.failed(.transport)
+        #expect(fixture.store.recoveryMessage == nil)
+        try acknowledge(fixture.store, workoutID: UUID(), epoch: UUID(), revision: 1)
+        await settle()
+        fixture.store.syncRecovery.updatePresentation(at: Date().addingTimeInterval(60))
+        #expect(fixture.store.recoveryMessage == nil)
+        #expect(fixture.engine.hasActiveSession)
+    }
+
+    @Test func aNewHandoffFromHomeGetsItsOwnQuietRecoveryWindow() async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        try acknowledge(fixture.store, workoutID: nil, epoch: UUID(), revision: 1)
+        await settle()
+        fixture.store.syncRecovery.failed(.transport, at: Date().addingTimeInterval(-30))
+        fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
+        await settle()
+        #expect(fixture.store.isAwaitingWorkoutIdentity)
+        #expect(fixture.store.activeWorkout != nil)
+        #expect(fixture.store.recoveryMessage == nil)
+    }
+
+    @Test func engineAutomaticRetryStaysQuietButExhaustionNeedsAction() async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        let id = UUID(), epoch = UUID()
+        try acknowledge(fixture.store, workoutID: id, epoch: epoch, revision: 1)
+        await settle()
+        fixture.engine.retryState.failed(.transient, at: Date())
+        #expect(fixture.store.recoveryMessage == nil)
+        fixture.engine.retryState.failed(.transient, at: Date())
+        fixture.engine.retryState.failed(.transient, at: Date())
+        #expect(fixture.store.recoveryMessage == WatchEngineRetryState.Issue.retryLimit.message)
+        fixture.store.handle(.workoutFinished(workoutID: id))
+        await settle()
+        #expect(fixture.store.recoveryMessage == nil)
+    }
+
+    @Test(arguments: [0, 1, 2, 3, 4])
+    func terminalPathsClearRecoveryAndIgnoreLateErrors(path: Int) async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        let id = UUID(), epoch = UUID(), now = Date()
+        try acknowledge(fixture.store, workoutID: id, epoch: epoch, revision: 1)
+        await settle()
+        fixture.store.syncRecovery.refresh(at: now)
+        let request = try #require({ fixture.store.syncRecovery.nextRequest(at: now) }())
+        fixture.store.syncRecovery.failed(.transport, requestID: request.id, at: now.addingTimeInterval(-WatchSyncRecoveryState.transientIssueGracePeriod))
+        fixture.store.syncRecovery.updatePresentation(at: now)
+        #expect(fixture.store.recoveryMessage != nil)
+        switch path {
+        case 0: fixture.store.finishWorkout()
+        case 1: fixture.store.discardWorkout()
+        case 2: fixture.store.handle(.workoutFinished(workoutID: id))
+        case 3: fixture.store.handle(.discardWorkout(workoutID: id))
+        default: try push(fixture.store, workoutID: nil, epoch: epoch, revision: 2)
+        }
+        await settle()
+        fixture.store.syncRecovery.failed(.transport, requestID: request.id)
+        #expect(fixture.store.activeWorkout == nil)
+        #expect(fixture.store.syncRecovery.issue == nil)
+        #expect(fixture.store.syncRecoveryTask == nil)
+        #expect(fixture.store.recoveryMessage == nil)
+        // A new Home refresh while the phone sleeps is quiet as well.
+        fixture.store.syncRecovery.failed(.unreachable, at: now.addingTimeInterval(-20))
+        fixture.store.syncRecovery.updatePresentation(at: now)
+        #expect(fixture.store.recoveryMessage == nil)
+    }
+
+    @Test func unchangedReplyClearsTheBannerAndRestartsLivenessMonitoring() async throws {
+        let fixture = Fixture()
+        defer { fixture.cleanUp() }
+        let id = UUID(), epoch = UUID(), now = Date()
+        try acknowledge(fixture.store, workoutID: id, epoch: epoch, revision: 1)
+        await settle()
+        fixture.store.requestLivenessProbeIfNeeded(at: now.addingTimeInterval(31))
+        await settle()
+        let requestID = try #require(fixture.store.syncRecovery.pendingRequestID)
+        fixture.store.syncRecovery.failed(.transport, requestID: requestID, at: now.addingTimeInterval(-20))
+        fixture.store.syncRecovery.updatePresentation(at: now)
+        let reply = WatchSyncReply(requestID: requestID,
+                                  metadata: WatchSyncMetadata(epoch: epoch, revision: 1, workoutID: id),
+                                  contextData: WatchWire.encode(fixture.store.context!))
+        fixture.store.receiveSyncReply(WatchWire.encode(reply), requestID: requestID)
+        #expect(fixture.store.recoveryMessage == nil)
+        #expect(fixture.store.syncHealthCheckTask != nil)
+        #expect(fixture.store.syncRecovery.pendingRequestID == nil)
     }
 
     @Test func freshContextRestartsRecoveryAfterThreeTransientFailures() async throws {
@@ -128,14 +279,28 @@ struct WatchRecoveryIntegrationTests {
         #expect(fixture.engine.starts == 1)
     }
 
-    @Test func unsupportedSnapshotIsVisibleAndDoesNotResolvePendingIdentity() async throws {
+    @Test func unreadablePushCannotShowRetryOrResolvePendingIdentity() async throws {
         let fixture = Fixture()
         defer { fixture.cleanUp() }
         fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
         await settle()
         fixture.store.receiveSnapshot(Data("invalid".utf8), metadata: WatchSyncMetadata(epoch: UUID(), revision: 1, workoutID: nil))
         #expect(fixture.store.isAwaitingWorkoutIdentity)
+        #expect(fixture.store.syncRecovery.issue == nil)
+        #expect(fixture.store.recoveryMessage == nil)
+        let requestID = try #require(fixture.store.syncRecovery.pendingRequestID)
+        fixture.store.receiveSnapshot(
+            Data("invalid".utf8),
+            metadata: WatchSyncMetadata(epoch: UUID(), revision: 1, workoutID: nil),
+            replyTo: requestID
+        )
         #expect(fixture.store.syncRecovery.issue == .invalidPayload)
+        #expect(fixture.store.recoveryMessage == nil)
+        fixture.store.syncRecovery.updatePresentation(at: .now.addingTimeInterval(
+            WatchSyncRecoveryState.transientIssueGracePeriod + 1
+        ))
+        #expect(fixture.store.recoveryMessage == WatchSyncIssue.invalidPayload.message)
+        #expect(fixture.store.isAwaitingWorkoutIdentity)
         #expect(fixture.engine.cancellations == 0)
     }
 
@@ -266,20 +431,23 @@ struct WatchRecoveryIntegrationTests {
         #expect(fixture.store.summary == nil)
     }
 
-    @Test func repeatedExpiredHandoffsNeverStartARecorder() async throws {
+    @Test func repeatedExpiredHandoffsDiscardProvisionalRecorders() async throws {
         let fixture = Fixture()
         defer { fixture.cleanUp() }
         let epoch = UUID()
         for revision in UInt64(1)...5 {
             fixture.store.handleWorkoutConfiguration(HKWorkoutConfigurationBox(value: HKWorkoutConfiguration()))
             await settle()
-            #expect(fixture.engine.starts == 0)
+            #expect(fixture.engine.starts == Int(revision))
+            #expect(fixture.engine.isAwaitingSessionWorkoutID)
             try acknowledge(fixture.store, workoutID: nil, epoch: epoch, revision: revision)
             await settle()
             #expect(fixture.store.activeWorkout == nil)
+            #expect(!fixture.engine.hasActiveSession)
         }
-        #expect(fixture.engine.starts == 0)
-        #expect(fixture.engine.cancellations == 0)
+        #expect(fixture.engine.starts == 5)
+        #expect(fixture.engine.cancellations == 5)
+        #expect(fixture.store.summary == nil)
     }
 
     @Test func verificationFlushesQuarantinedHeartRateWithIdentityAndSequence() async throws {

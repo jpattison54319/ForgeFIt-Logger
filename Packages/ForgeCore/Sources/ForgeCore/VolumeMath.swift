@@ -42,6 +42,14 @@ public enum VolumeMath {
     /// user doubling anything manually.
     public static func tonnage(_ s: SetEntry) -> Double {
         guard s.setType.countsAsWorkingVolume else { return 0 }
+        if s.setType == .timedHold {
+            // One completed hold contributes one application of its load.
+            // Seconds measure the hold, and do not stand in for repetitions.
+            return (s.durationSeconds ?? 0) > 0 ? effectiveLoad(s) : 0
+        }
+        if s.setType == .distance {
+            return StrengthDistanceUnit.validMeters(s.strengthDistanceMeters) != nil ? effectiveLoad(s) : 0
+        }
         let limbs = s.isUnilateral ? Double(s.limbCount) : 1.0
         return effectiveLoad(s) * effectiveReps(s) * limbs
     }
@@ -54,7 +62,7 @@ public enum VolumeMath {
         // A partial-range set says nothing about a full-range maximum, so it
         // never estimates one — the number would flatter the lifter and
         // contaminate every record and progression that reads it.
-        guard !s.setType.repsArePartialRange else { return nil }
+        guard !s.setType.repsArePartialRange, !s.setType.usesNonRepTracking else { return nil }
         guard let reps = s.reps, reps > 0 else { return nil }
         let load = effectiveLoad(s)
         guard load > 0 else { return nil }
@@ -103,7 +111,7 @@ public enum VolumeMath {
             return count
         case .cluster:
             return s.side2Logged ? 2 : 1
-        case .working, .backoff, .amrap:
+        case .working, .backoff, .amrap, .timedHold, .distance:
             return 1
         case .lengthenedPartial:
             // A full set's worth of stimulus at half the tonnage: training the

@@ -28,6 +28,10 @@ final class PendingDraftCoordinator {
         validators[token] = nil
     }
 
+    func commit(_ token: UUID) {
+        commits[token]?()
+    }
+
     /// Breaks every child-registration lifetime at the screen boundary. Some
     /// invalid lazy-row drafts intentionally stay registered while off-screen;
     /// without an explicit teardown those closures can retain the editor graph

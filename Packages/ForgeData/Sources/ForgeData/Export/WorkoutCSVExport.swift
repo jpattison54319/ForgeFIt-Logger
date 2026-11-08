@@ -1,3 +1,4 @@
+import ForgeCore
 import Foundation
 
 /// Minimal RFC-4180 CSV building. A field is quoted only when it must be
@@ -124,7 +125,13 @@ public enum WorkoutCSVExport {
                         CSVWriter.bool(set.isUnilateral),
                         CSVWriter.number(set.side2Reps),
                         CSVWriter.date(set.completedAt),
-                    ] + Array(repeating: "", count: 19))
+                    ] + [
+                        "", // modality
+                        CSVWriter.number(
+                            set.setType == SetType.distance.rawValue
+                                ? StrengthSetDistance.meters(in: set.machineSettingsJSON) : nil
+                        ),
+                    ] + Array(repeating: "", count: 17))
                 }
             }
 

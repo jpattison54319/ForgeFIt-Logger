@@ -1,9 +1,9 @@
 import AVFoundation
 import Foundation
 
-/// Off-main-thread gate for the shared `AVAudioSession` that every voice/chime
-/// cue rides on (yoga cues, pace announcements, HR/pace zone guards, the rest
-/// timer chime).
+/// Off-main-thread gate for bundled yoga narration and the timer chime.
+/// Cardio announcements use `WorkoutCueSpeech`'s system-managed session so
+/// their completion cannot leave this shared session ducking other media.
 ///
 /// `setActive` does synchronous cross-process IPC that can block ~100ms+ while
 /// CoreAudio negotiates a Bluetooth route. On the main actor that stalls the

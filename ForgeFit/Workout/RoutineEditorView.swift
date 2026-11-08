@@ -555,7 +555,9 @@ struct RoutineEditorView: View {
             } else if wasModality != .yoga {
                 target.yogaFlowJSON = nil
             }
-        } else if exercise.modality != wasModality {
+        } else if exercise.modality != wasModality
+                    || (exercise.strengthHoldSeconds != nil) != (previous?.strengthHoldSeconds != nil)
+                    || exercise.tracksStrengthDistance != (previous?.tracksStrengthDistance == true) {
             // Targets don't carry across disciplines: rep sets, duration
             // targets, interval plans, and yoga flows are all shaped by the
             // modality they were built for.
@@ -631,7 +633,12 @@ struct RoutineEditorView: View {
         case .yoga, .cardio:
             return []
         case .strength:
-            let target = RoutineSetModel(userID: ForgeFitDemo.userID, position: 0)
+            let duration = exercise.strengthHoldSeconds
+            let target = RoutineSetModel(
+                userID: ForgeFitDemo.userID, position: 0,
+                setType: exercise.tracksStrengthDistance ? .distance : (duration == nil ? .working : .timedHold),
+                targetDurationSeconds: duration
+            )
             modelContext.insert(target)
             return [target]
         }
@@ -909,6 +916,8 @@ private struct ExerciseEditRow: View {
     private var currentProgressionRule: ProgressionRule? { ProgressionRule.decode(from: routineExercise.progressionRuleJSON) }
     private var isCardio: Bool { exercise?.isCardio == true }
     private var isYoga: Bool { exercise?.isYoga == true }
+    private var isTimedStrength: Bool { exercise?.strengthHoldSeconds != nil }
+    private var isDistanceStrength: Bool { exercise?.tracksStrengthDistance == true }
     private var displayUnit: WeightUnit { exercise?.effectiveWeightUnit ?? Fmt.unit }
     private var supportsPercentagePrescription: Bool {
         AdaptiveLoadResolver.supportsPercentagePrescription(exercise)
@@ -959,7 +968,7 @@ private struct ExerciseEditRow: View {
                 }
             }])
         }
-        if !isCardio && !isYoga {
+        if !isCardio && !isYoga && !isTimedStrength && !isDistanceStrength {
             sections.append([
                 ScrollSafeMenuItem(title: "Add Warm-up Set", systemImage: "flame") { addSet(type: .warmup) },
                 ScrollSafeMenuItem(title: "Add Warm-up Ramp", systemImage: "flame.fill") { addWarmupRamp() },
@@ -1064,7 +1073,7 @@ private struct ExerciseEditRow: View {
                         MuscleChips(muscles: CardioKind.infer(name: exercise.name, equipment: exercise.equipment).musclesWorked)
                     }
                 } else {
-                    if hasPercentagePrescription,
+                    if !isTimedStrength, !isDistanceStrength, hasPercentagePrescription,
                        hasIncompletePercentagePrescription
                         || bestEstimatedOneRepMaxKg == nil
                         || !supportsPercentagePrescription {
@@ -1078,13 +1087,25 @@ private struct ExerciseEditRow: View {
 
     private var strengthSetEditor: some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            HStack {
-                Text("SET").frame(width: 40, alignment: .leading)
-                Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
-                Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
-                Text("RPE").frame(width: 48, alignment: .leading)
+            if isTimedStrength {
+                HStack(spacing: 8) {
+                    Text("SET").frame(width: 40, alignment: .leading)
+                    Text("TIME").frame(maxWidth: .infinity, alignment: .leading)
+                    if exercise?.defaultWeightMode != .bodyweight {
+                        Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .font(.tag).foregroundStyle(theme.textTertiary)
+            } else if !isDistanceStrength {
+                HStack {
+                    Text("SET").frame(width: 40, alignment: .leading)
+                    Text("REPS").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("LOAD").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("RPE").frame(width: 48, alignment: .leading)
+                }
+                .font(.tag).foregroundStyle(theme.textTertiary)
             }
-            .font(.tag).foregroundStyle(theme.textTertiary)
 
             ForEach(Array(sortedSets.enumerated()), id: \.element.id) { index, set in
                 SwipeToDeleteRow(
@@ -1095,7 +1116,44 @@ private struct ExerciseEditRow: View {
                     },
                     onDelete: { deleteSet(set) }
                 ) {
-                    SetTargetEditRow(
+                    if isDistanceStrength || set.setType == .distance {
+                        StrengthDistanceRow(
+                            setID: set.id, number: index + 1, meters: set.targetDistanceMeters,
+                            weight: set.loadPrescriptionMode == .fixed ? set.targetWeight : nil,
+                            showsLoad: exercise?.defaultWeightMode != .bodyweight,
+                            weightUnit: displayUnit,
+                            supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                                name: exercise?.name, equipment: exercise?.equipment
+                            ),
+                            completed: false, pendingDrafts: pendingDrafts,
+                            onDistance: { value in
+                                set.setType = .distance
+                                set.targetDistanceMeters = value
+                                save()
+                            },
+                            onLoad: { value in
+                                set.loadPrescriptionMode = .fixed
+                                set.targetWeight = value
+                                save()
+                            },
+                            onDelete: { deleteSet(set) }
+                        )
+                    } else if isTimedStrength || set.setType == .timedHold {
+                        StrengthHoldTargetRow(
+                            set: set,
+                            number: index + 1,
+                            defaultSeconds: exercise?.strengthHoldSeconds ?? StrengthHold.defaultSeconds,
+                            showsLoad: exercise?.defaultWeightMode != .bodyweight,
+                            unit: displayUnit,
+                            supportsResistanceBands: ResistanceBandSupport.isBandExercise(
+                                name: exercise?.name, equipment: exercise?.equipment
+                            ),
+                            pendingDrafts: pendingDrafts,
+                            onChange: save,
+                            onDelete: { deleteSet(set) }
+                        )
+                    } else {
+                        SetTargetEditRow(
                         set: set,
                         pendingDrafts: pendingDrafts,
                         workingNumber: workingNumber(upTo: index),
@@ -1111,7 +1169,8 @@ private struct ExerciseEditRow: View {
                         onSetType: { changeType(of: set, to: $0, index: index) },
                         onAddDrop: { addDropSet(below: set, index: index) },
                         onDelete: { deleteSet(set) }
-                    )
+                        )
+                    }
                 }
             }
 
@@ -1124,6 +1183,7 @@ private struct ExerciseEditRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(PressableButtonStyle())
+            .accessibilityIdentifier("routine-add-set")
         }
     }
 
@@ -1393,18 +1453,24 @@ private struct ExerciseEditRow: View {
     private func addSet(type: SetType) {
         guard !isCardio, !isYoga else { return }
         let last = sortedSets.last
-        let carriedType = type == .working ? (last?.setType.isBlockType == true ? last!.setType : type) : type
+        let carriedType: SetType
+        if isDistanceStrength { carriedType = .distance }
+        else if isTimedStrength { carriedType = .timedHold }
+        else { carriedType = type == .working && last?.setType.isBlockType == true ? (last?.setType ?? type) : type }
         let set = RoutineSetModel(
             userID: ForgeFitDemo.userID, position: routineExercise.sets.count,
             setType: carriedType,
-            targetRepsLow: last?.targetRepsLow,
-            targetRepsHigh: last?.targetRepsHigh,
+            targetRepsLow: carriedType.usesNonRepTracking ? nil : last?.targetRepsLow,
+            targetRepsHigh: carriedType.usesNonRepTracking ? nil : last?.targetRepsHigh,
             targetWeight: last?.targetWeight,
-            loadPrescriptionMode: last?.loadPrescriptionMode ?? .fixed,
-            target1RMPercentLow: last?.target1RMPercentLow,
-            target1RMPercentHigh: last?.target1RMPercentHigh,
-            targetRPE: last?.targetRPE,
-            targetDurationSeconds: carriedType == .amrap ? last?.targetDurationSeconds : nil,
+            loadPrescriptionMode: carriedType.usesNonRepTracking ? .fixed : (last?.loadPrescriptionMode ?? .fixed),
+            target1RMPercentLow: carriedType.usesNonRepTracking ? nil : last?.target1RMPercentLow,
+            target1RMPercentHigh: carriedType.usesNonRepTracking ? nil : last?.target1RMPercentHigh,
+            targetRPE: carriedType.usesNonRepTracking ? nil : last?.targetRPE,
+            targetDurationSeconds: isTimedStrength
+                ? (StrengthHold.validSeconds(last?.targetDurationSeconds) ?? exercise?.strengthHoldSeconds)
+                : (carriedType == .amrap ? last?.targetDurationSeconds : nil),
+            targetDistanceMeters: carriedType == .distance ? last?.targetDistanceMeters : nil,
             plannedMiniSetCount: carriedType == .myoRep ? (last?.plannedMiniSetCount ?? 1) : nil,
             plannedMiniRepsJSON: carriedType == .cluster ? last?.plannedMiniRepsJSON : nil
         )
@@ -2143,7 +2209,7 @@ struct OptionalLoadField: View {
         // Keep the band picker beside the field instead of laying it over the
         // text. The explicit slot preserves its touch target and leaves the
         // empty "Optional" placeholder readable in narrow conditioning rows.
-        HStack(spacing: supportsResistanceBands ? 2 : 0) {
+        HStack(spacing: supportsResistanceBands ? ResistanceBandLoadMenu.fieldSpacing : 0) {
             if supportsResistanceBands {
                 ResistanceBandLoadMenu(
                     selectedWeightKilograms: value,

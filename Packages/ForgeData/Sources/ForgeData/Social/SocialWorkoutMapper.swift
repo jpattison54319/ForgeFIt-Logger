@@ -75,7 +75,8 @@ public enum SocialWorkoutMapper {
     }
 
     private static func sharedSet(from set: SetModel) -> SharedSetDTO {
-        SharedSetDTO(
+        let sharesDerivedLoad = set.weightMode == .external
+        return SharedSetDTO(
             id: set.id,
             position: set.position,
             setType: set.setTypeRaw,
@@ -100,11 +101,11 @@ public enum SocialWorkoutMapper {
             side2MiniRepsJSON: set.side2MiniRepsJSON,
             plannedMiniSetCount: set.plannedMiniSetCount,
             plannedMiniRepsJSON: set.plannedMiniRepsJSON,
-            // Derived aggregates carried verbatim — never `bodyweightKg`, the
-            // health input they were computed from.
-            effectiveLoad: set.effectiveLoad,
-            totalVolume: set.totalVolume,
-            estimated1RM: set.estimated1RM,
+            // Per-set aggregates would reveal the scale reading directly or
+            // allow it to be reconstructed from repetitions and added load.
+            effectiveLoad: sharesDerivedLoad ? set.effectiveLoad : nil,
+            totalVolume: sharesDerivedLoad ? set.totalVolume : nil,
+            estimated1RM: sharesDerivedLoad ? set.estimated1RM : nil,
             completedAt: set.completedAt
         )
     }

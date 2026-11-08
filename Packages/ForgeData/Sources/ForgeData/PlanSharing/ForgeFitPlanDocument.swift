@@ -12,6 +12,10 @@ public enum ForgeFitPlanSetTypeContract {
             1
         case .lengthenedPartial, .lengthenedExtended:
             3
+        case .timedHold:
+            5
+        case .distance:
+            6
         }
     }
 
@@ -32,9 +36,8 @@ public enum ForgeFitPlanSetTypeContract {
 /// A user-created training plan that can leave ForgeFit without carrying any
 /// workout history, Health data, account identity, or local progress state.
 public struct ForgeFitPlanDocument: Codable, Equatable, Sendable {
-    /// v3 adds the lengthened set vocabulary; v4 adds ordered alternating
-    /// groups. Older recipients request an update rather than silently
-    /// importing only the legacy pair mirror.
+    /// v3 adds lengthened sets, v4 adds ordered alternating groups,
+    /// v5 adds timed strength holds, and v6 adds distance-based strength sets.
     public static let currentVersion = max(4, ForgeFitPlanSetTypeContract.latestVersion)
 
     public var formatVersion: Int

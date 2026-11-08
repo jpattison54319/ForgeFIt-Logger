@@ -4,9 +4,8 @@ import Testing
 
 struct SetTypeTests {
 
-    @Test func selectableExcludesOnlyRetiredRestPause() {
-        #expect(!SetType.selectable.contains(.restPause))
-        #expect(Set(SetType.selectable) == Set(SetType.allCases).subtracting([.restPause]))
+    @Test func repBasedPickerOmitsRetiredAndDurationOnlyTypes() {
+        #expect(Set(SetType.selectable) == Set(SetType.allCases).subtracting([.restPause, .timedHold, .distance]))
     }
 
     /// Legacy synced data still decodes — the case is retired from pickers,

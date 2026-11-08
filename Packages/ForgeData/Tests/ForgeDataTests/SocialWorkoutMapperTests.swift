@@ -201,6 +201,25 @@ import Testing
     }
 
     @MainActor
+    @Test func aBodyweightHoldCannotRevealTheScaleReading() throws {
+        let workout = maximallyPopulatedWorkout(userID: UUID())
+        let set = try #require(workout.exercises.first?.sets.first)
+        set.weightMode = .bodyweight
+        set.weight = nil
+        set.reps = nil
+        set.setType = .timedHold
+        set.durationSeconds = 65
+        set.recomputeDerivedMetrics()
+        #expect(set.totalVolume == set.bodyweightKg)
+        let dto = SocialWorkoutMapper.shared(from: workout, exerciseNames: [:])
+        let sharedSet = try #require(dto.exercises.first?.sets.first)
+        #expect(sharedSet.durationSeconds == 65)
+        #expect(sharedSet.effectiveLoad == nil)
+        #expect(sharedSet.totalVolume == nil)
+        #expect(sharedSet.estimated1RM == nil)
+    }
+
+    @MainActor
     @Test func roundTripThroughJSONIsStable() throws {
         let userID = UUID()
         let dto = SocialWorkoutMapper.shared(from: maximallyPopulatedWorkout(userID: userID), exerciseNames: [:])

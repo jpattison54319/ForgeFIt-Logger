@@ -49,7 +49,7 @@ nonisolated struct ExerciseRecordBaseline: Equatable, Sendable {
     var hasHistory: Bool = false
 
     mutating func absorb(_ set: SetModel) {
-        guard set.completedAt != nil, set.setType.countsAsWorkingVolume else { return }
+        guard PersonalRecords.isComparableLift(set) else { return }
         // A load moved through part of the range is not the same lift as the
         // same load moved through all of it, so partial-range sets neither
         // set nor raise the heaviest-weight bar. Their tonnage is already
@@ -68,6 +68,10 @@ nonisolated struct ExerciseRecordBaseline: Equatable, Sendable {
 /// Derives records on the fly (never persisted), so the live logger, the
 /// post-workout summary, and any future surface all agree by construction.
 nonisolated enum PersonalRecords {
+    /// Hold duration does not establish a rep-based lifting record.
+    fileprivate static func isComparableLift(_ set: SetModel) -> Bool {
+        set.completedAt != nil && set.setType.countsAsWorkingVolume && !set.setType.usesNonRepTracking
+    }
 
     /// Best prior values per exercise from workouts finished before `workout`
     /// started. The date cut-off keeps historical edits honest: editing an old
@@ -93,7 +97,7 @@ nonisolated enum PersonalRecords {
     static func awards(for set: SetModel, baseline: ExerciseRecordBaseline?, sessionSets: [SetModel]) -> [RecordKind] {
         guard let baseline, baseline.hasHistory,
               let completedAt = set.completedAt,
-              set.setType.countsAsWorkingVolume else { return [] }
+              isComparableLift(set) else { return [] }
 
         var bar = baseline
         for other in sessionSets where other.id != set.id {
@@ -128,7 +132,7 @@ nonisolated enum PersonalRecords {
         var candidates: [(set: SetModel, date: Date)] = []
         for workout in workouts where workout.deletedAt == nil {
             for we in workout.exercises where we.exerciseID == exerciseID {
-                for set in we.sets where set.completedAt != nil && set.setType.countsAsWorkingVolume {
+                for set in we.sets where isComparableLift(set) {
                     candidates.append((set, set.completedAt ?? workout.startedAt))
                 }
             }
@@ -156,7 +160,7 @@ nonisolated enum PersonalRecords {
     /// best set of the session if it beat the historical baseline.
     static func summaryAwards(for workoutExercise: WorkoutExerciseModel, baseline: ExerciseRecordBaseline?) -> [(kind: RecordKind, set: SetModel)] {
         guard let baseline, baseline.hasHistory else { return [] }
-        let done = workoutExercise.sets.filter { $0.completedAt != nil && $0.setType.countsAsWorkingVolume }
+        let done = workoutExercise.sets.filter(isComparableLift)
         guard !done.isEmpty else { return [] }
 
         var result: [(kind: RecordKind, set: SetModel)] = []

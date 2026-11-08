@@ -500,13 +500,24 @@ nonisolated final class HealthService: @unchecked Sendable {
 
     /// Launch the watch app into a workout session so a phone-started workout
     /// starts live metric collection on the wrist automatically.
+    func registerWatchWorkoutMirroring() {
+        #if canImport(HealthKit)
+        guard isAvailable else { return }
+        store.workoutSessionMirroringStartHandler = { session in
+            Task { @MainActor in WatchWorkoutMirror.shared.attach(session) }
+        }
+        #endif
+    }
+
     func startWatchApp(cardioKind: CardioKind? = nil) {
         #if canImport(HealthKit)
         guard isAvailable else { return }
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = cardioKind?.hkActivityType ?? .traditionalStrengthTraining
         configuration.locationType = cardioKind?.supportsOutdoorRoute == true ? .outdoor : .indoor
-        store.startWatchApp(with: configuration) { _, _ in }
+        store.startWatchApp(with: configuration) { started, error in
+            if !started { WatchSyncDiagnostics.record("watch-launch-failed", error: error) }
+        }
         #endif
     }
 
@@ -1235,6 +1246,16 @@ nonisolated final class HealthService: @unchecked Sendable {
         return samples
             .min { abs($0.endDate.timeIntervalSince(date)) < abs($1.endDate.timeIntervalSince(date)) }?
             .quantity.doubleValue(for: unit)
+        #else
+        return nil
+        #endif
+    }
+
+    /// Workout logging needs the latest recorded weigh-in even when it
+    /// predates the window used for the bodyweight chart.
+    func latestBodyMassKg() async -> Double? {
+        #if canImport(HealthKit)
+        return await latestQuantity(.bodyMass, unit: .gramUnit(with: .kilo))
         #else
         return nil
         #endif

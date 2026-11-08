@@ -12,7 +12,7 @@ import Foundation
 /// - YogaPoseCatalog poses or its prune list
 /// - MuscleRefinement rules
 enum LaunchSeedPolicy {
-    static let currentVersion = 1
+    static let currentVersion = 2
     static let defaultsKey = "seed.catalogVersion"
 
     /// Pure decision (unit-tested): seed when a reset wiped the store, when

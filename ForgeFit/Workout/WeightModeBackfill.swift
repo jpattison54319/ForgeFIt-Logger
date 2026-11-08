@@ -20,7 +20,8 @@ import SwiftData
 ///   mass was known yet.
 @MainActor
 enum WeightModeBackfill {
-    static let convertKey = "weightModeBackfilled.v1"
+    static let convertKey = "weightModeBackfilled.v2"
+    static let legacyConvertKey = "weightModeBackfilled.v1"
     typealias SaveOperation = @MainActor (ModelContext) throws -> Void
 
     private nonisolated struct RefreshReceipt: Sendable {
@@ -36,8 +37,9 @@ enum WeightModeBackfill {
               !defaults.bool(forKey: convertKey) else { return }
 
         let container = sourceContext.container
+        let needsLegacyModeConversion = !defaults.bool(forKey: legacyConvertKey)
         let task = Task.detached(priority: .utility) {
-            try convertPersisted(in: container)
+            try convertPersisted(in: container, needsLegacyModeConversion: needsLegacyModeConversion)
         }
         do {
             let receipt = try await withTaskCancellationHandler(
@@ -54,7 +56,8 @@ enum WeightModeBackfill {
     }
 
     private nonisolated static func convertPersisted(
-        in container: ModelContainer
+        in container: ModelContainer,
+        needsLegacyModeConversion: Bool
     ) throws -> RefreshReceipt {
         let transaction = ModelContext(container)
         transaction.autosaveEnabled = false
@@ -79,12 +82,7 @@ enum WeightModeBackfill {
                     guard let mode = modeByExerciseID[workoutExercise.exerciseID] else { continue }
                     for set in workoutExercise.sets where set.weightMode == .external {
                         try Task.checkCancellation()
-                        let value = set.weight
-                        set.weightMode = mode
-                        if set.modeWeight == nil, let value {
-                            set.weight = nil
-                            set.setModeWeight(value)
-                        }
+                        guard convert(set, to: mode, needsLegacyModeConversion: needsLegacyModeConversion) else { continue }
                         changed = true
                         touchedSetIDs.insert(set.id)
                     }
@@ -123,11 +121,31 @@ enum WeightModeBackfill {
         }
     }
 
+    private nonisolated static func convert(
+        _ set: SetModel, to mode: WeightMode, needsLegacyModeConversion: Bool
+    ) -> Bool {
+        let value = set.weight
+        if mode == .bodyweight {
+            guard (value ?? 0) == 0, (set.implementWeight ?? 0) == 0 else { return false }
+        } else {
+            guard needsLegacyModeConversion else { return false }
+        }
+        set.weightMode = mode
+        if set.modeWeight == nil, let value {
+            set.weight = nil
+            set.setModeWeight(value)
+        } else {
+            set.recomputeDerivedMetrics()
+        }
+        return true
+    }
+
     static func convertIfNeeded(
         in sourceContext: ModelContext,
         save: SaveOperation = { try $0.save() }
     ) {
         guard !UserDefaults.standard.bool(forKey: convertKey) else { return }
+        let needsLegacyModeConversion = !UserDefaults.standard.bool(forKey: legacyConvertKey)
         let transaction = ModelContext(sourceContext.container)
         transaction.autosaveEnabled = false
         do {
@@ -148,14 +166,7 @@ enum WeightModeBackfill {
                 for workoutExercise in workout.exercises {
                     guard let mode = modeByExerciseID[workoutExercise.exerciseID] else { continue }
                     for set in workoutExercise.sets where set.weightMode == .external {
-                        let value = set.weight
-                        set.weightMode = mode
-                        // Only move when the mode field is empty — never clobber a
-                        // value that somehow already lives where it belongs.
-                        if set.modeWeight == nil, let value {
-                            set.weight = nil
-                            set.setModeWeight(value)
-                        }
+                        guard convert(set, to: mode, needsLegacyModeConversion: needsLegacyModeConversion) else { continue }
                         changed = true
                         touchedSetIDs.insert(set.id)
                     }

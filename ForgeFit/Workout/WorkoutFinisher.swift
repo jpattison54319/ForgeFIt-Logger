@@ -833,6 +833,7 @@ enum WorkoutFinisher {
         CardioGoalAnnouncer.shared.cancelAll()
         CardioRouteRecorder.shared.cancel()
         WorkoutActivityController.shared.end()
+        StrengthHoldTimer.shared.cancel()
         RestTimerController.shared.skip()
         TimerChime.shared.stop()
         IntervalRunnerHub.shared.stop()

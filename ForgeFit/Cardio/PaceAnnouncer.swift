@@ -4,11 +4,10 @@ import Foundation
 
 /// Speaks split announcements during outdoor cardio ("Kilometer 3. Split
 /// 5 minutes 12 seconds.") — locked phone and earbuds included, since the
-/// route recorder keeps running in background. Same audio-session
-/// discipline as YogaGuidanceAudio: `.duckOthers` dips music around the
-/// utterance only, then releases so it recovers to full volume.
+/// route recorder keeps running in background. Speech's system-managed
+/// session ducks other audio around the utterance.
 @MainActor
-final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {
+final class PaceAnnouncer {
     static let shared = PaceAnnouncer()
 
     /// User toggle (Settings): default on — a silent run tracker that knows
@@ -22,11 +21,10 @@ final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "paceAnnouncementsEnabled") }
     }
 
-    private let synthesizer = AVSpeechSynthesizer()
+    private let speech: WorkoutCueSpeech
 
-    override private init() {
-        super.init()
-        synthesizer.delegate = self
+    init(speech: WorkoutCueSpeech? = nil) {
+        self.speech = speech ?? WorkoutCueSpeech()
     }
 
     func announceSplit(unitLabel: String, index: Int, splitSeconds: Int, totalSeconds: Int?) {
@@ -47,25 +45,10 @@ final class PaceAnnouncer: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func enqueue(_ phrase: String) {
-        // Activate off the main thread, then speak: the route recorder is
-        // running and setActive can block on a Bluetooth handoff mid-run.
-        Task {
-            try? await AudioCueSession.shared.activate()
-            let utterance = AVSpeechUtterance(string: phrase)
-            utterance.prefersAssistiveTechnologySettings = false
-            synthesizer.speak(utterance)
-        }
+        speech.speak(phrase)
     }
 
     func stop() {
-        synthesizer.stopSpeaking(at: .immediate)
-        Task { try? await AudioCueSession.shared.deactivate() }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            guard !self.synthesizer.isSpeaking else { return }
-            try? await AudioCueSession.shared.deactivate()
-        }
+        speech.stop()
     }
 }

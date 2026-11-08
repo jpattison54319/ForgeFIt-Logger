@@ -102,10 +102,9 @@ public enum ExerciseSeedRepository {
                 set(\.equipment, exercise.equipment)
                 set(\.isUnilateral, exercise.isUnilateral)
                 set(\.isCardio, isCardio)
-                if model.defaultWeightMode != (isCardio ? WeightMode.bodyweight : .external) {
-                    model.defaultWeightMode = isCardio ? .bodyweight : .external
-                    modelChanged = true
-                }
+                let mode = isCardio ? WeightMode.bodyweight
+                    : ExerciseLoadMode.inferred(equipment: exercise.equipment, name: exercise.name)
+                set(\.defaultWeightModeRaw, mode.rawValue)
             }
             if modelChanged {
                 model.updatedAt = Date()

@@ -234,24 +234,28 @@ final class AppIntentRoutingUITests: XCTestCase {
             "--reset-store",
             "--skip-onboarding",
             "-didOnboard", "YES",
-            "-initialTab", "profile",
+            "-initialTab", "home",
         ]
         acceptanceExpect(
-            visibleLabels: ["Settings"],
+            ["tab-profile"],
             phase: .setup,
-            invariants: ["Modern App Intent availability is visible without an app-owned permission prompt"]
+            invariants: ["The Profile tab gives access to Settings"]
         )
         app.acceptanceLaunch()
+
+        let profile = app.descendants(matching: .any)["tab-profile"].firstMatch
+        try acceptanceRequire(profile.waitForExistence(timeout: 15), "Expected the Profile tab.")
+        acceptanceExpect(visibleLabels: ["Settings"], phase: .setup)
+        profile.acceptanceTap()
 
         let settings = app.buttons["Settings"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 10), "Expected Profile's visible Settings button.")
         acceptanceExpect(
-            ["settings-app-intent-workouts-available"],
-            visibleLabels: ["Settings", "Control workouts with Siri"],
+            ["settings-app-intent-workouts-available", "settings-siri-phrase-ideas"],
+            visibleLabels: ["Settings", "Workout controls", "What to say"],
             phase: .setup,
             invariants: [
-                "The standard Settings sheet explains modern App Intent availability",
-                "Users see conversational phrases they can say and a local diagnostic surface",
+                "Settings shows workout control availability and a collapsed phrase disclosure",
             ]
         )
         settings.acceptanceTap()
@@ -259,10 +263,33 @@ final class AppIntentRoutingUITests: XCTestCase {
         let enabledStatus = app.descendants(matching: .any)["settings-app-intent-workouts-available"].firstMatch
         XCTAssertTrue(enabledStatus.waitForExistence(timeout: 5), "Expected the App Intent workout status row.")
         XCTAssertTrue(enabledStatus.isHittable, "Expected the App Intent status to be visibly on screen.")
-        XCTAssertTrue(app.staticTexts["Control workouts with Siri"].firstMatch.exists)
-        XCTAssertTrue(
-            app.staticTexts["Start, log sets, control rest, and finish with session exertion."].firstMatch.exists
+        XCTAssertTrue(app.staticTexts["Start, log sets, and finish."].firstMatch.exists)
+
+        let firstPhrase = "“Start my next workout in ForgeFit”"
+        let example = app.staticTexts[firstPhrase].firstMatch
+        XCTAssertFalse(example.exists, "Siri examples should start collapsed.")
+
+        let disclosure = app.buttons["settings-siri-phrase-ideas"].firstMatch
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+        acceptanceExpect(["settings-siri-phrase-ideas"], visibleLabels: ["What to say"])
+        app.acceptanceSwipeUp(velocity: .slow)
+        try acceptanceRequire(disclosure.isHittable, "Expected a visible Siri phrase disclosure.")
+        acceptanceExpect(
+            ["settings-siri-phrase-ideas"],
+            visibleLabels: [firstPhrase, "“Finish my workout in ForgeFit”"],
+            invariants: ["Expanding What to say shows the supported workout phrases."]
         )
+        disclosure.acceptanceTap()
+        XCTAssertTrue(example.waitForExistence(timeout: 5))
+        XCTAssertEqual(disclosure.value as? String, "Expanded")
+        acceptanceExpect(
+            ["settings-siri-phrase-ideas"],
+            visibleLabels: ["What to say"],
+            invariants: ["Collapsing What to say removes the examples again."]
+        )
+        disclosure.acceptanceTap()
+        XCTAssertTrue(example.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
     }
 
     private func assertFreshAppIntentWorkoutSummary(

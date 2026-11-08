@@ -64,6 +64,7 @@
   },
   {
     "slug": "Ab_Roller",
+    "weightMode": "bodyweight",
     "name": "Ab Roller",
     "force": "pull",
     "level": "intermediate",
@@ -260,6 +261,7 @@
   },
   {
     "slug": "Alternate_Leg_Diagonal_Bound",
+    "weightMode": "bodyweight",
     "name": "Alternate Leg Diagonal Bound",
     "force": "push",
     "level": "beginner",
@@ -745,6 +747,7 @@
   },
   {
     "slug": "Balance_Board",
+    "weightMode": "bodyweight",
     "name": "Balance Board",
     "force": null,
     "level": "beginner",
@@ -767,6 +770,7 @@
   },
   {
     "slug": "Ball_Leg_Curl",
+    "weightMode": "bodyweight",
     "name": "Ball Leg Curl",
     "force": "pull",
     "level": "beginner",
@@ -1735,6 +1739,7 @@
   },
   {
     "slug": "Bench_Sprint",
+    "weightMode": "bodyweight",
     "name": "Bench Sprint",
     "force": "push",
     "level": "beginner",
@@ -2139,6 +2144,7 @@
   },
   {
     "slug": "Bodyweight_Flyes",
+    "weightMode": "bodyweight",
     "name": "Bodyweight Flyes",
     "force": "push",
     "level": "intermediate",
@@ -2164,6 +2170,7 @@
   },
   {
     "slug": "Bodyweight_Mid_Row",
+    "weightMode": "bodyweight",
     "name": "Bodyweight Mid Row",
     "force": "pull",
     "level": "intermediate",
@@ -2208,6 +2215,7 @@
   },
   {
     "slug": "Bodyweight_Walking_Lunge",
+    "weightMode": "bodyweight",
     "name": "Bodyweight Walking Lunge",
     "force": "push",
     "level": "beginner",
@@ -2298,6 +2306,7 @@
   },
   {
     "slug": "Box_Jump_Multiple_Response",
+    "weightMode": "bodyweight",
     "name": "Box Jump (Multiple Response)",
     "force": "push",
     "level": "beginner",
@@ -2323,6 +2332,7 @@
   },
   {
     "slug": "Box_Skip",
+    "weightMode": "bodyweight",
     "name": "Box Skip",
     "force": "push",
     "level": "beginner",
@@ -3277,6 +3287,7 @@
   },
   {
     "slug": "Carioca_Quick_Step",
+    "weightMode": "bodyweight",
     "name": "Carioca Quick Step",
     "force": null,
     "level": "beginner",
@@ -4668,6 +4679,7 @@
   },
   {
     "slug": "Decline_Push-Up",
+    "weightMode": "bodyweight",
     "name": "Decline Push-Up",
     "force": "push",
     "level": "beginner",
@@ -4762,6 +4774,7 @@
   },
   {
     "slug": "Depth_Jump_Leap",
+    "weightMode": "bodyweight",
     "name": "Depth Jump Leap",
     "force": "push",
     "level": "beginner",
@@ -4812,6 +4825,7 @@
   },
   {
     "slug": "Dips_-_Chest_Version",
+    "weightMode": "bodyweight",
     "name": "Dips - Chest Version",
     "force": "push",
     "level": "intermediate",
@@ -5030,6 +5044,7 @@
   },
   {
     "slug": "Downward_Facing_Balance",
+    "weightMode": "bodyweight",
     "name": "Downward Facing Balance",
     "force": "static",
     "level": "intermediate",
@@ -5073,6 +5088,7 @@
   },
   {
     "slug": "Drop_Push",
+    "weightMode": "bodyweight",
     "name": "Drop Push",
     "force": "push",
     "level": "intermediate",
@@ -5997,6 +6013,7 @@
   },
   {
     "slug": "Exercise_Ball_Crunch",
+    "weightMode": "bodyweight",
     "name": "Exercise Ball Crunch",
     "force": "pull",
     "level": "beginner",
@@ -6018,6 +6035,7 @@
   },
   {
     "slug": "Exercise_Ball_Pull-In",
+    "weightMode": "bodyweight",
     "name": "Exercise Ball Pull-In",
     "force": "pull",
     "level": "beginner",
@@ -6299,6 +6317,7 @@
   },
   {
     "slug": "Floor_Glute-Ham_Raise",
+    "weightMode": "bodyweight",
     "name": "Floor Glute-Ham Raise",
     "force": "pull",
     "level": "intermediate",
@@ -6581,6 +6600,7 @@
   },
   {
     "slug": "Front_Box_Jump",
+    "weightMode": "bodyweight",
     "name": "Front Box Jump",
     "force": "push",
     "level": "beginner",
@@ -6628,6 +6648,7 @@
   },
   {
     "slug": "Front_Cone_Hops_or_hurdle_hops",
+    "weightMode": "bodyweight",
     "name": "Front Cone Hops (or hurdle hops)",
     "force": "push",
     "level": "beginner",
@@ -6847,6 +6868,7 @@
   },
   {
     "slug": "Gironda_Sternum_Chins",
+    "weightMode": "bodyweight",
     "name": "Gironda Sternum Chins",
     "force": "pull",
     "level": "intermediate",
@@ -7558,6 +7580,7 @@
   },
   {
     "slug": "Hurdle_Hops",
+    "weightMode": "bodyweight",
     "name": "Hurdle Hops",
     "force": "push",
     "level": "beginner",
@@ -7584,6 +7607,7 @@
   },
   {
     "slug": "Hyperextensions_Back_Extensions",
+    "weightMode": "bodyweight",
     "name": "Hyperextensions (Back Extensions)",
     "force": "pull",
     "level": "beginner",
@@ -7993,6 +8017,7 @@
   },
   {
     "slug": "Incline_Push-Up_Depth_Jump",
+    "weightMode": "bodyweight",
     "name": "Incline Push-Up Depth Jump",
     "force": "push",
     "level": "beginner",
@@ -8148,6 +8173,7 @@
   },
   {
     "slug": "Inverted_Row",
+    "weightMode": "bodyweight",
     "name": "Inverted Row",
     "force": "pull",
     "level": "beginner",
@@ -8171,6 +8197,7 @@
   },
   {
     "slug": "Inverted_Row_with_Straps",
+    "weightMode": "bodyweight",
     "name": "Inverted Row with Straps",
     "force": "pull",
     "level": "beginner",
@@ -8860,6 +8887,7 @@
   },
   {
     "slug": "Kipping_Muscle_Up",
+    "weightMode": "bodyweight",
     "name": "Kipping Muscle Up",
     "force": "pull",
     "level": "intermediate",
@@ -8932,6 +8960,7 @@
   },
   {
     "slug": "Knee_Hip_Raise_On_Parallel_Bars",
+    "weightMode": "bodyweight",
     "name": "Knee/Hip Raise On Parallel Bars",
     "force": "pull",
     "level": "beginner",
@@ -9258,6 +9287,7 @@
   },
   {
     "slug": "Lateral_Box_Jump",
+    "weightMode": "bodyweight",
     "name": "Lateral Box Jump",
     "force": "push",
     "level": "beginner",
@@ -9285,6 +9315,7 @@
   },
   {
     "slug": "Lateral_Cone_Hops",
+    "weightMode": "bodyweight",
     "name": "Lateral Cone Hops",
     "force": "push",
     "level": "beginner",
@@ -9701,6 +9732,7 @@
   },
   {
     "slug": "Linear_Depth_Jump",
+    "weightMode": "bodyweight",
     "name": "Linear Depth Jump",
     "force": "push",
     "level": "intermediate",
@@ -9754,6 +9786,7 @@
   },
   {
     "slug": "London_Bridges",
+    "weightMode": "bodyweight",
     "name": "London Bridges",
     "force": "pull",
     "level": "intermediate",
@@ -10622,6 +10655,7 @@
   },
   {
     "slug": "Mixed_Grip_Chin",
+    "weightMode": "bodyweight",
     "name": "Mixed Grip Chin",
     "force": "pull",
     "level": "expert",
@@ -10665,6 +10699,7 @@
   },
   {
     "slug": "Mountain_Climbers",
+    "weightMode": "bodyweight",
     "name": "Mountain Climbers",
     "force": "pull",
     "level": "beginner",
@@ -10734,6 +10769,7 @@
   },
   {
     "slug": "Muscle_Up",
+    "weightMode": "bodyweight",
     "name": "Muscle Up",
     "force": "pull",
     "level": "intermediate",
@@ -11568,6 +11604,7 @@
   },
   {
     "slug": "One_Arm_Chin-Up",
+    "weightMode": "bodyweight",
     "name": "One Arm Chin-Up",
     "force": "pull",
     "level": "expert",
@@ -12161,6 +12198,7 @@
   },
   {
     "slug": "Parallel_Bar_Dip",
+    "weightMode": "bodyweight",
     "name": "Parallel Bar Dip",
     "force": "push",
     "level": "beginner",
@@ -12239,6 +12277,7 @@
   },
   {
     "slug": "Physioball_Hip_Bridge",
+    "weightMode": "bodyweight",
     "name": "Physioball Hip Bridge",
     "force": "push",
     "level": "beginner",
@@ -12306,6 +12345,7 @@
   },
   {
     "slug": "Plank",
+    "defaultHoldSeconds": 30,
     "name": "Plank",
     "force": "static",
     "level": "beginner",
@@ -12366,6 +12406,7 @@
   },
   {
     "slug": "Platform_Hamstring_Slides",
+    "weightMode": "bodyweight",
     "name": "Platform Hamstring Slides",
     "force": "pull",
     "level": "beginner",
@@ -12414,6 +12455,7 @@
   },
   {
     "slug": "Plyo_Kettlebell_Pushups",
+    "weightMode": "bodyweight",
     "name": "Plyo Kettlebell Pushups",
     "force": "push",
     "level": "expert",
@@ -12915,6 +12957,7 @@
   },
   {
     "slug": "Push-Ups_With_Feet_On_An_Exercise_Ball",
+    "weightMode": "bodyweight",
     "name": "Push-Ups With Feet On An Exercise Ball",
     "force": "push",
     "level": "intermediate",
@@ -13745,6 +13788,7 @@
   },
   {
     "slug": "Ring_Dips",
+    "weightMode": "bodyweight",
     "name": "Ring Dips",
     "force": "push",
     "level": "intermediate",
@@ -13814,6 +13858,7 @@
   },
   {
     "slug": "Rocky_Pull-Ups_Pulldowns",
+    "weightMode": "bodyweight",
     "name": "Rocky Pull-Ups/Pulldowns",
     "force": "pull",
     "level": "intermediate",
@@ -13889,6 +13934,7 @@
   },
   {
     "slug": "Rope_Climb",
+    "weightMode": "bodyweight",
     "name": "Rope Climb",
     "force": "pull",
     "level": "intermediate",
@@ -14122,6 +14168,7 @@
   },
   {
     "slug": "Scapular_Pull-Up",
+    "weightMode": "bodyweight",
     "name": "Scapular Pull-Up",
     "force": "pull",
     "level": "beginner",
@@ -15296,6 +15343,7 @@
   },
   {
     "slug": "Side_To_Side_Chins",
+    "weightMode": "bodyweight",
     "name": "Side To Side Chins",
     "force": "pull",
     "level": "intermediate",
@@ -15459,6 +15507,7 @@
   },
   {
     "slug": "Single-Leg_High_Box_Squat",
+    "weightMode": "bodyweight",
     "name": "Single-Leg High Box Squat",
     "force": "push",
     "level": "beginner",
@@ -15481,6 +15530,7 @@
   },
   {
     "slug": "Single-Leg_Hop_Progression",
+    "weightMode": "bodyweight",
     "name": "Single-Leg Hop Progression",
     "force": "push",
     "level": "beginner",
@@ -15506,6 +15556,7 @@
   },
   {
     "slug": "Single-Leg_Lateral_Hop",
+    "weightMode": "bodyweight",
     "name": "Single-Leg Lateral Hop",
     "force": "push",
     "level": "beginner",
@@ -15551,6 +15602,7 @@
   },
   {
     "slug": "Single-Leg_Stride_Jump",
+    "weightMode": "bodyweight",
     "name": "Single-Leg Stride Jump",
     "force": "push",
     "level": "beginner",
@@ -18452,6 +18504,7 @@
   },
   {
     "slug": "Suspended_Fallout",
+    "weightMode": "bodyweight",
     "name": "Suspended Fallout",
     "force": "pull",
     "level": "intermediate",
@@ -18477,6 +18530,7 @@
   },
   {
     "slug": "Suspended_Push-Up",
+    "weightMode": "bodyweight",
     "name": "Suspended Push-Up",
     "force": "push",
     "level": "beginner",
@@ -18500,6 +18554,7 @@
   },
   {
     "slug": "Suspended_Reverse_Crunch",
+    "weightMode": "bodyweight",
     "name": "Suspended Reverse Crunch",
     "force": "pull",
     "level": "beginner",
@@ -18520,6 +18575,7 @@
   },
   {
     "slug": "Suspended_Row",
+    "weightMode": "bodyweight",
     "name": "Suspended Row",
     "force": "pull",
     "level": "beginner",
@@ -18542,6 +18598,7 @@
   },
   {
     "slug": "Suspended_Split_Squat",
+    "weightMode": "bodyweight",
     "name": "Suspended Split Squat",
     "force": "push",
     "level": "intermediate",

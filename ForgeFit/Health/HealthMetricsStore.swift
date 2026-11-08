@@ -81,7 +81,13 @@ final class HealthMetricsStore {
     private(set) var activityMetrics: [DailyActivityMetric] = []
     /// Body-mass history in kilograms.
     private(set) var bodyweightSeries: [(date: Date, value: Double)] = []
-    var latestBodyweight: Double? { bodyweightSeries.last?.value }
+    private var workoutBodyweight: Double?
+    var latestBodyweight: Double? {
+        #if DEBUG
+        if let workoutBodyweightForUITests { return workoutBodyweightForUITests }
+        #endif
+        return workoutBodyweight ?? bodyweightSeries.last?.value
+    }
     /// Garmin sleep is flowing into Apple Health but HRV isn't (Garmin
     /// Connect doesn't sync it) — the recovery screen explains the gap.
     private(set) var hrvGapDetected = false
@@ -109,6 +115,8 @@ final class HealthMetricsStore {
     /// When a demo seed is active, real HealthKit refreshes are suppressed so
     /// they can't overwrite the synthetic series with an empty query.
     @ObservationIgnored private var demoSeeded = false
+    @ObservationIgnored private let workoutBodyweightForUITests: Double? =
+        ProcessInfo.processInfo.environment["FORGEFIT_SEED_WORKOUT_BODYWEIGHT"] == "1" ? 78 : nil
     #endif
 
     /// Safe to call often; coalesces and skips when refreshed very recently.
@@ -213,6 +221,7 @@ final class HealthMetricsStore {
         extraSignals = result.extras
         activityMetrics = result.activity
         bodyweightSeries = result.bodyweight
+        workoutBodyweight = nil
         hrvGapDetected = result.hrvGapDetected
         lastRefreshed = Date()
     }
@@ -419,9 +428,27 @@ final class HealthMetricsStore {
 
     /// Bodyweight-mode sets get the user's latest body mass so their volume
     /// counts — the load math treats it like any other stored kilogram value.
-    func fillBodyweight(_ set: SetModel) {
-        guard set.weightMode != .external, set.bodyweightKg == nil, let bw = latestBodyweight else { return }
-        set.bodyweightKg = bw
+    @discardableResult
+    func fillBodyweight(_ set: SetModel, exerciseWeightMode: WeightMode? = nil) -> Bool {
+        let changed = LiveSetCompletion.captureBodyweight(
+            for: set, exerciseWeightMode: exerciseWeightMode, latestBodyweight: latestBodyweight
+        )
+        guard changed else { return false }
         set.recomputeDerivedMetrics()
+        return true
+    }
+
+    func refreshWorkoutBodyweight() async {
+        #if DEBUG
+        if demoSeeded { return }
+        #endif
+        let mass = await HealthService.shared.latestBodyMassKg()
+        guard !Task.isCancelled else { return }
+        workoutBodyweight = mass.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+    }
+
+    func didLogBodyweight(_ kilograms: Double) {
+        if kilograms.isFinite, kilograms > 0 { workoutBodyweight = kilograms }
+        refresh(force: true)
     }
 }

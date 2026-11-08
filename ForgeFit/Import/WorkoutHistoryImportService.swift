@@ -180,7 +180,7 @@ enum WorkoutHistoryImportService {
                 )
 
                 workoutExercise.sets = strengthSets.enumerated().map { setPosition, setDraft in
-                    SetModel(
+                    let set = SetModel(
                         userID: userID,
                         position: setPosition,
                         setType: setDraft.setType,
@@ -191,6 +191,11 @@ enum WorkoutHistoryImportService {
                         durationSeconds: setDraft.durationSeconds,
                         completedAt: draft.endedAt
                     )
+                    if setDraft.setType == .distance {
+                        set.strengthDistanceMeters = setDraft.distanceMeters
+                        set.recomputeDerivedMetrics()
+                    }
+                    return set
                 }
                 workoutExercises.append(workoutExercise)
 
@@ -299,7 +304,7 @@ enum WorkoutHistoryImportService {
         for exercise in workouts.flatMap(\.exercises) where unmatched.contains(exercise.name) {
             var hint = hints[exercise.name] ?? ExerciseClassificationHint()
             for set in exercise.sets {
-                if set.distanceMeters != nil { hint.hasDistance = true }
+                if set.distanceMeters != nil && !set.setType.usesNonRepTracking { hint.hasDistance = true }
                 if set.weightKg != nil { hint.hasWeight = true }
                 if set.reps != nil { hint.hasReps = true }
             }
@@ -333,17 +338,24 @@ enum WorkoutHistoryImportService {
         let resolved = classification ?? legacyClassification(for: draft)
         let confident = resolved.confidence >= ExerciseClassifier.reviewConfidenceThreshold
         let equipment = resolved.equipment ?? ExerciseClassifier.inferredEquipment(name: draft.name.lowercased())
+        let distance = draft.sets.first?.setType == .distance && draft.sets.allSatisfy { $0.setType == .distance }
+        let timed = draft.sets.first?.setType == .timedHold && draft.sets.allSatisfy { $0.setType == .timedHold }
+        let isCardio = resolved.isCardio && !distance && !timed
 
         return ExerciseLibraryModel(
             ownerID: userID,
             name: draft.name,
-            movementPattern: resolved.isCardio ? "cardio" : resolved.movementPattern,
+            movementPattern: isCardio ? "cardio" : (resolved.isCardio ? nil : resolved.movementPattern),
             primaryMuscles: resolved.primaryMuscles,
             secondaryMuscles: resolved.secondaryMuscles,
             equipment: equipment,
-            defaultWeightMode: resolved.isCardio ? .bodyweight : .external,
-            isCardio: resolved.isCardio,
-            category: resolved.isCardio ? "cardio" : "strength",
+            defaultWeightMode: isCardio ? .bodyweight : .external,
+            isCardio: isCardio,
+            modalityRaw: distance ? ExerciseLibraryModel.strengthDistanceModalityRaw : nil,
+            defaultHoldSeconds: timed
+                ? (StrengthHold.validSeconds(draft.sets.first?.durationSeconds) ?? StrengthHold.defaultSeconds)
+                : nil,
+            category: isCardio ? "cardio" : "strength",
             needsReview: !confident,
             classificationConfidence: resolved.confidence,
             classificationSourceRaw: resolved.source.rawValue,
@@ -356,7 +368,7 @@ enum WorkoutHistoryImportService {
     /// available; mirrors the previous `makeCustomExercise` behaviour.
     nonisolated private static func legacyClassification(for draft: ImportedExerciseDraft) -> ExerciseClassification {
         let kind = CardioKind.infer(name: draft.name, equipment: nil)
-        let hasCardioMetrics = draft.sets.contains { $0.distanceMeters != nil }
+        let hasCardioMetrics = draft.sets.contains { $0.distanceMeters != nil && !$0.setType.usesNonRepTracking }
         let isCardio = kind != .other || hasCardioMetrics
         return ExerciseClassification(
             primaryMuscles: isCardio ? kind.musclesWorked : [],
@@ -369,6 +381,7 @@ enum WorkoutHistoryImportService {
     }
 
     nonisolated private static func isCardioSet(_ set: ImportedSetDraft, exerciseName: String, exercise: ExerciseLibraryModel?) -> Bool {
+        if set.setType.usesNonRepTracking { return false }
         if set.distanceMeters != nil { return true }
         if exercise?.isCardio == true { return true }
         let kind = CardioKind.infer(name: exerciseName, equipment: exercise?.equipment)

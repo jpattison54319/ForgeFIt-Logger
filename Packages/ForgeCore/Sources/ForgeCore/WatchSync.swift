@@ -366,6 +366,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
     public var setTypeRaw: String?
     public var weightModeRaw: String?
     public var durationSeconds: Int?
+    public var strengthDistanceMeters: Double?
+    public var strengthDistanceUnitRaw: String?
     public var isUnilateral: Bool?
     public var miniReps: [Int]?
     public var side2Reps: Int?
@@ -397,6 +399,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         setTypeRaw: String? = nil,
         weightModeRaw: String? = nil,
         durationSeconds: Int? = nil,
+        strengthDistanceMeters: Double? = nil,
+        strengthDistanceUnitRaw: String? = nil,
         isUnilateral: Bool? = nil,
         miniReps: [Int]? = nil,
         side2Reps: Int? = nil,
@@ -420,6 +424,8 @@ public struct WatchSetSnapshot: Codable, Sendable, Equatable, Identifiable {
         self.setTypeRaw = setTypeRaw
         self.weightModeRaw = weightModeRaw
         self.durationSeconds = durationSeconds
+        self.strengthDistanceMeters = strengthDistanceMeters
+        self.strengthDistanceUnitRaw = strengthDistanceUnitRaw
         self.isUnilateral = isUnilateral
         self.miniReps = miniReps
         self.side2Reps = side2Reps

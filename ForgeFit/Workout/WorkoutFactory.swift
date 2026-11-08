@@ -223,9 +223,37 @@ enum WorkoutFactory {
                 // tonnage treat the raw number as the lifted load (assistance
                 // × reps for assisted work) instead of the effective load.
                 let weightMode = exercise?.defaultWeightMode ?? .external
+                let defaultHoldSeconds = exercise?.strengthHoldSeconds
                 let pendingSets: [SetModel] = isSessionBased ? [] : routineExercise.sets
                     .sorted { $0.position < $1.position }
                     .map { target in
+                        if exercise?.tracksStrengthDistance == true || target.setType == .distance {
+                            let set = SetModel(
+                                userID: ForgeFitDemo.userID, position: target.position, setType: .distance,
+                                weightMode: weightMode, sourceRoutineSetID: target.id
+                            )
+                            set.strengthDistanceMeters = target.targetDistanceMeters
+                            if target.loadPrescriptionMode == .fixed {
+                                set.setModeWeight(target.targetWeight)
+                            }
+                            return set
+                        }
+                        if defaultHoldSeconds != nil || target.setType == .timedHold {
+                            let duration = StrengthHold.validSeconds(target.targetDurationSeconds)
+                                ?? defaultHoldSeconds ?? StrengthHold.defaultSeconds
+                            let set = SetModel(
+                                userID: ForgeFitDemo.userID,
+                                position: target.position,
+                                setType: .timedHold,
+                                weightMode: weightMode,
+                                durationSeconds: duration,
+                                sourceRoutineSetID: target.id
+                            )
+                            if target.loadPrescriptionMode == .fixed {
+                                set.setModeWeight(target.targetWeight)
+                            }
+                            return set
+                        }
                         let prescription = target.estimatedOneRepMaxPrescription
                         let adaptiveResolution: AdaptiveLoadResolution? = prescription.flatMap { prescription in
                             guard let exercise,

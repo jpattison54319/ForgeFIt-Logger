@@ -800,6 +800,10 @@ public enum RoutineChangeSync {
             routineSet.plannedMiniReps = plan.isEmpty ? [3, 3, 3, 3] : plan
         case .amrap:
             routineSet.targetDurationSeconds = workoutSet.durationSeconds ?? 60
+        case .timedHold:
+            routineSet.targetDurationSeconds = workoutSet.durationSeconds ?? StrengthHold.defaultSeconds
+        case .distance:
+            routineSet.targetDistanceMeters = workoutSet.strengthDistanceMeters
         default:
             break
         }

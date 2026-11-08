@@ -492,6 +492,9 @@ nonisolated private struct CSVImportMapper {
     }
 
     func setType(_ record: CSVRecord) -> SetType {
+        if let type = record["settype"].flatMap(SetType.init(rawValue:)), type.usesNonRepTracking {
+            return type
+        }
         if let warmup = string(record, keys: ["iswarmup"])?.lowercased(), ["1", "true", "yes"].contains(warmup) {
             return .warmup
         }
